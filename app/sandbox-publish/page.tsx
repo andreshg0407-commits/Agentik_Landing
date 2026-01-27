@@ -2,14 +2,14 @@
 
 import React, { useEffect, useMemo, useState } from 'react'
 
-type UploadState = 'idle' | 'ready' | 'uploading' | 'success' | 'error'
+type StepState = 'idle' | 'ready' | 'loading' | 'success' | 'error'
 
-export default function SandboxUploadOnlyPage() {
+export default function SandboxPublishOnlyPage() {
   const [connected, setConnected] = useState(false)
   const [scope, setScope] = useState('')
 
   const [file, setFile] = useState<File | null>(null)
-  const [state, setState] = useState<UploadState>('idle')
+  const [state, setState] = useState<StepState>('idle')
   const [message, setMessage] = useState('')
   const [details, setDetails] = useState<any>(null)
 
@@ -38,27 +38,27 @@ export default function SandboxUploadOnlyPage() {
     setState(f ? 'ready' : 'idle')
   }
 
-  const onUpload = async () => {
+  const onPublish = async () => {
     if (!file) return
-    setState('uploading')
-    setMessage('Uploading (Sandbox)…')
+    setState('loading')
+    setMessage('Publishing (Sandbox)…')
     setDetails(null)
 
     const form = new FormData()
     form.append('video', file)
 
-    const res = await fetch('/api/tiktok/upload', { method: 'POST', body: form })
+    const res = await fetch('/api/tiktok/publish', { method: 'POST', body: form })
     const data = await res.json().catch(() => ({}))
 
     if (!res.ok) {
       setState('error')
-      setMessage(data?.error || 'Upload failed')
+      setMessage(data?.error || 'Publish failed')
       setDetails(data)
       return
     }
 
     setState('success')
-    setMessage('Upload OK (Sandbox).')
+    setMessage('Publish OK (Sandbox).')
     setDetails(data)
   }
 
@@ -66,7 +66,7 @@ export default function SandboxUploadOnlyPage() {
     <main style={{ minHeight: '100vh', padding: 24, background: '#0b1220', color: '#e5e7eb' }}>
       <div style={{ maxWidth: 900, margin: '0 auto' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <h1 style={{ margin: 0, fontSize: 22 }}>Sandbox Upload — video.upload</h1>
+          <h1 style={{ margin: 0, fontSize: 22 }}>Sandbox Publish — video.publish</h1>
           <span
             style={{
               marginLeft: 'auto',
@@ -106,19 +106,19 @@ export default function SandboxUploadOnlyPage() {
           </label>
 
           <button
-            onClick={onUpload}
-            disabled={!connected || !file || state === 'uploading'}
+            onClick={onPublish}
+            disabled={!connected || !file || state === 'loading'}
             style={{
               padding: '10px 14px',
               borderRadius: 12,
               border: '1px solid rgba(255,255,255,0.12)',
-              background: connected && file && state !== 'uploading' ? '#304f9d' : 'rgba(48,79,157,0.35)',
+              background: connected && file && state !== 'loading' ? '#304f9d' : 'rgba(48,79,157,0.35)',
               color: 'white',
               fontWeight: 900,
-              cursor: connected && file && state !== 'uploading' ? 'pointer' : 'not-allowed',
+              cursor: connected && file && state !== 'loading' ? 'pointer' : 'not-allowed',
             }}
           >
-            {state === 'uploading' ? 'Uploading…' : 'Upload (Sandbox)'}
+            {state === 'loading' ? 'Publishing…' : 'Publish (Sandbox)'}
           </button>
 
           <span style={{ color: '#9ca3af' }}>Status: <b style={{ color: '#e5e7eb' }}>{state}</b></span>

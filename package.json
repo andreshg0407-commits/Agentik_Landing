@@ -9,6 +9,7 @@
     "start": "next start"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.975.0",
     "@emotion/is-prop-valid": "latest",
     "@hookform/resolvers": "^3.10.0",
     "@number-flow/react": "0.5.10",

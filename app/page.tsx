@@ -20,63 +20,81 @@ export default function HomePage() {
       <Navbar />
 
       {/* HERO */}
-      <section className="bg-[#f7f8fa] min-h-[90vh]">
-        <div className="mx-auto max-w-7xl px-6 pt-28 pb-24 md:pt-32 md:pb-28 grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
-          {/* COLUMNA IZQUIERDA — TEXTO */}
-          <div className="relative z-10">
-            <p className="text-gray-600 text-sm uppercase tracking-wide">
-              Agentik • Empleados virtuales con IA
-            </p>
+<section className="bg-[#f7f8fa] min-h-[85vh]">
+  <div className="mx-auto max-w-7xl px-6 pt-28 pb-24 md:pt-32 md:pb-28 grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
+    {/* COLUMNA IZQUIERDA — TEXTO */}
+    <div className="relative z-10">
+      <p className="text-gray-600 text-sm uppercase tracking-wide">
+        Agentik • Empleados virtuales con IA
+      </p>
 
-            <h1 className="mt-4 text-gray-900 text-4xl md:text-6xl font-bold leading-tight">
-              Luca: tu Social Media Manager con IA
-            </h1>
+      <h1 className="text-3xl md:text-5xl font-semibold leading-[1.15] tracking-tight">
+        Empleados con IA que hacen tareas reales por ti.
+      </h1>
 
-            <p className="mt-6 text-gray-700 text-lg max-w-xl">
-              Le escribes una orden a Luca. Él crea el contenido y, si lo deseas, lo publica por ti.
-              Tú apruebas. Luca lo deja listo para publicar.
-            </p>
+      <p className="mt-6 text-base md:text-lg text-gray-600 max-w-xl">
+  Agentik es para negocios, profesionales o personas.
+  Vende por WhatsApp, publica contenido, gestiona inventario, agenda reservas...
+</p>
 
-            {/* BOTONES */}
-            <div className="mt-10 flex flex-col sm:flex-row gap-4">
-              <a
-                href="/agentes/marketing"
-                className="rounded-xl bg-black px-6 py-3 font-semibold text-white hover:bg-black/90 transition"
-              >
-                Probar a Luca
-              </a>
+      <div className="mt-6 flex flex-wrap gap-2 text-sm text-gray-700">
+        <span className="rounded-full bg-black/5 px-3 py-1">Ventas por WhatsApp</span>
+        <span className="rounded-full bg-black/5 px-3 py-1">Shopify</span>
+        <span className="rounded-full bg-black/5 px-3 py-1">Redes</span>
+        <span className="rounded-full bg-black/5 px-3 py-1">Reservas</span>
+        <span className="rounded-full bg-black/5 px-3 py-1">Automatización</span>
+      </div>
 
-              <a
-                href="#como-funciona"
-                className="rounded-xl border border-black/20 px-6 py-3 font-semibold text-black hover:bg-black/5 transition"
-              >
-                Ver demo
-              </a>
-            </div>
+      {/* BOTONES */}
+      <div className="mt-10 flex flex-col sm:flex-row gap-4">
+        <a
+          href="/agentes/marketing"
+          className="rounded-xl bg-black px-6 py-3 font-semibold text-white hover:bg-black/90 transition"
+        >
+          Conocer los agentes
+        </a>
 
-            <div className="mt-8 text-gray-500 text-sm">
-              Ejemplo de orden:{" "}
-              <span className="font-mono bg-black/5 px-2 py-1 rounded">
-                “Luca, publica este video en Instagram y TikTok”
-              </span>
-            </div>
-          </div>
+        <a
+          href="#como-funciona"
+          className="rounded-xl border border-black/20 px-6 py-3 font-semibold text-black hover:bg-black/5 transition"
+        >
+          Ver cómo funciona
+        </a>
+      </div>
 
-          {/* COLUMNA DERECHA — ROBOT */}
-          <div className="relative flex items-center justify-center lg:justify-end">
-            <div className="w-full max-w-[540px] h-[420px] md:h-[520px] lg:h-[620px]">
-              <iframe
-                src="https://my.spline.design/nexbotrobotcharacterconcept-kAZefxQm4X8uFGbZ0NfCTefi/"
-                width="100%"
-                height="100%"
-                frameBorder="0"
-                style={{ border: "none" }}
-                allowFullScreen
-              />
-            </div>
-          </div>
-        </div>
-      </section>
+      <div className="mt-8 text-gray-500 text-sm">
+        <span className="font-mono bg-black/5 px-2 py-1 rounded">
+          Empieza con un agente. Agrega más cuando lo necesites.
+        </span>
+      </div>
+
+      <div className="mt-4 text-gray-600 text-sm">
+        ¿Necesitas una autorización o flujo personalizado?{" "}
+        <a
+          href="mailto:hello@agentik.ai"
+          className="underline underline-offset-4 hover:text-gray-900"
+        >
+          Escríbenos
+        </a>
+        .
+      </div>
+    </div>
+
+    {/* COLUMNA DERECHA — ROBOT */}
+    <div className="relative flex items-center justify-center lg:justify-end -translate-y-4">
+      <div className="w-full max-w-[540px] h-[420px] md:h-[520px] lg:h-[620px]">
+        <iframe
+          src="https://my.spline.design/nexbotrobotcharacterconcept-kAZefxQm4X8uFGbZ0NfCTefi/"
+          width="100%"
+          height="100%"
+          frameBorder="0"
+          style={{ border: "none" }}
+          allowFullScreen
+        />
+      </div>
+    </div>
+  </div>
+</section>
 
       {/* ECOSISTEMA: Agentik no es solo Luca */}
       <section id="services" className="py-24 bg-black">
@@ -86,14 +104,14 @@ export default function HomePage() {
               Agentik es tu equipo de empleados virtuales
             </h2>
             <p className="text-xl text-gray-300 max-w-2xl mx-auto">
-              Empieza con Luca (marketing) y luego agregas otros agentes por rol: operaciones, ventas,
+              Empieza con Luca (Ventas) y luego agregas otros agentes por rol: operaciones, Marketing,
               inventario, reservas, reportes.
             </p>
           </div>
 
           <BentoGrid className="lg:grid-rows-3">
             <BentoCard
-              name="Luca — Social Media Manager"
+              name="Social Media Manager"
               className="lg:row-start-1 lg:row-end-4 lg:col-start-2 lg:col-end-3"
               background={
                 <div className="absolute inset-0 bg-black/80 backdrop-blur-sm border border-white/10" />
