@@ -1,0 +1,1212 @@
+// Agentik schema
+// Prisma 7 config-first setup
+// ⚠️ DATABASE URL lives in prisma.config.ts
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// --------------------
+/// Enums
+/// --------------------
+enum OrgType {
+  SAAS_CUSTOMER
+  ENTERPRISE
+  INTERNAL
+}
+
+enum OrgStatus {
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+enum ProjectStatus {
+  PLANNED
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum Role {
+  SUPER_ADMIN // Agentik internal only
+  ORG_ADMIN
+  MANAGER
+  OPERATOR
+  VIEWER
+  BILLING
+}
+
+enum MembershipStatus {
+  INVITED
+  ACTIVE
+  DISABLED
+}
+
+enum AgentType {
+  MARKETING
+  SALES
+  WEB_MANAGER
+  ACCOUNTING
+  OPS
+  CUSTOM
+}
+
+enum AgentStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum ChannelType {
+  WHATSAPP
+  TIKTOK
+  INSTAGRAM
+  FACEBOOK
+  WEB
+  EMAIL
+  API
+}
+
+enum IntegrationProvider {
+  META
+  TIKTOK
+  GOOGLE
+  SHOPIFY
+  STRIPE
+  ZELLE
+  MERCURY
+  DIAN
+  CUSTOM
+}
+
+enum IntegrationStatus {
+  CONNECTED
+  DISCONNECTED
+  ERROR
+}
+
+enum WorkflowProvider {
+  N8N
+  CUSTOM
+}
+
+enum WorkflowStatus {
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum RunStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELED
+}
+
+enum ConversationStatus {
+  OPEN
+  PENDING_HANDOFF
+  HANDED_OFF
+  CLOSED
+}
+
+enum MessageRole {
+  USER
+  AGENT
+  TOOL
+  SYSTEM
+}
+
+enum FilePurpose {
+  CATALOG
+  BRAND_ASSET
+  DOCUMENT
+  PROMPT_ATTACHMENT
+  OTHER
+}
+
+enum PlanInterval {
+  MONTH
+  YEAR
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+}
+
+enum SyncJobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum AlertStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum RuleStatus {
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum RuleExecutionStatus {
+  MATCHED
+  SKIPPED
+  FAILED
+}
+
+enum EventStatus {
+  PENDING
+  PROCESSED
+  FAILED
+}
+
+enum UsageKind {
+  LLM_TOKENS
+  LLM_CALL
+  IMAGE_GEN
+  VIDEO_GEN
+  STORAGE
+  WORKFLOW_RUN
+  MESSAGE
+}
+
+/// --------------------
+/// Tenant / Identity
+/// --------------------
+model Organization {
+  id     String    @id @default(cuid())
+  name   String
+  slug   String    @unique
+  type   OrgType   @default(ENTERPRISE)
+  status OrgStatus @default(ACTIVE)
+
+  // Branding / preferences per org
+  settingsJson Json?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  members         Membership[]
+  workspaces      Workspace[]
+  projects        Project[]
+  agents          Agent[]
+  channels        Channel[]
+  integrations    Integration[]
+  workflows       Workflow[]
+  files           FileObject[]
+  knowledge       KnowledgeItem[]
+  runs            Run[]
+  logs            AgentLog[]
+  audits          AuditLog[]
+  subscriptions   Subscription[]
+  conversations   Conversation[]
+  messages        Message[]
+  usageEvents     UsageEvent[]
+  events          Event[]
+  rules           Rule[]
+  alerts          Alert[]
+  metricSnapshots MetricSnapshot[]
+  syncJobs        SyncJob[]
+  documents       Document[]
+
+  @@index([status])
+}
+
+model User {
+  id    String  @id @default(cuid())
+  email String  @unique
+  name  String?
+  phone String?
+
+  // Auth.js v5 required fields
+  emailVerified DateTime?
+  image         String?
+
+  // Auth strategy: password hash or oauth provider; keep flexible
+  authJson Json?
+
+  memberships          Membership[]
+  auditLogs            AuditLog[]           @relation("UserAuditLogs")
+  assignedAlerts       Alert[]              @relation("AssignedAlerts")
+  // Auth.js relations
+  accounts             Account[]
+  sessions             Session[]
+  passwordCredential   PasswordCredential?
+  // Workspace-level access (multi-tenant)
+  workspaceMemberships WorkspaceMembership[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+}
+
+model Membership {
+  id             String @id @default(cuid())
+  organizationId String
+  userId         String
+  role           Role   @default(VIEWER)
+
+  status          MembershipStatus @default(INVITED)
+  invitedAt       DateTime?
+  acceptedAt      DateTime?
+  disabledAt      DateTime?
+  permissionsJson Json?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@index([organizationId, status])
+}
+
+/// --------------------
+/// Projects (modules / initiatives)
+/// --------------------
+model Project {
+  id             String        @id @default(cuid())
+  organizationId String
+  // Optional: scope this technical initiative to a brand/client workspace
+  workspaceId    String?
+  name           String
+  key            String // REQUIRED stable key like "dojeans-control-center"
+  status         ProjectStatus @default(PLANNED)
+  description    String?
+  settingsJson   Json?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workspace    Workspace?   @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+
+  agents          Agent[]
+  channels        Channel[]
+  integrations    Integration[]
+  workflows       Workflow[]
+  knowledge       KnowledgeItem[]
+  files           FileObject[]
+  runs            Run[]
+  audits          AuditLog[]
+  projectModules  ProjectModule[]
+  conversations   Conversation[]
+  usageEvents     UsageEvent[]
+  events          Event[]
+  rules           Rule[]
+  alerts          Alert[]
+  metricSnapshots MetricSnapshot[]
+  syncJobs        SyncJob[]
+  logs            AgentLog[] // ✅ relación real para AgentLog (mejora producción)
+  documents       Document[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  // ✅ Esto es CLAVE: de aquí sale el unique input `organizationId_key` en Prisma (seed correcto)
+  @@unique([organizationId, key])
+  @@index([organizationId, status])
+  @@index([key]) // (opcional) útil para búsquedas rápidas por key
+  @@index([workspaceId])
+}
+
+/// Optional: which “modules” are enabled in a project (phased rollout)
+model ProjectModule {
+  id         String  @id @default(cuid())
+  projectId  String
+  // Examples: "CONTROL_CENTER", "MILA_WHATSAPP", "LUCA_MARKETING", "DIAN_AUTOMATION"
+  code       String
+  enabled    Boolean @default(false)
+  configJson Json?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, code])
+  @@index([projectId, enabled])
+}
+
+/// --------------------
+/// Agents (Luca, Mila, etc.)
+/// --------------------
+model Agent {
+  id             String      @id @default(cuid())
+  organizationId String
+  projectId      String?
+  name           String
+  type           AgentType   @default(CUSTOM)
+  status         AgentStatus @default(DRAFT)
+
+  // Runtime selection
+  modelProvider   String? // "anthropic", "openai", "google", etc.
+  modelName       String? // "claude-...", "gpt-...", "gemini-..."
+  temperature     Float?
+  topP            Float?
+  maxOutputTokens Int?
+
+  // FIX: two relations Agent<->AgentVersion must be named + opposite fields exist
+  versions AgentVersion[] @relation("AgentVersions")
+
+  activeVersionId String?
+  activeVersion   AgentVersion? @relation("ActiveAgentVersion", fields: [activeVersionId], references: [id], onDelete: SetNull)
+
+  // Freeform config (for quick start); recommended to use versions below
+  configJson Json?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  channels       Channel[]
+  conversations  Conversation[]
+  logs           AgentLog[]
+  runs           Run[]
+  knowledgeLinks KnowledgeLink[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@unique([organizationId, name])
+  @@index([organizationId, status])
+  @@index([projectId])
+}
+
+model AgentVersion {
+  id      String  @id @default(cuid())
+  agentId String
+  version Int
+  label   String?
+
+  // Prompting + policy + tools instructions
+  systemPrompt String?
+  policyJson   Json?
+  toolsJson    Json?
+
+  // Persona / style / forbidden words / sales rules / etc.
+  behaviorJson Json?
+
+  // Domain knowledge references: tags, categories, etc.
+  metadataJson Json?
+
+  agent Agent @relation("AgentVersions", fields: [agentId], references: [id], onDelete: Cascade)
+
+  // Opposite side for activeVersion
+  activeFor Agent[] @relation("ActiveAgentVersion")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([agentId, version])
+  @@index([agentId])
+}
+
+/// --------------------
+/// Channels & Integrations
+/// --------------------
+model Channel {
+  id             String  @id @default(cuid())
+  organizationId String
+  projectId      String?
+  agentId        String?
+  integrationId  String?
+
+  type   ChannelType
+  name   String? // e.g. "Mila WPP DoJeans"
+  status String? // keep flexible (Meta statuses vary)
+
+  // Phone/page/account identifiers depending on channel
+  externalAccountId String?
+  externalPhoneId   String?
+  externalPageId    String?
+
+  // Store secrets/credentials encrypted at app layer (prefer Integration.secretsJson in prod)
+  credentialsJson Json?
+  settingsJson    Json?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  agent        Agent?       @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  integration  Integration? @relation(fields: [integrationId], references: [id], onDelete: SetNull)
+
+  conversations Conversation[]
+  runs          Run[]
+  agentLogs     AgentLog[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([organizationId, type])
+  @@index([projectId])
+  @@index([agentId])
+  @@index([integrationId])
+}
+
+model Integration {
+  id             String              @id @default(cuid())
+  organizationId String
+  projectId      String?
+  provider       IntegrationProvider
+  name           String?
+
+  status       IntegrationStatus @default(DISCONNECTED)
+  lastSyncedAt DateTime?
+  lastError    String?
+
+  // OAuth tokens, API keys, endpoints, etc. (encrypted by app layer)
+  secretsJson Json?
+  // Non-sensitive settings/ids
+  configJson  Json?
+  metaJson    Json?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  channels Channel[]
+  syncJobs SyncJob[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([organizationId, provider])
+  @@index([projectId])
+  @@index([organizationId, status])
+}
+
+/// --------------------
+/// Workflows (n8n, custom) + Runs
+/// --------------------
+model Workflow {
+  id             String           @id @default(cuid())
+  organizationId String
+  projectId      String?
+  provider       WorkflowProvider @default(N8N)
+  status         WorkflowStatus   @default(ACTIVE)
+
+  name        String
+  // For n8n: workflow ID, webhook URLs, etc.
+  externalId  String?
+  endpointUrl String?
+  configJson  Json?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  runs Run[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([organizationId, status])
+  @@index([projectId])
+}
+
+model Run {
+  id             String  @id @default(cuid())
+  organizationId String
+  projectId      String?
+  agentId        String?
+  channelId      String?
+  workflowId     String?
+  conversationId String?
+
+  // Job OS fields
+  type        String   @default("generic") // e.g. "marketing.image_to_video"
+  traceId     String?
+  attempt     Int      @default(0)
+  maxAttempts Int      @default(3)
+  queuedAt    DateTime @default(now())
+
+  status RunStatus @default(QUEUED)
+
+  // Useful for idempotency / retries
+  // ✅ Mantén NULL cuando no exista (no uses "" en app).
+  idempotencyKey String?
+
+  inputJson  Json?
+  outputJson Json?
+  errorJson  Json?
+
+  startedAt DateTime?
+  endedAt   DateTime?
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  agent        Agent?        @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  channel      Channel?      @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  workflow     Workflow?     @relation(fields: [workflowId], references: [id], onDelete: SetNull)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  logs   AgentLog[]
+  events Event[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, status])
+  @@index([organizationId, type])
+  @@index([projectId])
+  @@index([agentId])
+  @@index([workflowId])
+  @@index([conversationId])
+}
+
+/// --------------------
+/// Conversations (Mila) + Messages
+/// --------------------
+model Conversation {
+  id             String             @id @default(cuid())
+  organizationId String
+  projectId      String?
+  agentId        String?
+  channelId      String?
+  status         ConversationStatus @default(OPEN)
+
+  // For WhatsApp: customer phone; for web: session id; etc.
+  externalThreadId String?
+  customerName     String?
+  customerHandle   String? // phone/email/username
+  metadataJson     Json?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  agent        Agent?       @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  channel      Channel?     @relation(fields: [channelId], references: [id], onDelete: SetNull)
+
+  messages Message[]
+  runs     Run[]
+  logs     AgentLog[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  closedAt  DateTime?
+
+  @@index([organizationId, status])
+  @@index([agentId])
+  @@index([channelId])
+  @@index([customerHandle])
+}
+
+model Message {
+  id             String @id @default(cuid())
+  organizationId String
+  conversationId String
+
+  role        MessageRole
+  text        String?
+  // voice, image, file, etc.
+  contentJson Json?
+
+  // External references (WhatsApp message id, etc.)
+  externalMessageId String?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([organizationId])
+}
+
+/// --------------------
+/// Files & Knowledge (catalogs, docs, embeddings-ready)
+/// --------------------
+model FileObject {
+  id             String      @id @default(cuid())
+  organizationId String
+  projectId      String?
+  purpose        FilePurpose @default(OTHER)
+
+  name      String
+  mimeType  String?
+  sizeBytes Int?
+
+  // storage pointers: S3/R2/Drive etc
+  storageProvider String? // "r2", "s3", "gdrive"
+  storageKey      String?
+  url             String?
+
+  metadataJson Json?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  knowledgeItems KnowledgeItem[]
+  documents      Document[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([organizationId, purpose])
+  @@index([projectId])
+}
+
+model KnowledgeItem {
+  id             String   @id @default(cuid())
+  organizationId String
+  projectId      String?
+  title          String
+  content        String?
+  contentJson    Json?
+  tags           String[] @default([])
+
+  // future: embedding vector stored externally or in pgvector later
+  embeddingRef String?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  files      FileObject[]
+  agentLinks KnowledgeLink[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([organizationId])
+  @@index([projectId])
+}
+
+model KnowledgeLink {
+  id          String @id @default(cuid())
+  agentId     String
+  knowledgeId String
+
+  agent     Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  knowledge KnowledgeItem @relation(fields: [knowledgeId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([agentId, knowledgeId])
+}
+
+/// --------------------
+/// Logging / Audit / Usage (cost control)
+/// --------------------
+model AgentLog {
+  id             String  @id @default(cuid())
+  organizationId String
+  projectId      String?
+  agentId        String?
+  channelId      String?
+  conversationId String?
+  runId          String?
+
+  inputJson  Json?
+  outputJson Json?
+  errorJson  Json?
+
+  // Cost control (Decimal instead of Float)
+  provider  String?
+  model     String?
+  tokensIn  Int?
+  tokensOut Int?
+  costUsd   Decimal? @db.Decimal(14, 6)
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  agent        Agent?        @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  channel      Channel?      @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  run          Run?          @relation(fields: [runId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([agentId, createdAt])
+  @@index([projectId, createdAt])
+  @@index([runId])
+}
+
+model AuditLog {
+  id             String  @id @default(cuid())
+  organizationId String
+  projectId      String?
+  actorUserId    String?
+
+  traceId String? // add traceability
+
+  action      String
+  targetType  String?
+  targetId    String?
+  detailsJson Json?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  actorUser    User?        @relation("UserAuditLogs", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([projectId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([traceId])
+}
+
+model UsageEvent {
+  id             String    @id @default(cuid())
+  organizationId String
+  projectId      String?
+  kind           UsageKind
+  quantity       Int       @default(1)
+
+  unitCostUsd  Decimal? @db.Decimal(12, 6)
+  totalCostUsd Decimal? @db.Decimal(14, 6)
+
+  metadataJson Json?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([projectId, createdAt])
+  @@index([kind, createdAt])
+}
+
+/// --------------------
+/// Billing (SaaS-ready)
+/// --------------------
+model Plan {
+  id          String       @id @default(cuid())
+  code        String       @unique // "basic", "pro", "enterprise"
+  name        String
+  description String?
+  interval    PlanInterval @default(MONTH)
+
+  // ✅ Más estable con default string en Decimal
+  priceUsd Decimal @default("0") @db.Decimal(10, 2)
+
+  limitsJson Json? // usage limits, feature flags
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id             String             @id @default(cuid())
+  organizationId String
+  planId         String
+  status         SubscriptionStatus @default(TRIALING)
+
+  // Provider details (Stripe/manual/etc.)
+  provider               String?
+  providerCustomerId     String?
+  providerSubscriptionId String?
+  cancelAtPeriodEnd      Boolean   @default(false)
+  trialEndsAt            DateTime?
+
+  // Stripe ids, etc
+  billingJson Json?
+
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plan         Plan         @relation(fields: [planId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, status])
+  @@index([planId])
+}
+
+/// --------------------
+/// Sync / Import Jobs
+/// --------------------
+model SyncJob {
+  id             String        @id @default(cuid())
+  organizationId String
+  projectId      String?
+  integrationId  String?
+  type           String // "bank.import", "sag.export.sync"
+  traceId        String?
+  status         SyncJobStatus @default(QUEUED)
+  inputJson      Json?
+  outputJson     Json?
+  errorJson      Json?
+  startedAt      DateTime?
+  endedAt        DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  integration  Integration? @relation(fields: [integrationId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, status, type])
+  @@index([integrationId])
+  @@index([traceId])
+}
+
+/// --------------------
+/// Alerts
+/// --------------------
+model Alert {
+  id             String        @id @default(cuid())
+  organizationId String
+  projectId      String?
+  type           String // "inventory.low", "portfolio.overdue"
+  title          String
+  message        String
+  severity       AlertSeverity @default(INFO)
+  status         AlertStatus   @default(OPEN)
+  sourceType     String?
+  sourceId       String?
+  assignedUserId String?
+  metadataJson   Json?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  assignedUser User?        @relation("AssignedAlerts", fields: [assignedUserId], references: [id], onDelete: SetNull)
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  resolvedAt DateTime?
+
+  @@index([organizationId, status, severity])
+  @@index([projectId, status])
+  @@index([type, createdAt])
+  @@index([assignedUserId])
+}
+
+/// --------------------
+/// Rules & Executions (event-driven automation)
+/// --------------------
+model Rule {
+  id             String     @id @default(cuid())
+  organizationId String
+  projectId      String?
+  moduleCode     String?
+  name           String
+  description    String?
+  eventType      String // "inventory.updated"
+  conditionJson  Json // condición evaluable
+  actionJson     Json // acción o acciones
+  priority       Int        @default(100)
+  status         RuleStatus @default(ACTIVE)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  executions RuleExecution[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, eventType, status])
+  @@index([projectId, status])
+}
+
+model RuleExecution {
+  id         String              @id @default(cuid())
+  ruleId     String
+  eventId    String
+  status     RuleExecutionStatus
+  resultJson Json?
+  errorJson  Json?
+
+  rule  Rule  @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([ruleId, createdAt])
+  @@index([eventId])
+}
+
+/// --------------------
+/// Metric Snapshots (time-series KPIs)
+/// --------------------
+model MetricSnapshot {
+  id             String   @id @default(cuid())
+  organizationId String
+  projectId      String?
+  code           String // "sales.daily", "inventory.critical.count"
+  label          String?
+  valueNumber    Decimal? @db.Decimal(18, 4)
+  valueJson      Json?
+  snapshotAt     DateTime
+  metadataJson   Json?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, code, snapshotAt])
+  @@index([projectId, snapshotAt])
+}
+
+/// --------------------
+/// Events (domain event bus)
+/// --------------------
+model Event {
+  id             String      @id @default(cuid())
+  organizationId String
+  projectId      String?
+  type           String // "inventory.updated", "invoice.received"
+  sourceType     String? // "integration", "api", "workflow", "user"
+  sourceId       String?
+  traceId        String?
+  runId          String?
+  payloadJson    Json
+  status         EventStatus @default(PENDING)
+  processedAt    DateTime?
+  errorJson      Json?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  run          Run?         @relation(fields: [runId], references: [id], onDelete: SetNull)
+
+  ruleExecutions RuleExecution[]
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, type, createdAt])
+  @@index([projectId, createdAt])
+  @@index([status, createdAt])
+  @@index([traceId])
+  @@index([runId])
+}
+
+/// --------------------
+/// Enums nuevos
+/// --------------------
+
+/// Distingue si un Workspace es una marca (Castillitos/Latin Kids/Pets)
+/// o un cliente externo (caso ARKETOPS) o una unidad interna.
+enum WorkspaceType {
+  BRAND      // línea de negocio o marca propia
+  CLIENT     // cliente externo con su propio dashboard
+  DEPARTMENT // área interna de la org
+  INTERNAL   // uso interno de la plataforma
+}
+
+/// Categoría estructural del documento para enrutamiento y validación.
+enum DocumentType {
+  XML                // CFDI, facturas electrónicas, etc.
+  PDF
+  BANK_STATEMENT     // extracto bancario
+  ACCOUNTING_SUPPORT // soporte contable / voucher
+  TAX_DOCUMENT       // declaración, certificado tributario
+  COMMERCIAL_DOCUMENT // orden de compra, contrato, remisión
+  OTHER
+}
+
+/// Estado del pipeline de procesamiento del documento.
+enum DocumentStatus {
+  PENDING    // subido, sin procesar
+  PROCESSING // en cola o siendo parseado
+  PROCESSED  // extracción completada
+  REVIEWED   // revisado por usuario
+  REJECTED   // rechazado / inválido
+  ERROR      // fallo en procesamiento
+}
+
+/// --------------------
+/// Auth.js v5 — modelos requeridos
+/// --------------------
+
+/// Cuentas OAuth vinculadas a un User (Google, GitHub, Meta, etc.)
+/// Campos y nombres son exactamente los que espera Auth.js.
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String  // "oauth" | "oidc" | "email"
+  provider          String  // "google", "github", "credentials"
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+/// Sesiones activas (strategy: "database" de Auth.js).
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/// Tokens para magic-link / email verification (Auth.js).
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+/// Credencial de contraseña separada del User para no mezclar
+/// campos sensibles con el perfil público. Alternativa limpia a authJson.
+model PasswordCredential {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  passwordHash String   // bcrypt / argon2 hash — NUNCA texto plano
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// --------------------
+/// Multi-tenant: Workspace (marca / cliente / unidad operativa)
+/// --------------------
+
+/// Workspace es la capa entre Organization y Project.
+/// Para Castillitos: un Workspace por marca (Castillitos, Latin Kids, Pets).
+/// Para ARKETOPS: un Workspace por cliente externo.
+/// Los Projects (iniciativas técnicas) quedan opcionalmente anclados a un Workspace.
+model Workspace {
+  id             String        @id @default(cuid())
+  organizationId String
+  type           WorkspaceType @default(BRAND)
+  name           String
+  slug           String
+
+  description  String?
+  logoUrl      String?
+  settingsJson Json?
+
+  // Si es un cliente externo: datos de contacto del cliente
+  contactName  String?
+  contactEmail String?
+  contactPhone String?
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memberships  WorkspaceMembership[]
+  projects     Project[]
+  documents    Document[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  // slug único dentro de la org (no global, cada empresa puede tener su propio slug)
+  @@unique([organizationId, slug])
+  @@index([organizationId, type])
+}
+
+/// Acceso de un User a un Workspace específico.
+/// Usuarios internos (ARKETOPS staff) pueden tener múltiples WorkspaceMemberships.
+/// Clientes externos solo deben tener una WorkspaceMembership en su propio Workspace.
+model WorkspaceMembership {
+  id          String           @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        Role             @default(VIEWER) // reutiliza el enum existente
+  status      MembershipStatus @default(INVITED)
+
+  invitedAt  DateTime?
+  acceptedAt DateTime?
+  // Permisos adicionales granulares si hacen falta
+  permissionsJson Json?
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+  @@index([workspaceId, status])
+}
+
+/// --------------------
+/// Document (modelo genérico de documentos estructurados)
+/// --------------------
+
+/// Representa cualquier documento formal: XML fiscal, PDF, extracto bancario,
+/// soporte contable, documento comercial, etc.
+/// Vinculado a FileObject para el binario real; aquí vive la metadata extraída.
+model Document {
+  id             String         @id @default(cuid())
+  organizationId String
+  workspaceId    String?
+  projectId      String?
+  fileObjectId   String?        // archivo fuente en storage
+
+  type           DocumentType
+  category       String?        // sub-categoría libre: "cfdi_ingreso", "estado_cuenta_mercury"
+  title          String
+  description    String?
+  status         DocumentStatus @default(PENDING)
+
+  // Resultado de parsing / extracción estructurada
+  extractedJson  Json?
+
+  // Campos fiscales / comerciales comunes (desnormalizados para queries rápidas)
+  issuerName     String?        // emisor / proveedor
+  issuerId       String?        // NIT, RUC, RFC, CUIT del emisor
+  receiverName   String?        // receptor / empresa
+  receiverId     String?        // ID fiscal del receptor
+  documentDate   DateTime?
+  amount         Decimal?       @db.Decimal(18, 4)
+  currency       String?        @default("USD")
+
+  metadataJson   Json?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workspace    Workspace?   @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  project      Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  file         FileObject?  @relation(fields: [fileObjectId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([organizationId, type, status])
+  @@index([workspaceId, type])
+  @@index([projectId])
+  @@index([fileObjectId])
+  @@index([issuerId])
+  @@index([documentDate])
+}
