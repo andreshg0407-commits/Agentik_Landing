@@ -96,7 +96,6 @@ async function uploadToR2(args: {
       Key: key,
       Body: body,
       ContentType: mime,
-      // cache para assets (ajusta si quieres)
       CacheControl: "public, max-age=31536000, immutable",
     })
   )
@@ -106,9 +105,16 @@ async function uploadToR2(args: {
   return { url, name: `${base}${ext ? "." + ext : ""}`, mime, key, bytes }
 }
 
+// helpers para reglas duras
+function asBool(v: any, fallback = false) {
+  if (typeof v === "boolean") return v
+  if (typeof v === "string") return v.toLowerCase() === "true"
+  return fallback
+}
+
 export async function POST(req: Request) {
   try {
-    // 1) Validar TikTok conectado (SIN demos)
+    // 1) Validar TikTok conectado (real)
     const cookieHeader = req.headers.get("cookie") || ""
     const access_token = pickCookie(cookieHeader, "tt_access_token") // httpOnly
     const open_id = pickCookie(cookieHeader, "tt_open_id") // visible
@@ -150,11 +156,44 @@ export async function POST(req: Request) {
     }
 
     // 3) client_id (multi-cliente)
-    const client_id = String(formData.get("client_id") || "moda-colombia")
+    const client_id = String(formData.get("client_id") || "moda-colombia").trim() || "moda-colombia"
 
     if (!description) {
       return NextResponse.json({ ok: false, message: "description es requerido" }, { status: 400 })
     }
+
+    // ===== NEW: generation controls from front =====
+    const generation_type = String(formData.get("generation_type") || "text-to-video").trim() // text-to-video | image-to-video
+    const aspect_ratio = String(formData.get("aspect_ratio") || "9:16").trim() // 9:16 | 16:9
+    const duration_seconds_raw = String(formData.get("duration_seconds") || "12").trim() // 8 | 12
+    const prompt_mode = String(formData.get("prompt_mode") || "coach").trim() // coach | direct
+    const debug = asBool(formData.get("debug"), false)
+
+    // hard rules (no promesas falsas)
+    const duration_seconds = Number(duration_seconds_raw)
+    const ALLOWED_DURATIONS = new Set([8, 12])
+    if (!ALLOWED_DURATIONS.has(duration_seconds)) {
+      return NextResponse.json({ ok: false, message: "duration_seconds inválido. Solo 8 o 12." }, { status: 400 })
+    }
+
+    const ALLOWED_RATIOS = new Set(["9:16", "16:9"])
+    if (!ALLOWED_RATIOS.has(aspect_ratio)) {
+      return NextResponse.json({ ok: false, message: "aspect_ratio inválido. Solo 9:16 o 16:9." }, { status: 400 })
+    }
+
+    const ALLOWED_GEN = new Set(["text-to-video", "image-to-video"])
+    if (!ALLOWED_GEN.has(generation_type)) {
+      return NextResponse.json({ ok: false, message: "generation_type inválido." }, { status: 400 })
+    }
+
+    const ALLOWED_PROMPT_MODE = new Set(["coach", "direct"])
+    if (!ALLOWED_PROMPT_MODE.has(prompt_mode)) {
+      return NextResponse.json({ ok: false, message: "prompt_mode inválido." }, { status: 400 })
+    }
+
+    // helpers de video
+    const vertical = aspect_ratio === "9:16"
+    const resolution = vertical ? "1080x1920" : "1920x1080"
 
     // request_id canónico
     const request_id = `req_${Date.now()}`
@@ -180,6 +219,11 @@ export async function POST(req: Request) {
         return NextResponse.json({ ok: false, message: "Archivo inválido. Sube imagen o video." }, { status: 400 })
       }
 
+      // ✅ regla dura: image-to-video debe traer IMAGEN
+      if (generation_type === "image-to-video" && !isImage) {
+        return NextResponse.json({ ok: false, message: "Para Imagen → Video debes subir una imagen." }, { status: 400 })
+      }
+
       if (!ENABLE_R2_UPLOAD) {
         // fallback (sin romper): manda metadata pero sin URL
         reference = {
@@ -194,7 +238,7 @@ export async function POST(req: Request) {
         reference = {
           has_reference: true,
           reference_type: isVideo ? "video" : "image",
-          file_url: up.url, // ✅ URL público real (Runway OK)
+          file_url: up.url,
           file_name: up.name,
           mime_type: up.mime,
           bytes: up.bytes,
@@ -203,7 +247,15 @@ export async function POST(req: Request) {
       }
     }
 
-    // 5) Payload CANÓNICO
+    // ✅ regla dura: image-to-video requiere referencia (y idealmente URL pública)
+    if (generation_type === "image-to-video" && !(reference && reference.has_reference)) {
+      return NextResponse.json(
+        { ok: false, message: "Para Imagen → Video la referencia (imagen) es requerida." },
+        { status: 400 }
+      )
+    }
+
+    // 5) Payload CANÓNICO (para Luca-intake)
     const payload = {
       meta: {
         request_id,
@@ -212,19 +264,21 @@ export async function POST(req: Request) {
         locale: "es-CO",
         timezone: "America/Bogota",
         created_at: new Date().toISOString(),
-        debug: false,
+        debug,
       },
 
       agent: {
         name: "luca",
         version: "v1",
         mode: "publish",
-        pipeline: "runway->tiktok",
+        pipeline: "generate->publish",
       },
 
       auth: {
         tiktok: {
-          mode: "inline",
+          // ✅ recomendación: preferir tabla, pero con fallback inline
+          // (así multi-cliente se vuelve estable)
+          mode: "prefer_table",
           open_id,
           access_token,
           refresh_token: null,
@@ -241,6 +295,9 @@ export async function POST(req: Request) {
         title: null,
         description,
         language: "es",
+
+        // ✅ CLAVE: guía el flujo grande
+        intent: generation_type, // "text-to-video" | "image-to-video"
 
         reference: reference
           ? {
@@ -261,6 +318,10 @@ export async function POST(req: Request) {
 
       content: {
         optimize_prompt: optimize,
+
+        // ✅ CLAVE: guía si usa Prompt Coach o no
+        prompt_mode, // "coach" | "direct"
+
         copy: {
           mode: copy?.mode === "custom" ? "custom" : "auto",
           text: copy?.value || copy?.text || null,
@@ -274,6 +335,15 @@ export async function POST(req: Request) {
               ? hashtags.items
               : [],
         },
+      },
+
+      // ✅ CLAVE: no adivinar en n8n
+      video: {
+        format: "mp4",
+        vertical,
+        duration_seconds,
+        resolution,
+        fps: 30,
       },
 
       publishing: {
@@ -292,7 +362,7 @@ export async function POST(req: Request) {
       },
     }
 
-    // 6) Enviar a n8n
+    // 6) Enviar a n8n (Luca-intake)
     const n8nRes = await fetch("https://iagentscolombia.app.n8n.cloud/webhook/luca-intake", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -304,12 +374,27 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, message: `n8n error: ${n8nText || n8nRes.status}` }, { status: 502 })
     }
 
+    // ✅ respuesta al front con eco opcional (debug)
     return NextResponse.json({
       ok: true,
       message: "Luca recibió la orden correctamente",
       connected_tiktok: true,
       reference_uploaded: Boolean(reference?.has_reference && reference?.file_url),
       reference_url: reference?.file_url || null,
+      ...(debug
+        ? {
+            echo: {
+              client_id,
+              generation_type,
+              aspect_ratio,
+              duration_seconds,
+              prompt_mode,
+              has_reference: Boolean(reference?.has_reference),
+              reference_type: reference?.reference_type || null,
+              reference_file_url_empty: reference?.has_reference ? !reference?.file_url : null,
+            },
+          }
+        : {}),
     })
   } catch (err: any) {
     return NextResponse.json({ ok: false, message: err?.message || "Error en Luca submit" }, { status: 500 })

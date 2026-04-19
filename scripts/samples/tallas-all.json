@@ -1,0 +1,215 @@
+{
+  "capturedAt": "2026-04-08T20:41:17.271Z",
+  "rows": [
+    {
+      "ka_nl_talla": 5,
+      "ss_codigo": "1",
+      "ss_talla": "1",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 6,
+      "ss_codigo": "2",
+      "ss_talla": "2",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 7,
+      "ss_codigo": "3",
+      "ss_talla": "3",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 8,
+      "ss_codigo": "4",
+      "ss_talla": "4",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 9,
+      "ss_codigo": "5",
+      "ss_talla": "5",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 10,
+      "ss_codigo": "6",
+      "ss_talla": "6",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 11,
+      "ss_codigo": "8",
+      "ss_talla": "8",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 12,
+      "ss_codigo": "10",
+      "ss_talla": "10",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 13,
+      "ss_codigo": "12",
+      "ss_talla": "12",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 14,
+      "ss_codigo": "14",
+      "ss_talla": "14",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 15,
+      "ss_codigo": "16",
+      "ss_talla": "16",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 22,
+      "ss_codigo": "2-4",
+      "ss_talla": "2-4",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 23,
+      "ss_codigo": "6-8",
+      "ss_talla": "6-8",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 24,
+      "ss_codigo": "10-12",
+      "ss_talla": "10-12",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 25,
+      "ss_codigo": "14-16",
+      "ss_talla": "14-16",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 26,
+      "ss_codigo": "18-20",
+      "ss_talla": "18-20",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 27,
+      "ss_codigo": "0-3",
+      "ss_talla": "0-3",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 28,
+      "ss_codigo": "3-6",
+      "ss_talla": "3-6",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 29,
+      "ss_codigo": "6-9",
+      "ss_talla": "6-9",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 30,
+      "ss_codigo": "9-12",
+      "ss_talla": "9-12",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 31,
+      "ss_codigo": "12-18",
+      "ss_talla": "12-18",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 32,
+      "ss_codigo": "18-24",
+      "ss_talla": "18-24",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 33,
+      "ss_codigo": "S",
+      "ss_talla": "S",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 34,
+      "ss_codigo": "M",
+      "ss_talla": "M",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 35,
+      "ss_codigo": "L",
+      "ss_talla": "L",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 36,
+      "ss_codigo": "XL",
+      "ss_talla": "XL",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 37,
+      "ss_codigo": "XXL",
+      "ss_talla": "XXL",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 38,
+      "ss_codigo": "6-12",
+      "ss_talla": "6-12",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 39,
+      "ss_codigo": "18",
+      "ss_talla": "18",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 40,
+      "ss_codigo": "20",
+      "ss_talla": "20",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 41,
+      "ss_codigo": "22",
+      "ss_talla": "22",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 42,
+      "ss_codigo": "9",
+      "ss_talla": "9",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 43,
+      "ss_codigo": "24",
+      "ss_talla": "24",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 44,
+      "ss_codigo": "GEN",
+      "ss_talla": "GEN",
+      "nd_orden": null
+    },
+    {
+      "ka_nl_talla": 45,
+      "ss_codigo": "24-36",
+      "ss_talla": "24-36",
+      "nd_orden": null
+    }
+  ]
+}

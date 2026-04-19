@@ -1,0 +1,47 @@
+{
+  "capturedAt": "2026-04-08T21:19:01.731Z",
+  "mode": "APPROVAL-GATE-TEST -- NO SOAP CALL -- NO SAG WRITE",
+  "operationId": "cmnqjm6260000x3y5a610uaaj",
+  "organizationId": "cmmpwstuf000dp5y58kj1daaj",
+  "approvedBy": "sag-test-approval-script",
+  "alreadyApprovedBeforeTest": false,
+  "routeCoupling": {
+    "description": "API route approve+execute coupling",
+    "path": "app/api/orgs/[orgSlug]/sag/write/[operationId]/approve/route.ts",
+    "behavior": "approve() immediately followed by executeOperation() in one HTTP request",
+    "implication": "Calling API route sends a real SOAP write -- NOT safe in test context"
+  },
+  "permissionGating": {
+    "allowedRoles": [
+      "ORG_ADMIN",
+      "MANAGER",
+      "SUPER_ADMIN"
+    ],
+    "enforcedAt": "API route (HTTP layer) -- queue.approve() has no role check",
+    "roleCheckLine": "route.ts lines 29-35: allowedRoles.includes(membership.role)"
+  },
+  "preApprovalState": {
+    "status": "PENDING",
+    "approvedBy": null,
+    "approvedAt": null,
+    "submittedXml": null,
+    "sagResponseOk": null,
+    "sentAt": null
+  },
+  "postApprovalState": {
+    "status": "APPROVED",
+    "approvedBy": "sag-test-approval-script",
+    "approvedAt": "2026-04-08T21:19:01.349Z",
+    "submittedXml": null,
+    "sagResponseOk": null,
+    "sagResponseRaw": null,
+    "sentAt": null,
+    "executedAt": null,
+    "generatedXmlBytes": 495
+  },
+  "queueState": {
+    "pendingCount": 0,
+    "approvedCount": 1
+  },
+  "checksPassedOf": "10/10"
+}

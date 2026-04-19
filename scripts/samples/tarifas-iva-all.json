@@ -1,0 +1,77 @@
+{
+  "capturedAt": "2026-04-08T20:41:16.924Z",
+  "rows": [
+    {
+      "KA_NL_TARIFA_IVA": 1,
+      "SS_COD_IVA": "IVA16",
+      "SS_NOM_IVA": "GRAVADOS 16%",
+      "ND_PORCENTAJE_IVA": 16,
+      "ka_nl_pais": 1,
+      "ss_cod_iva_alterno": "",
+      "sc_excluido": "N"
+    },
+    {
+      "KA_NL_TARIFA_IVA": 2,
+      "SS_COD_IVA": "EXE",
+      "SS_NOM_IVA": "EXENTOS",
+      "ND_PORCENTAJE_IVA": 0,
+      "ka_nl_pais": 1,
+      "ss_cod_iva_alterno": "",
+      "sc_excluido": "N"
+    },
+    {
+      "KA_NL_TARIFA_IVA": 3,
+      "SS_COD_IVA": "EXC",
+      "SS_NOM_IVA": "EXCLUIDOS",
+      "ND_PORCENTAJE_IVA": 0,
+      "ka_nl_pais": 1,
+      "ss_cod_iva_alterno": "",
+      "sc_excluido": "S"
+    },
+    {
+      "KA_NL_TARIFA_IVA": 4,
+      "SS_COD_IVA": "10",
+      "SS_NOM_IVA": "GRAVADOS 10%",
+      "ND_PORCENTAJE_IVA": 10,
+      "ka_nl_pais": 1,
+      "ss_cod_iva_alterno": "",
+      "sc_excluido": "N"
+    },
+    {
+      "KA_NL_TARIFA_IVA": 5,
+      "SS_COD_IVA": "20",
+      "SS_NOM_IVA": "GRAVADOS 20%",
+      "ND_PORCENTAJE_IVA": 20,
+      "ka_nl_pais": 1,
+      "ss_cod_iva_alterno": "",
+      "sc_excluido": "N"
+    },
+    {
+      "KA_NL_TARIFA_IVA": 6,
+      "SS_COD_IVA": "05",
+      "SS_NOM_IVA": "GRAVADOS 5%",
+      "ND_PORCENTAJE_IVA": 5,
+      "ka_nl_pais": 1,
+      "ss_cod_iva_alterno": "",
+      "sc_excluido": "N"
+    },
+    {
+      "KA_NL_TARIFA_IVA": 7,
+      "SS_COD_IVA": "IVA8",
+      "SS_NOM_IVA": "GRAVADOS 8%",
+      "ND_PORCENTAJE_IVA": 8,
+      "ka_nl_pais": 1,
+      "ss_cod_iva_alterno": "",
+      "sc_excluido": "N"
+    },
+    {
+      "KA_NL_TARIFA_IVA": 8,
+      "SS_COD_IVA": "IVA19",
+      "SS_NOM_IVA": "GRAVADOS 19%",
+      "ND_PORCENTAJE_IVA": 19,
+      "ka_nl_pais": 1,
+      "ss_cod_iva_alterno": "",
+      "sc_excluido": "N"
+    }
+  ]
+}

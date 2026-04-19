@@ -1,0 +1,445 @@
+{
+  "capturedAt": "2026-04-08T20:41:17.610Z",
+  "rows": [
+    {
+      "ka_nl_color": 6,
+      "ss_codigo": "BL1",
+      "ss_nombre": "BLANCO"
+    },
+    {
+      "ka_nl_color": 10,
+      "ss_codigo": "AM1",
+      "ss_nombre": "AMARILLO"
+    },
+    {
+      "ka_nl_color": 11,
+      "ss_codigo": "AZ1",
+      "ss_nombre": "AZUL"
+    },
+    {
+      "ka_nl_color": 12,
+      "ss_codigo": "AZ2",
+      "ss_nombre": "AZUL CLARO"
+    },
+    {
+      "ka_nl_color": 13,
+      "ss_codigo": "AZ3",
+      "ss_nombre": "AZUL OSCURO"
+    },
+    {
+      "ka_nl_color": 14,
+      "ss_codigo": "AZ4",
+      "ss_nombre": "AZUL REY"
+    },
+    {
+      "ka_nl_color": 15,
+      "ss_codigo": "BE1",
+      "ss_nombre": "BEIGE"
+    },
+    {
+      "ka_nl_color": 16,
+      "ss_codigo": "CF1",
+      "ss_nombre": "CAFÉ"
+    },
+    {
+      "ka_nl_color": 17,
+      "ss_codigo": "CE1",
+      "ss_nombre": "CELESTE "
+    },
+    {
+      "ka_nl_color": 18,
+      "ss_codigo": "CU1",
+      "ss_nombre": "CURUBA"
+    },
+    {
+      "ka_nl_color": 19,
+      "ss_codigo": "FC1",
+      "ss_nombre": "FUCSIA FANTASIA"
+    },
+    {
+      "ka_nl_color": 20,
+      "ss_codigo": "GN1",
+      "ss_nombre": "GRANATE"
+    },
+    {
+      "ka_nl_color": 21,
+      "ss_codigo": "GR1",
+      "ss_nombre": "GRIS"
+    },
+    {
+      "ka_nl_color": 22,
+      "ss_codigo": "GR2",
+      "ss_nombre": "GRIS CROSS"
+    },
+    {
+      "ka_nl_color": 23,
+      "ss_codigo": "GR3",
+      "ss_nombre": "GRIS JASPED"
+    },
+    {
+      "ka_nl_color": 24,
+      "ss_codigo": "LI1",
+      "ss_nombre": "LILA"
+    },
+    {
+      "ka_nl_color": 25,
+      "ss_codigo": "ME1",
+      "ss_nombre": "MELON"
+    },
+    {
+      "ka_nl_color": 26,
+      "ss_codigo": "MO1",
+      "ss_nombre": "MORA LECHE "
+    },
+    {
+      "ka_nl_color": 27,
+      "ss_codigo": "MO2",
+      "ss_nombre": "MORADO"
+    },
+    {
+      "ka_nl_color": 28,
+      "ss_codigo": "MZ1",
+      "ss_nombre": "MOSTAZA"
+    },
+    {
+      "ka_nl_color": 29,
+      "ss_codigo": "NE1",
+      "ss_nombre": "NEGRO"
+    },
+    {
+      "ka_nl_color": 30,
+      "ss_codigo": "RJ1",
+      "ss_nombre": "ROJO"
+    },
+    {
+      "ka_nl_color": 31,
+      "ss_codigo": "RS1",
+      "ss_nombre": "ROSA CLARO"
+    },
+    {
+      "ka_nl_color": 32,
+      "ss_codigo": "RS2",
+      "ss_nombre": "ROSA NEON"
+    },
+    {
+      "ka_nl_color": 33,
+      "ss_codigo": "RS3",
+      "ss_nombre": "ROSADO"
+    },
+    {
+      "ka_nl_color": 34,
+      "ss_codigo": "TR1",
+      "ss_nombre": "TERRACOTA"
+    },
+    {
+      "ka_nl_color": 35,
+      "ss_codigo": "TU1",
+      "ss_nombre": "TURQUESA"
+    },
+    {
+      "ka_nl_color": 36,
+      "ss_codigo": "VE1",
+      "ss_nombre": "VERDE"
+    },
+    {
+      "ka_nl_color": 37,
+      "ss_codigo": "VE2",
+      "ss_nombre": "VERDE MANZANA"
+    },
+    {
+      "ka_nl_color": 38,
+      "ss_codigo": "VE3",
+      "ss_nombre": "VERDE MENTA"
+    },
+    {
+      "ka_nl_color": 39,
+      "ss_codigo": "VE4",
+      "ss_nombre": "VERDE MILITAR"
+    },
+    {
+      "ka_nl_color": 40,
+      "ss_codigo": "VI1",
+      "ss_nombre": "VINOTINTO"
+    },
+    {
+      "ka_nl_color": 41,
+      "ss_codigo": "AZ5",
+      "ss_nombre": "AZUL CROSS"
+    },
+    {
+      "ka_nl_color": 42,
+      "ss_codigo": "PA1",
+      "ss_nombre": "PALO ROSA"
+    },
+    {
+      "ka_nl_color": 43,
+      "ss_codigo": "KA1",
+      "ss_nombre": "CAQUI"
+    },
+    {
+      "ka_nl_color": 44,
+      "ss_codigo": "NE2",
+      "ss_nombre": "NEGRO CROSS"
+    },
+    {
+      "ka_nl_color": 45,
+      "ss_codigo": "PA2",
+      "ss_nombre": "PLATA"
+    },
+    {
+      "ka_nl_color": 46,
+      "ss_codigo": "DO1",
+      "ss_nombre": "DORADO"
+    },
+    {
+      "ka_nl_color": 47,
+      "ss_codigo": "VE5",
+      "ss_nombre": "VERDE ANTIOQUIA"
+    },
+    {
+      "ka_nl_color": 48,
+      "ss_codigo": "AM2",
+      "ss_nombre": "ARENA"
+    },
+    {
+      "ka_nl_color": 49,
+      "ss_codigo": "NA1",
+      "ss_nombre": "NARANJA"
+    },
+    {
+      "ka_nl_color": 50,
+      "ss_codigo": "MA2",
+      "ss_nombre": "MANDARINA"
+    },
+    {
+      "ka_nl_color": 51,
+      "ss_codigo": "RS4",
+      "ss_nombre": "ROSADO JASPED"
+    },
+    {
+      "ka_nl_color": 52,
+      "ss_codigo": "AZ6",
+      "ss_nombre": "AZUL PETROLEO"
+    },
+    {
+      "ka_nl_color": 53,
+      "ss_codigo": "AZ7",
+      "ss_nombre": "AZUL AGUA"
+    },
+    {
+      "ka_nl_color": 54,
+      "ss_codigo": "VE6",
+      "ss_nombre": "VERDE OLIVA"
+    },
+    {
+      "ka_nl_color": 55,
+      "ss_codigo": "ZA1",
+      "ss_nombre": "ZAFIRO (AZUL)"
+    },
+    {
+      "ka_nl_color": 56,
+      "ss_codigo": "CA1",
+      "ss_nombre": "CAMEL"
+    },
+    {
+      "ka_nl_color": 57,
+      "ss_codigo": "MA3",
+      "ss_nombre": "MARFIL JASPED"
+    },
+    {
+      "ka_nl_color": 59,
+      "ss_codigo": "GEN",
+      "ss_nombre": "GENERICO"
+    },
+    {
+      "ka_nl_color": 60,
+      "ss_codigo": "",
+      "ss_nombre": ""
+    },
+    {
+      "ka_nl_color": 62,
+      "ss_codigo": "CO1",
+      "ss_nombre": "CORAL "
+    },
+    {
+      "ka_nl_color": 63,
+      "ss_codigo": "GR4",
+      "ss_nombre": "GRIS 3%"
+    },
+    {
+      "ka_nl_color": 64,
+      "ss_codigo": "MZ2",
+      "ss_nombre": "MOSTAZA CLARO"
+    },
+    {
+      "ka_nl_color": 65,
+      "ss_codigo": "FC2",
+      "ss_nombre": "FUCSIA"
+    },
+    {
+      "ka_nl_color": 66,
+      "ss_codigo": "MA4",
+      "ss_nombre": "MARFIL"
+    },
+    {
+      "ka_nl_color": 67,
+      "ss_codigo": "RS5",
+      "ss_nombre": "ROSA VIEJO"
+    },
+    {
+      "ka_nl_color": 68,
+      "ss_codigo": "RS6",
+      "ss_nombre": "CAMELIA "
+    },
+    {
+      "ka_nl_color": 69,
+      "ss_codigo": "LA1",
+      "ss_nombre": "LADRILLO"
+    },
+    {
+      "ka_nl_color": 70,
+      "ss_codigo": "VE7",
+      "ss_nombre": "VERDE ARCILLA"
+    },
+    {
+      "ka_nl_color": 71,
+      "ss_codigo": "VE8",
+      "ss_nombre": "VERDE MATCHA"
+    },
+    {
+      "ka_nl_color": 72,
+      "ss_codigo": "SA1",
+      "ss_nombre": "SANDIA"
+    },
+    {
+      "ka_nl_color": 73,
+      "ss_codigo": "VE9",
+      "ss_nombre": "VERDE LIMON"
+    },
+    {
+      "ka_nl_color": 74,
+      "ss_codigo": "VE10",
+      "ss_nombre": "VERDE CLARO"
+    },
+    {
+      "ka_nl_color": 75,
+      "ss_codigo": "VE11",
+      "ss_nombre": "VERDE OSCURO"
+    },
+    {
+      "ka_nl_color": 76,
+      "ss_codigo": "FC3",
+      "ss_nombre": "FUCSIA NEON "
+    },
+    {
+      "ka_nl_color": 77,
+      "ss_codigo": "HB",
+      "ss_nombre": "HABANO"
+    },
+    {
+      "ka_nl_color": 78,
+      "ss_codigo": "ML",
+      "ss_nombre": "MALVA"
+    },
+    {
+      "ka_nl_color": 79,
+      "ss_codigo": "AV",
+      "ss_nombre": "AVENA"
+    },
+    {
+      "ka_nl_color": 80,
+      "ss_codigo": "CA",
+      "ss_nombre": "CARAMELO"
+    },
+    {
+      "ka_nl_color": 81,
+      "ss_codigo": "NU",
+      "ss_nombre": "NUDE"
+    },
+    {
+      "ka_nl_color": 83,
+      "ss_codigo": "GU1",
+      "ss_nombre": "GUAYABA"
+    },
+    {
+      "ka_nl_color": 84,
+      "ss_codigo": "DU1",
+      "ss_nombre": "DURAZNO"
+    },
+    {
+      "ka_nl_color": 85,
+      "ss_codigo": "IV1",
+      "ss_nombre": "IVORY"
+    },
+    {
+      "ka_nl_color": 86,
+      "ss_codigo": "MO3",
+      "ss_nombre": "MOCCA"
+    },
+    {
+      "ka_nl_color": 87,
+      "ss_codigo": "AM3",
+      "ss_nombre": "AMARILLO CITRICO "
+    },
+    {
+      "ka_nl_color": 88,
+      "ss_codigo": "AM4",
+      "ss_nombre": "CAÑAMO"
+    },
+    {
+      "ka_nl_color": 89,
+      "ss_codigo": "AM5",
+      "ss_nombre": "TIZA"
+    },
+    {
+      "ka_nl_color": 90,
+      "ss_codigo": "PA3",
+      "ss_nombre": "PEACH"
+    },
+    {
+      "ka_nl_color": 91,
+      "ss_codigo": "RS7",
+      "ss_nombre": "ROSA AMARANTO"
+    },
+    {
+      "ka_nl_color": 92,
+      "ss_codigo": "AZ8",
+      "ss_nombre": "AZUL NUBE"
+    },
+    {
+      "ka_nl_color": 93,
+      "ss_codigo": "LI2",
+      "ss_nombre": "LAVANDA "
+    },
+    {
+      "ka_nl_color": 94,
+      "ss_codigo": "VE12",
+      "ss_nombre": "VERDE EUCALIPTO"
+    },
+    {
+      "ka_nl_color": 95,
+      "ss_codigo": "AR1",
+      "ss_nombre": "ARCOIRIS"
+    },
+    {
+      "ka_nl_color": 96,
+      "ss_codigo": "MOS",
+      "ss_nombre": "MOSAICO"
+    },
+    {
+      "ka_nl_color": 97,
+      "ss_codigo": "TRA1",
+      "ss_nombre": "TRANSPARENTE"
+    },
+    {
+      "ka_nl_color": 98,
+      "ss_codigo": "MU1",
+      "ss_nombre": "MULTICOLOR"
+    },
+    {
+      "ka_nl_color": 99,
+      "ss_codigo": "MA5",
+      "ss_nombre": "MADERA"
+    }
+  ]
+}

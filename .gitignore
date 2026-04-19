@@ -25,3 +25,16 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+/lib/generated/prisma
+
+# local file uploads (dev only — replace with cloud storage in production)
+/public/uploads/*
+!/public/uploads/.gitkeep
+
+# junk / scratch files
+agentik-audit.zip
+ka_ni_fuente
+raw-
+package-lock\ 2.json
+package-lock\ 3.json
+package-lock\ 4.json

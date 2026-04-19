@@ -1,0 +1,125 @@
+{
+  "capturedAt": "2026-04-08T20:55:32.628Z",
+  "rows": [
+    {
+      "ka_nl_movimiento": 7,
+      "total_valor": 10677011,
+      "total_iva": 18734,
+      "total_descuento": 0
+    },
+    {
+      "ka_nl_movimiento": 20,
+      "total_valor": 18696984,
+      "total_iva": 20159,
+      "total_descuento": 0
+    },
+    {
+      "ka_nl_movimiento": 24,
+      "total_valor": 764296,
+      "total_iva": 1235,
+      "total_descuento": 0
+    },
+    {
+      "ka_nl_movimiento": 27,
+      "total_valor": 518833,
+      "total_iva": 836,
+      "total_descuento": 0
+    },
+    {
+      "ka_nl_movimiento": 28,
+      "total_valor": 226245,
+      "total_iva": 361,
+      "total_descuento": 0
+    },
+    {
+      "ka_nl_movimiento": 29,
+      "total_valor": 683550,
+      "total_iva": 0,
+      "total_descuento": 0
+    },
+    {
+      "ka_nl_movimiento": 31,
+      "total_valor": 167649,
+      "total_iva": 304,
+      "total_descuento": 0
+    },
+    {
+      "ka_nl_movimiento": 32,
+      "total_valor": 70485,
+      "total_iva": 133,
+      "total_descuento": 0
+    },
+    {
+      "ka_nl_movimiento": 35,
+      "total_valor": 457227,
+      "total_iva": 513,
+      "total_descuento": 0
+    },
+    {
+      "ka_nl_movimiento": 36,
+      "total_valor": 83865,
+      "total_iva": 38,
+      "total_descuento": 0
+    },
+    {
+      "ka_nl_movimiento": 37,
+      "total_valor": 36050,
+      "total_iva": 19,
+      "total_descuento": 30
+    },
+    {
+      "ka_nl_movimiento": 41,
+      "total_valor": 181092,
+      "total_iva": 95,
+      "total_descuento": 150
+    },
+    {
+      "ka_nl_movimiento": 42,
+      "total_valor": 112352,
+      "total_iva": 57,
+      "total_descuento": 60
+    },
+    {
+      "ka_nl_movimiento": 43,
+      "total_valor": 91320,
+      "total_iva": 209,
+      "total_descuento": 0
+    },
+    {
+      "ka_nl_movimiento": 48,
+      "total_valor": 72100,
+      "total_iva": 38,
+      "total_descuento": 60
+    },
+    {
+      "ka_nl_movimiento": 49,
+      "total_valor": 36891,
+      "total_iva": 19,
+      "total_descuento": 30
+    },
+    {
+      "ka_nl_movimiento": 50,
+      "total_valor": 74621,
+      "total_iva": 38,
+      "total_descuento": 60
+    },
+    {
+      "ka_nl_movimiento": 51,
+      "total_valor": 143444,
+      "total_iva": 57,
+      "total_descuento": 90
+    },
+    {
+      "ka_nl_movimiento": 52,
+      "total_valor": 130235,
+      "total_iva": 171,
+      "total_descuento": 0
+    },
+    {
+      "ka_nl_movimiento": 53,
+      "total_valor": 100672,
+      "total_iva": 38,
+      "total_descuento": 30
+    }
+  ]
+}

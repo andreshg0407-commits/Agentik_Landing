@@ -1,6 +1,6 @@
 // app/api/tiktok/callback/route.ts
 import { NextResponse } from "next/server"
-import { cookieDomain, cookieSecure } from "@/app/lib/tiktokEnv"
+import { cookieDomain, cookieSecure } from "@/lib/tiktokEnv"
 
 export const runtime = "nodejs"
 

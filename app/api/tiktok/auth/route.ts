@@ -1,7 +1,7 @@
 // app/api/tiktok/auth/route.ts
 import { NextResponse } from "next/server"
 import crypto from "crypto"
-import { cookieDomain, cookieSecure } from "@/app/lib/tiktokEnv"
+import { cookieDomain, cookieSecure } from "@/lib/tiktokEnv"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -66,6 +66,7 @@ export async function GET(req: Request) {
 
   // ✅ TikTok OAuth authorize
   const authUrl = new URL("https://www.tiktok.com/v2/auth/authorize/")
+  authUrl.searchParams.set("prompt", "consent")
   authUrl.searchParams.set("client_key", clientKey)
   authUrl.searchParams.set("scope", scope)
   authUrl.searchParams.set("response_type", "code")

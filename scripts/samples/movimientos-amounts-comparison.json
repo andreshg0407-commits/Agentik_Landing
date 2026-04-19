@@ -1,0 +1,101 @@
+{
+  "capturedAt": "2026-04-08T20:57:31.814Z",
+  "note": "before=header-only (amounts=0); after=JOIN with MOVIMIENTOS_ITEMS",
+  "rows": [
+    {
+      "ka_nl_movimiento": 7,
+      "n_numero_documento": 1,
+      "sc_beneficiario": "INDUSTRIAS CASTILLO ALZATE S.A.S",
+      "d_fecha_documento": "2020-05-26T00:00:00",
+      "before": {
+        "originalAmount": 0,
+        "paidAmount": 0,
+        "balanceDue": 0
+      },
+      "after": {
+        "total_valor": 10677011,
+        "total_iva": 18734,
+        "total_descuento": 0,
+        "originalAmount": 10677011,
+        "paidAmount": 0,
+        "balanceDue": 10677011
+      }
+    },
+    {
+      "ka_nl_movimiento": 20,
+      "n_numero_documento": 2,
+      "sc_beneficiario": "INDUSTRIAS CASTILLO ALZATE S.A.S",
+      "d_fecha_documento": "2020-05-30T00:00:00",
+      "before": {
+        "originalAmount": 0,
+        "paidAmount": 0,
+        "balanceDue": 0
+      },
+      "after": {
+        "total_valor": 18696984,
+        "total_iva": 20159,
+        "total_descuento": 0,
+        "originalAmount": 18696984,
+        "paidAmount": 0,
+        "balanceDue": 18696984
+      }
+    },
+    {
+      "ka_nl_movimiento": 24,
+      "n_numero_documento": 3,
+      "sc_beneficiario": "INDUSTRIAS CASTILLO ALZATE S.A.S",
+      "d_fecha_documento": "2020-06-01T00:00:00",
+      "before": {
+        "originalAmount": 0,
+        "paidAmount": 0,
+        "balanceDue": 0
+      },
+      "after": {
+        "total_valor": 764296,
+        "total_iva": 1235,
+        "total_descuento": 0,
+        "originalAmount": 764296,
+        "paidAmount": 0,
+        "balanceDue": 764296
+      }
+    },
+    {
+      "ka_nl_movimiento": 27,
+      "n_numero_documento": 4,
+      "sc_beneficiario": "INDUSTRIAS CASTILLO ALZATE S.A.S",
+      "d_fecha_documento": "2020-06-03T00:00:00",
+      "before": {
+        "originalAmount": 0,
+        "paidAmount": 0,
+        "balanceDue": 0
+      },
+      "after": {
+        "total_valor": 518833,
+        "total_iva": 836,
+        "total_descuento": 0,
+        "originalAmount": 518833,
+        "paidAmount": 0,
+        "balanceDue": 518833
+      }
+    },
+    {
+      "ka_nl_movimiento": 28,
+      "n_numero_documento": 5,
+      "sc_beneficiario": "INDUSTRIAS CASTILLO ALZATE S.A.S",
+      "d_fecha_documento": "2020-06-04T00:00:00",
+      "before": {
+        "originalAmount": 0,
+        "paidAmount": 0,
+        "balanceDue": 0
+      },
+      "after": {
+        "total_valor": 226245,
+        "total_iva": 361,
+        "total_descuento": 0,
+        "originalAmount": 226245,
+        "paidAmount": 0,
+        "balanceDue": 226245
+      }
+    }
+  ]
+}

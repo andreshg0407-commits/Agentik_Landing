@@ -33,8 +33,9 @@ enum ProjectStatus {
 }
 
 enum Role {
-  SUPER_ADMIN // Agentik internal only
-  ORG_ADMIN
+  SUPER_ADMIN    // Agentik superuser — overrides everything
+  AGENTIK_ADMIN  // Agentik internal platform admin — Consola Interna only, no client data
+  ORG_ADMIN      // Client org admin — fully client-facing, no internal console
   MANAGER
   OPERATOR
   VIEWER
@@ -82,6 +83,7 @@ enum IntegrationProvider {
   ZELLE
   MERCURY
   DIAN
+  PYA
   CUSTOM
 }
 
@@ -191,6 +193,50 @@ enum UsageKind {
   MESSAGE
 }
 
+enum ActionTaskStatus {
+  PENDING
+  SCHEDULED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELED
+}
+
+enum ActionTaskType {
+  CREAR_TAREA_COMERCIAL
+  ASIGNAR_SEGUIMIENTO_VENDEDOR
+  MARCAR_CLIENTE_RECUPERACION
+  GENERAR_INFORME
+  PROGRAMAR_INFORME
+  ABRIR_ALERTA_OPERATIVA
+  CREAR_ACCION_COBRANZA
+  ESCALAR_A_GERENCIA
+}
+
+enum ActionTaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum NotificationType {
+  ACTION_ASSIGNED
+  ACTION_REASSIGNED
+  ACTION_DUE_TODAY
+  ACTION_OVERDUE
+  ACTION_COMPLETED
+  SCHEDULED_REPORT_READY
+  SCHEDULED_REPORT_FAILED
+  SYSTEM
+}
+
+enum ScheduleFrequency {
+  ONCE
+  WEEKLY
+  MONTHLY
+}
+
 /// --------------------
 /// Tenant / Identity
 /// --------------------
@@ -227,9 +273,31 @@ model Organization {
   events          Event[]
   rules           Rule[]
   alerts          Alert[]
-  metricSnapshots MetricSnapshot[]
-  syncJobs        SyncJob[]
-  documents       Document[]
+  metricSnapshots  MetricSnapshot[]
+  syncJobs         SyncJob[]
+  documents        Document[]
+  productSnapshots ProductSnapshot[]
+  orderSnapshots   OrderSnapshot[]
+  salesImportBatches  SalesImportBatch[]
+  saleRecords         SaleRecord[]
+  businessAlerts      BusinessAlert[]
+  connectors          Connector[]
+  customerProfiles    CustomerProfile[]
+  customerReceivables CustomerReceivable[]
+  crmOpportunities    CRMOpportunity[]
+  crmActivities       CRMActivity[]
+  crmQuotes           CRMQuote[]
+  pipelineStages      PipelineStage[]
+  sagWriteOperations  SagWriteOperation[]
+  actionTasks         ActionTask[]
+  notifications       Notification[]
+  scheduledReports    ScheduledReport[]
+  budgets             Budget[]
+  tenantModules       TenantModule[]
+  whatsAppConfig          WhatsAppConfig?
+  whatsAppConversations   WhatsAppConversation[]
+  whatsAppContactMemories WhatsAppContactMemory[]
+  studioSessions          StudioSession[]
 
   @@index([status])
 }
@@ -256,6 +324,7 @@ model User {
   passwordCredential   PasswordCredential?
   // Workspace-level access (multi-tenant)
   workspaceMemberships WorkspaceMembership[]
+  uploadedDocuments    Document[]
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -336,7 +405,7 @@ model Project {
 model ProjectModule {
   id         String  @id @default(cuid())
   projectId  String
-  // Examples: "CONTROL_CENTER", "MILA_WHATSAPP", "LUCA_MARKETING", "DIAN_AUTOMATION"
+  // Examples: “CONTROL_CENTER”, “MILA_WHATSAPP”, “LUCA_MARKETING”, “DIAN_AUTOMATION”
   code       String
   enabled    Boolean @default(false)
   configJson Json?
@@ -348,6 +417,26 @@ model ProjectModule {
 
   @@unique([projectId, code])
   @@index([projectId, enabled])
+}
+
+/// Per-org feature flags for UI modules.
+/// Open by default: if no row exists for a (org, moduleKey) pair the module is considered ENABLED.
+/// Only explicit enabled=false rows hide modules.
+/// Keys match the ModuleKey enum in lib/tenant/modules.ts.
+model TenantModule {
+  id             String  @id @default(cuid())
+  organizationId String
+  /// Canonical module key — see ModuleKey in lib/tenant/modules.ts
+  moduleKey      String
+  enabled        Boolean @default(true)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, moduleKey])
+  @@index([organizationId, enabled])
 }
 
 /// --------------------
@@ -1124,6 +1213,8 @@ model Workspace {
   memberships  WorkspaceMembership[]
   projects     Project[]
   documents    Document[]
+  productSnapshots ProductSnapshot[]
+  orderSnapshots   OrderSnapshot[]
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -1173,6 +1264,7 @@ model Document {
   workspaceId    String?
   projectId      String?
   fileObjectId   String?        // archivo fuente en storage
+  createdById    String?
 
   type           DocumentType
   category       String?        // sub-categoría libre: "cfdi_ingreso", "estado_cuenta_mercury"
@@ -1198,6 +1290,7 @@ model Document {
   workspace    Workspace?   @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
   project      Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
   file         FileObject?  @relation(fields: [fileObjectId], references: [id], onDelete: SetNull)
+  createdBy    User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -1209,4 +1302,1408 @@ model Document {
   @@index([fileObjectId])
   @@index([issuerId])
   @@index([documentDate])
+  @@index([createdById])
 }
+
+/// --------------------
+/// External Data Snapshots — reusable canonical models for connector ingestion
+/// sourceSystem = "pya" | "shopify" | "stripe" | etc.
+/// @@unique([organizationId, sourceSystem, sourceId]) enables idempotent upserts.
+/// --------------------
+
+model ProductSnapshot {
+  id             String  @id @default(cuid())
+  organizationId String
+  workspaceId    String?
+  sourceSystem   String  // connector identifier: "pya", "shopify", etc.
+  sourceId       String  // external product ID
+
+  // Normalized fields (connector-agnostic)
+  name        String
+  sku         String?
+  description String?
+  category    String?
+  price       Decimal? @db.Decimal(18, 4)
+  currency    String?  @default("USD")
+  status      String?  // "active" | "inactive" | source-specific value
+  imageUrl    String?
+
+  // Full raw payload for auditability and future enrichment
+  payloadJson Json?
+  syncedAt    DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workspace    Workspace?   @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, sourceSystem, sourceId])
+  @@index([organizationId, sourceSystem])
+  @@index([workspaceId])
+  @@index([status])
+}
+
+model OrderSnapshot {
+  id             String  @id @default(cuid())
+  organizationId String
+  workspaceId    String?
+  sourceSystem   String  // connector identifier: "pya", "shopify", etc.
+  sourceId       String  // external order ID
+
+  // Normalized fields (connector-agnostic)
+  status       String?  // "pending" | "confirmed" | "delivered" | source-specific
+  totalAmount  Decimal? @db.Decimal(18, 4)
+  currency     String?  @default("USD")
+  customerId   String?  // external customer ID if available
+  customerName String?
+  orderedAt    DateTime?
+
+  // Full raw payload for auditability and future enrichment
+  payloadJson Json?
+  syncedAt    DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workspace    Workspace?   @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, sourceSystem, sourceId])
+  @@index([organizationId, sourceSystem])
+  @@index([workspaceId])
+  @@index([orderedAt])
+  @@index([status])
+}
+
+/// --------------------
+/// Sales Intelligence
+/// --------------------
+
+enum SaleGrain {
+  TRANSACTION  // each row is one sale event
+  AGGREGATED   // each row is a SAG pre-grouped summary
+}
+
+enum SaleChannel {
+  TIENDA
+  ONLINE
+  TELEFONO
+  DISTRIBUIDOR
+  MAYORISTA
+  OTRO
+}
+
+/// Source-family classification for SAG comprobante codes.
+///
+/// Derived at import time from cod_comprobante via the tenant's
+/// documentFamilyMap (stored in Connector.config). Defaults to OTHER
+/// until the map is configured and confirmed against the SAG manual.
+///
+/// See lib/sales/sag-document-type.ts for the classification logic
+/// and https://pya.com.co/wp-content/uploads/2026/02/Manual-SAG.html
+/// for the authoritative PYA code reference.
+enum SagDocumentFamily {
+  /// Factura de venta (fiscal invoice — creates receivable in cartera)
+  OFFICIAL_INVOICE
+  /// Remisión / Nota de entrega (dispatch only — no receivable created)
+  DISPATCH_REMISION
+  /// Nota crédito (reduces receivable / reversal)
+  CREDIT_NOTE
+  /// Nota débito (increases receivable / adjustment)
+  DEBIT_NOTE
+  /// Unclassified — cod_comprobante absent or not in documentFamilyMap
+  OTHER
+}
+
+/// High-level commercial source: Fuente 1 (official billing) vs Fuente 2 (remision/dispatch).
+/// Derived from sagDocumentFamily at import time; can be overridden via import wizard.
+///
+///   OFICIAL  — Fuente 1: factura fiscal; recognized revenue; creates receivable in cartera.
+///   REMISION — Fuente 2: remisión / nota de entrega; operational demand; pending conversion.
+enum SagSourceType {
+  OFICIAL    // Fuente 1 — official invoice, recognized revenue
+  REMISION   // Fuente 2 — remisión / dispatch, pending conversion to invoice
+}
+
+/// Lifecycle stage of the commercial document at import time.
+/// Flows: PENDIENTE → DESPACHADO → REMITIDO → FACTURADO
+enum SourceDocumentStage {
+  FACTURADO   // Invoice issued — official fiscal document, revenue recognized
+  REMITIDO    // Remisión issued — goods dispatched, invoice pending
+  DESPACHADO  // Goods dispatched but not yet documented as remisión or invoice
+  PENDIENTE   // Document pending — awaiting any formal stage
+}
+
+/// Defines what period a SalesImportBatch covers and therefore what it replaces.
+enum SaleScopeType {
+  MONTH   // scopeKey = "YYYYMM" e.g. "202403"
+  RANGE   // scopeKey = "YYYY-MM-DD:YYYY-MM-DD"
+  YEAR    // scopeKey = "YYYY"
+  ADHOC   // scopeKey = cuid — no replacement semantics
+}
+
+/// One import batch = one CSV/Excel file from SAG.
+/// A batch with the same (organizationId, scopeType, scopeKey) replaces any
+/// previous batch with the same scope — old records are deleted before insert.
+model SalesImportBatch {
+  id             String        @id @default(cuid())
+  organizationId String
+
+  // Source
+  source         String        @default("csv") // "csv" | "manual"
+  grain          SaleGrain     @default(TRANSACTION)
+  fileName       String?
+
+  // Scope — what this batch covers and replaces
+  scopeType      SaleScopeType @default(MONTH)
+  scopeKey       String        // e.g. "202403", "2024", "2024-03-01:2024-03-31"
+
+  // Replacement tracking: when a batch is superseded, we set replacedByBatchId on it
+  replacedByBatchId String?
+
+  // Status
+  status         String        @default("PENDING") // PENDING|PROCESSING|DONE|FAILED|SUPERSEDED
+  rowCount       Int           @default(0)
+  importedCount  Int           @default(0)
+  skippedCount   Int           @default(0)
+  errorJson      Json?
+
+  importedAt     DateTime      @default(now())
+  importedBy     String?
+
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  records        SaleRecord[]
+
+  @@index([organizationId, scopeType, scopeKey])
+  @@index([organizationId, status])
+  @@index([organizationId, importedAt])
+}
+
+/// One normalized sale row from a SAG export.
+/// naturalKey is a short hash of the row's stable fields (excluding organizationId);
+/// uniqueness is enforced at org scope via @@unique([organizationId, naturalKey]).
+model SaleRecord {
+  id             String      @id @default(cuid())
+  organizationId String
+  importBatchId  String
+  grain          SaleGrain
+
+  // ── Temporal ────────────────────────────────────────────────────────────────
+  saleDate       DateTime    // UTC midnight of the sale date
+  periodoAoMes   String?     // original SAG field, e.g. "202403"
+
+  // ── Seller ──────────────────────────────────────────────────────────────────
+  sellerCode     String?     // SAG code if available, e.g. "V001"
+  sellerSlug     String      // stable slug: toSlug(sellerName), used as join key
+  sellerName     String
+
+  // ── Store ───────────────────────────────────────────────────────────────────
+  storeCode      String?     // SAG store code if available
+  storeSlug      String
+  storeName      String
+
+  // ── Product / Line ───────────────────────────────────────────────────────────
+  productLine    String
+  brand          String?
+  productCode    String?
+  productName    String?
+
+  // ── Geography ────────────────────────────────────────────────────────────────
+  zone           String?
+
+  // ── Transaction ──────────────────────────────────────────────────────────────
+  channel        SaleChannel
+  comprobanteCode String?     // raw SAG code, e.g. "FV", "NV" (alias: cod_comprobante)
+  comprobante    String?      // full reference, e.g. "FV-001234"
+
+  // ── Document source classification ────────────────────────────────────────────
+  // Derived from comprobanteCode via Connector.config.documentFamilyMap at import.
+  // Defaults to OTHER until the tenant map is configured and confirmed.
+  // See: lib/sales/sag-document-type.ts
+  sagDocumentFamily SagDocumentFamily @default(OTHER)
+
+  // ── Source awareness (Fuente 1 / Fuente 2) ────────────────────────────────────
+  // sagSourceType:        derived from sagDocumentFamily + heuristics at import time.
+  //                       OFICIAL = Fuente 1 (recognized revenue).
+  //                       REMISION = Fuente 2 (operational demand, pending conversion).
+  // sourceDocumentStage:  lifecycle stage at import (FACTURADO | REMITIDO | DESPACHADO | PENDIENTE).
+  //
+  // Finance rules:
+  //   - Only OFICIAL contributes to recognized revenue, budget actuals, and DIAN reconciliation.
+  //   - REMISION contributes to operational demand, near-term forecast, and conversion tracking.
+  //   - REMISION not converted to OFICIAL after X days surfaces as a pending conversion risk.
+  sagSourceType        SagSourceType        @default(OFICIAL)
+  sourceDocumentStage  SourceDocumentStage  @default(FACTURADO)
+  // Audit: which signal determined sagSourceType at import time.
+  // Values: "family" | "explicit_column" | "code_pattern" | "ref_pattern" | "filename" | "default" | "legacy"
+  // "legacy" = imported before source-tracking sprint (FUENTE_1 assumed conservatively).
+  sourceInferredFrom   String               @default("legacy")
+
+  // Reference to an origin or related document.
+  // E.g.: a remisión's number may reference the original order or a later invoice.
+  // Populated from export fields when available (Castillitos field: TBD — confirm
+  // against SAG manual https://pya.com.co/wp-content/uploads/2026/02/Manual-SAG.html).
+  originDocumentRef String?
+
+  // ── Customer ─────────────────────────────────────────────────────────────────
+  customerNit    String?
+  customerName   String?
+
+  // ── Measures ─────────────────────────────────────────────────────────────────
+  amount         Decimal     @db.Decimal(18, 2)
+  currency       String      @default("COP")
+  units          Int?
+  // txCount: for TRANSACTION grain always 1.
+  // For AGGREGATED: SAG-provided count when available, NULL when SAG did not export it.
+  // NULL signals "unknown count" — do not compute avgTicket from this row.
+  txCount        Int?
+
+  // ── Deduplication ────────────────────────────────────────────────────────────
+  // Short SHA-256 hash of row's natural key fields (grain-specific, excludes orgId).
+  // Combined with organizationId for org-scoped uniqueness.
+  naturalKey     String
+
+  // ── Audit ────────────────────────────────────────────────────────────────────
+  rawJson        Json        // original SAG row
+
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  importBatch    SalesImportBatch   @relation(fields: [importBatchId], references: [id])
+
+  @@unique([organizationId, naturalKey])
+  @@index([organizationId, saleDate])
+  @@index([organizationId, periodoAoMes])
+  @@index([organizationId, sellerSlug, saleDate])
+  @@index([organizationId, storeSlug, saleDate])
+  @@index([organizationId, productLine, saleDate])
+  @@index([organizationId, channel, saleDate])
+  @@index([organizationId, comprobanteCode])
+  @@index([organizationId, sagDocumentFamily, saleDate])
+  @@index([organizationId, customerNit])
+  @@index([importBatchId])
+  // Source-awareness indexes — enable fast Fuente 1 / Fuente 2 filtering
+  @@index([organizationId, sagSourceType, saleDate])
+  @@index([organizationId, sagSourceType, sellerSlug, saleDate])
+  @@index([organizationId, sagSourceType, storeSlug, saleDate])
+  @@index([organizationId, sagSourceType, sourceDocumentStage, saleDate])
+  // Audit index — identify legacy-assumed rows needing review
+  @@index([organizationId, sourceInferredFrom])
+}
+
+/// Persisted result of the source dedup engine (F2 ↔ F1 matching).
+///
+/// One row per REMISION SaleRecord (f2RecordId is unique).
+/// isOrphan = true  → no matching F1 found in MAX_DATE_GAP_DAYS window.
+/// isOrphan = false → matched to f1RecordId with given signal and confidence.
+///
+/// Regenerated by persistDedupResults() after every import batch.
+/// All modules that need conversion / orphan data read from here — not re-computing.
+///
+/// Dedup key: (organizationId, f2RecordId) — upsert on re-import.
+model SourceMatchRecord {
+  id             String   @id @default(cuid())
+  organizationId String
+
+  /// The REMISION SaleRecord this row describes.
+  f2RecordId     String
+  /// The matching OFICIAL SaleRecord. NULL when isOrphan = true.
+  f1RecordId     String?
+
+  /// Period of the F2 record (YYYYMM).
+  periodoAoMes   String
+
+  // ── Match result ──────────────────────────────────────────────────────────
+  /// True when no plausible F1 match was found within MAX_DATE_GAP_DAYS.
+  isOrphan       Boolean  @default(true)
+  /// Signal that produced the match. NULL when isOrphan.
+  /// "origin_doc_ref" | "comprobante_number" | "customer_amount_date" | "seller_store_amount"
+  matchSignal    String?
+  /// Matching confidence 0–100. NULL when isOrphan.
+  confidence     Int?
+  /// Days between F2 saleDate and F1 saleDate. NULL when isOrphan.
+  conversionDays Int?
+  /// (f1.amount - f2.amount) / f2.amount × 100. NULL when isOrphan.
+  amountDeltaPct Float?
+
+  // ── Orphan risk (only meaningful when isOrphan = true) ────────────────────
+  /// "NONE" | "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" — based on daysPending at generation time.
+  orphanRisk     String?
+  /// Days since F2 saleDate at the moment this record was last generated.
+  orphanDays     Int?
+
+  // ── Denormalized for fast querying without joining SaleRecord ─────────────
+  customerNit    String?
+  sellerSlug     String
+  storeSlug      String
+  f2Amount       Float
+  f2Date         DateTime
+
+  generatedAt    DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([organizationId, f2RecordId])
+  @@index([organizationId, periodoAoMes])
+  @@index([organizationId, isOrphan, orphanRisk])
+  @@index([organizationId, sellerSlug, periodoAoMes])
+  @@index([organizationId, customerNit, periodoAoMes])
+  @@index([organizationId, isOrphan, periodoAoMes])
+}
+
+/// Business alert generated by the Alert Engine from sales/finance/operational data.
+/// Deduplicated by (organizationId, type, entityKey, period) — re-running the same
+/// period updates the existing alert rather than creating a duplicate.
+model BusinessAlert {
+  id             String        @id @default(cuid())
+  organizationId String
+
+  // Classification
+  module         String        // "sales" | "finance" | "production"
+  type           String        // "sales_drop" | "seller_dependency"
+  severity       AlertSeverity @default(WARNING)
+  status         AlertStatus   @default(OPEN)
+
+  // Content
+  title          String
+  message        String
+
+  // Entity the alert is about
+  entityType     String        // "seller" | "store" | "product_line"
+  entityKey      String        // slug or stable key
+  entityLabel    String        // human-readable name
+
+  // Temporal scope
+  period         String        // "YYYYMM" — the period evaluated
+
+  // Structured data for the UI / downstream rules
+  payloadJson    Json
+
+  // Lifecycle
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  acknowledgedAt DateTime?
+  resolvedAt     DateTime?
+  acknowledgedBy String?       // userId
+
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Deduplication: one alert per (org, type, entity, period)
+  @@unique([organizationId, type, entityKey, period])
+  @@index([organizationId, status, severity])
+  @@index([organizationId, module, period])
+  @@index([organizationId, period])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Universal Connector Layer
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum ConnectorStatus {
+  ACTIVE
+  INACTIVE
+  SYNCING
+  ERROR
+}
+
+enum ConnectorRunStatus {
+  RUNNING
+  SUCCESS
+  PARTIAL   // completed but some rows errored
+  FAILED
+}
+
+/// A configured integration instance per org.
+/// config stores source-specific credentials + settings as JSON.
+/// IMPORTANT: encrypt sensitive fields (API keys, tokens) before storing.
+model Connector {
+  id             String          @id @default(cuid())
+  organizationId String
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  source         String          // "sag_pya" | "shopify" | "hubspot" | "csv" | …
+  name           String          // human-readable label ("Shopify Store A")
+  status         ConnectorStatus @default(INACTIVE)
+
+  config         Json            @default("{}")
+  modules        String[]        // enabled modules: ["orders","customers",…]
+
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  runs           ConnectorRun[]
+  cursors        ConnectorCursor[]
+  mappings       ConnectorMapping[]
+
+  @@unique([organizationId, source, name])
+  @@index([organizationId, source])
+  @@index([organizationId, status])
+}
+
+/// Observability record for a single module sync execution.
+model ConnectorRun {
+  id             String             @id @default(cuid())
+  connectorId    String
+  connector      Connector          @relation(fields: [connectorId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  source         String
+  module         String
+
+  startedAt      DateTime           @default(now())
+  finishedAt     DateTime?
+
+  status         ConnectorRunStatus @default(RUNNING)
+
+  rowsRead       Int                @default(0)
+  rowsImported   Int                @default(0)
+  rowsSkipped    Int                @default(0)
+  rowsErrored    Int                @default(0)
+
+  cursorBefore   String?
+  cursorAfter    String?
+
+  error          String?
+  meta           Json?
+
+  @@index([connectorId, module])
+  @@index([organizationId, source, module])
+  @@index([organizationId, status])
+  @@index([startedAt])
+}
+
+/// Persists incremental sync position per connector × module.
+model ConnectorCursor {
+  id             String    @id @default(cuid())
+  connectorId    String
+  connector      Connector @relation(fields: [connectorId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  module         String
+  cursor         String    // opaque — ISO date, page token, offset, …
+
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([connectorId, module])
+  @@index([organizationId, module])
+}
+
+/// Field-level mapping between source schema and unified schema.
+/// Drives future field-mapping UI — not used by the sync engine directly yet.
+model ConnectorMapping {
+  id             String    @id @default(cuid())
+  connectorId    String
+  connector      Connector @relation(fields: [connectorId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  module         String    // "orders" | "customers" | …
+  sourceField    String    // field path in the source record
+  targetField    String    // field path in the unified schema
+  transform      String?   // optional expression: "toUpperCase", "parseDate:yyyy-MM-dd"
+  defaultValue   String?   // fallback when source field is null/absent
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([connectorId, module, sourceField])
+  @@index([connectorId, module])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Customer 360 + Pipeline Intelligence
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum CustomerStatus {
+  ACTIVE
+  INACTIVE
+  PROSPECT
+  CHURNED
+  BLOCKED
+}
+
+enum OpportunityStatus {
+  OPEN
+  WON
+  LOST
+  ABANDONED
+}
+
+enum ActivityType {
+  CALL
+  EMAIL
+  VISIT
+  NOTE
+  MEETING
+  QUOTE_SENT
+  DEMO
+  PROPOSAL
+  OTHER
+}
+
+enum QuoteStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+/// Materialized canonical customer profile.
+/// Merged from ERP (identity + financial) and CRM (relational + commercial).
+/// slug = toSlug(nit ?? name) — used as the stable dedup key.
+model CustomerProfile {
+  id             String         @id @default(cuid())
+  organizationId String
+
+  // Source IDs
+  erpId          String?        // SAG/ERP customer ID
+  crmId          String?        // CRM customer ID
+
+  // Identity
+  nit            String?        // NIT normalizado (sin puntos/guiones)
+  slug           String         // stable slug for joins + dedup
+  name           String
+  legalName      String?
+
+  // Classification
+  status         CustomerStatus @default(ACTIVE)
+  segment        String?        // "A" | "B" | "C" | custom
+  customerType   String         @default("B2B") // "B2B" | "B2C"
+
+  // Contact
+  email          String?
+  phone          String?
+  city           String?
+  department     String?        // departamento colombiano
+  address        String?
+
+  // Commercial assignment
+  sellerSlug     String?
+  sellerName     String?
+
+  // Financial KPIs (denormalized from SaleRecord — refreshed on sync)
+  ltv            Decimal?       @db.Decimal(18, 2)  // lifetime value COP
+  lastPurchaseAt DateTime?
+  purchasePeriods Int           @default(0)          // distinct YYYYMM periods with sales
+  avgMonthlyRevenue Decimal?    @db.Decimal(18, 2)
+  avgTicket      Decimal?       @db.Decimal(18, 2)
+  totalSalesL12  Decimal?       @db.Decimal(18, 2)   // last 12 months
+
+  // Receivables summary (from ERP — refreshed on receivables sync)
+  totalReceivable   Decimal?    @db.Decimal(18, 2)
+  overdueReceivable Decimal?    @db.Decimal(18, 2)
+  maxDpd            Int?        // max days past due (0 = current)
+
+  // AI / Health scoring
+  healthScore    Int?           // 0-100 (100 = healthiest)
+  riskScore      Int?           // 0-100 (100 = highest risk)
+  churnRisk      String?        // "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"
+  nextBestAction String?        // AI-suggested next step
+  aiSummary      String?        // short AI-generated narrative
+  scoredAt       DateTime?
+
+  // Sync audit
+  erpSyncedAt    DateTime?
+  crmSyncedAt    DateTime?
+  rawErpJson     Json?
+  rawCrmJson     Json?
+
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  organization       Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  crmOpportunities   CRMOpportunity[]
+  activities         CRMActivity[]
+  quotes             CRMQuote[]
+  receivables        CustomerReceivable[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId, status])
+  @@index([organizationId, sellerSlug])
+  @@index([organizationId, lastPurchaseAt])
+  @@index([organizationId, nit])
+  @@index([organizationId, churnRisk])
+  @@index([organizationId, customerType])
+}
+
+/// Cartera / accounts receivable from ERP.
+/// One row per invoice document with a pending balance.
+model CustomerReceivable {
+  id             String   @id @default(cuid())
+  organizationId String
+  customerId     String?  // FK to CustomerProfile (null if not yet linked)
+
+  // Source
+  erpId          String?  // ERP receivable / document ID
+  invoiceNumber  String?
+
+  // Identity fallback (when customer not yet linked)
+  customerNit    String?
+  customerName   String
+
+  // Amounts (COP)
+  originalAmount Decimal  @db.Decimal(18, 2)
+  paidAmount     Decimal  @db.Decimal(18, 2) @default(0)
+  balanceDue     Decimal  @db.Decimal(18, 2)
+  currency       String   @default("COP")
+
+  // Dates
+  invoiceDate    DateTime
+  dueDate        DateTime
+  paidAt         DateTime?
+
+  // Aging
+  daysOverdue    Int      @default(0)
+  agingBucket    String   // "CURRENT" | "1-30" | "31-60" | "61-90" | "90+"
+
+  // Status
+  status         String   @default("OPEN") // "OPEN" | "PARTIAL" | "PAID" | "WRITTEN_OFF"
+
+  // Audit
+  rawErpJson     Json?
+  syncedAt       DateTime @default(now())
+
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer       CustomerProfile? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, erpId])
+  @@index([organizationId, status])
+  @@index([organizationId, customerNit])
+  @@index([organizationId, customerId])
+  @@index([organizationId, dueDate])
+  @@index([organizationId, agingBucket])
+}
+
+/// CRM pipeline opportunity.
+/// Source-agnostic: populated from CRM connector syncs.
+model CRMOpportunity {
+  id             String            @id @default(cuid())
+  organizationId String
+  customerId     String?
+
+  // Source
+  crmId          String?
+
+  // Core
+  title          String
+  stage          String            // matches PipelineStage.key
+  amount         Decimal           @db.Decimal(18, 2)
+  currency       String            @default("COP")
+  probability    Int               @default(50) // 0-100, stage-based
+
+  // Dates
+  openedAt       DateTime
+  expectedCloseAt DateTime?
+  closedAt       DateTime?
+  lastActivityAt DateTime?
+
+  // Outcome
+  status         OpportunityStatus @default(OPEN)
+  lossReason     String?
+  lossNote       String?
+
+  // Assignment
+  sellerSlug     String?
+  sellerName     String?
+
+  // AI scoring
+  aiCloseProbability Float?        // 0–1, refreshed by scoring job
+  riskFlags      String[]          // ["no_activity_14d", "competitor_mentioned", ...]
+
+  // Audit
+  rawCrmJson     Json?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer       CustomerProfile? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  activities     CRMActivity[]
+  quotes         CRMQuote[]
+
+  @@unique([organizationId, crmId])
+  @@index([organizationId, stage, status])
+  @@index([organizationId, sellerSlug, status])
+  @@index([organizationId, expectedCloseAt])
+  @@index([organizationId, status])
+  @@index([organizationId, customerId])
+}
+
+/// CRM activity log: calls, visits, emails, notes, meetings.
+model CRMActivity {
+  id             String       @id @default(cuid())
+  organizationId String
+  customerId     String?
+  opportunityId  String?
+
+  // Source
+  crmId          String?
+
+  // Core
+  type           ActivityType
+  subject        String?
+  body           String?
+  outcome        String?
+
+  // Timing
+  occurredAt     DateTime
+  dueAt          DateTime?
+  completedAt    DateTime?
+
+  // Assignment
+  sellerSlug     String?
+  sellerName     String?
+
+  // Audit
+  rawCrmJson     Json?
+  createdAt      DateTime     @default(now())
+
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer       CustomerProfile? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  opportunity    CRMOpportunity?  @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, crmId])
+  @@index([organizationId, customerId, occurredAt])
+  @@index([organizationId, opportunityId])
+  @@index([organizationId, occurredAt])
+  @@index([organizationId, sellerSlug])
+}
+
+/// CRM quotes/proposals sent to customers.
+model CRMQuote {
+  id             String      @id @default(cuid())
+  organizationId String
+  customerId     String?
+  opportunityId  String?
+
+  // Source
+  crmId          String?
+
+  // Core
+  quoteNumber    String?
+  status         QuoteStatus @default(DRAFT)
+  amount         Decimal     @db.Decimal(18, 2)
+  currency       String      @default("COP")
+
+  // Dates
+  issuedAt       DateTime
+  expiresAt      DateTime?
+  respondedAt    DateTime?
+
+  // Assignment
+  sellerSlug     String?
+  sellerName     String?
+
+  // Audit
+  rawCrmJson     Json?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer       CustomerProfile? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  opportunity    CRMOpportunity?  @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, crmId])
+  @@index([organizationId, customerId])
+  @@index([organizationId, status])
+  @@index([organizationId, sellerSlug])
+  @@index([organizationId, issuedAt])
+}
+
+// ── SAG Write Layer ───────────────────────────────────────────────────────────
+
+/// Audit trail for every SAG write operation.
+/// Operations must be APPROVED by a human before execution.
+/// Status lifecycle: PENDING → APPROVED → SENDING → SUCCEEDED|FAILED
+///                   PENDING → REJECTED  (terminal, no execution)
+///                   FAILED  → APPROVED  (retry, max 3 times)
+model SagWriteOperation {
+  id             String @id @default(cuid())
+  organizationId String
+
+  // Write type: 1=Cliente, 2=Documento, 3=Tercero, 5=Artículo, 6=Recibo, 28=Doc genérico
+  writeType      Int
+
+  // Status
+  status         String // PENDING|APPROVED|REJECTED|SENDING|SUCCEEDED|FAILED
+
+  // Risk classification: LOW|MEDIUM|HIGH (derived from writeType at enqueue time)
+  risk           String
+
+  // Human-readable description of what this operation does
+  description    String
+  // Optional reference to the source entity (e.g. customerId, orderId)
+  sourceRef      String?
+
+  // Input as stored JSON (for re-display in approval UI)
+  inputJson      Json
+
+  // XML generated at enqueue time (reviewer-inspectable before approval)
+  generatedXml   String @db.Text
+  // XML actually sent (copied from generatedXml at SENDING transition)
+  submittedXml   String? @db.Text
+
+  // SAG response
+  sagResponseRaw String? @db.Text
+  sagResponseOk  Boolean?
+
+  // Audit trail
+  initiatedBy    String  // userId or system identifier
+  initiatedAt    DateTime @default(now())
+
+  approvedBy     String?
+  approvedAt     DateTime?
+
+  rejectedBy     String?
+  rejectedAt     DateTime?
+  rejectionReason String?
+
+  sentAt         DateTime?
+  // Set when execution completes (SUCCEEDED or FAILED) — covers both SAG-level
+  // errors (markResult) and network/SOAP errors (markFailed). Together with
+  // sentAt this gives the full round-trip window for each attempt.
+  executedAt     DateTime?
+
+  retryCount     Int      @default(0)
+  lastError      String?  @db.Text
+
+  updatedAt      DateTime @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status])
+  @@index([organizationId, initiatedAt])
+  @@index([organizationId, writeType])
+}
+
+/// Configurable pipeline funnel stages per org.
+/// Seed default stages on first setup; admins can customise labels/order.
+model PipelineStage {
+  id             String  @id @default(cuid())
+  organizationId String
+  key            String  // slug: "prospect" | "qualified" | "proposal" | "negotiation" | "closed_won" | "closed_lost"
+  label          String
+  order          Int
+  isWon          Boolean @default(false)
+  isLost         Boolean @default(false)
+  color          String? // hex color for Kanban/pipeline UI
+  probability    Int     @default(50) // default win probability for deals in this stage
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, key])
+  @@index([organizationId, order])
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// §Workforce (future) — GOCEN integration preparation
+//
+// STATUS: NOT YET MIGRATED — these models are documented here so the
+//         Prisma schema grows in one logical place.  Run
+//         `npx prisma migrate dev --name add_workforce_models` once GOCEN
+//         credentials are available and the adapter is implemented.
+//
+/// --------------------
+/// Action Layer — Agentik Centro de Acciones
+/// --------------------
+/// Phase 1: internal tracked work items. No external side-effects yet.
+/// Phase 2+: WhatsApp, SAG writebacks, GOCEN execution via payloadJson.
+model ActionTask {
+  id             String              @id @default(cuid())
+  organizationId String
+
+  title          String
+  description    String?
+
+  actionType     ActionTaskType
+  targetType     String?             // "customer" | "seller" | "report" | "alert" | "branch" | ...
+  targetId       String?             // CustomerProfile.id, seller slug, etc.
+  targetLabel    String?             // Human-readable: customer name, seller name, ...
+
+  sourceModule   String?             // "agentik_copilot" | "customer_360" | "bandeja_acciones" | "torre_de_control" | ...
+
+  status         ActionTaskStatus    @default(PENDING)
+  priority       ActionTaskPriority  @default(MEDIUM)
+
+  assignedTo     String?             // User name/email (freeform Phase 1)
+  createdBy      String              // User email who created the action
+
+  dueAt          DateTime?
+  completedAt    DateTime?
+
+  payloadJson    Json?               // Input context snapshot
+  resultJson     Json?               // Outcome data when completed
+  errorMessage   String?             // Failure reason
+
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  organization      Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  notifications     Notification[]
+  scheduledReport   ScheduledReport?
+
+  @@index([organizationId, status])
+  @@index([organizationId, actionType])
+  @@index([organizationId, priority, status])
+  @@index([organizationId, createdAt])
+}
+
+/// --------------------
+/// Sprint 4 — Internal Notifications
+/// --------------------
+model Notification {
+  id             String           @id @default(cuid())
+  organizationId String
+  recipientEmail String           // user to notify
+  type           NotificationType
+  title          String
+  body           String?
+  actionTaskId   String?          // optional link to the triggering ActionTask
+  isRead         Boolean          @default(false)
+  readAt         DateTime?
+  createdAt      DateTime         @default(now())
+
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actionTask     ActionTask?      @relation(fields: [actionTaskId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, recipientEmail, isRead])
+  @@index([organizationId, createdAt])
+}
+
+/// --------------------
+/// Sprint 4 — Scheduled Reports
+/// --------------------
+model ScheduledReport {
+  id             String            @id @default(cuid())
+  organizationId String
+  actionTaskId   String?           @unique  // optional link to the PROGRAMAR_INFORME ActionTask
+  createdBy      String
+
+  title          String
+  query          String            // natural-language query passed to interpret()
+  reportType     String?           // preset slug: "executive_weekly" | "cartera_aging" | "alertas_criticas" | null
+  frequency      ScheduleFrequency @default(ONCE)
+  isActive       Boolean           @default(true)
+  recipients     String?           @db.Text  // comma-separated email list
+
+  // Execution scheduling
+  nextRunAt      DateTime?         // when to run next
+  lastRunAt      DateTime?
+  lastResult     Json?             // condensed ReportResult summary
+  lastError      String?
+  runCount       Int               @default(0)
+
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actionTask     ActionTask?       @relation(fields: [actionTaskId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, isActive, nextRunAt])
+  @@index([organizationId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Finance V2 — FP&A (Planeación y Presupuesto)
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum BudgetPeriod {
+  ANNUAL
+  QUARTERLY
+  MONTHLY
+}
+
+enum BudgetDimension {
+  TOTAL     // org-wide total
+  BRANCH    // by store / sucursal
+  CHANNEL   // by sales channel
+  SELLER    // by vendedor
+  LINE      // by product line
+  PAYROLL   // workforce/nómina (future-ready)
+}
+
+/// Budget target for a given period, dimension, and cost/revenue category.
+/// Used by FP&A variance analysis to compare plan vs actual (SaleRecord actuals).
+model Budget {
+  id             String          @id @default(cuid())
+  organizationId String
+
+  // Period
+  year           Int
+  month          Int?            // null when periodType = ANNUAL or QUARTERLY
+  quarter        Int?            // 1-4; null when periodType = ANNUAL or MONTHLY
+  periodType     BudgetPeriod
+
+  // Dimension
+  dimension      BudgetDimension
+  dimensionKey   String          @default("total")  // storeSlug, channel enum, sellerSlug, productLine, "total"
+  dimensionLabel String          @default("Total")
+
+  // Category — what kind of budget line
+  // "revenue" | "cogs" | "opex" | "payroll" | "capex" | "marketing"
+  category       String          @default("revenue")
+
+  // Amount
+  amount         Decimal         @db.Decimal(18, 2)
+  currency       String          @default("COP")
+
+  notes          String?
+  createdBy      String          // email of the user who set the target
+
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // One target per org / period / dimension / dimensionKey / category
+  @@unique([organizationId, year, month, quarter, periodType, dimension, dimensionKey, category])
+  @@index([organizationId, year, periodType])
+  @@index([organizationId, dimension, dimensionKey])
+}
+
+/// --------------------
+/// WhatsApp Module (tenant-activatable)
+/// --------------------
+
+enum WaConversationStatus {
+  ACTIVE
+  RESOLVED
+  HANDED_OFF
+  TIMED_OUT
+}
+
+enum WaMessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+/// Intent classified from the incoming message text.
+/// Extend this enum as new intent categories are needed.
+enum WaIntent {
+  FAQ
+  APPOINTMENT
+  SALES
+  SUPPORT
+  HANDOFF
+  UNKNOWN
+}
+
+/// Per-org WhatsApp Business configuration.
+/// One record per organization. Stores Meta credentials, display config,
+/// and a JSON blob for per-intent settings (FAQs, schedules, escalation rules).
+/// Active flag controls whether the webhook processes messages for this org.
+model WhatsAppConfig {
+  id             String  @id @default(cuid())
+  organizationId String  @unique
+
+  /// Meta Cloud API phone_number_id for routing
+  phoneNumberId  String
+  /// WhatsApp Business Account ID (WABA)
+  wabaId         String
+  /// Webhook verify token set in Meta App Dashboard
+  webhookSecret  String
+
+  /// Business display name sent in AI greetings
+  displayName    String
+  /// Optional first-contact welcome message
+  welcomeMessage String?
+  /// Extensible per-intent config blob:
+  ///   { faq: [{q, a}], appointment: { calendarUrl }, escalation: { email } }
+  intentConfig   Json?
+  /// Brand voice and style configuration blob:
+  ///   { tone, useEmoji, closingStyle, forbiddenPhrases, signaturePhrases,
+  ///     salesStyleHints, escalationStyle }
+  brandConfig    Json?
+  /// false = draft / paused; webhook silently acks but does not process
+  active         Boolean @default(false)
+
+  organization  Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  conversations WhatsAppConversation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// One conversation per (organizationId, contactPhone) pair.
+/// Automatically resumed when the same number writes again while ACTIVE.
+model WhatsAppConversation {
+  id             String               @id @default(cuid())
+  organizationId String
+  configId       String
+
+  /// Sender phone in E.164 format, e.g. +573001234567
+  contactPhone   String
+  /// WhatsApp profile display name — updated on each contact if present
+  contactName    String?
+
+  status         WaConversationStatus @default(ACTIVE)
+  /// Most recent intent — updated after every incoming message
+  lastIntent     WaIntent?
+  handedOff      Boolean              @default(false)
+  /// Department or agent identifier when status = HANDED_OFF
+  handoffTo      String?
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  config       WhatsAppConfig    @relation(fields: [configId], references: [id], onDelete: Cascade)
+  messages     WhatsAppMessage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, contactPhone])
+  @@index([organizationId, status])
+  @@index([organizationId, updatedAt])
+  @@index([configId])
+}
+
+/// Individual message within a WhatsApp conversation.
+model WhatsAppMessage {
+  id             String        @id @default(cuid())
+  conversationId String
+  /// Denormalized for fast per-org queries without a join
+  organizationId String
+
+  role           WaMessageRole
+  /// Normalized plain-text content (images → "[imagen]", voice → "[audio]")
+  content        String
+  /// Classified intent — set only on USER messages
+  intent         WaIntent?
+  /// Full raw Meta webhook entry — preserved for audit and debugging
+  rawPayload     Json?
+  /// Meta-assigned wamid — used for deduplication (idempotent upsert)
+  waMessageId    String?       @unique
+
+  conversation WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([conversationId])
+  @@index([organizationId, intent])
+  @@index([organizationId, createdAt])
+}
+
+/// Lightweight per-contact memory for personalization and outcome tracking.
+/// One record per (organizationId, contactPhone) pair — contact-scoped, org-isolated.
+/// Written asynchronously after the webhook pipeline — never blocks the 200 response.
+model WhatsAppContactMemory {
+  id             String   @id @default(cuid())
+  organizationId String
+  contactPhone   String
+
+  /// Most recently detected display name from WhatsApp profile
+  contactName              String?
+  /// Last intent that produced a tracked outcome: "SALES" or "APPOINTMENT"
+  lastSuccessfulOutcome    String?
+  /// Timestamp of that outcome
+  lastSuccessfulOutcomeAt  DateTime?
+  /// Free-text product or service keyword from last SALES conversation
+  lastProductMention       String?
+  /// Time hint from last APPOINTMENT request, e.g. "Mañana por la tarde"
+  lastAppointmentRequest   String?
+  /// Timestamp of last HANDOFF event
+  lastHandoffAt            DateTime?
+  /// Total distinct conversation threads opened (incremented on first message per thread)
+  totalConversations       Int      @default(1)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, contactPhone])
+  @@index([organizationId])
+}
+
+// ── Marketing Studio ──────────────────────────────────────────────────────────
+
+enum StudioSessionDbStatus {
+  IDLE
+  IN_PROGRESS
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  PUBLISHING
+  PUBLISHED
+  FAILED
+}
+
+enum AssetGenerationStatus {
+  PENDING
+  QUEUED
+  GENERATING
+  READY
+  FAILED
+}
+
+enum AssetPublishStatus {
+  NONE
+  QUEUED
+  PUBLISHING
+  PUBLISHED
+  FAILED
+}
+
+/// Persistent record of a Marketing Studio wizard session.
+/// One session = one operator run through the 5-step wizard.
+model StudioSession {
+  /// Client-generated sortable ID (format: ss_<timestamp36><rand>)
+  id              String                @id
+  organizationId  String
+  tenantId        String
+  /// Current wizard step — mirrors StudioStep TS union literal
+  step            String
+  status          StudioSessionDbStatus @default(IDLE)
+  /// UserObjective literal — set after step 2
+  objective       String?
+  productSku      String?
+  productImageUrl String?
+  /// Serialised Partial<MinimumInputFields>
+  inputsJson      Json?
+  /// Serialised ReviewItem[] — snapshot at review step
+  reviewItemsJson Json?
+  /// Serialised PublishResult — set after execution succeeds
+  publishResultJson Json?
+  /// Job ID returned by the executor stub / n8n webhook
+  executionJobId  String?
+  /// Full N8nWebhookPayload snapshot sent to the executor
+  executionPayloadJson Json?
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assets       GeneratedAsset[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, status])
+  @@index([organizationId, tenantId, createdAt(sort: Desc)])
+}
+
+/// One generated asset produced within a StudioSession.
+/// Maps to OutputAssetType — each session produces N assets per workflow profile.
+model GeneratedAsset {
+  id               String                @id @default(cuid())
+  sessionId        String
+  /// OutputAssetType literal: product_photo | social_image | social_video | copy_caption | hashtags | product_draft
+  assetType        String
+  generationStatus AssetGenerationStatus @default(PENDING)
+  publishStatus    AssetPublishStatus    @default(NONE)
+  /// CDN URL for visual assets once generated
+  assetUrl         String?
+  /// Body for text assets (copy_caption, hashtags)
+  content          String?
+  /// Operator review decision — pending | approved | rejected
+  reviewStatus     String                @default("pending")
+  /// External reference: Shopify draft ID, Luca job ID, catalog export URL
+  externalRef      String?
+  /// Provider job ID from the generation provider
+  generationJobId  String?
+  /// Provider-specific extra data
+  providerMeta     Json?
+
+  session StudioSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sessionId])
+  @@index([sessionId, generationStatus])
+}
+
+// Adapter:     lib/connectors/adapters/gocen/   (not yet implemented)
+// Types:       lib/workforce/types.ts            (ready)
+// Service:     lib/workforce/service.ts          (scaffolded, returns stubs)
+// UI:          app/(app)/[orgSlug]/workforce/    (placeholder page)
+//
+// Commercial join points (all use existing indexed fields — no new indexes
+// needed on the sales side):
+//   EmployeeProfile.sellerSlug  ↔  SaleRecord.sellerSlug
+//   EmployeeProfile.storeSlug   ↔  SaleRecord.storeSlug
+//   AttendanceFact.storeSlug    ↔  SaleRecord.storeSlug
+//   PayrollFact (commission)    ↔  getSellerDetail() totalAmount per period
+//   ComplianceSignal            ↔  cross-analysis with sales performance KPIs
+// ──────────────────────────────────────────────────────────────────────────────
+//
+// model EmployeeProfile {
+//   id              String   @id @default(cuid())
+//   organizationId  String
+//   gocenId         String?                    // GOCEN código empleado
+//   firstName       String
+//   lastName        String
+//   fullName        String
+//   nationalId      String?                    // Cédula
+//   email           String?
+//   phone           String?
+//   role            String                     // seller|supervisor|branch_manager|logistics|admin|other
+//   employmentType  String                     // full_time|part_time|contractor|intern
+//   status          String                     // active|inactive|on_leave|terminated
+//   department      String?
+//   position        String?
+//   sellerSlug      String?                    // join key → SaleRecord.sellerSlug
+//   storeSlug       String?                    // join key → SaleRecord.storeSlug
+//   storeName       String?
+//   hiredAt         DateTime?
+//   terminatedAt    DateTime?
+//   lastSyncAt      DateTime?
+//   rawGocenJson    Json?
+//   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+//   attendanceFacts AttendanceFact[]
+//   payrollFacts    PayrollFact[]
+//   complianceSignals ComplianceSignal[]
+//   @@index([organizationId, status])
+//   @@index([organizationId, sellerSlug])
+//   @@index([organizationId, storeSlug])
+// }
+//
+// model AttendanceFact {
+//   id              String   @id @default(cuid())
+//   organizationId  String
+//   employeeId      String
+//   eventType       String                     // check_in|check_out|break_start|break_end|absence
+//   occurredAt      DateTime
+//   storeSlug       String?                    // join key → SaleRecord.storeSlug
+//   absenceReason   String?
+//   notes           String?
+//   minutesWorked   Int?
+//   sourceRef       String?
+//   employee        EmployeeProfile @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+//   organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+//   @@index([organizationId, employeeId, occurredAt])
+//   @@index([organizationId, storeSlug, occurredAt])
+// }
+//
+// model PayrollFact {
+//   id              String   @id @default(cuid())
+//   organizationId  String
+//   employeeId      String
+//   period          String                     // YYYY-MM  — aligns with SaleRecord.periodoAoMes
+//   status          String                     // draft|approved|paid|disputed
+//   component       String                     // base|commission|bonus|overtime|deduction|tax|social_security
+//   grossAmount     Decimal  @db.Decimal(18,2)
+//   netAmount       Decimal? @db.Decimal(18,2)
+//   commissionBase  Decimal? @db.Decimal(18,2) // cross-ref: getSellerDetail().totalAmount
+//   commissionRate  Decimal? @db.Decimal(6,4)
+//   paidAt          DateTime?
+//   sourceRef       String?
+//   employee        EmployeeProfile @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+//   organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+//   @@index([organizationId, employeeId, period])
+//   @@index([organizationId, period, component])
+// }
+//
+// model ComplianceSignal {
+//   id              String   @id @default(cuid())
+//   organizationId  String
+//   employeeId      String
+//   signalType      String                     // contract_expiry|document_missing|training_overdue|...
+//   severity        String                     // info|warning|critical
+//   description     String
+//   dueAt           DateTime?
+//   acknowledged    Boolean  @default(false)
+//   acknowledgedAt  DateTime?
+//   acknowledgedBy  String?
+//   createdAt       DateTime @default(now())
+//   resolvedAt      DateTime?
+//   sourceRef       String?
+//   employee        EmployeeProfile @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+//   organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+//   @@index([organizationId, employeeId, resolvedAt])
+//   @@index([organizationId, severity, resolvedAt])
+// }

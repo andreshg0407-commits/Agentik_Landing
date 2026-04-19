@@ -1,0 +1,30 @@
+{
+  "capturedAt": "2026-04-08T20:37:01.699Z",
+  "rows": [
+    {
+      "ka_ni_zona": 1,
+      "sc_detalle_zona": "MEDELLIN Y AREA METROPOLITANA",
+      "dd_fecha_ult_modificacion": "2016-09-21T00:00:00"
+    },
+    {
+      "ka_ni_zona": 3,
+      "sc_detalle_zona": "BOGOTA",
+      "dd_fecha_ult_modificacion": "2016-09-21T00:00:00"
+    },
+    {
+      "ka_ni_zona": 9,
+      "sc_detalle_zona": "OTRAS ZONAS",
+      "dd_fecha_ult_modificacion": "2016-09-21T00:00:00"
+    },
+    {
+      "ka_ni_zona": 5,
+      "sc_detalle_zona": "EJE CAFETERO",
+      "dd_fecha_ult_modificacion": "2016-09-21T00:00:00"
+    },
+    {
+      "ka_ni_zona": 6,
+      "sc_detalle_zona": "COSTA NORTE",
+      "dd_fecha_ult_modificacion": "2016-09-21T00:00:00"
+    }
+  ]
+}

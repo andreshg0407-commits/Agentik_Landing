@@ -10,21 +10,20 @@ const OPENID_COOKIE = "tt_open_id"
 const SCOPE_COOKIE = "tt_scope"
 const TOKEN_TYPE_COOKIE = "tt_token_type"
 
-function getCookie(cookieHeader: string, name: string) {
-  const found = cookieHeader
+function pickCookie(cookieHeader: string, name: string) {
+  const hit = cookieHeader
     .split(";")
     .map((c) => c.trim())
     .find((c) => c.startsWith(`${name}=`))
-  return found ? decodeURIComponent(found.split("=").slice(1).join("=")) : ""
+  return hit ? decodeURIComponent(hit.split("=").slice(1).join("=")) : ""
 }
 
 export async function GET(req: Request) {
   const cookieHeader = req.headers.get("cookie") || ""
-
-  const access = getCookie(cookieHeader, ACCESS_COOKIE)
-  const open_id = getCookie(cookieHeader, OPENID_COOKIE)
-  const scope = getCookie(cookieHeader, SCOPE_COOKIE)
-  const token_type = getCookie(cookieHeader, TOKEN_TYPE_COOKIE)
+  const access = pickCookie(cookieHeader, ACCESS_COOKIE)
+  const open_id = pickCookie(cookieHeader, OPENID_COOKIE)
+  const scope = pickCookie(cookieHeader, SCOPE_COOKIE)
+  const token_type = pickCookie(cookieHeader, TOKEN_TYPE_COOKIE)
 
   const connected = Boolean(access && open_id)
 
@@ -39,7 +38,7 @@ export async function GET(req: Request) {
     },
   })
 
-  // 🔥 anti-fantasmas
+  // 🔥 evita “connected fantasma” por cache
   res.headers.set("Cache-Control", "no-store, max-age=0")
   return res
 }
