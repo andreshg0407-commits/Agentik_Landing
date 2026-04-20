@@ -589,9 +589,13 @@ interface AssetCardProps {
   asset:     AssetState | null;
   onApprove: (id: string) => void;
   onReject:  (id: string) => void;
+  orgSlug:   string;
 }
 
-function AssetCard({ asset, onApprove, onReject }: AssetCardProps) {
+function AssetCard({ asset, onApprove, onReject, orgSlug }: AssetCardProps) {
+  const downloadHref = asset?.id
+    ? `/api/orgs/${orgSlug}/marketing-studio/assets/${asset.id}/download`
+    : undefined;
   const meta = asset
     ? (ASSET_META[asset.assetType] ?? { icon: "📄", label: asset.assetType })
     : { icon: "📷", label: "Activo" };
@@ -656,8 +660,8 @@ function AssetCard({ asset, onApprove, onReject }: AssetCardProps) {
             border: `1px solid ${C.redBorder}`, borderRadius: R.sm, fontSize: T.sz.xs,
             fontWeight: T.wt.bold, cursor: "pointer", fontFamily: T.mono,
           }}>✗ Rechazar</button>
-          {asset.assetUrl && (
-            <a href={asset.assetUrl} download target="_blank" rel="noopener noreferrer"
+          {downloadHref && (
+            <a href={downloadHref} download
               style={{ marginLeft: "auto", padding: `4px ${S[2]}px`, background: C.surface,
                 color: C.inkMid, border: `1px solid ${C.line}`, borderRadius: R.sm,
                 fontSize: T.sz.xs, fontFamily: T.mono, textDecoration: "none" }}>
@@ -666,16 +670,18 @@ function AssetCard({ asset, onApprove, onReject }: AssetCardProps) {
           )}
         </div>
       )}
-      {isApproved && asset?.assetUrl && (
+      {isApproved && asset && (
         <div style={{ display: "flex", gap: S[2], padding: `${S[2]}px ${S[3]}px`,
           borderTop: `1px solid ${C.greenBorder}`, background: C.greenLight }}>
           <span style={{ fontSize: T.sz.xs, color: C.greenDark }}>✓ Guardado en biblioteca creativa</span>
-          <a href={asset.assetUrl} download target="_blank" rel="noopener noreferrer"
-            style={{ marginLeft: "auto", padding: `2px ${S[2]}px`, background: C.white,
-              color: C.inkMid, border: `1px solid ${C.greenBorder}`, borderRadius: R.sm,
-              fontSize: T.sz.xs, fontFamily: T.mono, textDecoration: "none" }}>
-            ↓ Descargar
-          </a>
+          {downloadHref && (
+            <a href={downloadHref} download
+              style={{ marginLeft: "auto", padding: `2px ${S[2]}px`, background: C.white,
+                color: C.inkMid, border: `1px solid ${C.greenBorder}`, borderRadius: R.sm,
+                fontSize: T.sz.xs, fontFamily: T.mono, textDecoration: "none" }}>
+              ↓ Descargar
+            </a>
+          )}
         </div>
       )}
     </div>
@@ -750,12 +756,12 @@ function GenerationStep({
       <div style={{ padding: `${S[4]}px` }}>
         {assets.length === 0 ? (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[3] }}>
-            {[0, 1].map(i => <AssetCard key={i} asset={null} onApprove={() => {}} onReject={() => {}} />)}
+            {[0, 1].map(i => <AssetCard key={i} asset={null} onApprove={() => {}} onReject={() => {}} orgSlug={orgSlug} />)}
           </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: assets.length === 1 ? "1fr" : "1fr 1fr", gap: S[3] }}>
             {assets.map(a => (
-              <AssetCard key={a.id} asset={a} onApprove={onApprove} onReject={onReject} />
+              <AssetCard key={a.id} asset={a} onApprove={onApprove} onReject={onReject} orgSlug={orgSlug} />
             ))}
           </div>
         )}
