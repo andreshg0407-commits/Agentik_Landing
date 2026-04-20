@@ -44,6 +44,17 @@ export interface AssetGenerationRequest {
    * Built by buildGenerativePrompt() for visual assets; text spec for copy/hashtags.
    */
   prompt?:   string;
+  /**
+   * Negative prompt forwarded to the generation provider when supported.
+   * Used to suppress mannequins, isolated products, fake legs, etc.
+   */
+  negativePrompt?: string;
+  /**
+   * Hint for n8n about which Replicate model to use for this specific asset.
+   * n8n workflow should prefer this over its default when present.
+   * Examples: "black-forest-labs/flux-kontext-pro", "cuuupid/idm-vton"
+   */
+  replicateModelId?: string;
   /** Pre-rendered copy body — skips generation for text assets where we already have the value */
   content?:  string;
   /**
@@ -205,18 +216,22 @@ export function buildN8nWebhookPayload(
  */
 export function buildAssetRequests(
   assets: Array<{
-    id:              string;
-    assetType:       OutputAssetType;
-    prompt?:         string;
-    content?:        string;
-    sourceImageUrl?: string;
-    angle?:          "front" | "back";
+    id:                string;
+    assetType:         OutputAssetType;
+    prompt?:           string;
+    negativePrompt?:   string;
+    replicateModelId?: string;
+    content?:          string;
+    sourceImageUrl?:   string;
+    angle?:            "front" | "back";
   }>,
 ): AssetGenerationRequest[] {
-  return assets.map(({ id, assetType, prompt, content, sourceImageUrl, angle }) => ({
+  return assets.map(({ id, assetType, prompt, negativePrompt, replicateModelId, content, sourceImageUrl, angle }) => ({
     assetId: id,
     assetType,
     prompt,
+    negativePrompt,
+    replicateModelId,
     content,
     sourceImageUrl,
     angle,

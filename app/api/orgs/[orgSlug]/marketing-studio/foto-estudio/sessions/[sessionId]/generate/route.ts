@@ -64,7 +64,13 @@ export async function POST(
     }
 
     // ── Build asset list ──────────────────────────────────────────────────────
-    const assetSpecs: Array<{ assetType: string; prompt: string; sourceImageUrl: string }> = [];
+    const assetSpecs: Array<{
+      assetType:         string;
+      prompt:            string;
+      negativePrompt:    string;
+      replicateModelId:  string;
+      sourceImageUrl:    string;
+    }> = [];
 
     for (const output of selectedOutputs) {
       const assetTypes = mapOutputToAssetTypes(output);
@@ -72,9 +78,12 @@ export async function POST(
         // back_clean uses backImageUrl; everything else uses frontImageUrl
         const sourceUrl = (assetType === "back_clean" && backImageUrl) ? backImageUrl : (frontImageUrl || backImageUrl);
         if (!sourceUrl) continue; // skip if source missing (guard)
-        const prompt    = buildPrompt({ assetType, visualStyle, background, aspectRatio, garmentType, brandLine, socialPublicationType, referenceImageUrl });
+        const { prompt, negativePrompt, replicateModelId } = buildPrompt({
+          assetType, visualStyle, background, aspectRatio,
+          garmentType, brandLine, socialPublicationType, referenceImageUrl,
+        });
         for (let i = 0; i < quantity; i++) {
-          assetSpecs.push({ assetType, prompt, sourceImageUrl: sourceUrl });
+          assetSpecs.push({ assetType, prompt, negativePrompt, replicateModelId, sourceImageUrl: sourceUrl });
         }
       }
     }
@@ -120,10 +129,12 @@ export async function POST(
       fidelityMode:    "standard",
       draftShopify:    false,
       assets: dbAssets.map((a, idx) => ({
-        assetId:        a.id,
-        assetType:      a.assetType as OutputAssetType,
-        prompt:         assetSpecs[idx]?.prompt ?? "",
-        sourceImageUrl: assetSpecs[idx]?.sourceImageUrl,
+        assetId:          a.id,
+        assetType:        a.assetType as OutputAssetType,
+        prompt:           assetSpecs[idx]?.prompt            ?? "",
+        negativePrompt:   assetSpecs[idx]?.negativePrompt    ?? "",
+        replicateModelId: assetSpecs[idx]?.replicateModelId  ?? "",
+        sourceImageUrl:   assetSpecs[idx]?.sourceImageUrl,
       })),
       callbackUrl,
       schemaVersion:   "1.0",
@@ -154,7 +165,27 @@ export async function POST(
   }
 }
 
-// ── Prompt builder — commercial-grade, Do Jeans spec ──────────────────────────
+// ── Prompt builder — commercial fashion model, Do Jeans spec ─────────────────
+//
+// Model recommendation for n8n:
+//   Primary:   black-forest-labs/flux-kontext-pro  (garment-preserving img2img)
+//   Fallback:  black-forest-labs/flux-1.1-pro-ultra (higher realism if kontext unavailable)
+//   Virtual try-on alternative: cuuupid/idm-vton   (best garment fidelity, separate person
+//              image required — wire separately in n8n if available)
+//
+// Prompting rules for flux-kontext-pro garment→model generation:
+//   1. Lead with the PERSON, not the product. The model must understand the subject is human.
+//   2. Explicitly forbid mannequin/isolated product IN the positive prompt (flux ignores neg prompts).
+//   3. "Keep the exact garment from the reference image" triggers kontext preservation.
+//   4. Describe background with physical precision — "light gray seamless paper" not "gray bg".
+//   5. Use negativePrompt field for APIs that accept it (Stable Diffusion / SDXL paths in n8n).
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface PromptResult {
+  prompt:           string;
+  negativePrompt:   string;
+  replicateModelId: string;
+}
 
 function buildPrompt(opts: {
   assetType:             string;
@@ -165,141 +196,191 @@ function buildPrompt(opts: {
   brandLine:             BrandLine;
   socialPublicationType: SocialPublicationType;
   referenceImageUrl?:    string;
-}): string {
+}): PromptResult {
   const { assetType, visualStyle, background, aspectRatio, garmentType, brandLine, socialPublicationType } = opts;
 
-  // ── Shared vocab ─────────────────────────────────────────────────────────
+  // ── Garment vocabulary ───────────────────────────────────────────────────
 
   const garmentLabel: Record<GarmentType, string> = {
     jean:     "denim jeans",
     short:    "denim shorts",
     falda:    "denim skirt",
-    body:     "bodysuit",
+    body:     "form-fitting bodysuit",
     top:      "top",
     chaqueta: "denim jacket",
     vestido:  "dress",
-    otro:     "garment",
+    otro:     "clothing",
   };
+  const garmentStr = garmentLabel[garmentType] ?? "clothing";
 
-  const garmentStr = garmentLabel[garmentType] ?? "garment";
+  // ── Model descriptor ─────────────────────────────────────────────────────
 
-  // ── Model aesthetic per brand line ───────────────────────────────────────
+  const modelLuxury =
+    "a real Latina woman fashion model with a curvy voluptuous figure, " +
+    "accentuated hips and buttocks, natural feminine silhouette, " +
+    "confident elegant pose that highlights the fit of the garment";
 
-  const modelDescLuxury =
-    "a voluptuous Latin woman model, curvy figure, accentuated silhouette, " +
-    "booty-lifting fit, confident and sensual pose, glamorous but tasteful";
-  const modelDescCasual =
-    "a young Latin woman model, slim athletic build, natural relaxed pose, " +
-    "urban everyday look, approachable and confident";
-  const modelDesc = brandLine === "luxury" ? modelDescLuxury : modelDescCasual;
+  const modelCasual =
+    "a real young Latina woman fashion model with a slim athletic build, " +
+    "natural relaxed posture, approachable urban look";
 
-  // ── Background ──────────────────────────────────────────────────────────
+  const modelDesc = brandLine === "luxury" ? modelLuxury : modelCasual;
+
+  // ── Background — physical precision ─────────────────────────────────────
 
   const bgMap: Record<string, string> = {
-    white:         "pure white seamless background",
-    light_gray:    "light gray seamless studio background",
-    black:         "deep black background, dramatic lighting",
-    gradient:      "soft gradient background, smooth tonal transition",
-    outdoor_scene: "outdoor urban setting, natural daylight",
-    indoor_scene:  "indoor lifestyle environment, warm ambient light",
-    transparent:   "transparent background (PNG cutout)",
+    white:         "pure white seamless paper backdrop, evenly lit, no shadows on background",
+    light_gray:    "light neutral gray seamless paper backdrop, evenly lit studio, no shadows on background",
+    black:         "deep matte black seamless backdrop, dramatic split lighting",
+    gradient:      "soft light-to-mid gray gradient seamless backdrop",
+    outdoor_scene: "outdoor urban street setting, natural overcast daylight",
+    indoor_scene:  "modern indoor lifestyle space, warm window light",
+    transparent:   "transparent background (alpha channel PNG cutout)",
   };
-  const bgStr = bgMap[background] ?? background;
+  const bgStr = bgMap[background] ?? "neutral studio backdrop";
 
-  // ── Visual style lighting ────────────────────────────────────────────────
+  // ── Lighting ─────────────────────────────────────────────────────────────
 
   const lightingMap: Record<string, string> = {
-    clean_studio: "clean studio lighting, even soft boxes, no harsh shadows",
-    editorial:    "editorial fashion lighting, dramatic shadows, high contrast",
-    urban:        "natural city light, golden hour, authentic street atmosphere",
-    lifestyle:    "lifestyle natural light, warm tones, candid atmosphere",
-    luxury:       "premium studio lighting, rim light, bokeh depth-of-field",
-    minimal:      "minimalist flat lighting, neutral tones, understated elegance",
+    clean_studio: "professional studio lighting, large soft boxes, even exposure, no harsh shadows",
+    editorial:    "editorial high-contrast lighting, strong key light, dramatic shadows",
+    urban:        "natural outdoor light, overcast sky, soft diffuse illumination",
+    lifestyle:    "warm natural window light, soft fill, lifestyle mood",
+    luxury:       "premium studio lighting, rim light separation, subtle bokeh, polished finish",
+    minimal:      "clean flat even lighting, minimal shadows, clinical white-light setup",
   };
   const lightingStr = lightingMap[visualStyle] ?? "professional studio lighting";
 
-  // ── Per asset-type prompt construction ──────────────────────────────────
+  // ── Shared negative prompt ───────────────────────────────────────────────
 
-  // CATALOG (front_clean): half-body, garment in center, e-commerce focus
+  const sharedNegative = [
+    "mannequin", "ghost mannequin", "headless mannequin", "plastic mannequin",
+    "dummy", "doll", "fake legs", "mannequin legs", "isolated product",
+    "floating garment", "product cutout", "flat lay", "no model", "empty clothes",
+    "disembodied clothing", "invisible body", "CGI product", "3D render",
+    "deformed body", "extra limbs", "bad anatomy", "blurry", "low quality",
+    "watermark", "logo overlay", "text on image", "wrong color garment",
+    "different garment", "pattern change", "fabric change",
+  ].join(", ");
+
+  // ── Recommended model ────────────────────────────────────────────────────
+
+  // flux-kontext-pro: img2img with context preservation — best for garment fidelity
+  const defaultModel = "black-forest-labs/flux-kontext-pro";
+
+  // ── Per asset-type construction ──────────────────────────────────────────
+
+  // CATALOG FRONT (front_clean)
   if (assetType === "front_clean") {
-    return [
-      `Commercial e-commerce product photo of ${garmentStr} worn by ${modelDesc}.`,
-      `American shot (waist to knee), garment centered and fully visible, flat-front view.`,
-      `${lightingStr}. ${bgStr}.`,
-      `Hyper-realistic, sharp garment texture and stitching detail, accurate color rendition.`,
-      `${aspectRatio} format. Commercial fashion photography, high resolution, ready for online store.`,
+    const prompt = [
+      // 1. Lead with person — critical for flux-kontext-pro
+      `${modelDesc} wearing the exact ${garmentStr} shown in the reference image.`,
+      // 2. Garment preservation instruction (kontext trigger)
+      `Keep the garment's exact color, stitching, wash, pocket placement, waistband, and silhouette unchanged from the reference.`,
+      // 3. Shot framing
+      `American shot framing (waist to mid-thigh), model facing camera, straight-on front view, garment fully visible and centered.`,
+      // 4. Environment
+      `${bgStr}. ${lightingStr}.`,
+      // 5. Quality and commercial use
+      `Sharp garment texture, high-resolution skin detail, commercial e-commerce fashion photography quality, ${aspectRatio} ratio.`,
+      // 6. Explicit exclusions IN the positive prompt (flux-kontext-pro ignores negatives)
+      `Not a mannequin. Not an isolated product. Real living person. No fake legs. No floating garment.`,
     ].join(" ");
+
+    return { prompt, negativePrompt: sharedNegative, replicateModelId: defaultModel };
   }
 
-  // CATALOG BACK (back_clean): rear view, same e-commerce focus
+  // CATALOG BACK (back_clean)
   if (assetType === "back_clean") {
-    return [
-      `Commercial e-commerce product photo of ${garmentStr} worn by ${modelDesc}, rear view.`,
-      `American shot (waist to knee), garment centered, full back visible, showing fit and back design details.`,
-      `${lightingStr}. ${bgStr}.`,
-      `Hyper-realistic, sharp garment texture and stitching detail, accurate color rendition.`,
-      `${aspectRatio} format. Commercial fashion photography, high resolution, ready for online store.`,
+    const booty = brandLine === "luxury"
+      ? "showing the natural lifting effect of the garment on the buttocks and hips, silhouette highlighted"
+      : "relaxed natural rear pose";
+
+    const prompt = [
+      `${modelDesc} wearing the exact ${garmentStr} shown in the reference image, photographed from behind.`,
+      `Keep the garment's exact color, stitching, back pockets, rear waistband, and silhouette unchanged from the reference.`,
+      `American shot framing (waist to mid-thigh), rear view, ${booty}.`,
+      `${bgStr}. ${lightingStr}.`,
+      `Sharp garment texture, commercial e-commerce fashion photography quality, ${aspectRatio} ratio.`,
+      `Not a mannequin. Not an isolated product. Real living person. No fake legs. No floating garment.`,
     ].join(" ");
+
+    return { prompt, negativePrompt: sharedNegative, replicateModelId: defaultModel };
   }
 
-  // SOCIAL (social_image): full model, publication-type specific framing
+  // SOCIAL FEED / REEL / STORY (social_image)
   if (assetType === "social_image") {
-    const pubTypePrompts: Record<SocialPublicationType, string> = {
+    const pubFraming: Record<SocialPublicationType, string> = {
       feed: [
-        `Social media feed photo of ${garmentStr} worn by ${modelDesc}, full body shot.`,
-        `Balanced square or portrait composition, vibrant colors, polished post-processing.`,
-        `Model posing naturally for Instagram feed, confident engaging look.`,
+        `Full body shot, model centered, ${aspectRatio} portrait composition optimized for Instagram feed.`,
+        `Vibrant polished look, confident engaging pose toward camera.`,
       ].join(" "),
       reel: [
-        `Social media reel thumbnail photo of ${garmentStr} worn by ${modelDesc}, dynamic full body.`,
-        `Vertical 9:16 composition optimized for Reels and TikTok, energetic pose suggesting movement.`,
-        `Model mid-motion, hair and clothing with slight motion blur, cinematic feel.`,
+        `Full body vertical 9:16 composition optimized for Instagram Reels and TikTok.`,
+        `Dynamic energetic pose suggesting movement, slight motion energy in hair and garment.`,
       ].join(" "),
       story: [
-        `Instagram Story photo of ${garmentStr} worn by ${modelDesc}, full body or close-up.`,
-        `Vertical 9:16 composition with negative space at top and bottom for text overlay.`,
-        `Model gazing directly at camera, minimal background distractions.`,
+        `Full body vertical 9:16 composition with clear negative space at top and bottom for text overlay.`,
+        `Model looking directly at camera, minimal background distractions.`,
       ].join(" "),
     };
-    const pubStr = pubTypePrompts[socialPublicationType] ?? pubTypePrompts.feed;
-    return [
-      pubStr,
-      `${lightingStr}. ${bgStr}.`,
-      `Hyper-realistic, commercial fashion quality, ${aspectRatio} format.`,
-      `Brand aesthetic: ${brandLine === "luxury" ? "aspirational luxury Latin fashion" : "accessible urban Latin streetwear"}.`,
+    const framingStr = pubFraming[socialPublicationType] ?? pubFraming.feed;
+
+    const brandStr = brandLine === "luxury"
+      ? "aspirational premium Latin fashion aesthetic, sophisticated and desirable"
+      : "accessible authentic urban Latin streetwear aesthetic";
+
+    const prompt = [
+      `${modelDesc} wearing the exact ${garmentStr} shown in the reference image.`,
+      `Keep the garment's exact color, design, and details unchanged from the reference.`,
+      framingStr,
+      `${bgStr}. ${lightingStr}.`,
+      `${brandStr}. Hyper-realistic commercial fashion photography, ${aspectRatio} ratio.`,
+      `Not a mannequin. Not an isolated product. Real living person.`,
     ].join(" ");
+
+    return { prompt, negativePrompt: sharedNegative, replicateModelId: defaultModel };
   }
 
-  // SHORT VIDEO (social_video): motion, vertical, natural movement descriptor
+  // SHORT VIDEO (social_video)
   if (assetType === "social_video") {
-    return [
-      `Short fashion video clip (8 seconds) featuring ${garmentStr} worn by ${modelDesc}.`,
-      `Vertical 9:16 format, optimized for TikTok and Instagram Reels.`,
-      `Model walking naturally, adjusting garment, light spin to show full silhouette.`,
-      `${lightingStr}. ${bgStr}.`,
-      `Smooth slow-motion segments, upbeat pacing, commercial fashion video quality.`,
-      `Brand aesthetic: ${brandLine === "luxury" ? "aspirational luxury Latin fashion" : "authentic urban Latin streetwear"}.`,
+    const prompt = [
+      `${modelDesc} wearing the exact ${garmentStr} shown in the reference image, filmed as a short fashion video clip.`,
+      `Keep the garment's exact color, design, and details unchanged from the reference.`,
+      `Vertical 9:16 video frame, 8-second clip. Model walks naturally, does a slow confident turn to show front and back silhouette.`,
+      `${bgStr}. ${lightingStr}.`,
+      `Cinematic 24fps feel, smooth movement, commercial fashion video quality.`,
+      `Not a mannequin. Real human model in motion.`,
     ].join(" ");
+
+    return { prompt, negativePrompt: sharedNegative, replicateModelId: defaultModel };
   }
 
-  // CUSTOM TEMPLATE (product_photo): reference style analysis
+  // CUSTOM TEMPLATE / PLANTILLA (product_photo)
   if (assetType === "product_photo") {
     const refNote = opts.referenceImageUrl
-      ? "Match the visual composition, color palette and layout style of the provided reference image exactly."
-      : "Create a lookbook-style brand composition with brand-consistent color palette.";
-    return [
-      `Custom brand template photo featuring ${garmentStr} worn by ${modelDesc}.`,
+      ? "Match the visual composition, color palette, and layout style of the reference template image exactly. Place the garment and model within that layout."
+      : "Lookbook-style brand editorial composition, brand-consistent color palette and layout.";
+
+    const prompt = [
+      `${modelDesc} wearing the exact ${garmentStr} shown in the reference image.`,
+      `Keep the garment's exact color, design, and details unchanged from the reference.`,
       refNote,
-      `${lightingStr}. ${bgStr}.`,
-      `${aspectRatio} format. Hyper-realistic commercial fashion photography.`,
-      `Brand aesthetic: ${brandLine === "luxury" ? "premium aspirational Latin fashion" : "modern accessible urban fashion"}.`,
+      `${bgStr}. ${lightingStr}.`,
+      `${aspectRatio} ratio. Hyper-realistic commercial fashion photography.`,
+      `Not a mannequin. Real living person.`,
     ].join(" ");
+
+    return { prompt, negativePrompt: sharedNegative, replicateModelId: defaultModel };
   }
 
   // Fallback
-  return [
-    `Commercial fashion photo of ${garmentStr} worn by ${modelDesc}.`,
-    `${lightingStr}. ${bgStr}.`,
-    `${aspectRatio} format. Hyper-realistic, high resolution.`,
+  const prompt = [
+    `${modelDesc} wearing the exact ${garmentStr} shown in the reference image.`,
+    `Keep the garment's exact color, design, and details unchanged from the reference.`,
+    `${bgStr}. ${lightingStr}. ${aspectRatio} ratio.`,
+    `Commercial fashion photography, hyper-realistic. Real human model, not a mannequin.`,
   ].join(" ");
+
+  return { prompt, negativePrompt: sharedNegative, replicateModelId: defaultModel };
 }
