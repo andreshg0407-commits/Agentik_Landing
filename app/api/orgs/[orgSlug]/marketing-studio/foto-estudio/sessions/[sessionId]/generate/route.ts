@@ -24,7 +24,7 @@ export const runtime = "nodejs";
 type RouteContext = { params: Promise<{ orgSlug: string; sessionId: string }> };
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: RouteContext,
 ): Promise<NextResponse> {
   const { orgSlug, sessionId } = await params;
@@ -79,7 +79,7 @@ export async function POST(
 
     // ── Build n8n payload ─────────────────────────────────────────────────────
     const callbackSecret = process.env.STUDIO_N8N_WEBHOOK_SECRET;
-    const callbackBase   = `${process.env.NEXT_PUBLIC_BASE_URL ?? ""}/api/orgs/${orgSlug}/marketing-studio/sessions/${sessionId}/callback`;
+    const callbackBase   = `${new URL(req.url).origin}/api/orgs/${orgSlug}/marketing-studio/sessions/${sessionId}/callback`;
     const callbackUrl    = callbackSecret
       ? `${callbackBase}?token=${encodeURIComponent(callbackSecret)}`
       : callbackBase;

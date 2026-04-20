@@ -147,7 +147,7 @@ export async function POST(
 
     // ── 7. Build execution payload ───────────────────────────────────────────
     const callbackSecret = process.env.STUDIO_N8N_WEBHOOK_SECRET;
-    const callbackBase   = `${process.env.NEXT_PUBLIC_BASE_URL ?? ""}/api/orgs/${orgSlug}/marketing-studio/sessions/${sessionId}/callback`;
+    const callbackBase   = `${new URL(req.url).origin}/api/orgs/${orgSlug}/marketing-studio/sessions/${sessionId}/callback`;
     const callbackUrl    = callbackSecret
       ? `${callbackBase}?token=${encodeURIComponent(callbackSecret)}`
       : callbackBase;
