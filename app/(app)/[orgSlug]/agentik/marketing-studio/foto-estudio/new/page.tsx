@@ -61,7 +61,13 @@ export default async function FotoEstudioNewPage({
       </div>
 
       {/* ── Wizard ── */}
-      <FotoEstudioWizard orgSlug={orgSlug} tenantId={orgSlug} />
+      {/* DEMO: force do-jeans tenant config when accessed via /agentik — remove after do-jeans org is provisioned */}
+      <FotoEstudioWizard
+        orgSlug={orgSlug}
+        tenantId={process.env.FOTO_ESTUDIO_DEMO_TENANT ?? orgSlug}
+        defaultBrandLine="luxury"
+        defaultGarmentType="jean"
+      />
 
     </div>
   );

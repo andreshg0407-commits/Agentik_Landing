@@ -932,7 +932,17 @@ function GenerationStep({
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function FotoEstudioWizard({ orgSlug, tenantId }: { orgSlug: string; tenantId: string }) {
+export function FotoEstudioWizard({
+  orgSlug,
+  tenantId,
+  defaultBrandLine  = "casual",
+  defaultGarmentType = "jean",
+}: {
+  orgSlug:            string;
+  tenantId:           string;
+  defaultBrandLine?:  BrandLine;
+  defaultGarmentType?: GarmentType;
+}) {
   // Session
   const [sessionId] = useState(() => genSessionId());
   const dbCreated   = useRef(false);
@@ -958,8 +968,8 @@ export function FotoEstudioWizard({ orgSlug, tenantId }: { orgSlug: string; tena
   const [background,            setBackground]            = useState<BackgroundType>("white");
   const [aspectRatio,           setAspectRatio]           = useState<AspectRatio>("1:1");
   const [quantity,              setQuantity]              = useState(1);
-  const [garmentType,           setGarmentType]           = useState<GarmentType>("jean");
-  const [brandLine,             setBrandLine]             = useState<BrandLine>("casual");
+  const [garmentType,           setGarmentType]           = useState<GarmentType>(defaultGarmentType);
+  const [brandLine,             setBrandLine]             = useState<BrandLine>(defaultBrandLine);
   const [socialPublicationType, setSocialPublicationType] = useState<SocialPublicationType>("feed");
 
   // Step 4
