@@ -21,7 +21,7 @@ import type {
 import type { SerializedCommercialFact } from "@/lib/commercial-ledger/types";
 import SagEnqueueButton from "./sag-enqueue-button";
 import ActionButton     from "../_action-button";
-import { suggestAction } from "@/lib/collections/queue";
+import { suggestAction } from "@/lib/collections/suggest-action";
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 

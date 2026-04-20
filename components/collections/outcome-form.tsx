@@ -13,8 +13,8 @@
  */
 
 import { useState } from "react";
-import type { OutcomeType, ContactChannel } from "@/lib/collections/outcomes";
-import { OUTCOME_LABELS, OUTCOME_ICONS } from "@/lib/collections/outcomes";
+import type { OutcomeType, ContactChannel } from "@/lib/collections/outcomes-types";
+import { OUTCOME_LABELS, OUTCOME_ICONS } from "@/lib/collections/outcomes-types";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
