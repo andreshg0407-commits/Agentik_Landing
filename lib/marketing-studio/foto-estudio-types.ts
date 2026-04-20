@@ -31,17 +31,42 @@ export type BackgroundType =
 
 export type AspectRatio = "1:1" | "9:16" | "4:5" | "4:3" | "16:9";
 
+/** Type of garment being photographed */
+export type GarmentType =
+  | "jean"
+  | "short"
+  | "falda"
+  | "body"
+  | "top"
+  | "chaqueta"
+  | "vestido"
+  | "otro";
+
+/**
+ * Brand line — determines model aesthetic and mood.
+ * luxury: curvy latina, levanta cola silhouette, sensual elegance.
+ * casual: urban, relaxed, approachable.
+ */
+export type BrandLine = "luxury" | "casual";
+
+/** For social_photo — drives framing, composition, aspect ratio and pose */
+export type SocialPublicationType = "feed" | "reel" | "story";
+
 export interface FotoEstudioSettings {
-  frontImageUrl?:    string;
-  backImageUrl?:     string;
-  detail1Url?:       string;
-  detail2Url?:       string;
-  sku?:              string;
-  selectedOutputs:   FotoOutputType[];
-  visualStyle:       VisualStyle;
-  background:        BackgroundType;
-  aspectRatio:       AspectRatio;
-  quantity:          number;   // variants per output type, 1–4
+  frontImageUrl?:         string;
+  backImageUrl?:          string;
+  detail1Url?:            string;
+  detail2Url?:            string;
+  referenceImageUrl?:     string;   // for custom_template — style reference
+  sku?:                   string;
+  selectedOutputs:        FotoOutputType[];
+  visualStyle:            VisualStyle;
+  background:             BackgroundType;
+  aspectRatio:            AspectRatio;
+  quantity:               number;   // variants per output type, 1–4
+  garmentType:            GarmentType;
+  brandLine:              BrandLine;
+  socialPublicationType?: SocialPublicationType;  // only for social_photo
 }
 
 /** Maps a FotoOutputType to the asset type strings used in GeneratedAsset */
@@ -59,6 +84,39 @@ export function mapOutputToAssetTypes(output: FotoOutputType): string[] {
       return ["product_photo"];
   }
 }
+
+export const GARMENT_TYPE_LABELS: Record<GarmentType, string> = {
+  jean:     "Jean",
+  short:    "Short",
+  falda:    "Falda",
+  body:     "Body",
+  top:      "Top",
+  chaqueta: "Chaqueta",
+  vestido:  "Vestido",
+  otro:     "Otro",
+};
+
+export const BRAND_LINE_LABELS: Record<BrandLine, string> = {
+  luxury: "Luxury",
+  casual: "Casual",
+};
+
+export const BRAND_LINE_DESCRIPTIONS: Record<BrandLine, string> = {
+  luxury: "Modelo voluptuosa, estética latina premium, levanta cola.",
+  casual: "Modelo urbana, look relajado y cotidiano.",
+};
+
+export const SOCIAL_PUBLICATION_LABELS: Record<SocialPublicationType, string> = {
+  feed:  "Feed",
+  reel:  "Reel / TikTok",
+  story: "Story",
+};
+
+export const SOCIAL_PUBLICATION_DESCRIPTIONS: Record<SocialPublicationType, string> = {
+  feed:  "Cuadrado o 4:5 — composición balanceada, colores vibrantes.",
+  reel:  "9:16 vertical — pose dinámica, sugestión de movimiento.",
+  story: "9:16 vertical — encuadre cercano, espacio para texto.",
+};
 
 export const VISUAL_STYLE_LABELS: Record<VisualStyle, string> = {
   clean_studio: "Estudio limpio",

@@ -20,12 +20,20 @@ import {
   VISUAL_STYLE_LABELS,
   BACKGROUND_LABELS,
   ASPECT_RATIO_LABELS,
+  GARMENT_TYPE_LABELS,
+  BRAND_LINE_LABELS,
+  BRAND_LINE_DESCRIPTIONS,
+  SOCIAL_PUBLICATION_LABELS,
+  SOCIAL_PUBLICATION_DESCRIPTIONS,
 } from "@/lib/marketing-studio/foto-estudio-types";
 import type {
   FotoOutputType,
   VisualStyle,
   BackgroundType,
   AspectRatio,
+  GarmentType,
+  BrandLine,
+  SocialPublicationType,
 } from "@/lib/marketing-studio/foto-estudio-types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -111,9 +119,12 @@ const OUTPUT_CARDS: Array<{
 
 // ── Visual styles ─────────────────────────────────────────────────────────────
 
-const VISUAL_STYLES: VisualStyle[] = ["clean_studio", "editorial", "urban", "lifestyle", "luxury", "minimal"];
-const BACKGROUNDS:   BackgroundType[] = ["white", "light_gray", "black", "gradient", "outdoor_scene", "indoor_scene", "transparent"];
-const ASPECT_RATIOS: AspectRatio[]    = ["1:1", "9:16", "4:5", "4:3", "16:9"];
+const VISUAL_STYLES:    VisualStyle[]           = ["clean_studio", "editorial", "urban", "lifestyle", "luxury", "minimal"];
+const BACKGROUNDS:      BackgroundType[]         = ["white", "light_gray", "black", "gradient", "outdoor_scene", "indoor_scene", "transparent"];
+const ASPECT_RATIOS:    AspectRatio[]            = ["1:1", "9:16", "4:5", "4:3", "16:9"];
+const GARMENT_TYPES:    GarmentType[]            = ["jean", "short", "falda", "body", "top", "chaqueta", "vestido", "otro"];
+const BRAND_LINES:      BrandLine[]              = ["luxury", "casual"];
+const SOCIAL_PUB_TYPES: SocialPublicationType[]  = ["feed", "reel", "story"];
 
 const ASSET_META: Record<string, { icon: string; label: string }> = {
   front_clean:    { icon: "📸", label: "Vista frontal" },
@@ -341,22 +352,28 @@ function ImageUploadZone({
 function UploadStep({
   frontUrl, setFrontUrl, backUrl, setBackUrl,
   detail1Url, setDetail1Url, detail2Url, setDetail2Url,
-  sku, setSku, onNext, tenantId, sessionId,
+  referenceImageUrl, setReferenceImageUrl,
+  sku, setSku, onNext, tenantId, sessionId, selectedOutputs,
 }: {
-  frontUrl:       string;
-  setFrontUrl:    (v: string) => void;
-  backUrl:        string;
-  setBackUrl:     (v: string) => void;
-  detail1Url:     string;
-  setDetail1Url:  (v: string) => void;
-  detail2Url:     string;
-  setDetail2Url:  (v: string) => void;
-  sku:            string;
-  setSku:         (v: string) => void;
-  onNext:         () => void;
-  tenantId:       string;
-  sessionId:      string;
+  frontUrl:              string;
+  setFrontUrl:           (v: string) => void;
+  backUrl:               string;
+  setBackUrl:            (v: string) => void;
+  detail1Url:            string;
+  setDetail1Url:         (v: string) => void;
+  detail2Url:            string;
+  setDetail2Url:         (v: string) => void;
+  referenceImageUrl:     string;
+  setReferenceImageUrl:  (v: string) => void;
+  sku:                   string;
+  setSku:                (v: string) => void;
+  onNext:                () => void;
+  tenantId:              string;
+  sessionId:             string;
+  selectedOutputs:       FotoOutputType[];
 }) {
+  const hasCustomTemplate = selectedOutputs.includes("custom_template");
+
   return (
     <Panel style={{ marginBottom: 0 }}>
       <PanelHeader title="Sube las fotos del producto" icon="📦" />
@@ -380,6 +397,27 @@ function UploadStep({
             <ImageUploadZone label="Detalle 1" required={false} angle="detail1" tenantId={tenantId} sessionId={sessionId} onUploaded={setDetail1Url} />
             <ImageUploadZone label="Detalle 2" required={false} angle="detail2" tenantId={tenantId} sessionId={sessionId} onUploaded={setDetail2Url} />
           </div>
+
+          {/* Reference image — only shown when custom_template is selected */}
+          {hasCustomTemplate && (
+            <div>
+              <div style={{ fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.brand,
+                textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: S[2] }}>
+                🎨 Plantilla personalizada
+              </div>
+              <ImageUploadZone
+                label="Imagen de referencia de estilo"
+                required={false}
+                angle={"detail1" as UploadAngle}
+                tenantId={tenantId}
+                sessionId={sessionId}
+                onUploaded={setReferenceImageUrl}
+              />
+              <div style={{ fontSize: T.sz.xs, color: C.inkFaint, marginTop: 4 }}>
+                La IA copiará la composición, paleta de colores y estilo de esta imagen de referencia.
+              </div>
+            </div>
+          )}
 
           <div style={{ fontSize: T.sz.xs, color: C.inkFaint,
             padding: `${S[2]}px ${S[3]}px`, background: C.surfaceAlt, borderRadius: R.sm }}>
@@ -468,21 +506,30 @@ function ChooseOutputsStep({
 function VisualSettingsStep({
   visualStyle, setVisualStyle, background, setBackground,
   aspectRatio, setAspectRatio, quantity, setQuantity,
+  garmentType, setGarmentType, brandLine, setBrandLine,
+  socialPublicationType, setSocialPublicationType,
   onNext, onBack, selectedOutputs,
 }: {
-  visualStyle:    VisualStyle;
-  setVisualStyle: (v: VisualStyle) => void;
-  background:     BackgroundType;
-  setBackground:  (v: BackgroundType) => void;
-  aspectRatio:    AspectRatio;
-  setAspectRatio: (v: AspectRatio) => void;
-  quantity:       number;
-  setQuantity:    (v: number) => void;
-  onNext:         () => void;
-  onBack:         () => void;
-  selectedOutputs: FotoOutputType[];
+  visualStyle:              VisualStyle;
+  setVisualStyle:           (v: VisualStyle) => void;
+  background:               BackgroundType;
+  setBackground:            (v: BackgroundType) => void;
+  aspectRatio:              AspectRatio;
+  setAspectRatio:           (v: AspectRatio) => void;
+  quantity:                 number;
+  setQuantity:              (v: number) => void;
+  garmentType:              GarmentType;
+  setGarmentType:           (v: GarmentType) => void;
+  brandLine:                BrandLine;
+  setBrandLine:             (v: BrandLine) => void;
+  socialPublicationType:    SocialPublicationType;
+  setSocialPublicationType: (v: SocialPublicationType) => void;
+  onNext:                   () => void;
+  onBack:                   () => void;
+  selectedOutputs:          FotoOutputType[];
 }) {
-  const hasVideo = selectedOutputs.includes("short_video");
+  const hasVideo  = selectedOutputs.includes("short_video");
+  const hasSocial = selectedOutputs.includes("social_photo");
 
   return (
     <Panel style={{ marginBottom: 0 }}>
@@ -490,7 +537,84 @@ function VisualSettingsStep({
       <div style={{ padding: `${S[4]}px` }}>
         <div style={{ display: "grid", gap: S[4] }}>
 
-          {/* Visual style */}
+          {/* ── Tipo de prenda ─────────────────────────────────────────── */}
+          <div>
+            <div style={labelStyle}>Tipo de prenda</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: S[2] }}>
+              {GARMENT_TYPES.map(gt => (
+                <button key={gt} onClick={() => setGarmentType(gt)} style={{
+                  padding: `${S[2]}px ${S[2]}px`,
+                  border: garmentType === gt ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
+                  borderRadius: R.md,
+                  background: garmentType === gt ? C.brandLight : C.surface,
+                  cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.sm,
+                  fontWeight: garmentType === gt ? T.wt.bold : T.wt.normal,
+                  color: garmentType === gt ? C.brand : C.inkMid,
+                  transition: "border-color 0.1s",
+                }}>
+                  {GARMENT_TYPE_LABELS[gt]}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* ── Línea de marca ─────────────────────────────────────────── */}
+          <div>
+            <div style={labelStyle}>Línea de marca</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
+              {BRAND_LINES.map(bl => (
+                <button key={bl} onClick={() => setBrandLine(bl)} style={{
+                  padding: `${S[3]}px ${S[3]}px`,
+                  border: brandLine === bl ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
+                  borderRadius: R.md,
+                  background: brandLine === bl ? C.brandLight : C.surface,
+                  cursor: "pointer", fontFamily: T.mono,
+                  textAlign: "left" as const,
+                  transition: "border-color 0.1s",
+                }}>
+                  <div style={{ fontWeight: T.wt.bold, fontSize: T.sz.sm,
+                    color: brandLine === bl ? C.brand : C.ink, marginBottom: 3 }}>
+                    {BRAND_LINE_LABELS[bl]}
+                  </div>
+                  <div style={{ fontSize: T.sz.xs,
+                    color: brandLine === bl ? C.brandDark : C.inkLight }}>
+                    {BRAND_LINE_DESCRIPTIONS[bl]}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* ── Tipo de publicación (solo para Foto para redes) ─────────── */}
+          {hasSocial && (
+            <div>
+              <div style={labelStyle}>Tipo de publicación — Foto para redes</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: S[2] }}>
+                {SOCIAL_PUB_TYPES.map(pt => (
+                  <button key={pt} onClick={() => setSocialPublicationType(pt)} style={{
+                    padding: `${S[3]}px ${S[2]}px`,
+                    border: socialPublicationType === pt ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
+                    borderRadius: R.md,
+                    background: socialPublicationType === pt ? C.brandLight : C.surface,
+                    cursor: "pointer", fontFamily: T.mono,
+                    textAlign: "left" as const,
+                    transition: "border-color 0.1s",
+                  }}>
+                    <div style={{ fontWeight: T.wt.bold, fontSize: T.sz.sm,
+                      color: socialPublicationType === pt ? C.brand : C.ink, marginBottom: 3 }}>
+                      {SOCIAL_PUBLICATION_LABELS[pt]}
+                    </div>
+                    <div style={{ fontSize: T.sz["2xs"],
+                      color: socialPublicationType === pt ? C.brandDark : C.inkFaint }}>
+                      {SOCIAL_PUBLICATION_DESCRIPTIONS[pt]}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── Estilo visual ──────────────────────────────────────────── */}
           <div>
             <div style={labelStyle}>Estilo visual</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: S[2] }}>
@@ -511,7 +635,7 @@ function VisualSettingsStep({
             </div>
           </div>
 
-          {/* Background */}
+          {/* ── Fondo ──────────────────────────────────────────────────── */}
           <div>
             <div style={labelStyle}>Fondo</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
@@ -532,7 +656,7 @@ function VisualSettingsStep({
             </div>
           </div>
 
-          {/* Format / aspect ratio (skip for videos) */}
+          {/* ── Formato / aspect ratio (no aplica para video) ─────────── */}
           {!hasVideo && (
             <div>
               <div style={labelStyle}>Formato</div>
@@ -553,7 +677,7 @@ function VisualSettingsStep({
             </div>
           )}
 
-          {/* Quantity */}
+          {/* ── Variantes ─────────────────────────────────────────────── */}
           <div>
             <div style={labelStyle}>Variantes por tipo</div>
             <div style={{ display: "flex", gap: S[2] }}>
@@ -826,11 +950,17 @@ export function FotoEstudioWizard({ orgSlug, tenantId }: { orgSlug: string; tena
   // Step 2
   const [selectedOutputs, setSelectedOutputs] = useState<FotoOutputType[]>([]);
 
+  // Step 1 extra
+  const [referenceImageUrl, setReferenceImageUrl] = useState("");
+
   // Step 3
-  const [visualStyle,  setVisualStyle]  = useState<VisualStyle>("clean_studio");
-  const [background,   setBackground]   = useState<BackgroundType>("white");
-  const [aspectRatio,  setAspectRatio]  = useState<AspectRatio>("1:1");
-  const [quantity,     setQuantity]     = useState(1);
+  const [visualStyle,           setVisualStyle]           = useState<VisualStyle>("clean_studio");
+  const [background,            setBackground]            = useState<BackgroundType>("white");
+  const [aspectRatio,           setAspectRatio]           = useState<AspectRatio>("1:1");
+  const [quantity,              setQuantity]              = useState(1);
+  const [garmentType,           setGarmentType]           = useState<GarmentType>("jean");
+  const [brandLine,             setBrandLine]             = useState<BrandLine>("casual");
+  const [socialPublicationType, setSocialPublicationType] = useState<SocialPublicationType>("feed");
 
   // Step 4
   const [assets,        setAssets]        = useState<AssetState[]>([]);
@@ -888,16 +1018,20 @@ export function FotoEstudioWizard({ orgSlug, tenantId }: { orgSlug: string; tena
       body: JSON.stringify({
         action: "set_inputs",
         inputs: {
-          frontImageUrl:   frontUrl,
-          backImageUrl:    backUrl || undefined,
-          detail1Url:      detail1Url || undefined,
-          detail2Url:      detail2Url || undefined,
-          sku:             sku || undefined,
+          frontImageUrl:        frontUrl,
+          backImageUrl:         backUrl            || undefined,
+          detail1Url:           detail1Url         || undefined,
+          detail2Url:           detail2Url         || undefined,
+          referenceImageUrl:    referenceImageUrl  || undefined,
+          sku:                  sku                || undefined,
           selectedOutputs,
           visualStyle,
           background,
           aspectRatio,
           quantity,
+          garmentType,
+          brandLine,
+          socialPublicationType,
         },
       }),
     }).catch(err => console.warn("[wizard] failed to save inputs:", err));
@@ -981,13 +1115,15 @@ export function FotoEstudioWizard({ orgSlug, tenantId }: { orgSlug: string; tena
 
       {step === "upload" && (
         <UploadStep
-          frontUrl={frontUrl}     setFrontUrl={setFrontUrl}
-          backUrl={backUrl}       setBackUrl={setBackUrl}
-          detail1Url={detail1Url} setDetail1Url={setDetail1Url}
-          detail2Url={detail2Url} setDetail2Url={setDetail2Url}
-          sku={sku}               setSku={setSku}
+          frontUrl={frontUrl}                   setFrontUrl={setFrontUrl}
+          backUrl={backUrl}                     setBackUrl={setBackUrl}
+          detail1Url={detail1Url}               setDetail1Url={setDetail1Url}
+          detail2Url={detail2Url}               setDetail2Url={setDetail2Url}
+          referenceImageUrl={referenceImageUrl} setReferenceImageUrl={setReferenceImageUrl}
+          sku={sku}                             setSku={setSku}
           onNext={() => setStep("choose_outputs")}
           tenantId={tenantId} sessionId={sessionId}
+          selectedOutputs={selectedOutputs}
         />
       )}
 
@@ -1004,10 +1140,13 @@ export function FotoEstudioWizard({ orgSlug, tenantId }: { orgSlug: string; tena
 
       {step === "visual_settings" && (
         <VisualSettingsStep
-          visualStyle={visualStyle}   setVisualStyle={setVisualStyle}
-          background={background}     setBackground={setBackground}
-          aspectRatio={aspectRatio}   setAspectRatio={setAspectRatio}
-          quantity={quantity}         setQuantity={setQuantity}
+          visualStyle={visualStyle}                   setVisualStyle={setVisualStyle}
+          background={background}                     setBackground={setBackground}
+          aspectRatio={aspectRatio}                   setAspectRatio={setAspectRatio}
+          quantity={quantity}                         setQuantity={setQuantity}
+          garmentType={garmentType}                   setGarmentType={setGarmentType}
+          brandLine={brandLine}                       setBrandLine={setBrandLine}
+          socialPublicationType={socialPublicationType} setSocialPublicationType={setSocialPublicationType}
           onNext={() => setStep("generation")}
           onBack={() => setStep("choose_outputs")}
           selectedOutputs={selectedOutputs}

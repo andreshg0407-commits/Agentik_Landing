@@ -91,11 +91,19 @@ export interface StudioExecutionPayload {
   locale:             string;
 
   // ── Foto Estudio settings (foto_estudio path only) ────────────────────────
-  selectedOutputs?:   string[];
-  visualStyle?:       string;
-  background?:        string;
-  aspectRatio?:       string;
-  quantity?:          number;
+  selectedOutputs?:        string[];
+  visualStyle?:            string;
+  background?:             string;
+  aspectRatio?:            string;
+  quantity?:               number;
+  /** Type of garment: jean, short, falda, body, top, chaqueta, vestido, otro */
+  garmentType?:            string;
+  /** Brand line: luxury (curvy latina, levanta cola) | casual (urban, relaxed) */
+  brandLine?:              string;
+  /** For social_photo: feed | reel | story — drives framing and composition */
+  socialPublicationType?:  string;
+  /** Reference image URL for custom_template — style is matched from this */
+  referenceImageUrl?:      string;
 
   // ── Mode discriminator ────────────────────────────────────────────────────
   /**
