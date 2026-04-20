@@ -37,6 +37,7 @@ import {
   resolveAndPublishSession,
   updateDbSessionFailed,
 }                                            from "@/lib/marketing-studio/session-service";
+import { uploadGeneratedAssetImage }         from "@/lib/marketing-studio/r2-upload";
 
 type RouteContext = { params: Promise<{ orgSlug: string; sessionId: string }> };
 
@@ -106,10 +107,26 @@ export async function POST(
 
   // ── 3. Persist asset status ──────────────────────────────────────────────────
   if (status === "READY") {
-    if (!assetUrl && !content) {
-      // product_draft and text assets may have no URL — that is valid
+    let finalUrl = assetUrl ?? "";
+
+    // Re-host provider URLs (e.g. signed Replicate URLs) to R2 for permanence.
+    if (assetUrl) {
+      try {
+        const r2 = await uploadGeneratedAssetImage({
+          sourceUrl: assetUrl,
+          tenantId:  session.tenantId,
+          sessionId,
+          assetId,
+          assetType: asset.assetType,
+        });
+        if (r2) finalUrl = r2.url;
+      } catch (uploadErr) {
+        // R2 upload failed — log and fall back to provider URL
+        console.warn("[callback] R2 upload failed, using provider URL", { assetId, err: uploadErr });
+      }
     }
-    await updateAssetGenerationReady(assetId, assetUrl ?? "", externalRef);
+
+    await updateAssetGenerationReady(assetId, finalUrl, externalRef);
   } else {
     await updateAssetGenerationFailed(assetId);
   }

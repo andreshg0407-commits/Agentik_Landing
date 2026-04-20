@@ -6,7 +6,8 @@
  */
 
 export type FotoOutputType =
-  | "catalog_photo"      // Foto catálogo — clean background, e-commerce ready
+  | "catalog_photo"      // Foto frontal — clean front, e-commerce ready
+  | "back_photo"         // Foto trasera — clean back shot
   | "social_photo"       // Foto para redes — styled, social format
   | "short_video"        // Video corto — 8s vertical clip
   | "custom_template";   // Plantilla personalizada
@@ -31,7 +32,7 @@ export type BackgroundType =
 export type AspectRatio = "1:1" | "9:16" | "4:5" | "4:3" | "16:9";
 
 export interface FotoEstudioSettings {
-  frontImageUrl:     string;
+  frontImageUrl?:    string;
   backImageUrl?:     string;
   detail1Url?:       string;
   detail2Url?:       string;
@@ -44,10 +45,12 @@ export interface FotoEstudioSettings {
 }
 
 /** Maps a FotoOutputType to the asset type strings used in GeneratedAsset */
-export function mapOutputToAssetTypes(output: FotoOutputType, hasBack: boolean): string[] {
+export function mapOutputToAssetTypes(output: FotoOutputType): string[] {
   switch (output) {
     case "catalog_photo":
-      return hasBack ? ["front_clean", "back_clean"] : ["front_clean"];
+      return ["front_clean"];
+    case "back_photo":
+      return ["back_clean"];
     case "social_photo":
       return ["social_image"];
     case "short_video":

@@ -40,7 +40,7 @@ export async function POST(
 
     const settings = (session.inputsJson ?? {}) as Partial<FotoEstudioSettings>;
     const frontImageUrl   = settings.frontImageUrl ?? "";
-    const backImageUrl    = settings.backImageUrl;
+    const backImageUrl    = settings.backImageUrl   ?? "";
     const detail1Url      = settings.detail1Url;
     const detail2Url      = settings.detail2Url;
     const selectedOutputs = settings.selectedOutputs ?? ["catalog_photo"] as FotoOutputType[];
@@ -49,17 +49,19 @@ export async function POST(
     const aspectRatio     = settings.aspectRatio     ?? "1:1";
     const quantity        = Math.min(Math.max(settings.quantity ?? 1, 1), 4);
 
-    if (!frontImageUrl) {
-      return NextResponse.json({ error: "frontImageUrl required" }, { status: 422 });
+    if (!frontImageUrl && !backImageUrl) {
+      return NextResponse.json({ error: "Se requiere al menos una imagen (frontal o trasera)" }, { status: 422 });
     }
 
     // ── Build asset list ──────────────────────────────────────────────────────
     const assetSpecs: Array<{ assetType: string; prompt: string; sourceImageUrl: string }> = [];
 
     for (const output of selectedOutputs) {
-      const assetTypes = mapOutputToAssetTypes(output, !!backImageUrl);
+      const assetTypes = mapOutputToAssetTypes(output);
       for (const assetType of assetTypes) {
-        const sourceUrl = (assetType === "back_clean" && backImageUrl) ? backImageUrl : frontImageUrl;
+        // back_clean uses backImageUrl; everything else uses frontImageUrl
+        const sourceUrl = (assetType === "back_clean" && backImageUrl) ? backImageUrl : (frontImageUrl || backImageUrl);
+        if (!sourceUrl) continue; // skip if source missing (guard)
         const prompt    = buildPrompt({ assetType, visualStyle, background, aspectRatio });
         for (let i = 0; i < quantity; i++) {
           assetSpecs.push({ assetType, prompt, sourceImageUrl: sourceUrl });

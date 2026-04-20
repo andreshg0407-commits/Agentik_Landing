@@ -59,39 +59,53 @@ const STEP_ORDER: WizardStep[] = ["upload", "choose_outputs", "visual_settings",
 // ── Output type card definitions ──────────────────────────────────────────────
 
 const OUTPUT_CARDS: Array<{
-  value:   FotoOutputType;
-  icon:    string;
-  label:   string;
-  desc:    string;
-  formats: string;
+  value:        FotoOutputType;
+  icon:         string;
+  label:        string;
+  desc:         string;
+  formats:      string;
+  /** "front" = requires frontUrl, "back" = requires backUrl, "any" = requires either */
+  requiresAngle: "front" | "back" | "any";
 }> = [
   {
-    value:   "catalog_photo",
-    icon:    "📸",
-    label:   "Foto catálogo",
-    desc:    "Fondo limpio, encuadre e-commerce. Lista para tienda.",
-    formats: "JPEG · PNG · hasta 4K",
+    value:        "catalog_photo",
+    icon:         "📸",
+    label:        "Foto frontal",
+    desc:         "Fondo limpio, encuadre e-commerce. Lista para tienda.",
+    formats:      "JPEG · PNG · hasta 4K",
+    requiresAngle: "front",
   },
   {
-    value:   "social_photo",
-    icon:    "🖼️",
-    label:   "Foto para redes",
-    desc:    "Recortada y estilizada para feed de Instagram o TikTok.",
-    formats: "1:1 · 4:5 · 9:16",
+    value:        "back_photo",
+    icon:         "🔙",
+    label:        "Foto trasera",
+    desc:         "Vista trasera con fondo limpio. Ideal para fichas de producto.",
+    formats:      "JPEG · PNG · hasta 4K",
+    requiresAngle: "back",
   },
   {
-    value:   "short_video",
-    icon:    "🎬",
-    label:   "Video corto",
-    desc:    "Clip de 8 s en vertical — óptimo para Reels y TikTok.",
-    formats: "MP4 · 9:16 · 1080p",
+    value:        "social_photo",
+    icon:         "🖼️",
+    label:        "Foto para redes",
+    desc:         "Recortada y estilizada para feed de Instagram o TikTok.",
+    formats:      "1:1 · 4:5 · 9:16",
+    requiresAngle: "front",
   },
   {
-    value:   "custom_template",
-    icon:    "🎨",
-    label:   "Plantilla personalizada",
-    desc:    "Composición de marca — lookbook, flyer, banner.",
-    formats: "Según plantilla",
+    value:        "short_video",
+    icon:         "🎬",
+    label:        "Video corto",
+    desc:         "Clip de 8 s en vertical — óptimo para Reels y TikTok.",
+    formats:      "MP4 · 9:16 · 1080p",
+    requiresAngle: "front",
+  },
+  {
+    value:        "custom_template",
+    icon:         "🎨",
+    label:        "Plantilla personalizada",
+    desc:         "Composición de marca — lookbook, flyer, banner.",
+    formats:      "Según plantilla",
+    requiresAngle: "front",
   },
 ];
 
@@ -361,7 +375,7 @@ function UploadStep({
 
           {/* 2x2 upload grid */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[3] }}>
-            <ImageUploadZone label="Frontal"   required={true}  angle="front"   tenantId={tenantId} sessionId={sessionId} onUploaded={setFrontUrl}   />
+            <ImageUploadZone label="Frontal"   required={false} angle="front"   tenantId={tenantId} sessionId={sessionId} onUploaded={setFrontUrl}   />
             <ImageUploadZone label="Trasera"   required={false} angle="back"    tenantId={tenantId} sessionId={sessionId} onUploaded={setBackUrl}    />
             <ImageUploadZone label="Detalle 1" required={false} angle="detail1" tenantId={tenantId} sessionId={sessionId} onUploaded={setDetail1Url} />
             <ImageUploadZone label="Detalle 2" required={false} angle="detail2" tenantId={tenantId} sessionId={sessionId} onUploaded={setDetail2Url} />
@@ -369,12 +383,12 @@ function UploadStep({
 
           <div style={{ fontSize: T.sz.xs, color: C.inkFaint,
             padding: `${S[2]}px ${S[3]}px`, background: C.surfaceAlt, borderRadius: R.sm }}>
-            <strong style={{ color: C.inkMid }}>Frontal</strong> es obligatoria.
-            Las fotos de trasera y detalles mejoran la fidelidad del resultado generado.
+            Sube al menos una foto para continuar.
+            Cuantas más ángulos incluyas, mejores serán los resultados generados.
           </div>
         </div>
       </div>
-      <ActionRow nextLabel="Continuar →" canNext={frontUrl.trim().length > 0} onNext={onNext} />
+      <ActionRow nextLabel="Continuar →" canNext={frontUrl.trim().length > 0 || backUrl.trim().length > 0} onNext={onNext} />
     </Panel>
   );
 }
@@ -382,20 +396,28 @@ function UploadStep({
 // ── Step 2: Choose outputs ────────────────────────────────────────────────────
 
 function ChooseOutputsStep({
-  selected, onToggle, onNext, onBack,
+  selected, onToggle, onNext, onBack, hasFront, hasBack,
 }: {
-  selected: FotoOutputType[];
-  onToggle: (v: FotoOutputType) => void;
-  onNext:   () => void;
-  onBack:   () => void;
+  selected:  FotoOutputType[];
+  onToggle:  (v: FotoOutputType) => void;
+  onNext:    () => void;
+  onBack:    () => void;
+  hasFront:  boolean;
+  hasBack:   boolean;
 }) {
+  const visibleCards = OUTPUT_CARDS.filter(c =>
+    (c.requiresAngle === "front" && hasFront) ||
+    (c.requiresAngle === "back"  && hasBack)  ||
+    (c.requiresAngle === "any"   && (hasFront || hasBack)),
+  );
+
   return (
     <Panel style={{ marginBottom: 0 }}>
       <PanelHeader title="¿Qué quieres generar?" icon="🎯"
         badge={<Badge variant={selected.length > 0 ? "brand" : "neutral"}>{selected.length} seleccionados</Badge>} />
       <div style={{ padding: `${S[4]}px` }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[3] }}>
-          {OUTPUT_CARDS.map(card => {
+          {visibleCards.map(card => {
             const isSelected = selected.includes(card.value);
             return (
               <button key={card.value} onClick={() => onToggle(card.value)} style={{
@@ -690,8 +712,8 @@ function GenerationStep({
           <div style={{ padding: `${S[3]}px`, background: C.brandLight,
             border: `1px solid ${C.brandBorder}`, borderRadius: R.md,
             fontSize: T.sz.sm, color: C.brandDark, marginBottom: S[3] }}>
-            Agentik generará los activos visuales usando n8n + Replicate.
-            El proceso puede tomar entre 30 segundos y 2 minutos por activo.
+            Las imágenes se están generando con IA. Esto puede tardar entre 30 segundos y 2 minutos.
+            Tus imágenes aparecerán aquí automáticamente al estar listas.
           </div>
           {generateError && (
             <div style={{ padding: `${S[2]}px ${S[3]}px`, background: "#fff0f0",
@@ -969,6 +991,8 @@ export function FotoEstudioWizard({ orgSlug, tenantId }: { orgSlug: string; tena
           onToggle={toggleOutput}
           onNext={() => setStep("visual_settings")}
           onBack={() => setStep("upload")}
+          hasFront={frontUrl.trim().length > 0}
+          hasBack={backUrl.trim().length > 0}
         />
       )}
 

@@ -61,7 +61,7 @@ export default async function FotoEstudioNewPage({
       </div>
 
       {/* ── Wizard ── */}
-      <FotoEstudioWizard orgSlug={orgSlug} tenantId="castillitos" />
+      <FotoEstudioWizard orgSlug={orgSlug} tenantId={orgSlug} />
 
     </div>
   );
