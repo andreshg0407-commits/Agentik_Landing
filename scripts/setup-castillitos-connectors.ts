@@ -97,9 +97,13 @@ async function main() {
 
   const secrets = (pyaIntegration?.secretsJson ?? {}) as Record<string, unknown>;
 
+  // Token resolution: env var ALWAYS wins over legacy secretsJson.
+  // The legacy integration token (PYA_AP... placeholder) was confirmed invalid by
+  // raw SOAP probes (2026-04-21) — it triggers NullReferenceException in the .NET server.
+  // PYA_SOAP_TOKEN from env is the current valid SAG token (36-char UUID format).
   const sagToken: string =
-    (typeof secrets.token === "string" ? secrets.token.trim() : "") ||
-    (process.env.PYA_SOAP_TOKEN ?? "");
+    (process.env.PYA_SOAP_TOKEN?.trim() ?? "") ||
+    (typeof secrets.token === "string" ? secrets.token.trim() : "");
 
   const sagDatabase: string =
     (typeof secrets.database === "string" ? secrets.database.trim() : "") ||
