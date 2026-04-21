@@ -120,12 +120,49 @@ async function main() {
 
   // ── 4. Upsert sag_pya_soap connector ───────────────────────────────────────
 
+  // Queries confirmed 2026-04-20:
+  //   - v_cl = SAG-managed view over TERCEROS (manual PYA v32, confirmed 2026-04-08)
+  //   - CARTERA does not exist in this installation; use MOVIMIENTOS + MOVIMIENTOS_ITEMS JOIN
+  const CORRECT_CUSTOMER_QUERY   = "SELECT * FROM v_cl";
+  const CORRECT_RECEIVABLE_QUERY = [
+    "SELECT",
+    "  m.ka_nl_movimiento, m.ka_ni_fuente, m.n_numero_documento,",
+    "  m.ka_nl_tercero, m.sc_beneficiario, m.d_fecha_documento,",
+    "  m.ss_moneda, m.ddt_fecha_new,",
+    "  SUM(ISNULL(mi.n_valor, 0))      AS total_valor,",
+    "  SUM(ISNULL(mi.n_iva, 0))        AS total_iva,",
+    "  SUM(ISNULL(mi.n_descuento, 0))  AS total_descuento,",
+    "  f.sc_cobrar_pagar, f.k_n_clase_fuente, f.ka_ni_forma_pago_fte",
+    "FROM MOVIMIENTOS m",
+    "LEFT JOIN MOVIMIENTOS_ITEMS mi",
+    "  ON mi.ka_nl_movimiento = m.ka_nl_movimiento",
+    "LEFT JOIN FUENTES f",
+    "  ON f.ka_ni_fuente = m.ka_ni_fuente",
+    "WHERE m.sc_anulado = 'N'",
+    "GROUP BY",
+    "  m.ka_nl_movimiento, m.ka_ni_fuente, m.n_numero_documento,",
+    "  m.ka_nl_tercero, m.sc_beneficiario, m.d_fecha_documento,",
+    "  m.ss_moneda, m.ddt_fecha_new,",
+    "  f.sc_cobrar_pagar, f.k_n_clase_fuente, f.ka_ni_forma_pago_fte",
+    "ORDER BY m.ka_nl_movimiento",
+  ].join(" ");
+
+  // database is REQUIRED — a_s_bd missing causes NullReferenceException on the .NET server.
+  // Resolved from: legacy secrets.database → PYA_SAG_BD env var.
+  // If both are absent the connector is created without a_s_bd and will always fail.
+  if (!sagDatabase) {
+    console.warn(
+      "  ⚠  PYA_SAG_BD no está seteado — el conector fallará con NullReferenceException.\n" +
+      "     Agregar PYA_SAG_BD al env (valor: nombre de la BD en SAG, e.g. INDDIANAA_CASTILLO-ALZATE).\n",
+    );
+  }
+
   const sagConfig: Record<string, unknown> = {
     token:                 sagToken,
-    database:              sagDatabase || undefined,
+    ...(sagDatabase ? { database: sagDatabase } : {}),  // only set when resolved — never store undefined
     endpointUrl:           sagEndpoint,
-    customerQuery:         "SELECT * FROM TERCEROS",
-    receivableQuery:       "SELECT * FROM CARTERA",
+    customerQuery:         CORRECT_CUSTOMER_QUERY,
+    receivableQuery:       CORRECT_RECEIVABLE_QUERY,
     // Confirmed 2026-04-20 from FUENTES.xlsx — maps k_sc_codigo_fuente → SagDocumentFamily.
     // Powers classifyDocumentFamily() in source-inference pipeline (eliminates OTHER fallback).
     documentFamilyMap:     CASTILLITOS_DOCUMENT_FAMILY_MAP,
