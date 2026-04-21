@@ -431,6 +431,7 @@ export const CASTILLITOS_BODEGAS: CastillitosValueSet = {
  * Action required: request FUENTES.ka_ni_forma_pago_fte lookup table from
  * Castillitos DBA, or confirm that payment method validation is done at the
  * FUENTES level rather than at the MOVIMIENTOS level.
+ * See: lib/sag/master-data/castillitos-fuentes.ts for the full FUENTES registry.
  */
 export const CASTILLITOS_FORMAS_PAGO: CastillitosValueSet = {
   confirmed: false,
@@ -506,6 +507,8 @@ export interface HomologationSummary {
   pendingNames: string[];
 }
 
+import { CASTILLITOS_FUENTES_VALUE_SET } from "./castillitos-fuentes";
+
 const ALL_VALUE_SETS: Record<string, CastillitosValueSet> = {
   FORMAS_PAGO:    CASTILLITOS_FORMAS_PAGO,
   ZONAS:          CASTILLITOS_ZONAS,
@@ -521,6 +524,8 @@ const ALL_VALUE_SETS: Record<string, CastillitosValueSet> = {
   TALLAS:         CASTILLITOS_TALLAS,
   COLORES:        CASTILLITOS_COLORES,
   BODEGAS:        CASTILLITOS_BODEGAS,
+  // Confirmed 2026-04-20 from FUENTES.xlsx — 127 sources classified
+  FUENTES:        CASTILLITOS_FUENTES_VALUE_SET,
 };
 
 export function getHomologationSummary(): HomologationSummary {

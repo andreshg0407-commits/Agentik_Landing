@@ -29,6 +29,7 @@
 import { prisma } from "@/lib/prisma";
 import { IntegrationProvider } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
+import { CASTILLITOS_DOCUMENT_FAMILY_MAP } from "@/lib/sag/master-data/castillitos-fuentes";
 
 const ORG_SLUG =
   process.argv.find(a => a.startsWith("--org="))?.slice(6) ?? "castillitos";
@@ -125,6 +126,9 @@ async function main() {
     endpointUrl:           sagEndpoint,
     customerQuery:         "SELECT * FROM TERCEROS",
     receivableQuery:       "SELECT * FROM CARTERA",
+    // Confirmed 2026-04-20 from FUENTES.xlsx — maps k_sc_codigo_fuente → SagDocumentFamily.
+    // Powers classifyDocumentFamily() in source-inference pipeline (eliminates OTHER fallback).
+    documentFamilyMap:     CASTILLITOS_DOCUMENT_FAMILY_MAP,
     // Traceability: link back to the legacy Integration row
     ...(pyaIntegration ? { _legacyIntegrationId: pyaIntegration.id } : {}),
   };

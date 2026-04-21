@@ -198,7 +198,9 @@ export function normalizeExplicitSource(
   if (
     s === "1"       || s === "f1"      || s === "fuente1" ||
     s === "oficial" || s === "factura" || s === "invoice" ||
-    s === "fv"      || s === "fa"
+    s === "fv"      || s === "fa"      ||
+    // Castillitos k_sc_codigo_fuente — facturas de venta (FUENTES.xlsx 2026-04-20)
+    s === "fe" || s === "vc" || s === "v1" || s === "v2" || s === "v3" || s === "fx"
   ) return "FUENTE_1";
 
   // ── FUENTE_2 signals ───────────────────────────────────────────────────────

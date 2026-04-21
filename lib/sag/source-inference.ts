@@ -87,13 +87,16 @@ const FAMILY_TO_STAGE: Record<SagDocumentFamilyStr, SourceDocumentStage> = {
 //   NR = Nota de Remisión
 //   GD = Guía de Despacho
 //
+// Castillitos-specific (from FUENTES.xlsx, 2026-04-20):
+//   F2 = REMISION (ka=2, NO_OFICIAL/REMISION)
+//
 // Excluded to avoid false positives:
-//   FV, FA = Factura de Venta (OFFICIAL_INVOICE)
-//   NC = Nota Crédito (CREDIT_NOTE)
-//   ND = Nota Débito (DEBIT_NOTE)
+//   FV, FA, FE = Factura de Venta (OFFICIAL_INVOICE)
+//   NC, NE, NX = Nota Crédito (CREDIT_NOTE)
+//   ND, DB = Nota Débito (DEBIT_NOTE)
 //   RE = Recibo / Reembolso
 
-const REMISION_CODE_RE = /^(NV|REM|RD|GD|NR|NDL|RR|GDE)$/i;
+const REMISION_CODE_RE = /^(NV|REM|RD|GD|NR|NDL|RR|GDE|F2)$/i;
 
 // ── Heuristic patterns for full comprobante reference ─────────────────────────
 //
@@ -123,7 +126,14 @@ function normalizeExplicitSourceLocal(
   if (
     s === "1"       || s === "f1"      || s === "fuente1" ||
     s === "oficial" || s === "factura" || s === "invoice" ||
-    s === "fv"      || s === "fa"
+    s === "fv"      || s === "fa"      ||
+    // Castillitos k_sc_codigo_fuente — facturas de venta (FUENTES.xlsx 2026-04-20)
+    s === "fe"  || // ka=101 Factura electrónica de venta (vigente)
+    s === "vc"  || // ka=48  Factura de venta POS (histórica)
+    s === "v1"  || // ka=92  Factura POS WI (histórica)
+    s === "v2"  || // ka=103 Factura POS SD (histórica)
+    s === "v3"  || // ka=104 Factura POS M (histórica)
+    s === "fx"     // ka=143 Factura electrónica (histórica)
   ) return "OFICIAL";
 
   if (
@@ -131,6 +141,7 @@ function normalizeExplicitSourceLocal(
     s === "remision" || s === "remisión" || s === "remision/despacho" ||
     s === "despacho" || s === "dispatch" ||
     s === "nv"       || s === "gd"       || s === "nr"   || s === "rem"
+    // Nota: F2 ya está cubierto por s === "f2" — ka=2 REMISION de Castillitos
   ) return "REMISION";
 
   return null;
