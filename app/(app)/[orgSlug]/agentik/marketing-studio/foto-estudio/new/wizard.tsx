@@ -25,6 +25,10 @@ import {
   BRAND_LINE_DESCRIPTIONS,
   SOCIAL_PUBLICATION_LABELS,
   SOCIAL_PUBLICATION_DESCRIPTIONS,
+  MODEL_TYPE_LABELS,
+  BODY_TYPE_LABELS,
+  VISUAL_QUALITY_LABELS,
+  FRAMING_TYPE_LABELS,
 } from "@/lib/marketing-studio/foto-estudio-types";
 import type {
   FotoOutputType,
@@ -34,6 +38,10 @@ import type {
   GarmentType,
   BrandLine,
   SocialPublicationType,
+  ModelType,
+  BodyType,
+  VisualQuality,
+  FramingType,
 } from "@/lib/marketing-studio/foto-estudio-types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -125,6 +133,10 @@ const ASPECT_RATIOS:    AspectRatio[]            = ["1:1", "9:16", "4:5", "4:3",
 const GARMENT_TYPES:    GarmentType[]            = ["jean", "short", "falda", "body", "top", "chaqueta", "vestido", "otro"];
 const BRAND_LINES:      BrandLine[]              = ["luxury", "casual"];
 const SOCIAL_PUB_TYPES: SocialPublicationType[]  = ["feed", "reel", "story"];
+const MODEL_TYPES:      ModelType[]              = ["latina_rubia", "latina_morena", "europea_rubia", "morena_editorial", "luxury_curvy", "casual_urbana", "fitness", "premium_catalogo", "personalizada"];
+const BODY_TYPES:       BodyType[]               = ["slim", "curvy", "voluptuosa", "atletica", "plus_size", "petite", "personalizada"];
+const VISUAL_QUALITIES: VisualQuality[]          = ["standard_hd", "full_hd", "2k_editorial", "4k_premium"];
+const FRAMING_TYPES:    FramingType[]            = ["frontal_catalogo", "americano", "full_body_editorial", "close_up_producto", "back_view", "side_view", "tres_cuartos", "movimiento_lifestyle"];
 
 const ASSET_META: Record<string, { icon: string; label: string }> = {
   front_clean:    { icon: "📸", label: "Vista frontal" },
@@ -508,7 +520,11 @@ function VisualSettingsStep({
   aspectRatio, setAspectRatio, quantity, setQuantity,
   garmentType, setGarmentType, brandLine, setBrandLine,
   socialPublicationType, setSocialPublicationType,
+  modelType, setModelType, bodyType, setBodyType,
+  visualQuality, setVisualQuality, framingType, setFramingType,
+  modelReferenceUrl, setModelReferenceUrl,
   onNext, onBack, selectedOutputs,
+  tenantId, sessionId,
 }: {
   visualStyle:              VisualStyle;
   setVisualStyle:           (v: VisualStyle) => void;
@@ -524,9 +540,21 @@ function VisualSettingsStep({
   setBrandLine:             (v: BrandLine) => void;
   socialPublicationType:    SocialPublicationType;
   setSocialPublicationType: (v: SocialPublicationType) => void;
+  modelType:                ModelType;
+  setModelType:             (v: ModelType) => void;
+  bodyType:                 BodyType;
+  setBodyType:              (v: BodyType) => void;
+  visualQuality:            VisualQuality;
+  setVisualQuality:         (v: VisualQuality) => void;
+  framingType:              FramingType;
+  setFramingType:           (v: FramingType) => void;
+  modelReferenceUrl:        string;
+  setModelReferenceUrl:     (v: string) => void;
   onNext:                   () => void;
   onBack:                   () => void;
   selectedOutputs:          FotoOutputType[];
+  tenantId:                 string;
+  sessionId:                string;
 }) {
   const hasVideo  = selectedOutputs.includes("short_video");
   const hasSocial = selectedOutputs.includes("social_photo");
@@ -613,6 +641,126 @@ function VisualSettingsStep({
               </div>
             </div>
           )}
+
+          {/* ══ PERFIL DE MODELO ══════════════════════════════════════ */}
+          <div style={{
+            padding: `${S[3]}px ${S[3]}px ${S[1]}px`,
+            border: `1.5px solid ${C.brand}`,
+            borderRadius: R.md,
+            background: C.brandLight,
+          }}>
+            <div style={{ fontWeight: T.wt.black, fontSize: T.sz.sm, color: C.brand,
+              textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: S[3] }}>
+              Perfil de modelo
+            </div>
+            <div style={{ display: "grid", gap: S[4] }}>
+
+              {/* Tipo de modelo */}
+              <div>
+                <div style={labelStyle}>Tipo de modelo</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: S[2] }}>
+                  {MODEL_TYPES.map(mt => (
+                    <button key={mt} onClick={() => setModelType(mt)} style={{
+                      padding: `${S[2]}px ${S[2]}px`,
+                      border: modelType === mt ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
+                      borderRadius: R.md,
+                      background: modelType === mt ? C.brand : C.white,
+                      cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.xs,
+                      fontWeight: modelType === mt ? T.wt.bold : T.wt.normal,
+                      color: modelType === mt ? C.white : C.inkMid,
+                      transition: "all 0.1s",
+                    }}>
+                      {MODEL_TYPE_LABELS[mt]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Contextura corporal */}
+              <div>
+                <div style={labelStyle}>Contextura corporal</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
+                  {BODY_TYPES.map(bt => (
+                    <button key={bt} onClick={() => setBodyType(bt)} style={{
+                      padding: `${S[2]}px ${S[3]}px`,
+                      border: bodyType === bt ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
+                      borderRadius: R.md,
+                      background: bodyType === bt ? C.brand : C.white,
+                      cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.sm,
+                      fontWeight: bodyType === bt ? T.wt.bold : T.wt.normal,
+                      color: bodyType === bt ? C.white : C.inkMid,
+                      textAlign: "left" as const,
+                      transition: "all 0.1s",
+                    }}>
+                      {BODY_TYPE_LABELS[bt]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Calidad visual */}
+              <div>
+                <div style={labelStyle}>Calidad visual</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
+                  {VISUAL_QUALITIES.map(vq => (
+                    <button key={vq} onClick={() => setVisualQuality(vq)} style={{
+                      padding: `${S[2]}px ${S[3]}px`,
+                      border: visualQuality === vq ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
+                      borderRadius: R.md,
+                      background: visualQuality === vq ? C.brand : C.white,
+                      cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.sm,
+                      fontWeight: visualQuality === vq ? T.wt.bold : T.wt.normal,
+                      color: visualQuality === vq ? C.white : C.inkMid,
+                      textAlign: "left" as const,
+                      transition: "all 0.1s",
+                    }}>
+                      {VISUAL_QUALITY_LABELS[vq]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Tipo de encuadre */}
+              <div>
+                <div style={labelStyle}>Tipo de encuadre</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
+                  {FRAMING_TYPES.map(ft => (
+                    <button key={ft} onClick={() => setFramingType(ft)} style={{
+                      padding: `${S[2]}px ${S[3]}px`,
+                      border: framingType === ft ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
+                      borderRadius: R.md,
+                      background: framingType === ft ? C.brand : C.white,
+                      cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.sm,
+                      fontWeight: framingType === ft ? T.wt.bold : T.wt.normal,
+                      color: framingType === ft ? C.white : C.inkMid,
+                      textAlign: "left" as const,
+                      transition: "all 0.1s",
+                    }}>
+                      {FRAMING_TYPE_LABELS[ft]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Modelo de referencia (opcional) */}
+              <div>
+                <div style={labelStyle}>Modelo de referencia <span style={{ fontWeight: T.wt.normal, textTransform: "none" as const, letterSpacing: 0, color: C.inkFaint }}>(opcional)</span></div>
+                <ImageUploadZone
+                  label="Foto de modelo de referencia"
+                  required={false}
+                  angle={"detail2" as UploadAngle}
+                  tenantId={tenantId}
+                  sessionId={sessionId}
+                  onUploaded={setModelReferenceUrl}
+                />
+                <div style={{ fontSize: T.sz.xs, color: C.inkFaint, marginTop: 4 }}>
+                  Sube una foto del tipo de modelo que quieres usar. La IA replicará ese look.
+                </div>
+              </div>
+
+            </div>
+          </div>
+          {/* ══ FIN PERFIL DE MODELO ══════════════════════════════════ */}
 
           {/* ── Estilo visual ──────────────────────────────────────────── */}
           <div>
@@ -971,6 +1119,11 @@ export function FotoEstudioWizard({
   const [garmentType,           setGarmentType]           = useState<GarmentType>(defaultGarmentType);
   const [brandLine,             setBrandLine]             = useState<BrandLine>(defaultBrandLine);
   const [socialPublicationType, setSocialPublicationType] = useState<SocialPublicationType>("feed");
+  const [modelType,         setModelType]         = useState<ModelType>("latina_rubia");
+  const [bodyType,          setBodyType]           = useState<BodyType>("curvy");
+  const [visualQuality,     setVisualQuality]      = useState<VisualQuality>("full_hd");
+  const [framingType,       setFramingType]        = useState<FramingType>("frontal_catalogo");
+  const [modelReferenceUrl, setModelReferenceUrl]  = useState("");
 
   // Step 4
   const [assets,        setAssets]        = useState<AssetState[]>([]);
@@ -1042,6 +1195,11 @@ export function FotoEstudioWizard({
           garmentType,
           brandLine,
           socialPublicationType,
+          modelType,
+          bodyType,
+          visualQuality,
+          framingType,
+          modelReferenceUrl:    modelReferenceUrl   || undefined,
         },
       }),
     }).catch(err => console.warn("[wizard] failed to save inputs:", err));
@@ -1157,6 +1315,12 @@ export function FotoEstudioWizard({
           garmentType={garmentType}                   setGarmentType={setGarmentType}
           brandLine={brandLine}                       setBrandLine={setBrandLine}
           socialPublicationType={socialPublicationType} setSocialPublicationType={setSocialPublicationType}
+          modelType={modelType}                       setModelType={setModelType}
+          bodyType={bodyType}                         setBodyType={setBodyType}
+          visualQuality={visualQuality}               setVisualQuality={setVisualQuality}
+          framingType={framingType}                   setFramingType={setFramingType}
+          modelReferenceUrl={modelReferenceUrl}       setModelReferenceUrl={setModelReferenceUrl}
+          tenantId={tenantId}                         sessionId={sessionId}
           onNext={() => setStep("generation")}
           onBack={() => setStep("choose_outputs")}
           selectedOutputs={selectedOutputs}
