@@ -456,7 +456,13 @@ function StreamRow({ stream, orgSlug }: { stream: FinancialStream; orgSlug: stri
       </div>
 
       {/* Status badge */}
-      <span className={badgeClass}>{stream.statusLabel}</span>
+      <span
+        className={badgeClass}
+        title={stream.statusLabel}
+        style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block" }}
+      >
+        {stream.statusLabel}
+      </span>
 
       {/* Primary signal + optional action link */}
       <div style={{ display: "flex", alignItems: "center", gap: S[2], justifyContent: "flex-end" }}>
@@ -495,24 +501,71 @@ function StreamGroupSection({
   orgSlug: string;
 }) {
   if (streams.length === 0) return null;
+
+  const attentionCount  = streams.filter(s => s.requiresAction).length;
+  const operativeCount  = streams.filter(s =>
+    !s.requiresAction &&
+    s.status !== "integration_pending" &&
+    s.status !== "missing_sag_mapping",
+  ).length;
+
+  // Groups with items requiring attention default open; clean groups default closed
+  const [open, setOpen] = useState(attentionCount > 0);
+
   return (
     <>
-      <div className="ag-intel-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span style={{
-          fontFamily:    T.mono,
-          fontSize:      T.sz.xs,
-          fontWeight:    T.wt.bold,
-          color:         C.blueDark,
-          textTransform: "uppercase" as const,
-          letterSpacing: "0.06em",
-        }}>
-          {label}
-        </span>
-        <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkGhost }}>
-          {streams.length} fuente{streams.length !== 1 ? "s" : ""}
+      {/* Collapsible group header */}
+      <div
+        className="ag-intel-header"
+        onClick={() => setOpen(o => !o)}
+        style={{
+          display:       "flex",
+          alignItems:    "center",
+          justifyContent:"space-between",
+          cursor:        "pointer",
+          userSelect:    "none" as const,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
+          <span style={{
+            fontFamily:    T.mono,
+            fontSize:      T.sz.xs,
+            fontWeight:    T.wt.bold,
+            color:         C.blueDark,
+            textTransform: "uppercase" as const,
+            letterSpacing: "0.06em",
+          }}>
+            {label}
+          </span>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkGhost }}>
+            · {streams.length} fuente{streams.length !== 1 ? "s" : ""}
+          </span>
+          {attentionCount > 0 && (
+            <span style={{
+              fontFamily:   T.mono,
+              fontSize:     T.sz["2xs"],
+              fontWeight:   T.wt.bold,
+              color:        C.amberDark,
+              background:   C.amberLight,
+              border:       `1px solid ${C.amberBorder}`,
+              borderRadius: R.xs,
+              padding:      "1px 6px",
+              whiteSpace:   "nowrap",
+            }}>
+              {attentionCount} atención
+            </span>
+          )}
+          {!open && operativeCount > 0 && attentionCount === 0 && (
+            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.green }}>
+              {operativeCount} operativa{operativeCount !== 1 ? "s" : ""}
+            </span>
+          )}
+        </div>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost }}>
+          {open ? "▲" : "▼"}
         </span>
       </div>
-      {streams.map(s => <StreamRow key={s.id} stream={s} orgSlug={orgSlug} />)}
+      {open && streams.map(s => <StreamRow key={s.id} stream={s} orgSlug={orgSlug} />)}
     </>
   );
 }
@@ -745,6 +798,85 @@ function ObservationStrip({ attentionPlan }: { attentionPlan: AttentionRouterRes
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Streams-derived insight strip (fallback when no attentionPlan) ────────────
+
+function StreamsInsightStrip({ streams }: { streams: FinancialStream[] }) {
+  const actionItems   = streams.filter(s => s.requiresAction);
+  const blocked       = streams.filter(s => s.status === "blocked_source" || s.status === "missing_sag_mapping");
+  const reconcPending = streams.filter(s => s.status === "reconciliation_pending");
+  const operative     = streams.filter(s =>
+    !s.requiresAction &&
+    s.status !== "integration_pending" &&
+    s.status !== "missing_sag_mapping",
+  );
+
+  let headline   = "Sin señales activas";
+  let context: string | null = null;
+  let escalation: "ok" | "watch" | "warn" = "ok";
+
+  if (actionItems.length > 0) {
+    headline = `${actionItems.length} fuente${actionItems.length !== 1 ? "s" : ""} requiere${actionItems.length !== 1 ? "n" : ""} atención`;
+    if (blocked.length > 0) {
+      context    = `${blocked.length} bloqueada${blocked.length !== 1 ? "s" : ""}`;
+      escalation = "warn";
+    } else if (reconcPending.length > 0) {
+      context    = `${reconcPending.length} con conciliación pendiente`;
+      escalation = "watch";
+    } else {
+      escalation = "watch";
+    }
+  } else if (operative.length > 0) {
+    headline = `${operative.length} de ${streams.length} fuentes operativas`;
+    const pending = streams.length - operative.length;
+    if (pending > 0) context = `${pending} pendiente${pending !== 1 ? "s" : ""} de integración`;
+    escalation = "ok";
+  }
+
+  const dotColor   = escalation === "warn"  ? C.amber    : escalation === "watch" ? C.blue  : C.green;
+  const borderLeft = escalation === "warn"  ? `3px solid ${C.amber}`
+                   : escalation === "watch" ? `3px solid ${C.blue}`
+                   : `3px solid ${C.green}`;
+  const bg         = escalation === "warn"  ? C.amberLight
+                   : escalation === "watch" ? C.blueLight
+                   : C.greenLight;
+
+  return (
+    <div style={{
+      display:      "flex",
+      alignItems:   "center",
+      gap:          S[3],
+      padding:      `${S[3]}px ${S[4]+2}px`,
+      marginBottom: S[5],
+      border:       `1px solid ${C.line}`,
+      borderLeft,
+      borderRadius: R.md,
+      background:   bg,
+    }}>
+      <div style={{ width: 6, height: 6, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />
+      <div style={{ flex: 1, display: "flex", alignItems: "center", gap: S[2], flexWrap: "wrap" as const }}>
+        <span style={{
+          fontFamily:    T.mono,
+          fontSize:      T.sz.xs,
+          fontWeight:    T.wt.black,
+          color:         C.brand,
+          textTransform: "uppercase" as const,
+          letterSpacing: "0.05em",
+        }}>
+          Agentik observa
+        </span>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.inkMid }}>
+          {headline}
+        </span>
+        {context && (
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight }}>
+            · {context}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -1153,11 +1285,17 @@ function RecentSessionsSection({ sessions }: { sessions: ReconSessionRow[] }) {
       subtitle={sessions.length > 0 ? `${sessions.length} sesión${sessions.length !== 1 ? "es" : ""}` : undefined}
     >
       {sessions.length === 0 ? (
-        <EmptyOperationalState
-          message="Sin sesiones registradas"
-          detail="Las sesiones de conciliación aparecerán aquí una vez se ejecuten flujos."
-        />
+        <div style={{
+          fontFamily: T.mono,
+          fontSize:   T.sz.sm,
+          color:      C.inkFaint,
+          padding:    `${S[3]}px ${S[4]}px`,
+          textAlign:  "center" as const,
+        }}>
+          Sin sesiones — ejecuta un flujo de conciliación para registrar actividad aquí
+        </div>
       ) : (
+        <div style={{ overflowX: "auto" }}>
         <div className="ag-op-table">
           {/* Column headers */}
           <div className="ag-op-table-head" style={{
@@ -1283,6 +1421,7 @@ function RecentSessionsSection({ sessions }: { sessions: ReconSessionRow[] }) {
               </div>
             );
           })}
+        </div>
         </div>
       )}
     </WorkspaceSection>
@@ -1453,7 +1592,7 @@ function ResultsWorkbench({ result, baseUrl }: { result: ReconResult; baseUrl: s
             ))}
           </div>
 
-          {sortedRecords(result.records).map((r, i) => (
+          {sortedRecords(result.records).map((r) => (
             <div
               key={r.key}
               className="ag-op-row"
@@ -1464,7 +1603,6 @@ function ResultsWorkbench({ result, baseUrl }: { result: ReconResult; baseUrl: s
                 padding:             `${S[2]+1}px ${S[4]}px`,
                 borderBottom:        `1px solid ${C.lineSubtle}`,
                 alignItems:          "center",
-                background:          i % 2 === 0 ? C.white : C.surface,
               }}
             >
               {/* Estado */}
@@ -1572,7 +1710,7 @@ export default function ReconClient({
   ];
 
   return (
-    <div style={{ fontFamily: T.mono, maxWidth: 1100, margin: "0 auto", padding: `${S[6]}px ${S[4]}px` }}>
+    <div style={{ fontFamily: T.mono, maxWidth: 1100, margin: "0 auto", padding: `${S[6]}px ${S[4]}px`, minWidth: 0, overflowX: "hidden" }}>
 
       {/* ── Workspace Header ── */}
       <ReconModuleHeader
@@ -1590,32 +1728,26 @@ export default function ReconClient({
       {!selectedFlow && (
         <div>
 
-          {/* Layer 2: Agentik observa — priority-routed observations */}
-          {attentionPlan && (
-            <ObservationStrip attentionPlan={attentionPlan} />
-          )}
+          {/* Layer 1: Observation strip — attentionPlan if available, else stream-derived signal */}
+          {attentionPlan
+            ? <ObservationStrip attentionPlan={attentionPlan} />
+            : streams && streams.length > 0
+              ? <StreamsInsightStrip streams={streams} />
+              : null}
 
-          {/* Layer 3: Data Sources — SAG / DIAN / Bancos + FinancialStreamsPanel */}
-          <DataSourcesLayer streams={streams} orgSlug={orgSlug} />
-
-          {/* Layer 4: Reconciliation Builder — compact flow rows */}
+          {/* Layer 2: Reconciliation Builder — primary workspace (promoted above sources) */}
           <ReconciliationBuilder
             orgSlug={orgSlug}
             onSelectFlow={(id) => setSelectedFlow(id)}
           />
 
-          {/* Layer 5: Sesiones recientes */}
+          {/* Layer 3: Data Sources — SAG / DIAN / Bancos + FinancialStreamsPanel (detail layer) */}
+          <DataSourcesLayer streams={streams} orgSlug={orgSlug} />
+
+          {/* Layer 4: Sesiones recientes */}
           <RecentSessionsSection sessions={recentSessions ?? []} />
 
-          {/* Layer 5b: Results Workbench — empty state (no active run) */}
-          <WorkspaceSection title="Mesa de trabajo — resultados">
-            <EmptyOperationalState
-              message="Sin resultados activos"
-              detail="Selecciona un flujo disponible para ejecutar una conciliación y ver los resultados aquí."
-            />
-          </WorkspaceSection>
-
-          {/* Layer 7: Copilot readiness */}
+          {/* Layer 5: Copilot readiness */}
           <div style={{ marginTop: S[6] }}>
             <CopilotReadinessSlot
               label="Agentik Copilot — Conciliación"
