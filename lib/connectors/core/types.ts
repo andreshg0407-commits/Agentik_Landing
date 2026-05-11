@@ -22,6 +22,8 @@ export type SyncModule =
   | "inventory"
   | "invoices"
   | "receivables"
+  | "movements"
+  | "collections"
   | "opportunities"
   | "activities"
   | "quotes";
@@ -366,6 +368,82 @@ export interface UnifiedQuote extends SourceRecord {
   issuedAt:        Date;
   expiresAt?:      Date;
   respondedAt?:    Date;
+}
+
+// ── 9. SAG Collection (v_pagosnew → CollectionRecord) ────────────────────────
+
+/**
+ * Canonical record produced by mapSagCollection().
+ * Maps one row from v_pagosnew (or v_movimientos_pagos_con_facturas) to the
+ * fields needed to upsert a CollectionRecord.
+ *
+ * This is the MONETARY layer for cobros (R1, R2, RS, RC, RG, RA, SI, AN).
+ * SaleRecord (MOVIMIENTOS header) remains the DOCUMENTAL layer.
+ *
+ * Confirmed fields from v_pagosnew (2026-04-30):
+ *   Valor_Pagado             — real received amount (always positive after Math.abs)
+ *   Codigo_Fuente_Comprobante — "R1" | "R2" | "RS" | "RC" | "RG" | "RA" | "SI"
+ * Probable fields (multiple name variants tried in mapper):
+ *   Fecha_Pago / Fecha_Documento / Fecha — collection date
+ *   Nro_Comprobante / Numero_Documento   — receipt number
+ *   Nit_Tercero / NIT / n_nit            — customer NIT
+ *   Nombre_Tercero / Nombre / NOMBRE     — customer name
+ *   Ka_Nl_Movimiento / Id_Movimiento     — SAG MOVIMIENTOS PK for dedup
+ */
+export interface UnifiedCollection extends SourceRecord {
+  erpMovId?:       number;   // ka_nl_movimiento (if available)
+  comprobanteCode: string;   // R1, R2, RS, RC, RG, RA, SI, AN
+  documentNumber?: string;
+  collectionDate:  Date;
+  /** ka_nl_tercero from SAG TERCEROS — integer internal PK. NOT a NIT. */
+  sagTerceroId?:   number;
+  /** Real NIT from TERCEROS.n_nit (populated when TERCEROS JOIN is present). */
+  customerNit?:    string;
+  customerName?:   string;
+  amount:          number;   // absolute value (Math.abs applied)
+  currency:        string;   // "COP" | "USD"
+  appliedFacts?:   Array<{ invoiceNumber: string; amount: number }>;
+  bankReference?:  string;
+}
+
+// ── 10. SAG Movement (MOVIMIENTOS → SaleRecord) ───────────────────────────────
+
+/**
+ * Canonical record produced by mapSagOrder().
+ * Maps one SAG MOVIMIENTOS row where k_n_clase_fuente=4 (PD — Pedidos Cliente)
+ * to the fields needed to upsert a CustomerOrderRecord.
+ * These rows are EXCLUDED from UnifiedMovement / SaleRecord (financial layer).
+ */
+export interface UnifiedSagOrder extends SourceRecord {
+  erpMovId:     number;   // ka_nl_movimiento
+  orderNumber:  string;   // n_numero_documento
+  customerName: string;   // sc_beneficiario
+  customerNit?: string;   // ka_nl_tercero as string
+  orderDate:    Date;     // d_fecha_documento
+  amount:       number;   // total_valor
+  currency:     string;   // "COP" | "USD"
+  sourceCode:   string;   // always "PD"
+}
+
+/**
+ * Canonical record produced by mapSagMovement().
+ * Maps one SAG MOVIMIENTOS row (with FUENTES JOIN) to the fields needed
+ * to upsert a SaleRecord.
+ */
+export interface UnifiedMovement extends SourceRecord {
+  erpMovId:          number;       // ka_nl_movimiento — stable PK for naturalKey
+  comprobanteCode:   string | null; // k_sc_codigo_fuente — e.g. "FE", "R1", "F2"
+  comprobante:       string;       // n_numero_documento
+  saleDate:          Date;         // d_fecha_documento
+  customerName:      string;       // sc_beneficiario
+  customerTaxId?:    string;       // String(ka_nl_tercero) — best available
+  amount:            number;       // total_valor (SUM MOVIMIENTOS_ITEMS.n_valor)
+  currency:          string;       // "COP" | "USD"
+  channel:           string;       // "EMPRESA" | "ALMACEN" | "ONLINE" | "OTRO"
+  sagSourceType:     string;       // "OFICIAL" | "REMISION"
+  sagDocumentFamily: string;       // SagDocumentFamily enum string
+  storeName:         string;       // derived from channel/code group
+  storeSlug:         string;       // toSlug(storeName)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

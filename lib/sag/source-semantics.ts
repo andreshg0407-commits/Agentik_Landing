@@ -22,6 +22,7 @@
  */
 
 import type { SagSourceType } from "./source-inference";
+import { SQL_FILTER_EXCLUIR_ARKETOPS } from "@/lib/sag/master-data/source-semantic-rules";
 
 // ── Canonical business type ───────────────────────────────────────────────────
 
@@ -161,14 +162,15 @@ export function isDispatchSource(sag: SagSourceType): boolean {
 // ── Raw SQL condition fragments ───────────────────────────────────────────────
 // Use these in Prisma.$queryRaw via Prisma.raw() to keep filter logic centralized.
 
-/** Restricts SaleRecord to FUENTE_1 — recognized revenue only. */
-export const REVENUE_SOURCE_CONDITION = `"sagSourceType" = 'OFICIAL'`;
+// Sprint 3.1: All source conditions now exclude ARKETOPS codes.
+/** Restricts SaleRecord to FUENTE_1 — recognized revenue only. ARKETOPS excluded. */
+export const REVENUE_SOURCE_CONDITION = `"sagSourceType" = 'OFICIAL' AND ${SQL_FILTER_EXCLUIR_ARKETOPS}`;
 
-/** Restricts SaleRecord to FUENTE_2 — dispatch/remision flow only. */
-export const DISPATCH_SOURCE_CONDITION = `"sagSourceType" = 'REMISION'`;
+/** Restricts SaleRecord to FUENTE_2 — dispatch/remision flow only. ARKETOPS excluded. */
+export const DISPATCH_SOURCE_CONDITION = `"sagSourceType" = 'REMISION' AND ${SQL_FILTER_EXCLUIR_ARKETOPS}`;
 
-/** Includes all source types — for total / forecast queries. */
-export const ALL_SOURCES_CONDITION = `"sagSourceType" IN ('OFICIAL', 'REMISION')`;
+/** Includes all source types — for total / forecast queries. ARKETOPS excluded. */
+export const ALL_SOURCES_CONDITION = `"sagSourceType" IN ('OFICIAL', 'REMISION') AND ${SQL_FILTER_EXCLUIR_ARKETOPS}`;
 
 // ── CSV explicit-source normalization ─────────────────────────────────────────
 //

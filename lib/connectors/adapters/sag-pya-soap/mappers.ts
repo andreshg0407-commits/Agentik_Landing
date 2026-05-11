@@ -50,7 +50,7 @@
  * for backward compatibility with callers that pass raw string NITs.
  */
 
-import type { UnifiedCustomer, UnifiedReceivable, ReceivableStatus } from "@/lib/connectors/core/types";
+import type { UnifiedCustomer, UnifiedReceivable, UnifiedSagOrder, UnifiedCollection, ReceivableStatus } from "@/lib/connectors/core/types";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -241,9 +241,16 @@ export function mapSagReceivable(
 
   // Customer — denormalized name on the header row
   const customerName = str(row, "sc_beneficiario") ?? "SIN NOMBRE";
-  // ka_nl_tercero is an integer FK to TERCEROS; store as string for traceability
-  const terceroId = num(row, "ka_nl_tercero", 0);
-  const customerTaxId: string | undefined = terceroId > 0 ? String(terceroId) : undefined;
+  // ka_nl_tercero is an integer FK to TERCEROS — NOT the real NIT.
+  // Real NIT comes from TERCEROS.n_nit via the LEFT JOIN (field: nit_tercero).
+  // Only fall back to String(terceroId) for meta/traceability — never expose it as NIT.
+  const terceroId    = num(row, "ka_nl_tercero", 0);
+  const nitTerceroRaw = row["nit_tercero"];
+  const nitTercero    = nitTerceroRaw != null && String(nitTerceroRaw).trim() !== "" && String(nitTerceroRaw).trim() !== "0"
+    ? String(nitTerceroRaw).trim()
+    : null;
+  // customerTaxId = real NIT from TERCEROS; undefined when not available (no fallback to internal FK)
+  const customerTaxId: string | undefined = nitTercero ?? undefined;
 
   // Dates
   const issueDate = parseDate(row, "d_fecha_documento");
@@ -323,6 +330,363 @@ export function mapSagReceivable(
       // paidAmountPending: true until a payments table (PAGOS, RECIBOS, etc.) is available
       paidAmountPending: true,
     },
+  };
+}
+
+// ── Movement mapper ───────────────────────────────────────────────────────────
+
+// ── ka_ni_fuente → k_sc_codigo_fuente lookup ──────────────────────────────────
+// k_sc_codigo_fuente cannot be added to the SAG GROUP BY on the full dataset
+// (triggers NullReferenceException, confirmed 2026-04-24).  Instead we derive
+// comprobanteCode client-side from the integer ka_ni_fuente using a per-connector
+// lookup function passed in by the adapter instance.
+//
+// The lookup function is built from connector.config.fuentesMap (a Record<number,string>
+// stored in the Connector DB row) so each PYA company uses its own FUENTES registry.
+// Castillitos falls back to CASTILLITOS_SOURCE_SEMANTIC_RULES when fuentesMap is absent.
+
+// Code → channel mapping (confirmed from probe 2026-04-24)
+const EMPRESA_CODES = new Set([
+  // Ventas empresa F1 (active + historical)
+  "FE", "F1", "NE", "NC", "ND", "NF", "D1", "FX",
+  // Cobros empresa
+  "R1", "R2",
+  // Consignaciones bancarias
+  "CP", "B1", "B2", "H1", "H2",
+]);
+const ALMACEN_CODES = new Set([
+  // Ventas almacén
+  "FD", "FC", "FG", "FA", "VC", "NA", "NG", "NS", "NT", "DA",
+  // POS recaudos
+  "RS", "RC", "RG", "RA",
+  // Retail financiero (Addi/Sistecredit — at stores)
+  "SI", "AN",
+]);
+const WEB_CODES = new Set(["FW", "NW"]);
+
+// Codes classified as Fuente 2 / REMISION (dispatch without invoice)
+const REMISION_CODES = new Set(["F2", "R2", "NF2"]);
+
+function deriveChannel(code: string | null): string {
+  if (!code) return "OTRO";
+  if (EMPRESA_CODES.has(code)) return "EMPRESA";
+  if (ALMACEN_CODES.has(code)) return "ALMACEN";
+  if (WEB_CODES.has(code))     return "ONLINE";
+  return "OTRO";
+}
+
+function deriveSagSourceType(code: string | null): string {
+  if (!code) return "OFICIAL";
+  return REMISION_CODES.has(code) ? "REMISION" : "OFICIAL";
+}
+
+function deriveSagDocumentFamily(code: string | null): string {
+  if (!code) return "OTHER";
+  if (code === "F2") return "DISPATCH_REMISION";
+  if (code.startsWith("N") && code.length === 2) return "CREDIT_NOTE";
+  if (code.startsWith("D") && code.length === 2) return "CREDIT_NOTE";
+  if (code.startsWith("F") && code.length === 2) return "OFFICIAL_INVOICE";
+  if (["R1", "R2", "RS", "RC", "RG", "RA", "SI", "AN"].includes(code)) return "OTHER";
+  if (["CP", "B1", "B2", "H1", "H2"].includes(code)) return "OTHER";
+  return "OTHER";
+}
+
+function deriveStoreName(code: string | null, channel: string): string {
+  if (!code) return "SAG";
+  const STORE_LABELS: Record<string, string> = {
+    FD: "Almacén D", FC: "Almacén C", FG: "Almacén G", FA: "Almacén A",
+    FW: "Tienda Web", FE: "Empresa", F1: "Empresa F1", F2: "Empresa F2",
+    R1: "Empresa", R2: "Empresa F2",
+    RS: "POS", RC: "POS", RG: "POS", RA: "POS",
+    SI: "Addi/Sistecredit", AN: "Addi/Sistecredit",
+  };
+  return STORE_LABELS[code] ?? (channel === "EMPRESA" ? "Empresa" : channel === "ALMACEN" ? "Almacén" : "SAG");
+}
+
+/**
+ * Map a SAG MOVIMIENTOS+FUENTES row (DEFAULT_RECEIVABLE_QUERY shape — 14 fields)
+ * to a canonical UnifiedMovement for SaleRecord storage.
+ *
+ * comprobanteCode is derived from ka_ni_fuente via the `fuenteToCode` lookup
+ * provided by the adapter instance (per-connector FUENTES registry).
+ * k_sc_codigo_fuente cannot be included in the SAG GROUP BY on the full dataset.
+ *
+ * Returns null for payables (sc_cobrar_pagar='P') and orders (k_n_clase_fuente=4).
+ */
+export function mapSagMovement(
+  row: Record<string, unknown>,
+  orgId: string,
+  fuenteToCode: (kaNiFuente: number) => string | null,
+): import("@/lib/connectors/core/types").UnifiedMovement | null {
+  // Skip payables and orders (same filter as receivables)
+  const cobrarPagar = str(row, "sc_cobrar_pagar") ?? "C";
+  const clase       = row["k_n_clase_fuente"] != null ? Number(row["k_n_clase_fuente"]) : 0;
+  if (cobrarPagar === "P" || clase === 4) return null;
+
+  const movId    = num(row, "ka_nl_movimiento", 0);
+  if (movId === 0) return null;
+
+  // Derive comprobanteCode from integer ka_ni_fuente via rules lookup
+  const fuenteId = num(row, "ka_ni_fuente", 0);
+  const code     = fuenteId > 0 ? fuenteToCode(fuenteId) : null;
+  const docNum      = str(row, "n_numero_documento") ?? String(movId);
+  const saleDate    = parseDate(row, "d_fecha_documento");
+  const customerName = str(row, "sc_beneficiario") ?? "SIN NOMBRE";
+  const terceroId   = num(row, "ka_nl_tercero", 0);
+
+  const totalValor  = num(row, "total_valor", 0);
+  const moneda      = str(row, "ss_moneda") ?? "PESOS";
+  const currency    = moneda.toUpperCase() === "DOLARES" ? "USD" : "COP";
+
+  const channel           = deriveChannel(code);  // derived from comprobanteCode
+  const sagSourceType     = deriveSagSourceType(code);
+  const sagDocumentFamily = deriveSagDocumentFamily(code);
+  const storeName         = deriveStoreName(code, channel);
+  const storeSlug         = slugify(storeName);
+
+  return {
+    sourceId:          `MOV-${movId}`,
+    source:            "sag_pya_soap",
+    orgId,
+    erpMovId:          movId,
+    comprobanteCode:   code,
+    comprobante:       docNum,
+    saleDate,
+    customerName,
+    customerTaxId:     terceroId > 0 ? String(terceroId) : undefined,
+    amount:            totalValor,
+    currency,
+    channel,
+    sagSourceType,
+    sagDocumentFamily,
+    storeName,
+    storeSlug,
+    meta: { raw: row, code, channel, sagSourceType },
+  };
+}
+
+// ── Collection mapper — SAG v_pagosnew ────────────────────────────────────────
+
+// Cobro codes this mapper accepts. Any other code is rejected (returns null).
+const COLLECTION_CODES = new Set(["R1", "R2", "RS", "RC", "RG", "RA", "SI", "AN"]);
+
+/**
+ * Slug helper (mirrors the slugify used in the movement mapper).
+ * Used only for naturalKey fallback — not for display.
+ */
+function mkNaturalKey(parts: (string | number | null | undefined)[]): string {
+  const crypto = require("crypto") as typeof import("crypto");
+  return crypto
+    .createHash("sha256")
+    .update(parts.map(p => String(p ?? "")).join("|"))
+    .digest("hex")
+    .slice(0, 24);
+}
+
+/**
+ * Map one row from v_pagosnew (or v_movimientos_pagos_con_facturas) to a
+ * canonical UnifiedCollection for CollectionRecord storage.
+ *
+ * Field names in v_pagosnew use PascalCase; the mapper tries multiple casing
+ * variants for each field to be resilient to SAG view differences.
+ *
+ * Confirmed fields from live v_pagosnew schema (2026-04-30):
+ *   Codigo_Fuente_Comprobante — short code: R1, R2, RS, RC, RG, RA, SI, AN
+ *   Valor_Pagado              — real payment amount (always positive in this view)
+ *   Fecha_Documento           — payment date (NOT Fecha_Pago)
+ *   Numero_Documento          — comprobante number (NOT Nro_Comprobante), numeric
+ *   Documento_pagado          — the invoice number being settled
+ *   Nit_Tercero               — customer NIT (numeric)
+ *   Nombre_Tercero            — customer name
+ *   NOTE: Ka_Nl_Movimiento does NOT exist in v_pagosnew — dedup = code+docNum+date
+ *
+ * Returns null if:
+ *   - Codigo_Fuente_Comprobante is not a known cobro code
+ *   - Valor_Pagado resolves to 0 after Math.abs (SAG structural zero — skip)
+ */
+export function mapSagCollection(
+  row: Record<string, unknown>,
+  orgId: string,
+): UnifiedCollection | null {
+  // ── Comprobante code — primary filter ──────────────────────────────────────
+  const code =
+    str(row, "Codigo_Fuente_Comprobante") ??
+    str(row, "codigo_fuente_comprobante") ??
+    str(row, "CODIGO_FUENTE_COMPROBANTE") ??
+    str(row, "Codigo_Fuente") ??
+    str(row, "codigo_fuente") ??
+    str(row, "CodigoFuente");
+  if (!code || !COLLECTION_CODES.has(code)) return null;
+
+  // ── Amount — Valor_Pagado is the confirmed real amount field ───────────────
+  // SAG may store as negative (signo=-1 convention). Always Math.abs.
+  const rawAmount =
+    num(row, "Valor_Pagado") ||
+    num(row, "valor_pagado") ||
+    num(row, "VALOR_PAGADO") ||
+    num(row, "ValorPagado") ||
+    num(row, "Valor_Pago") ||
+    num(row, "valor_pago") ||
+    0;
+  const amount = Math.abs(rawAmount);
+  // Skip structural zeros — no real payment data in this row
+  if (amount === 0) return null;
+
+  // ── SAG MOVIMIENTOS PK — used for dedup and cross-referencing SaleRecord ───
+  const erpMovIdRaw =
+    row["Ka_Nl_Movimiento"] ??
+    row["ka_nl_movimiento"] ??
+    row["KA_NL_MOVIMIENTO"] ??
+    row["Id_Movimiento"] ??
+    row["id_movimiento"] ??
+    row["NL_MOVIMIENTO"];
+  const erpMovId = erpMovIdRaw != null && erpMovIdRaw !== "" ? Number(erpMovIdRaw) : null;
+
+  // ── Document number ────────────────────────────────────────────────────────
+  // Confirmed from v_pagosnew live schema (2026-04-30): Numero_Documento
+  const documentNumber =
+    str(row, "Numero_Documento") ??
+    str(row, "numero_documento") ??
+    str(row, "Nro_Comprobante") ??
+    str(row, "nro_comprobante") ??
+    str(row, "Numero_Comprobante") ??
+    str(row, "NRO_COMPROBANTE") ??
+    str(row, "n_numero_documento") ??
+    (erpMovId != null ? String(erpMovId) : undefined);
+
+  // ── Collection date ────────────────────────────────────────────────────────
+  // Confirmed from v_pagosnew live schema (2026-04-30): Fecha_Documento
+  const collectionDate =
+    parseDate(row, "Fecha_Documento") ||
+    parseDate(row, "fecha_documento") ||
+    parseDate(row, "Fecha_Pago") ||
+    parseDate(row, "fecha_pago") ||
+    parseDate(row, "FECHA_DOCUMENTO") ||
+    parseDate(row, "Fecha") ||
+    parseDate(row, "fecha") ||
+    new Date(0);
+
+  // ── Customer ───────────────────────────────────────────────────────────────
+  // sagTerceroId = ka_nl_tercero (internal SAG integer PK) — NOT the real NIT.
+  // Only used for identity resolution via resolveCustomerIdentity().
+  const terceroIdRaw = row["Ka_Nl_Tercero"] ?? row["ka_nl_tercero"] ?? row["KA_NL_TERCERO"];
+  const sagTerceroId = terceroIdRaw != null && Number(terceroIdRaw) > 0
+    ? Number(terceroIdRaw)
+    : undefined;
+
+  // customerNit = real NIT from TERCEROS.n_nit (populated when TERCEROS JOIN present).
+  // Never fall back to ka_nl_tercero here — that would re-introduce the 526 bug.
+  const nitRaw =
+    row["Nit_Tercero"] ?? row["nit_tercero"] ?? row["NIT_TERCERO"] ??
+    row["NIT"] ?? row["nit"] ?? row["n_nit"];
+  const customerNit =
+    nitRaw != null && String(nitRaw).trim() !== "" && String(nitRaw) !== "0"
+      ? String(nitRaw).trim()
+      : undefined;
+
+  const customerName =
+    str(row, "Nombre_Tercero") ??
+    str(row, "nombre_tercero") ??
+    str(row, "NOMBRE_TERCERO") ??
+    str(row, "Nombre") ??
+    str(row, "nombre") ??
+    str(row, "NOMBRE") ??
+    str(row, "sc_beneficiario");
+
+  // ── Currency ───────────────────────────────────────────────────────────────
+  const moneda =
+    str(row, "Moneda") ?? str(row, "moneda") ?? str(row, "MONEDA") ??
+    str(row, "ss_moneda") ?? "PESOS";
+  const currency = moneda.toUpperCase() === "DOLARES" ? "USD" : "COP";
+
+  // ── Applied invoices (v_movimientos_pagos_con_facturas may provide these) ──
+  const invoiceRef =
+    str(row, "Numero_Factura") ?? str(row, "numero_factura") ??
+    str(row, "Factura") ?? str(row, "factura");
+  const appliedFacts = invoiceRef
+    ? [{ invoiceNumber: invoiceRef, amount }]
+    : undefined;
+
+  // ── Bank reference (for B1/B2/CP consignaciones) ──────────────────────────
+  const bankReference =
+    str(row, "Referencia") ?? str(row, "referencia") ??
+    str(row, "Nro_Cheque") ?? str(row, "nro_cheque") ??
+    str(row, "ss_banco") ?? str(row, "n_numero_cheque");
+
+  // ── Dedup natural key ──────────────────────────────────────────────────────
+  // Prefer erpMovId (stable SAG PK). Fallback to code+docNum+date.
+  const naturalKey = erpMovId != null && erpMovId > 0
+    ? mkNaturalKey([orgId, erpMovId])
+    : mkNaturalKey([orgId, code, documentNumber, collectionDate.toISOString().slice(0, 10)]);
+
+  return {
+    sourceId:        naturalKey,
+    source:          "sag_pya_soap",
+    orgId,
+    erpMovId:        erpMovId != null && erpMovId > 0 ? erpMovId : undefined,
+    comprobanteCode: code,
+    documentNumber,
+    collectionDate,
+    sagTerceroId,
+    customerNit,
+    customerName,
+    amount,
+    currency,
+    appliedFacts,
+    bankReference,
+    meta: { raw: row, code, erpMovId },
+  };
+}
+
+// ── Order mapper — SAG PD (Pedidos Cliente) ───────────────────────────────────
+
+/**
+ * Map a SAG MOVIMIENTOS+FUENTES row to a canonical UnifiedSagOrder.
+ *
+ * Returns non-null ONLY for rows where:
+ *   k_n_clase_fuente = 4 (customer orders)  AND
+ *   sc_cobrar_pagar  = 'C' (AR direction)    AND
+ *   derived comprobanteCode = 'PD'
+ *
+ * These rows are filtered out by mapSagMovement() (SaleRecord layer).
+ * This mapper gives them a dedicated storage path: CustomerOrderRecord.
+ */
+export function mapSagOrder(
+  row: Record<string, unknown>,
+  orgId: string,
+  fuenteToCode: (kaNiFuente: number) => string | null,
+): UnifiedSagOrder | null {
+  const cobrarPagar = str(row, "sc_cobrar_pagar") ?? "C";
+  const clase       = row["k_n_clase_fuente"] != null ? Number(row["k_n_clase_fuente"]) : 0;
+  if (cobrarPagar === "P" || clase !== 4) return null;
+
+  const fuenteId = num(row, "ka_ni_fuente", 0);
+  const code     = fuenteId > 0 ? fuenteToCode(fuenteId) : null;
+  if (code !== "PD") return null; // only genuine PEDIDOS CLIENTES rows
+
+  const movId       = num(row, "ka_nl_movimiento", 0);
+  if (movId === 0) return null;
+
+  const orderNumber  = str(row, "n_numero_documento") ?? String(movId);
+  const customerName = str(row, "sc_beneficiario") ?? "SIN NOMBRE";
+  const terceroId    = num(row, "ka_nl_tercero", 0);
+  const orderDate    = parseDate(row, "d_fecha_documento");
+  const totalValor   = num(row, "total_valor", 0);
+  const moneda       = str(row, "ss_moneda") ?? "PESOS";
+  const currency     = moneda.toUpperCase() === "DOLARES" ? "USD" : "COP";
+
+  return {
+    sourceId:     `ORD-${movId}`,
+    source:       "sag_pya_soap",
+    orgId,
+    erpMovId:     movId,
+    orderNumber,
+    customerName,
+    customerNit:  terceroId > 0 ? String(terceroId) : undefined,
+    orderDate,
+    amount:       totalValor,
+    currency,
+    sourceCode:   "PD",
   };
 }
 

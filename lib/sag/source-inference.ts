@@ -127,12 +127,21 @@ function normalizeExplicitSourceLocal(
     s === "1"       || s === "f1"      || s === "fuente1" ||
     s === "oficial" || s === "factura" || s === "invoice" ||
     s === "fv"      || s === "fa"      ||
-    // Castillitos k_sc_codigo_fuente — facturas de venta (FUENTES.xlsx 2026-04-20)
-    s === "fe"  || // ka=101 Factura electrónica de venta (vigente)
-    s === "vc"  || // ka=48  Factura de venta POS (histórica)
+    // Castillitos k_sc_codigo_fuente — facturas vigentes (FUENTES.xlsx 2026-04-20)
+    s === "fe"  || // ka=101 Factura electrónica empresa (vigente)
+    s === "fd"  || // ka=175 Factura electrónica San Diego (vigente)
+    s === "fc"  || // ka=176 Factura electrónica Centro (vigente)
+    s === "fg"  || // ka=177 Factura electrónica Gran Plaza (vigente)
+    s === "fw"  || // ka=207 Factura electrónica Web (vigente)
+    // Castillitos — facturas históricas
+    s === "vc"  || // ka=48  Factura POS (histórica)
     s === "v1"  || // ka=92  Factura POS WI (histórica)
     s === "v2"  || // ka=103 Factura POS SD (histórica)
     s === "v3"  || // ka=104 Factura POS M (histórica)
+    s === "v4"  || // ka=173 Factura POS Centro (histórica)
+    s === "v5"  || // ka=179 Factura POS Gran Plaza (histórica)
+    s === "v6"  || // ka=193 Factura POS Caldas (histórica)
+    s === "ff"  || // ka=155 Factura electrónica (histórica)
     s === "fx"     // ka=143 Factura electrónica (histórica)
   ) return "OFICIAL";
 

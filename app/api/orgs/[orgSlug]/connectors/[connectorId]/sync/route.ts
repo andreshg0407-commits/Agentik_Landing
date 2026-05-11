@@ -30,6 +30,18 @@ import { sagError }                     from "@/lib/sag/logger";
 // Register all adapters (side-effect import — must come before syncEngine calls)
 import "@/lib/connectors/adapters";
 
+// ── CRM connector detection ───────────────────────────────────────────────────
+// Sources that carry CRM modules (opportunities, activities, quotes).
+// Add new CRM integrations here — do not scatter source names across hooks.
+const CRM_CONNECTOR_SOURCES = new Set([
+  "castillitos_crm",
+  "hubspot",
+  "salesforce",
+  "pipedrive",
+  "crm_generic",
+]);
+const isCrmConnector = (source: string) => CRM_CONNECTOR_SOURCES.has(source);
+
 export const runtime     = "nodejs";
 export const maxDuration = 120; // long enough for a full SAG SOAP pull
 
@@ -59,11 +71,22 @@ export async function POST(
 
     if (module) {
       // ── Single-module sync ──────────────────────────────────────────────────
-      const runId = await syncEngine.syncModule(connectorId, module as never, {});
+      //
+      // For SAG receivables: SAG returns all rows in one SOAP response.
+      // The adapter paginates client-side in batches of 500 rows, using an
+      // instance-level cache so only one SOAP call is made per invocation.
+      // maxPages=20 caps each invocation at ~10 000 rows (~55–70 s of DB writes),
+      // keeping us within the 120-second Vercel limit.
+      // The cursor is persisted after each page; if hasMore is true the caller
+      // should invoke sync again (the next cron tick or explicit UI retry).
+      const isRxBatch = module === "receivables" && connector.source === "sag_pya_soap";
+      const runId = await syncEngine.syncModule(connectorId, module as never, {
+        ...(isRxBatch ? { maxPages: 20 } : {}),
+      });
 
       const run = await prisma.connectorRun.findUnique({
         where: { id: runId },
-        select: { status: true, rowsRead: true, rowsImported: true, rowsSkipped: true, rowsErrored: true, error: true },
+        select: { status: true, rowsRead: true, rowsImported: true, rowsSkipped: true, rowsErrored: true, error: true, cursorAfter: true },
       });
 
       // Post-sync hooks (fire-and-forget — do not block the response)
@@ -80,7 +103,7 @@ export async function POST(
 
         // CRM: after customers/accounts sync, refresh financial KPIs so that
         // CustomerProfile.ltv / totalSalesL12 are joined to CRM-sourced profiles.
-        if (module === "customers" && connector.source === "castillitos_crm") {
+        if (module === "customers" && isCrmConnector(connector.source)) {
           refreshAllCustomerFinancials(organization.id).catch(e =>
             sagError("sync:hook:fail", { orgId: organization.id, connectorId, module, code: "refreshAllCustomerFinancials(crm)", message: (e as Error).message }),
           );
@@ -91,7 +114,7 @@ export async function POST(
         // Also regenerate CRM risk alerts (stale opps, inactive premium clients, etc.)
         if (
           (module === "customers" || module === "opportunities" || module === "activities" || module === "quotes") &&
-          connector.source === "castillitos_crm"
+          isCrmConnector(connector.source)
         ) {
           runScoringForOrg(organization.id).catch(e =>
             sagError("sync:hook:fail", { orgId: organization.id, connectorId, module, code: "runScoringForOrg", message: (e as Error).message }),
@@ -102,6 +125,16 @@ export async function POST(
         }
       }
 
+      // For receivables batch sync: indicate whether this invocation processed
+      // all available pages or hit maxPages and needs to be called again.
+      // The cursor is already persisted by cursorStore.set(); the next call
+      // resumes from where this one stopped.
+      // Callers loop until resumable=false to complete the full initial import.
+      const resumable =
+        isRxBatch &&
+        typeof run?.cursorAfter === "string" &&
+        run.cursorAfter.startsWith("page:");
+
       return NextResponse.json({
         runId,
         module,
@@ -111,6 +144,7 @@ export async function POST(
         rowsSkipped:  run?.rowsSkipped  ?? 0,
         rowsErrored:  run?.rowsErrored  ?? 0,
         error:        run?.error ?? null,
+        resumable,
         ms: Date.now() - t0,
       });
 
@@ -124,7 +158,7 @@ export async function POST(
           sagError("sync:hook:fail", { orgId: organization.id, connectorId, code: "refreshAllCustomerFinancials", message: (e as Error).message }),
         );
       }
-      if (connector.source === "castillitos_crm") {
+      if (isCrmConnector(connector.source)) {
         // Full CRM sync may include "customers" — refresh financials to join
         // ERP sales data onto newly upserted CRM-sourced CustomerProfiles.
         refreshAllCustomerFinancials(organization.id).catch(e =>

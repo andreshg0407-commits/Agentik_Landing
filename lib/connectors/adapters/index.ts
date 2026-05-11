@@ -27,18 +27,21 @@ import type { RunContext, StorageHandler, UnifiedCustomer } from "../core/types"
 import { SagPyaAdapter }            from "./sag-pya/index";
 import { sagPyaOrderStorage }       from "./sag-pya/order-storage";
 
-registry.register("sag_pya", SagPyaAdapter);
-registerStorageHandler("orders", sagPyaOrderStorage);
-
 // ── SAG PYA SOAP ──────────────────────────────────────────────────────────────
 import { SagPyaSoapAdapter }           from "./sag-pya-soap/index";
 import {
   customerProfileStorage,
   customerReceivableStorage,
+  saleRecordStorage,
+  customerOrderStorage,
+  collectionStorage,
 }                                      from "./sag-pya-soap/storage";
 
+registry.register("sag_pya", SagPyaAdapter);
 registry.register("sag_pya_soap", SagPyaSoapAdapter);
-registerStorageHandler("receivables", customerReceivableStorage);
+registerStorageHandler("receivables",  customerReceivableStorage);
+registerStorageHandler("movements",    saleRecordStorage);
+registerStorageHandler("collections",  collectionStorage);
 
 // ── Castillitos CRM ───────────────────────────────────────────────────────────
 import { CastillitosCrmAdapter }       from "./castillitos-crm/index";
@@ -53,6 +56,21 @@ registry.register("castillitos_crm", CastillitosCrmAdapter);
 registerStorageHandler("opportunities", crmOpportunityStorage);
 registerStorageHandler("activities",    crmActivityStorage);
 registerStorageHandler("quotes",        crmQuoteStorage);
+
+// ── "orders" module — source-aware mux ────────────────────────────────────────
+// sag_pya (CSV pivot) writes OrderSnapshot via sagPyaOrderStorage.
+// sag_pya_soap writes CustomerOrderRecord via customerOrderStorage.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const orderStorageMux: StorageHandler<any> = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async upsertMany(records: any[], ctx: RunContext) {
+    if (ctx.source === "sag_pya_soap") {
+      return customerOrderStorage.upsertMany(records, ctx);
+    }
+    return sagPyaOrderStorage.upsertMany(records, ctx);
+  },
+};
+registerStorageHandler("orders", orderStorageMux);
 
 // ── "customers" module — source-aware mux ─────────────────────────────────────
 // Multiple adapters (sag_pya_soap, castillitos_crm) produce "customers" records

@@ -45,6 +45,9 @@ export type SagEventCode =
   | "write:retry"
   // SOAP transport
   | "soap:call:start"   // emitted before every consultaSagJson call (token never included)
+  | "soap:call:done"   // emitted after SOAP response received (row count)
+  | "soap:cache:ready" // emitted after adapter cache is populated (AR row count)
+  | "soap:page"        // emitted per pullReceivables page (offset, slice, hasMore)
   | "soap:fault"
   | "soap:http:error"
   | "soap:parse:error"

@@ -297,28 +297,53 @@ export function isFacturaVenta(ka: number): boolean {
 // Confirmado 2026-04-20 desde FUENTES.xlsx.
 
 export const CASTILLITOS_DOCUMENT_FAMILY_MAP: SagDocumentFamilyMap = {
-  // Facturas de venta (generan ingreso + cartera por cobrar)
-  "FE": "OFFICIAL_INVOICE",   // ka=101 — Factura electrónica (vigente)
-  "F1": "OFFICIAL_INVOICE",   // ka=93  — Factura de venta (histórica)
-  "VC": "OFFICIAL_INVOICE",   // ka=48  — Factura POS (histórica)
-  "V1": "OFFICIAL_INVOICE",   // ka=92  — Factura POS WI (histórica)
-  "V2": "OFFICIAL_INVOICE",   // ka=103 — Factura POS SD (histórica)
-  "V3": "OFFICIAL_INVOICE",   // ka=104 — Factura POS M (histórica)
-  "FX": "OFFICIAL_INVOICE",   // ka=143 — Factura electrónica (histórica)
+  // ── Facturas de venta vigentes — por canal ────────────────────────────────
+  "FE": "OFFICIAL_INVOICE",   // ka=101 — Factura electrónica empresa      (EMPRESA)
+  "FD": "OFFICIAL_INVOICE",   // ka=175 — Factura electrónica San Diego     (ALMACEN)
+  "FC": "OFFICIAL_INVOICE",   // ka=176 — Factura electrónica Centro        (ALMACEN)
+  "FG": "OFFICIAL_INVOICE",   // ka=177 — Factura electrónica Gran Plaza    (ALMACEN)
+  "FA": "OFFICIAL_INVOICE",   // ka=194 — Factura electrónica Caldas        (ALMACEN)
+  "FW": "OFFICIAL_INVOICE",   // ka=207 — Factura electrónica Web           (WEB)
 
-  // Remisión / despacho (flujo operacional, sin cartera)
+  // ── Facturas de venta históricas ──────────────────────────────────────────
+  "F1": "OFFICIAL_INVOICE",   // ka=93  — Factura de venta genérica (histórica)
+  "VC": "OFFICIAL_INVOICE",   // ka=48  — Factura POS               (histórica)
+  "V1": "OFFICIAL_INVOICE",   // ka=92  — Factura POS WI            (histórica)
+  "V2": "OFFICIAL_INVOICE",   // ka=103 — Factura POS SD            (histórica)
+  "V3": "OFFICIAL_INVOICE",   // ka=104 — Factura POS Mayorca       (histórica)
+  "V4": "OFFICIAL_INVOICE",   // ka=173 — Factura POS Centro        (histórica)
+  "V5": "OFFICIAL_INVOICE",   // ka=179 — Factura POS Gran Plaza    (histórica)
+  "V6": "OFFICIAL_INVOICE",   // ka=193 — Factura POS Caldas        (histórica)
+  "FF": "OFFICIAL_INVOICE",   // ka=155 — Factura electrónica       (histórica)
+  "FX": "OFFICIAL_INVOICE",   // ka=143 — Factura electrónica       (histórica)
+
+  // ── Remisión / despacho (flujo operacional, sin cartera) ──────────────────
   "F2": "DISPATCH_REMISION",  // ka=2   — Remisión (vigente)
+  "F3": "DISPATCH_REMISION",  // ka=164 — Remisión EV (histórica)
 
-  // Notas crédito (reducen ingreso — devoluciones)
-  "NE": "CREDIT_NOTE",        // ka=102 — Nota crédito electrónica (vigente)
-  "NC": "CREDIT_NOTE",        // ka=139 — Nota crédito / notas empresa (vigente)
+  // ── Notas crédito vigentes — por canal ────────────────────────────────────
+  "NE": "CREDIT_NOTE",        // ka=102 — Nota crédito empresa              (EMPRESA)
+  "NC": "CREDIT_NOTE",        // ka=139 — Nota crédito empresa (notas)      (EMPRESA)
+  "ND": "CREDIT_NOTE",        // ka=170 — Nota crédito empresa (notas)      (EMPRESA)
+  "NF": "CREDIT_NOTE",        // ka=171 — Nota crédito empresa (notas)      (EMPRESA)
+  "NS": "CREDIT_NOTE",        // ka=200 — Nota crédito San Diego            (ALMACEN)
+  "NT": "CREDIT_NOTE",        // ka=202 — Nota crédito Centro               (ALMACEN)
+  "NG": "CREDIT_NOTE",        // ka=197 — Nota crédito Gran Plaza           (ALMACEN)
+  "NA": "CREDIT_NOTE",        // ka=196 — Nota crédito Caldas               (ALMACEN)
+  "NW": "CREDIT_NOTE",        // ka=208 — Nota crédito Web                  (WEB)
+  "D1": "CREDIT_NOTE",        // ka=25  — Devolución ventas (vigente, mixto)
+
+  // ── Notas crédito históricas ──────────────────────────────────────────────
   "NX": "CREDIT_NOTE",        // ka=110 — Nota crédito electrónica (histórica)
-  "D1": "CREDIT_NOTE",        // ka=25  — Devolución ventas (vigente)
   "D2": "CREDIT_NOTE",        // ka=98  — Devolución ventas 2 (no oficial)
   "2D": "CREDIT_NOTE",        // ka=106 — Devolución vtas San Diego (histórica)
   "3D": "CREDIT_NOTE",        // ka=107 — Devolución vtas Mayorca (histórica)
+  "4D": "CREDIT_NOTE",        // ka=172 — Devolución vtas Centro (histórica)
+  "5D": "CREDIT_NOTE",        // ka=180 — Devolución vtas Gran Plaza (histórica)
+  "6D": "CREDIT_NOTE",        // ka=195 — Devolución vtas Caldas (histórica)
+  "D3": "CREDIT_NOTE",        // ka=166 — Devolución ventas EV (histórica)
 
-  // Notas débito bancarias
+  // ── Notas débito bancarias ────────────────────────────────────────────────
   "DB": "DEBIT_NOTE",         // ka=21  — Notas débito bancarias (vigente)
 };
 

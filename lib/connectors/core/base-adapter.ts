@@ -27,9 +27,11 @@ import type {
   PullResult,
   SyncModule,
   UnifiedActivity,
+  UnifiedCollection,
   UnifiedCustomer,
   UnifiedInventory,
   UnifiedInvoice,
+  UnifiedMovement,
   UnifiedOpportunity,
   UnifiedOrder,
   UnifiedQuote,
@@ -90,6 +92,16 @@ export abstract class BaseAdapter {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async pullReceivables(_cursor?: string): Promise<PullResult<UnifiedReceivable>> {
     return UNSUPPORTED_MODULE as PullResult<UnifiedReceivable>;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async pullMovements(_cursor?: string): Promise<PullResult<UnifiedMovement>> {
+    return UNSUPPORTED_MODULE as PullResult<UnifiedMovement>;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async pullCollections(_cursor?: string): Promise<PullResult<UnifiedCollection>> {
+    return UNSUPPORTED_MODULE as PullResult<UnifiedCollection>;
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars

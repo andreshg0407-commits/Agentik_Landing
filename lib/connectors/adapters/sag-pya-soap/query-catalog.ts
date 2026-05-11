@@ -424,6 +424,125 @@ const PRODUCTION: Record<string, QueryEntry> = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// COLLECTIONS — Cobros reales desde v_pagosnew
+// Source confirmed: v_pagosnew.Valor_Pagado + Codigo_Fuente_Comprobante (2026-04-30)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const COLLECTIONS: Record<string, QueryEntry> = {
+
+  // Primary source for cobros. All field names confirmed from live v_pagosnew schema (2026-04-30).
+  // Ka_Nl_Movimiento does NOT exist in this view — dedup key = code+Numero_Documento+Fecha_Documento.
+  // TERCEROS LEFT JOIN added 2026-05-02 to expose Ka_Nl_Tercero (sagTerceroId) for identity linking.
+  allCobros: {
+    key:     "collections.allCobros",
+    purpose: "Pull all cobro receipts from v_pagosnew with TERCEROS JOIN for sagTerceroId.",
+    method:  "consultaSagJson",
+    query: [
+      "SELECT",
+      "  p.Codigo_Fuente_Comprobante,",
+      "  p.Valor_Pagado,",
+      "  p.Fecha_Documento,",
+      "  p.Numero_Documento,",
+      "  p.Documento_pagado,",
+      "  p.Nit_Tercero,",
+      "  p.Nombre_Tercero,",
+      "  t.Ka_Nl_Tercero",
+      "FROM v_pagosnew p",
+      "LEFT JOIN TERCEROS t ON CAST(t.n_nit AS BIGINT) = CAST(p.Nit_Tercero AS BIGINT)",
+      "WHERE p.Codigo_Fuente_Comprobante IN ('R1','R2','RS','RC','RG','RA','SI','AN')",
+      "  AND p.Valor_Pagado > 0",
+      "ORDER BY p.Fecha_Documento DESC",
+    ].join(" "),
+    expectedFields: [
+      "Codigo_Fuente_Comprobante",
+      "Valor_Pagado",
+      "Fecha_Documento",
+      "Numero_Documento",
+      "Documento_pagado",
+      "Nit_Tercero",
+      "Nombre_Tercero",
+      "Ka_Nl_Tercero",
+    ],
+    notes: [
+      "All field names confirmed from live v_pagosnew schema (2026-04-30).",
+      "Fecha_Documento is the correct date field (Fecha_Pago does not exist).",
+      "Numero_Documento is the comprobante number (Nro_Comprobante does not exist).",
+      "Documento_pagado is the invoice being settled by this cobro.",
+      "Ka_Nl_Movimiento does NOT exist in v_pagosnew — CollectionRecord dedup uses naturalKey(code+Numero_Documento+Fecha_Documento).",
+      "Ka_Nl_Tercero added via LEFT JOIN TERCEROS ON n_nit = Nit_Tercero (2026-05-02) — used as sagTerceroId for identity linking.",
+      "Rate limit: 1 extra SOAP call per sync run — well within 340/day limit.",
+    ].join(" | "),
+    validationChecklist: [
+      "✅ Codigo_Fuente_Comprobante confirmed",
+      "✅ Valor_Pagado confirmed (positive in view)",
+      "✅ Fecha_Documento confirmed (replaces Fecha_Pago)",
+      "✅ Numero_Documento confirmed (replaces Nro_Comprobante)",
+      "✅ Nit_Tercero confirmed",
+      "✅ Nombre_Tercero confirmed",
+      "✅ Ka_Nl_Movimiento confirmed absent — naturalKey = composite hash",
+      "Confirm R2/RS/RC/RG/RA/SI/AN codes are present in actual data",
+    ],
+    status: "validated", // confirmed 2026-04-30
+  },
+
+  // Full detail with applied invoices — richer than allCobros but may be slower.
+  withAppliedInvoices: {
+    key:     "collections.withAppliedInvoices",
+    purpose: "Pull cobros with their applied invoice numbers from v_movimientos_pagos_con_facturas.",
+    method:  "consultaSagJson",
+    query: [
+      "SELECT",
+      "  v.Codigo_Fuente_Comprobante,",
+      "  v.Valor_Pagado,",
+      "  v.Fecha_Pago,",
+      "  v.Nro_Comprobante,",
+      "  v.Nit_Tercero,",
+      "  v.Nombre_Tercero,",
+      "  v.Ka_Nl_Movimiento,",
+      "  v.Numero_Factura",
+      "FROM v_movimientos_pagos_con_facturas v",
+      "WHERE v.Codigo_Fuente_Comprobante IN ('R1','R2','RS','RC','RG','RA','SI','AN')",
+      "  AND v.Valor_Pagado > 0",
+      "ORDER BY v.Fecha_Pago DESC",
+    ].join(" "),
+    expectedFields: [
+      "Codigo_Fuente_Comprobante",
+      "Valor_Pagado",
+      "Fecha_Pago",
+      "Nro_Comprobante",
+      "Nit_Tercero",
+      "Nombre_Tercero",
+      "Ka_Nl_Movimiento",
+      "Numero_Factura",
+    ],
+    notes: "View name confirmed (2026-04-30). Adds Numero_Factura for appliedFacts. One row per cobro-factura application (cobro may appear N times if it paid N invoices). Mapper deduplicates by Ka_Nl_Movimiento and groups Numero_Factura into appliedFacts array.",
+    validationChecklist: [
+      "Confirm view exists via SELECT TOP 5 * FROM v_movimientos_pagos_con_facturas",
+      "Confirm Numero_Factura field name",
+      "Confirm cardinality: 1 row per cobro vs N rows per cobro (one per applied factura)",
+      "If N rows: dedup in mapper by Ka_Nl_Movimiento, collecting Numero_Factura into appliedFacts",
+    ],
+    status: "pending",
+  },
+
+  // Deep payment document detail — most fields, slowest query.
+  documentDetail: {
+    key:     "collections.documentDetail",
+    purpose: "Pull full payment document detail from v_documentos_pagos_detalle.",
+    method:  "consultaSagJson",
+    query:   "SELECT * FROM v_documentos_pagos_detalle WHERE Valor_Pagado > 0 ORDER BY Fecha_Pago DESC",
+    expectedFields: ["Codigo_Fuente_Comprobante", "Valor_Pagado", "Fecha_Pago"],
+    notes: "View name confirmed (2026-04-30). Use for diagnostics and field discovery. In production, prefer allCobros or withAppliedInvoices which are lighter.",
+    validationChecklist: [
+      "Run SELECT TOP 5 * FROM v_documentos_pagos_detalle to confirm field names",
+      "Check if it adds retenciones / descuentos fields not present in v_pagosnew",
+    ],
+    status: "pending",
+  },
+
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MASTER DATA LOOKUP QUERIES — for homologation (Phase 1)
 // ─────────────────────────────────────────────────────────────────────────────
 //
@@ -584,17 +703,82 @@ const MASTER_LOOKUPS: Record<string, QueryEntry> = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ACCOUNTS — SAG PUC Chart of Accounts validation
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// SAFE READ-ONLY. These queries are used ONLY to validate that PUC account
+// codes from bank-account-registry.ts exist in the SAG chart of accounts.
+//
+// No writes. No mutations. Never called automatically.
+// Called explicitly from validation scripts or admin tooling.
+//
+// Table candidates: CUENTAS, PLAN_CUENTAS, PLAN_DE_CUENTAS — confirm with DBA.
+
+const ACCOUNTS: Record<string, QueryEntry> = {
+
+  // Validate a single PUC code. Called per-account during SAG validation run.
+  byCode: {
+    key:     "accounts.byCode",
+    purpose: "Confirm that a specific PUC account code exists in SAG chart of accounts. Used by bank-account-registry.ts validation flow.",
+    method:  "consultaSagJson",
+    query:   "SELECT CODIGO, DESCRIPCION, TIPO, NIVEL FROM CUENTAS WHERE CODIGO = '{code}'",
+    expectedFields: ["CODIGO", "DESCRIPCION", "TIPO", "NIVEL"],
+    notes: [
+      "Replace {code} with the sagAccountCode from BankAccountSource (e.g. '11200501').",
+      "Table name CUENTAS is a placeholder — may be PLAN_CUENTAS or PLAN_DE_CUENTAS in this SAG instance.",
+      "Run once per PUC code from getAllSagAccountCodes() in bank-account-registry.ts.",
+      "Zero rows = code does not exist in SAG → update source status to 'missing_in_sag'.",
+      "One row = code confirmed → update source status to 'integration_pending'.",
+      "SAFE READ-ONLY. No mutations.",
+    ].join(" | "),
+    validationChecklist: [
+      "Confirm SAG table name: try CUENTAS first; fallback PLAN_CUENTAS, PLAN_DE_CUENTAS",
+      "Confirm CODIGO field name",
+      "Confirm WHERE filtering on CODIGO works in consultaSagJson",
+      "Test with one known code (e.g. 11200501) before batch run",
+    ],
+    status: "placeholder",
+  },
+
+  // Batch: pull all active leaf accounts for initial PUC discovery.
+  allActive: {
+    key:     "accounts.allActive",
+    purpose: "Pull all active accounts from SAG chart of accounts — used for initial PUC code discovery and bulk validation of bank-account-registry codes.",
+    method:  "consultaSagJson",
+    query:   "SELECT CODIGO, DESCRIPCION, TIPO, NIVEL FROM CUENTAS WHERE ACTIVO = 1 ORDER BY CODIGO",
+    expectedFields: ["CODIGO", "DESCRIPCION", "TIPO", "NIVEL"],
+    notes: [
+      "Table name CUENTAS is a placeholder — confirm with DBA.",
+      "ACTIVO filter may be 1 or 'S' depending on SAG version — test both.",
+      "Use allActive once to build a local snapshot; then use byCode for targeted lookups.",
+      "Cross-reference result with getAllSagAccountCodes() from bank-account-registry.ts.",
+      "SAFE READ-ONLY. No mutations.",
+    ].join(" | "),
+    validationChecklist: [
+      "Confirm table name",
+      "Confirm ACTIVO = 1 vs ACTIVO = 'S'",
+      "Confirm NIVEL field (depth in PUC hierarchy — leaf accounts are NIVEL 5 or 6)",
+      "Test query returns expected PUC codes (11200501, 11100501, etc.)",
+    ],
+    status: "placeholder",
+  },
+
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Unified catalog export
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const QUERY_CATALOG = {
   customers:     CUSTOMERS,
   receivables:   RECEIVABLES,
+  collections:   COLLECTIONS,
   articles:      ARTICLES,
   inventory:     INVENTORY,
   prices:        PRICES,
   orders:        ORDERS,
   production:    PRODUCTION,
+  accounts:      ACCOUNTS,
   masterLookups: MASTER_LOOKUPS,
 } as const;
 

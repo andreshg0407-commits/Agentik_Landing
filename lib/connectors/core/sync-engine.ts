@@ -222,6 +222,8 @@ function dispatchPull(
     case "inventory":     return adapter.pullInventory(cursor)     as Promise<PullResult<SourceRecord>>;
     case "invoices":      return adapter.pullInvoices(cursor)      as Promise<PullResult<SourceRecord>>;
     case "receivables":   return adapter.pullReceivables(cursor)   as Promise<PullResult<SourceRecord>>;
+    case "movements":     return adapter.pullMovements(cursor)     as Promise<PullResult<SourceRecord>>;
+    case "collections":   return adapter.pullCollections(cursor)   as Promise<PullResult<SourceRecord>>;
     case "opportunities": return adapter.pullOpportunities(cursor) as Promise<PullResult<SourceRecord>>;
     case "activities":    return adapter.pullActivities(cursor)    as Promise<PullResult<SourceRecord>>;
     case "quotes":        return adapter.pullQuotes(cursor)        as Promise<PullResult<SourceRecord>>;

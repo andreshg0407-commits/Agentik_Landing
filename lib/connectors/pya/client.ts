@@ -103,6 +103,10 @@ export async function consultaSagJson(
     console.error("[PYA DEBUG] → Body:", body);
   }
 
+  // 3-minute hard deadline per SOAP call.
+  // The receivables JOIN query (MOVIMIENTOS + MOVIMIENTOS_ITEMS + FUENTES, ~125 k rows)
+  // historically returns in 30–90 s. Without a timeout the fetch hangs indefinitely
+  // when the SAG Azure server is slow/idle, blocking the Node.js process for hours.
   const res = await fetch(config.endpointUrl, {
     method:  "POST",
     headers: {
@@ -110,6 +114,7 @@ export async function consultaSagJson(
       SOAPAction:     SOAP_ACTION,
     },
     body,
+    signal: AbortSignal.timeout(180_000), // 3 minutes
   });
 
   const xml = await res.text();
