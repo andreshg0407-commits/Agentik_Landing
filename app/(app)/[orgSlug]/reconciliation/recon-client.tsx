@@ -266,11 +266,13 @@ function FlowRow({ def }: { def: FlowRowDef }) {
         display:      "flex",
         alignItems:   "center",
         gap:          S[3],
-        padding:      `${S[3]}px ${S[4]}px`,
+        padding:      `${S[3]+2}px ${S[4]}px`,
         borderBottom: `1px solid ${C.lineSubtle}`,
         borderLeft:   isLive ? `3px solid ${C.green}` : `3px solid transparent`,
         background:   isLive ? C.white : C.surface,
-        minHeight:    52,
+        minHeight:    54,
+        transition:   "background 0.12s",
+        cursor:       isLive ? "pointer" : "default",
       }}
     >
       {/* Title + tag block */}
@@ -1127,21 +1129,24 @@ function SourceCard({ def }: { def: SourceDef }) {
   return (
     <div style={{
       flex:          "0 0 auto",
-      width:         200,
+      width:         260,
+      scrollSnapAlign: "start",
       border:        `1px solid ${borderColor}`,
+      borderLeft:    isAction ? `3px solid ${C.amber}` : `1px solid ${borderColor}`,
       borderRadius:  R.lg,
       background:    bg,
-      padding:       `${S[3]}px ${S[3]+2}px`,
+      padding:       `${S[3]+2}px ${S[4]}px`,
       boxShadow:     E.xs,
       display:       "flex",
       flexDirection: "column",
-      gap:           S[1]+1,
+      gap:           S[2],
+      transition:    "box-shadow 0.15s, border-color 0.15s",
     }}>
-      {/* Type badge + status dot row */}
+      {/* Type badge + status row */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <span style={{
-          fontFamily:    T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.black,
-          background: tc.bg, color: tc.color, borderRadius: R.xs, padding: "2px 6px",
+          fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.black,
+          background: tc.bg, color: tc.color, borderRadius: R.xs, padding: "2px 7px",
           textTransform: "uppercase", letterSpacing: "0.05em",
         }}>
           {def.typeLabel}
@@ -1149,7 +1154,7 @@ function SourceCard({ def }: { def: SourceDef }) {
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <div style={{ width: 6, height: 6, borderRadius: "50%", background: dotColor }} />
           <span style={{
-            fontFamily: T.mono, fontSize: T.sz["2xs"],
+            fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold,
             color: isConnected ? C.greenDark : isAction ? C.amberDark : C.inkFaint,
           }}>
             {statusLabel}
@@ -1157,12 +1162,13 @@ function SourceCard({ def }: { def: SourceDef }) {
         </div>
       </div>
 
-      {/* Name */}
+      {/* Name — larger, allow full display */}
       <div
         title={def.name}
         style={{
-          fontFamily: T.mono, fontSize: T.sz.md, fontWeight: T.wt.black, color: C.ink,
-          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: S[1],
+          fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.black, color: C.ink,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          marginTop: 2,
         }}
       >
         {def.name}
@@ -1170,27 +1176,34 @@ function SourceCard({ def }: { def: SourceDef }) {
 
       {/* PUC code */}
       {def.pucCode && (
-        <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkGhost, letterSpacing: "0.02em" }}>
+        <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkGhost, letterSpacing: "0.04em" }}>
           PUC {def.pucCode}
         </div>
       )}
 
-      {/* Signal */}
+      {/* Signal — allow 2 lines */}
       {def.signal && (
         <div
           title={def.signal}
           style={{
             fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight,
-            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1,
+            lineHeight: 1.5, flex: 1,
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+            overflow: "hidden",
           }}
         >
           {def.signal}
         </div>
       )}
 
+      {/* Divider before CTA */}
+      <div style={{ height: 1, background: borderColor, marginTop: S[1] }} />
+
       {/* Action */}
       {def.actionLabel && (
-        <div style={{ marginTop: "auto", paddingTop: S[1]+1 }}>
+        <div>
           {def.href && def.actionType === "review" ? (
             <a
               href={def.href}
@@ -1240,7 +1253,7 @@ function DataSourcesLayer({ streams, orgSlug }: { streams?: FinancialStream[]; o
   const filtered = filter === "all" ? sourceDefs : sourceDefs.filter(s => s.type === filter);
 
   return (
-    <div style={{ marginTop: S[8] }}>
+    <div style={{ marginTop: S[6] }}>
       <WorkspaceSection
         title="Fuentes de datos"
         subtitle={`${sourceDefs.length} fuentes · ${activeCount} activas`}
@@ -1284,14 +1297,37 @@ function DataSourcesLayer({ streams, orgSlug }: { streams?: FinancialStream[]; o
         </div>
 
         {/* Source cards carousel */}
-        <div style={{ display: "flex", gap: S[3], overflowX: "auto", paddingBottom: S[2] }}>
-          {filtered.length === 0 ? (
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkFaint, padding: `${S[3]}px 0` }}>
-              Sin fuentes en este grupo
-            </div>
-          ) : (
-            filtered.map(def => <SourceCard key={def.id} def={def} />)
+        <div style={{ position: "relative" }}>
+          {filtered.length > 3 && (
+            <div style={{
+              position:      "absolute",
+              right:         0,
+              top:           0,
+              bottom:        S[2],
+              width:         48,
+              background:    `linear-gradient(to left, ${C.white}, transparent)`,
+              pointerEvents: "none",
+              zIndex:        1,
+            }} />
           )}
+          <div style={{
+            display:         "flex",
+            gap:             S[3],
+            overflowX:       "auto",
+            paddingBottom:   S[2],
+            scrollSnapType:  "x mandatory",
+            scrollBehavior:  "smooth",
+            // Hide scrollbar on webkit while keeping scroll functionality
+            msOverflowStyle: "none",
+          }}>
+            {filtered.length === 0 ? (
+              <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkFaint, padding: `${S[3]}px 0` }}>
+                Sin fuentes en este grupo
+              </div>
+            ) : (
+              filtered.map(def => <SourceCard key={def.id} def={def} />)
+            )}
+          </div>
         </div>
 
         {/* Collapsed technical matrix */}
@@ -1419,70 +1455,160 @@ function ManualReconciliationWorkspace() {
   const [fmtA, setFmtA] = useState<FileFormat>("csv");
   const [fmtB, setFmtB] = useState<FileFormat>("csv");
 
+  const capabilities: string[] = [
+    "Parseo XML/CSV",
+    "Normalización de claves",
+    "Matching asistido",
+    "Reglas sugeridas",
+    "Detección de duplicados",
+  ];
+
+  const orchestrationStages = [
+    { step: "01", label: "Carga & Parseo",   desc: "columnas · tipos · codificación · estructura" },
+    { step: "02", label: "Normalización",     desc: "claves de cruce · formatos · homologación" },
+    { step: "03", label: "Matching IA",       desc: "patrones · reglas · probabilidad · resultados" },
+  ];
+
+  const microPanels = [
+    { label: "Columnas detectadas",    value: "—" },
+    { label: "Campos de cruce",        value: "—" },
+    { label: "Coincidencias prelim.",  value: "—" },
+    { label: "Estructura reconocida",  value: "—" },
+  ];
+
   return (
     <WorkspaceSection
-      title="Conciliación manual asistida"
-      subtitle="Carga dos fuentes · Agentik prepara la comparación"
+      title="Laboratorio de conciliación manual"
+      subtitle="Motor IA · Fuente A vs Fuente B · análisis asistido"
     >
-      <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight, marginBottom: S[4], lineHeight: 1.7 }}>
-        Carga dos fuentes y Agentik preparará una conciliación asistida cuando el motor manual esté activo.
-        Soporta XML y CSV — útil para extractos bancarios, exportaciones SAG, y archivos DIAN.
-      </div>
-
-      {/* Upload zones */}
-      <div style={{ display: "flex", gap: S[4], flexWrap: "wrap", marginBottom: S[5] }}>
-        <FileUploadZone label="Fuente A" format={fmtA} onFormatChange={setFmtA} />
-        <FileUploadZone label="Fuente B" format={fmtB} onFormatChange={setFmtB} />
-      </div>
-
-      {/* Engine status */}
-      <div style={{
-        display:      "flex",
-        alignItems:   "center",
-        gap:          S[3],
-        padding:      `${S[3]}px ${S[4]}px`,
-        border:       `1px solid ${C.blueBorder}`,
-        borderLeft:   `3px solid ${C.blue}`,
-        borderRadius: R.md,
-        background:   C.blueLight,
-        marginBottom: S[4],
-      }}>
-        <div style={{ width: 6, height: 6, borderRadius: "50%", background: C.blue, flexShrink: 0 }} />
-        <div>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold, color: C.blueDark }}>
-            Preparando motor de carga manual
-          </div>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight, marginTop: 2 }}>
-            El motor de carga manual estará disponible próximamente. El operador recibirá notificación cuando esté activo.
-          </div>
-        </div>
-      </div>
-
-      {/* CTA (disabled) */}
-      <div style={{ display: "flex", alignItems: "center", gap: S[3] }}>
-        <button
-          disabled
-          className="ag-action-primary"
-          style={{ opacity: 0.4, cursor: "not-allowed" }}
-        >
-          Preparar conciliación
-        </button>
-        <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint }}>
-          Requiere seleccionar ambas fuentes y motor activo
+      {/* Intelligence capability badges */}
+      <div style={{ display: "flex", gap: S[1]+2, flexWrap: "wrap", alignItems: "center", marginBottom: S[4] }}>
+        {capabilities.map(c => (
+          <span key={c} style={{
+            fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold,
+            color: C.inkFaint, background: C.surface, border: `1px solid ${C.line}`,
+            borderRadius: R.xs, padding: "2px 8px", whiteSpace: "nowrap",
+          }}>
+            {c}
+          </span>
+        ))}
+        <span style={{
+          marginLeft: "auto", fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold,
+          color: C.blue, background: C.blueLight, border: `1px solid ${C.blueBorder}`,
+          borderRadius: R.xs, padding: "2px 8px",
+        }}>
+          MOTOR: STANDBY
         </span>
       </div>
 
-      {/* Copilot note (below CTA — visible but secondary) */}
+      {/* Pipeline: Fuente A — IA Engine — Fuente B */}
+      <div style={{ display: "flex", gap: S[3], alignItems: "stretch", marginBottom: S[5], flexWrap: "wrap" }}>
+        <FileUploadZone label="Fuente A" format={fmtA} onFormatChange={setFmtA} />
+
+        {/* Engine connector */}
+        <div style={{
+          display: "flex", flexDirection: "column", alignItems: "center",
+          justifyContent: "center", gap: S[2], padding: `${S[3]}px ${S[2]}px`, flexShrink: 0,
+        }}>
+          <div style={{
+            fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost,
+            letterSpacing: "0.05em", textTransform: "uppercase",
+          }}>
+            vs
+          </div>
+          <div style={{
+            width: 40, height: 40, borderRadius: "50%",
+            background: C.blueLight, border: `2px solid ${C.blueBorder}`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.black, color: C.blueDark }}>
+              IA
+            </span>
+          </div>
+          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost, textAlign: "center" }}>
+            motor
+          </div>
+        </div>
+
+        <FileUploadZone label="Fuente B" format={fmtB} onFormatChange={setFmtB} />
+      </div>
+
+      {/* Orchestration stages — 3-step pipeline */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: S[2]+2, marginBottom: S[4] }}>
+        {orchestrationStages.map(stage => (
+          <div key={stage.step} style={{
+            border:       `1px solid ${C.line}`,
+            borderRadius: R.md,
+            padding:      `${S[2]+2}px ${S[3]}px`,
+            background:   C.surface,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: S[1] }}>
+              <span style={{
+                fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.black,
+                color: C.blueDark, background: C.blueLight, border: `1px solid ${C.blueBorder}`,
+                borderRadius: R.xs, padding: "1px 5px",
+              }}>
+                {stage.step}
+              </span>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold, color: C.inkMid }}>
+                {stage.label}
+              </span>
+            </div>
+            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint }}>
+              {stage.desc}
+            </div>
+            <div style={{
+              marginTop: S[1]+2, fontFamily: T.mono, fontSize: T.sz.xs,
+              fontWeight: T.wt.bold, color: C.inkGhost, letterSpacing: "0.04em",
+            }}>
+              STANDBY
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Intelligence micro-panels (Task 5) */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: S[2], marginBottom: S[5] }}>
+        {microPanels.map(p => (
+          <div key={p.label} style={{
+            border:       `1px solid ${C.line}`,
+            borderRadius: R.md,
+            padding:      `${S[2]+2}px ${S[3]}px`,
+            background:   C.white,
+          }}>
+            <div style={{
+              fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint,
+              marginBottom: S[1], letterSpacing: "0.02em",
+            }}>
+              {p.label}
+            </div>
+            <div style={{
+              fontFamily: T.mono, fontSize: T.sz.xl, fontWeight: T.wt.bold,
+              color: C.inkGhost,
+            }}>
+              {p.value}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* CTA */}
+      <div style={{ display: "flex", alignItems: "center", gap: S[3], marginBottom: S[4] }}>
+        <button disabled className="ag-action-primary" style={{ opacity: 0.4, cursor: "not-allowed" }}>
+          Preparar conciliación
+        </button>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint }}>
+          Requiere seleccionar ambas fuentes y activar motor
+        </span>
+      </div>
+
+      {/* Copilot note */}
       <div style={{
-        marginTop:  S[5],
-        fontFamily: T.mono,
-        fontSize:   T.sz.sm,
-        color:      C.inkLight,
-        borderTop:  `1px solid ${C.lineSubtle}`,
-        paddingTop: S[3],
+        fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight,
+        borderTop: `1px solid ${C.lineSubtle}`, paddingTop: S[3],
       }}>
         <span style={{ fontWeight: T.wt.bold, color: C.brand }}>Agentik Copilot</span>
-        {" "}podrá ayudarte a interpretar diferencias y sugerir reglas de conciliación cuando el motor esté activo.
+        {" "}interpretará diferencias, sugerirá reglas de cruce y explicará excepciones cuando el motor esté activo.
       </div>
     </WorkspaceSection>
   );
@@ -1585,6 +1711,8 @@ function ReconciliationBuilder({
 // ── Recent Sessions ───────────────────────────────────────────────────────────
 
 function RecentSessionsSection({ sessions }: { sessions: ReconSessionRow[] }) {
+  if (sessions.length === 0) return null;
+
   const fmtDate = (iso: string) => {
     try {
       return new Intl.DateTimeFormat("es-CO", {
@@ -1602,19 +1730,9 @@ function RecentSessionsSection({ sessions }: { sessions: ReconSessionRow[] }) {
   return (
     <WorkspaceSection
       title="Sesiones recientes"
-      subtitle={sessions.length > 0 ? `${sessions.length} sesión${sessions.length !== 1 ? "es" : ""}` : undefined}
+      subtitle={`${sessions.length} sesión${sessions.length !== 1 ? "es" : ""}`}
     >
-      {sessions.length === 0 ? (
-        <div style={{
-          fontFamily: T.mono,
-          fontSize:   T.sz.sm,
-          color:      C.inkFaint,
-          padding:    `${S[3]}px ${S[4]}px`,
-          textAlign:  "center" as const,
-        }}>
-          Sin sesiones — ejecuta un flujo de conciliación para registrar actividad aquí
-        </div>
-      ) : (
+      {(
         <div style={{ overflowX: "auto" }}>
         <div className="ag-op-table">
           {/* Column headers */}
@@ -2065,20 +2183,12 @@ export default function ReconClient({
           <DataSourcesLayer streams={streams} orgSlug={orgSlug} />
 
           {/* Layer 4: Manual File Reconciliation Workspace */}
-          <div style={{ marginTop: S[8] }}>
+          <div style={{ marginTop: S[6] }}>
             <ManualReconciliationWorkspace />
           </div>
 
-          {/* Layer 5: Sesiones recientes */}
+          {/* Layer 5: Sesiones recientes (hidden when empty — Task 7) */}
           <RecentSessionsSection sessions={recentSessions ?? []} />
-
-          {/* Layer 6: Copilot readiness (secondary — copilot note already in ManualWorkspace) */}
-          <div style={{ marginTop: S[6] }}>
-            <CopilotReadinessSlot
-              label="Agentik Copilot — Conciliación"
-              moduleId="reconciliation"
-            />
-          </div>
         </div>
       )}
 
