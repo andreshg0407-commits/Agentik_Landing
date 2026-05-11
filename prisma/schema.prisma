@@ -202,6 +202,23 @@ enum ActionTaskStatus {
   CANCELED
 }
 
+/// Lifecycle state of a CollectionRecord relative to invoice reconciliation.
+enum CollectionAppliedStatus {
+  AVAILABLE          // received from SAG, not yet linked to any invoice
+  PARTIALLY_APPLIED  // partial amount applied to invoice(s); remainder open
+  APPLIED            // fully applied — all amount allocated
+  MANUAL_OVERRIDE    // operator marked as applied without a PaymentRecord
+}
+
+/// Where the real monetary amount in CollectionRecord came from.
+/// SAG_V_PAGOSNEW is the primary confirmed source (Valor_Pagado).
+enum CollectionAmountSource {
+  SAG_V_PAGOSNEW    // v_pagosnew.Valor_Pagado — confirmed 2026-04-30
+  SAG_V_MOVPAGOS    // v_movimientos_pagos_con_facturas (pending validation)
+  SAG_V_DOCPAGOS    // v_documentos_pagos_detalle (pending validation)
+  MANUAL            // manually entered by operator
+}
+
 enum ActionTaskType {
   CREAR_TAREA_COMERCIAL
   ASIGNAR_SEGUIMIENTO_VENDEDOR
@@ -218,6 +235,20 @@ enum ActionTaskPriority {
   MEDIUM
   HIGH
   URGENT
+}
+
+/// Lifecycle state of a reconciliation session.
+/// Maps 1:1 to ReconciliationSessionStatus in lib/reconciliation/session-types.ts.
+enum ReconSessionStatus {
+  DRAFT
+  READY
+  RUNNING
+  NEEDS_REVIEW
+  PARTIALLY_RECONCILED
+  RECONCILED
+  CLOSED
+  FAILED
+  CANCELLED
 }
 
 enum NotificationType {
@@ -284,6 +315,7 @@ model Organization {
   connectors          Connector[]
   customerProfiles    CustomerProfile[]
   customerReceivables CustomerReceivable[]
+  paymentRecords      PaymentRecord[]
   crmOpportunities    CRMOpportunity[]
   crmActivities       CRMActivity[]
   crmQuotes           CRMQuote[]
@@ -298,6 +330,16 @@ model Organization {
   whatsAppConversations   WhatsAppConversation[]
   whatsAppContactMemories WhatsAppContactMemory[]
   studioSessions          StudioSession[]
+  customerOrderRecords    CustomerOrderRecord[]
+  collectionRecords       CollectionRecord[]
+  collectionAllocations   CollectionAllocation[]
+  orgGroupMemberships     OrgGroupMember[]
+  onboardingChecklist     OnboardingChecklist?
+  marketingConfig         TenantMarketingConfig?
+  reconciliationSessions    ReconciliationSession[]
+  reconciliationRuns        ReconciliationRun[]
+  reconciliationEvents      ReconciliationEvent[]
+  reconciliationExceptions  ReconciliationException[]
 
   @@index([status])
 }
@@ -437,6 +479,89 @@ model TenantModule {
 
   @@unique([organizationId, moduleKey])
   @@index([organizationId, enabled])
+}
+
+// ── Tenant Group + Onboarding + Marketing Config ──────────────────────────────
+
+/// Logical grouping of organizations (e.g. "Castillitos Group").
+/// No business data lives here — it is a read-only aggregation context.
+model OrgGroup {
+  id          String  @id @default(cuid())
+  name        String
+  slug        String  @unique
+  description String?
+  settingsJson Json?
+
+  members   OrgGroupMember[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Membership of an Organization in an OrgGroup.
+model OrgGroupMember {
+  id        String @id @default(cuid())
+  groupId   String
+  orgId     String
+  role      String @default("MEMBER")  // "MEMBER" | "LEAD"
+  sortOrder Int    @default(0)
+
+  group        OrgGroup     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [orgId],   references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([groupId, orgId])
+  @@index([orgId])
+}
+
+/// Activation checklist per organization.
+/// Tracks onboarding progress — updated as each step completes.
+/// All booleans default false; completedAt set when operator finishes.
+model OnboardingChecklist {
+  id             String  @id @default(cuid())
+  organizationId String  @unique
+
+  businessModeSet     Boolean @default(false)
+  erpConnected        Boolean @default(false)
+  erpSampleVerified   Boolean @default(false)
+  erpFirstSyncDone    Boolean @default(false)
+  shopifyConnected    Boolean @default(false)
+  whatsappConnected   Boolean @default(false)
+  socialConnected     Boolean @default(false)
+  brandVoiceSet       Boolean @default(false)
+  modulesActivated    Boolean @default(false)
+
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+/// DB-backed Marketing Studio configuration per organization.
+/// Replaces the hardcoded ALL_TENANT_CONFIGS array in tenant-config.ts.
+/// configJson mirrors the TenantMarketingConfig TypeScript type (brandVoice,
+/// allowedPresets, luca, categoryAliases, fotoEstudio, shopify, etc.).
+model TenantMarketingConfig {
+  id             String  @id @default(cuid())
+  organizationId String  @unique
+  tenantName     String
+  active         Boolean @default(true)
+
+  /// Prompt engine key used by foto-estudio generate route.
+  /// "kids_product"   → buildCastillitosProductPrompt()
+  /// "fashion_adult"  → buildDoJeansFashionPrompt()
+  /// "generic"        → generic fallback (fashion_adult behavior)
+  promptEngine   String  @default("generic")
+
+  /// Full config blob — mirrors TenantMarketingConfig TS type.
+  configJson     Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 }
 
 /// --------------------
@@ -1386,6 +1511,8 @@ enum SaleGrain {
 }
 
 enum SaleChannel {
+  EMPRESA
+  ALMACEN
   TIENDA
   ONLINE
   TELEFONO
@@ -1649,6 +1776,89 @@ model SourceMatchRecord {
   @@index([organizationId, isOrphan, periodoAoMes])
 }
 
+/// Real payment receipt pulled from SAG via v_pagosnew (or other payment views).
+///
+/// Design principles:
+///   - SaleRecord stays HEADER-ONLY (documental layer).
+///   - CollectionRecord is the MONETARY layer for cobros.
+///   - One CollectionRecord per payment receipt (one SAG row from v_pagosnew).
+///   - appliedFacts stores which invoices were credited by this receipt (when view provides it).
+///
+/// Dedup key: (organizationId, naturalKey) — naturalKey = hash(erpMovId) when available,
+/// or hash(comprobanteCode + documentNumber + collectionDate) otherwise.
+///
+/// B1/B2 dashboards read CollectionRecord.amount for cobros.
+/// When CollectionRecord is absent, fallback is "monto pendiente detalle SAG".
+model CollectionRecord {
+  id             String   @id @default(cuid())
+  organizationId String
+
+  // ── SAG source reference ────────────────────────────────────────────────────
+  /// ka_nl_movimiento from MOVIMIENTOS header (stable SAG PK). Null only if
+  /// the source view does not expose it.
+  erpMovId       Int?
+
+  // ── Document identity ───────────────────────────────────────────────────────
+  /// SAG source code: R1, R2, RS, RC, RG, RA, SI, AN
+  comprobanteCode String
+  /// Recibo number from SAG (Nro_Comprobante or equivalent)
+  documentNumber  String?
+  /// Date of the payment receipt
+  collectionDate  DateTime
+
+  // ── Customer ─────────────────────────────────────────────────────────────────
+  customerId     String?        // FK to CustomerProfile — set by resolveCustomerIdentity()
+  sagTerceroId   Int?           // ka_nl_tercero from SAG TERCEROS (raw, for re-linking)
+  customerNit    String?        // real NIT from TERCEROS.n_nit (populated by TERCEROS JOIN)
+  customerName   String?
+
+  // ── Amount ───────────────────────────────────────────────────────────────────
+  /// Valor_Pagado from v_pagosnew. Always positive (Math.abs applied in mapper).
+  amount         Decimal  @db.Decimal(18, 2)
+  currency       String   @default("COP")
+
+  // ── Source provenance ────────────────────────────────────────────────────────
+  amountSource   CollectionAmountSource @default(SAG_V_PAGOSNEW)
+
+  // ── Applied invoices (populated when view provides application detail) ───────
+  /// [{invoiceNumber: string, amount: number}]
+  appliedFacts   Json?
+
+  // ── Bank reference (for consignaciones/bancarios) ────────────────────────────
+  bankReference  String?
+
+  // ── Conciliation lifecycle ──────────────────────────────────────────────────
+  /// Whether this receipt has been applied to invoice(s) via Agentik.
+  appliedStatus   CollectionAppliedStatus @default(AVAILABLE)
+  /// PaymentRecord created when this collection was applied via Agentik UI.
+  paymentRecordId String?
+  appliedAt       DateTime?
+  appliedBy       String?   // userId of operator who applied
+
+  // ── Dedup ─────────────────────────────────────────────────────────────────────
+  /// hash(erpMovId) when available; hash(code+docNum+date) otherwise.
+  naturalKey     String
+
+  // ── Audit ─────────────────────────────────────────────────────────────────────
+  rawJson        Json?
+
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer       CustomerProfile? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  cobrosApplied  CollectionAllocation[]
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([organizationId, naturalKey])
+  @@index([organizationId, comprobanteCode, collectionDate])
+  @@index([organizationId, collectionDate])
+  @@index([organizationId, customerNit])
+  @@index([organizationId, erpMovId])
+  @@index([organizationId, customerId])
+  @@index([organizationId, sagTerceroId])
+  @@index([organizationId, appliedStatus])
+}
+
 /// Business alert generated by the Alert Engine from sales/finance/operational data.
 /// Deduplicated by (organizationId, type, entityKey, period) — re-running the same
 /// period updates the existing alert rather than creating a duplicate.
@@ -1811,6 +2021,15 @@ model ConnectorMapping {
 // Customer 360 + Pipeline Intelligence
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Customer identity confidence level.
+/// Set by resolveCustomerIdentity() and the backfill script.
+enum IdentityStatus {
+  VERIFIED         // NIT confirmed from SAG TERCEROS — no conflict
+  NEEDS_REVIEW     // Created via name-fallback or has unresolved conflict
+  CONSUMIDOR_FINAL // Anonymous consumer (NIT 222222222, 0, or absent)
+  DUPLICATE        // Suspected duplicate — pending manual merge
+}
+
 enum CustomerStatus {
   ACTIVE
   INACTIVE
@@ -1857,11 +2076,25 @@ model CustomerProfile {
   erpId          String?        // SAG/ERP customer ID
   crmId          String?        // CRM customer ID
 
-  // Identity
-  nit            String?        // NIT normalizado (sin puntos/guiones)
+  // ── SAG identity keys ───────────────────────────────────────────────────────
+  /// ka_nl_tercero from SAG TERCEROS — integer internal PK.
+  /// Populated by resolveCustomerIdentity() during sync. Used to re-link
+  /// incoming records without requiring a NIT lookup each time.
+  sagTerceroId   Int?
+
+  // ── Canonical identity ─────────────────────────────────────────────────────
+  /// NIT sin puntos, guiones ni dígito de verificación (ej. "901383501").
+  /// Source of truth for NIT-based lookups. Distinct from nit (legacy field).
+  nitNormalized  String?
+  nit            String?        // NIT normalizado (sin puntos/guiones) — legacy alias
   slug           String         // stable slug for joins + dedup
   name           String
   legalName      String?
+
+  // ── Identity confidence ────────────────────────────────────────────────────
+  identityStatus IdentityStatus @default(NEEDS_REVIEW)
+  /// Free-text audit note explaining why status is NEEDS_REVIEW or DUPLICATE.
+  identityNotes  String?
 
   // Classification
   status         CustomerStatus @default(ACTIVE)
@@ -1914,14 +2147,19 @@ model CustomerProfile {
   activities         CRMActivity[]
   quotes             CRMQuote[]
   receivables        CustomerReceivable[]
+  paymentRecords     PaymentRecord[]
+  collectionRecords  CollectionRecord[]
 
   @@unique([organizationId, slug])
   @@index([organizationId, status])
   @@index([organizationId, sellerSlug])
   @@index([organizationId, lastPurchaseAt])
   @@index([organizationId, nit])
+  @@index([organizationId, nitNormalized])
+  @@index([organizationId, sagTerceroId])
   @@index([organizationId, churnRisk])
   @@index([organizationId, customerType])
+  @@index([organizationId, identityStatus])
 }
 
 /// Cartera / accounts receivable from ERP.
@@ -1963,6 +2201,8 @@ model CustomerReceivable {
 
   organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   customer       CustomerProfile? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  allocations    PaymentAllocation[]
+  cobrosApplied  CollectionAllocation[]
 
   @@unique([organizationId, erpId])
   @@index([organizationId, status])
@@ -1970,6 +2210,188 @@ model CustomerReceivable {
   @@index([organizationId, customerId])
   @@index([organizationId, dueDate])
   @@index([organizationId, agingBucket])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Treasury Hub — Cobros (Sprint 2.5)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Modelo de pagos recibidos de clientes.
+//
+// Flujo:
+//   1. Gerencia / operador registra un cobro recibido (PaymentRecord).
+//   2. El sistema aplica el pago a una o más facturas (PaymentAllocation).
+//   3. CustomerReceivable se actualiza: paidAmount, balanceDue, status, paidAt.
+//   4. CustomerProfile se recalcula: totalReceivable, overdueReceivable.
+//   5. Dashboard actualiza: totalCobrado, cobrosHoy, tasaDeCobro.
+//
+// Canales de entrada:
+//   FORM          → Formulario Agentik (operación normal)
+//   EXCEL_IMPORT  → Carga masiva / histórico
+//   BANK_FEED     → Integración bancaria futura (premium)
+
+enum PaymentMethod {
+  TRANSFERENCIA     // transferencia bancaria ACH / interbancaria
+  CONSIGNACION      // consignación en efectivo / cheque en banco
+  CHEQUE            // cheque físico
+  EFECTIVO          // pago en efectivo directo
+  PSE               // pago electrónico PSE
+  TARJETA_CREDITO   // tarjeta de crédito
+  TARJETA_DEBITO    // tarjeta débito
+  OTRO
+}
+
+/// Tipo de documento de cobro.
+/// PAGO     → cobro en efectivo / transferencia / cheque / consignación
+/// ND       → nota de descuento aplicada como crédito
+/// AJUSTE   → ajuste contable / corrección manual
+enum PaymentDocumentType {
+  PAGO
+  ND
+  AJUSTE
+}
+
+enum PaymentStatus {
+  DRAFT                 // guardado, no confirmado (borrador)
+  PENDING               // confirmado, pendiente de conciliación con factura(s)
+  RECONCILED            // conciliado — todo el monto aplicado a factura(s)
+  PARTIALLY_RECONCILED  // confirmado, monto parcialmente aplicado
+  REVERSED              // reversado / anulado con trazabilidad
+}
+
+enum PaymentSource {
+  FORM          // formulario Agentik
+  EXCEL_IMPORT  // importación Excel histórica
+  BANK_FEED     // integración bancaria futura
+}
+
+/// Pago recibido de un cliente.
+/// Un PaymentRecord puede cubrir una o varias facturas (via PaymentAllocation).
+model PaymentRecord {
+  id             String        @id @default(cuid())
+  organizationId String
+
+  // Identificación del cliente
+  customerId     String?       // FK CustomerProfile (null si no está vinculado)
+  customerNit    String?       // denormalizado para búsqueda rápida
+  customerName   String        // denormalizado para display sin JOIN
+
+  // Monto total recibido
+  amount         Decimal       @db.Decimal(18, 2)
+  currency       String        @default("COP")
+
+  // Desglose contable
+  allocatedAmount Decimal      @db.Decimal(18, 2) @default(0) // suma de allocations
+  unallocatedAmount Decimal    @db.Decimal(18, 2) @default(0) // amount - allocatedAmount
+
+  // Fecha operativa
+  paymentDate    DateTime      // fecha en que se recibió el pago (puede ser pasado)
+
+  // Detalle bancario
+  bankName       String?       // nombre del banco receptor (ej. "Bancolombia")
+  bankAccount    String?       // últimos 4 dígitos o alias de la cuenta
+  paymentMethod  PaymentMethod @default(TRANSFERENCIA)
+  documentType   PaymentDocumentType @default(PAGO)  // PAGO | ND | AJUSTE
+  reference      String?       // referencia bancaria / número de transacción / cheque
+  externalRef    String?       // referencia del banco / extracto
+
+  // Comprobante
+  attachmentUrl  String?       // URL al comprobante adjunto (R2 / S3)
+  attachmentName String?       // nombre del archivo original
+
+  // Narrativa
+  notes          String?       // observaciones del operador
+
+  // Estado y ciclo de vida
+  status         PaymentStatus @default(DRAFT)
+  reconciledAt   DateTime?     // cuando quedó totalmente conciliado
+  reversedAt     DateTime?     // cuando fue reversado
+  reversalReason String?       // motivo del reverso
+
+  // Auditoría
+  source         PaymentSource @default(FORM)
+  createdBy      String        // userId del operador
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  // Relaciones
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer       CustomerProfile? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  allocations    PaymentAllocation[]
+
+  @@index([organizationId, status])
+  @@index([organizationId, paymentDate])
+  @@index([organizationId, customerNit])
+  @@index([organizationId, customerId])
+  @@index([organizationId, createdAt])
+}
+
+/// Aplicación de un pago a una factura específica.
+/// Un pago puede aplicarse a N facturas; una factura puede recibir N pagos parciales.
+model PaymentAllocation {
+  id              String          @id @default(cuid())
+  organizationId  String
+
+  paymentId       String          // FK PaymentRecord
+  receivableId    String          // FK CustomerReceivable
+
+  allocatedAmount Decimal         @db.Decimal(18, 2)  // monto aplicado a esta factura
+
+  // Snapshot al momento de la aplicación (para trazabilidad histórica)
+  balanceBefore   Decimal         @db.Decimal(18, 2)  // balanceDue antes
+  balanceAfter    Decimal         @db.Decimal(18, 2)  // balanceDue después
+
+  // Estado de la factura resultante
+  receivableStatus String         // OPEN | PARTIAL | PAID — snapshot post-aplicación
+
+  createdAt       DateTime        @default(now())
+
+  payment         PaymentRecord      @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  receivable      CustomerReceivable @relation(fields: [receivableId], references: [id], onDelete: Restrict)
+
+  @@index([paymentId])
+  @@index([receivableId])
+  @@index([organizationId])
+}
+
+/// Audit trail record for each SAG cobro applied to a CustomerReceivable.
+/// Created by the auto-reconciliation engine (Sprint S3, Phase 1).
+/// IMMUTABLE after creation — never updated, only created or deleted on rollback.
+/// Dedup constraint: each (collectionRecordId, receivableId) pair is applied exactly once.
+model CollectionAllocation {
+  id                 String   @id @default(cuid())
+  organizationId     String
+
+  collectionRecordId String   // FK → CollectionRecord (the cobro applied)
+  receivableId       String   // FK → CustomerReceivable (the invoice credited)
+
+  /// Amount credited to this invoice from this cobro (capped at remaining balanceDue)
+  amountApplied      Decimal  @db.Decimal(18, 2)
+
+  // Pre/post snapshot — frozen at creation, enables rollback and audit reconstruction
+  balanceBefore      Decimal  @db.Decimal(18, 2)
+  balanceAfter       Decimal  @db.Decimal(18, 2)
+  paidBefore         Decimal  @db.Decimal(18, 2)
+  paidAfter          Decimal  @db.Decimal(18, 2)
+  statusBefore       String   // CustomerReceivable.status snapshot before application
+  statusAfter        String   // CustomerReceivable.status snapshot after application
+
+  // Reconciliation metadata
+  ruleUsed           String   // "MOV_EXACT_MATCH" for Phase 1
+  confidence         String   // "HIGH" — Phase 1 applies HIGH confidence only
+  appliedBy          String   @default("AUTO") // "AUTO" | userId for manual overrides
+
+  createdAt          DateTime @default(now())
+
+  organization     Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  collectionRecord CollectionRecord   @relation(fields: [collectionRecordId], references: [id], onDelete: Restrict)
+  receivable       CustomerReceivable @relation(fields: [receivableId], references: [id], onDelete: Restrict)
+
+  @@unique([collectionRecordId, receivableId])
+  @@index([organizationId])
+  @@index([receivableId])
+  @@index([collectionRecordId])
+  @@index([organizationId, createdAt])
 }
 
 /// CRM pipeline opportunity.
@@ -2607,6 +3029,52 @@ model GeneratedAsset {
   @@index([sessionId, generationStatus])
 }
 
+// ── CustomerOrderRecord — SAG PD (Pedidos Cliente) pipeline ──────────────────
+//
+// Stores customer orders imported from SAG MOVIMIENTOS where k_n_clase_fuente=4
+// (PD = PEDIDOS CLIENTES, kaNiFuente=40).
+//
+// These documents are EXCLUDED from SaleRecord (financial layer) because:
+//   - familiaDocumento: "PEDIDO" — not an invoice
+//   - efectoFinanciero: "SIN_IMPACTO_DASHBOARD" — no monetary impact
+//   - participaEnVentas: false
+//
+// Populated by: lib/connectors/adapters/sag-pya-soap (pullOrders / customerOrderStorage)
+// Queried by:   lib/orders/queries.ts → getDailyOrderKpis()
+
+enum CustomerOrderStatus {
+  PENDIENTE   // Received, not yet confirmed
+  CONFIRMADO  // Confirmed by ops
+  DESPACHADO  // Dispatched to customer
+  FACTURADO   // Converted to invoice (FE/FD/etc.) — order closed
+  CANCELADO   // Cancelled
+}
+
+model CustomerOrderRecord {
+  id             String              @id @default(cuid())
+  organizationId String
+
+  erpMovId       Int                 // ka_nl_movimiento — stable SAG PK
+  orderNumber    String              // n_numero_documento
+  customerNit    String?             // ka_nl_tercero as string
+  customerName   String              // sc_beneficiario
+  orderDate      DateTime            // d_fecha_documento (UTC midnight)
+  amount         Decimal             @db.Decimal(18, 2)
+  currency       String              @default("COP")
+  status         CustomerOrderStatus @default(PENDIENTE)
+  sourceCode     String              @default("PD") // always "PD" for SAG orders
+  rawJson        Json                // full raw SAG row for traceability
+  syncedAt       DateTime            @default(now()) @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, erpMovId])
+  @@index([organizationId, orderDate])
+  @@index([organizationId, customerNit])
+  @@index([organizationId, status])
+  @@index([organizationId, orderDate, status])
+}
+
 // Adapter:     lib/connectors/adapters/gocen/   (not yet implemented)
 // Types:       lib/workforce/types.ts            (ready)
 // Service:     lib/workforce/service.ts          (scaffolded, returns stubs)
@@ -2707,3 +3175,169 @@ model GeneratedAsset {
 //   @@index([organizationId, employeeId, resolvedAt])
 //   @@index([organizationId, severity, resolvedAt])
 // }
+
+// ── Reconciliation Sessions (AGENTIK-RECON-SESSIONS-01) ───────────────────────
+
+/// A reconciliation session is one auditable reconciliation operation.
+/// Example: RC-2026-00041 · Banco Bogotá vs Cobros SAG · Abril 2026
+///
+/// Sessions are durable: they contain runs, audit events, and summary snapshots.
+/// Individual record-level results are NOT stored here — only summaries.
+///
+/// Tenant safety: organizationId is required on every row. All queries must
+/// include organizationId in the WHERE clause.
+model ReconciliationSession {
+  id             String             @id @default(cuid())
+  organizationId String
+  /// Human-readable code: RC-YYYY-##### (e.g. RC-2026-00041)
+  sessionCode    String
+  title          String
+  /// Source type slugs matching ReconciliationSourceType in source-contract.ts
+  sourceAType    String
+  sourceALabel   String
+  sourceBType    String
+  sourceBLabel   String
+  /// "YYYYMM" period — null for date-range sessions
+  period         String?
+  status         ReconSessionStatus @default(DRAFT)
+  /// userId or "system"
+  createdBy      String?
+  /// userId of assigned operator
+  assignedTo     String?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  closedAt       DateTime?
+  /// ReconSummary snapshot after last completed run
+  summaryJson    Json?
+  /// Extra context: source configs, filters, run parameters
+  metadataJson   Json?
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  runs         ReconciliationRun[]
+  events       ReconciliationEvent[]
+  exceptions   ReconciliationException[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@unique([organizationId, sessionCode])
+  @@index([organizationId, status])
+  @@index([organizationId, period])
+  @@index([organizationId, createdAt])
+}
+
+/// One execution of a reconciliation session.
+/// Sessions can have multiple runs (retries, reruns after source correction).
+/// Individual record results are NOT stored — only the summary snapshot.
+model ReconciliationRun {
+  id             String @id @default(cuid())
+  organizationId String
+  sessionId      String
+  /// Increments per session: 1, 2, 3, ...
+  runNumber      Int    @default(1)
+  /// "pending" | "running" | "completed" | "failed" | "unsupported"
+  status         String @default("pending")
+  sourceAKey     String?
+  sourceBKey     String?
+  period         String?
+  /// ReconSummary JSON when status = "completed"
+  summaryJson    Json?
+  /// Error details when status = "failed"
+  errorJson      Json?
+  /// Performance metrics + shadow config snapshot for this run (RECON-ENGINE-03)
+  metadataJson   Json?
+  startedAt      DateTime?
+  completedAt    DateTime?
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  session      ReconciliationSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  exceptions   ReconciliationException[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sessionId])
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
+}
+
+/// Immutable audit trail for reconciliation sessions.
+/// Every meaningful action emits one event — events are never modified or deleted.
+///
+/// actorType: "system" | "user" | "agent"
+/// eventType: see ReconAuditEventType in session-types.ts
+model ReconciliationEvent {
+  id             String @id @default(cuid())
+  organizationId String
+  sessionId      String
+  /// "system" | "user" | "agent"
+  actorType      String @default("system")
+  /// userId, agentId, or null for system events
+  actorId        String?
+  /// See ReconAuditEventType in session-types.ts
+  eventType      String
+  message        String
+  metadataJson   Json?
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  session      ReconciliationSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([sessionId])
+  @@index([organizationId, eventType])
+  @@index([organizationId, createdAt])
+}
+
+/// Persisted reconciliation exception from a run.
+/// Created by the engine persistence layer (AGENTIK-RECON-ENGINE-03).
+/// Resolution state updated by operators via the Exception Resolution Workbench.
+///
+/// recordKey: matches WorkbenchException.recordKey — deterministic per record+type pair
+/// type: mismatch_amount | only_in_a | only_in_b | duplicate_in_a | duplicate_in_b | probable_match
+/// severity: info | watch | elevated | critical
+/// status: open | under_review | resolved | ignored
+model ReconciliationException {
+  id             String @id @default(cuid())
+  organizationId String
+  sessionId      String
+  runId          String
+  /// Deterministic key — matches WorkbenchException.recordKey
+  recordKey      String
+  /// Exception type (see WorkbenchExceptionType)
+  type           String
+  /// Severity: info | watch | elevated | critical
+  severity       String @default("info")
+  /// Amounts from source A and source B
+  amountA        Float?
+  amountB        Float?
+  /// Delta: amountB - amountA
+  delta          Float?
+  /// Delta as percentage of amountA
+  deltaPercent   Float?
+  /// Row counts from each source for this key
+  rowsA          Int    @default(1)
+  rowsB          Int    @default(1)
+  /// Resolution lifecycle: open → under_review → resolved | ignored
+  status         String @default("open")
+  resolution     String?
+  resolvedBy     String?
+  resolvedAt     DateTime?
+  /// Explanation text, reasons[], and engine metadata snapshot
+  metadataJson   Json?
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  session      ReconciliationSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  run          ReconciliationRun     @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sessionId])
+  @@index([runId])
+  @@index([organizationId, status])
+  @@index([organizationId, type])
+  @@index([organizationId, severity])
+  @@index([recordKey])
+}

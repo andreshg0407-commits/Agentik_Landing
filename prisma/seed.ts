@@ -385,6 +385,36 @@ async function main() {
     });
   }
 
+  // ── Do Jeans org ─────────────────────────────────────────────────────────────
+
+  const doJeans = await prisma.organization.upsert({
+    where: { slug: "do-jeans" },
+    update: { name: "Do Jeans", status: "ACTIVE" },
+    create: {
+      name: "Do Jeans",
+      slug: "do-jeans",
+      type: "ENTERPRISE",
+      status: "ACTIVE",
+    },
+  });
+
+  await prisma.membership.upsert({
+    where: {
+      organizationId_userId: {
+        organizationId: doJeans.id,
+        userId: testUser.id,
+      },
+    },
+    update: { role: Role.SUPER_ADMIN, status: MembershipStatus.ACTIVE, acceptedAt: new Date() },
+    create: {
+      organizationId: doJeans.id,
+      userId: testUser.id,
+      role: Role.SUPER_ADMIN,
+      status: MembershipStatus.ACTIVE,
+      acceptedAt: new Date(),
+    },
+  });
+
   // ── Summary ──────────────────────────────────────────────────────────────────
 
   console.log("✅ Seed OK");
@@ -403,6 +433,7 @@ async function main() {
       { slug: restauranteDemo.slug },
     ],
     externalClient: { id: externalClient.id, email: externalClient.email },
+    doJeans: { id: doJeans.id, slug: doJeans.slug },
     demoActivity: existingActivity === 0 ? "created" : "skipped (already exists)",
   });
 }
