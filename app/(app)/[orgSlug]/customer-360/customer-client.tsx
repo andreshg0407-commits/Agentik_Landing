@@ -11,8 +11,9 @@
  * style — no Tailwind classes.
  */
 
-import { useState } from "react";
+import React, { useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
+import { formatDateCol } from "@/lib/utils/formatDate";
 import { statusLabel, stageLabel } from "@/lib/ui/status-labels";
 import type {
   SerializedCustomerSummary,
@@ -24,6 +25,47 @@ import ActionButton     from "../_action-button";
 import { suggestAction } from "@/lib/collections/suggest-action";
 
 // ── Props ─────────────────────────────────────────────────────────────────────
+
+type SerializedConsignacion = {
+  id:              string;
+  saleDate:        string | null;
+  comprobanteCode: string;
+  amount:          number;
+  reference:       string | null;
+  channelLabel:    string;
+};
+
+type SerializedCollectionRecord = {
+  id:              string;
+  comprobanteCode: string;
+  documentNumber:  string | null;
+  collectionDate:  string;
+  customerName:    string | null;
+  amount:          number;
+  appliedStatus:   string;
+};
+
+type SerializedPayment = {
+  id:            string;
+  amount:        number;
+  paymentDate:   string;
+  paymentMethod: string;
+  status:        string;
+  reference:     string | null;
+  bankName:      string | null;
+  customerName:  string;
+  notes:         string | null;
+  allocations:   {
+    allocatedAmount: number;
+    balanceBefore:   number;
+    balanceAfter:    number;
+    receivable: {
+      invoiceNumber:  string | null;
+      originalAmount: number;
+      balanceDue:     number;
+    };
+  }[];
+};
 
 interface Props {
   orgSlug:            string;
@@ -37,7 +79,10 @@ interface Props {
   customersError:     boolean;
   detail:             SerializedCustomer360 | null;
   detailError:        boolean;
-  commercialTimeline: SerializedCommercialFact[];
+  commercialTimeline:    SerializedCommercialFact[];
+  recentPayments:        SerializedPayment[];
+  pendingConsignaciones: SerializedConsignacion[];
+  collectionRecords:     SerializedCollectionRecord[];
 }
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -59,9 +104,7 @@ function fmtN(n: number | null | undefined): string {
 
 function fmtDate(d: string | null | undefined): string {
   if (!d) return "—";
-  return new Date(d).toLocaleDateString("es-CO", {
-    year: "numeric", month: "short", day: "numeric",
-  });
+  return formatDateCol(d);
 }
 
 const MONTH_NAMES = ["", "Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
@@ -148,6 +191,20 @@ const ACTIVITY_ICONS: Record<string, string> = {
   task:     "✅",
   demo:     "🖥",
   visit:    "🏢",
+};
+
+const RECO_COLORS: Record<string, CSSProperties> = {
+  SIN_SOPORTE: { background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" },
+  PARCIAL:     { background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe" },
+  CONCILIADA:  { background: "#dcfce7", color: "#15803d", border: "1px solid #86efac" },
+  EXCESO:      { background: "#fce7f3", color: "#9d174d", border: "1px solid #fbcfe8" },
+};
+
+const RECO_LABELS: Record<string, string> = {
+  SIN_SOPORTE: "Sin soporte",
+  PARCIAL:     "Parcial",
+  CONCILIADA:  "Conciliada",
+  EXCESO:      "Exceso",
 };
 
 // ── Commercial ledger helpers ─────────────────────────────────────────────────
@@ -242,7 +299,7 @@ function CrmEmptyState({
       {emptyMsg}
       {syncedAt && (
         <span style={{ marginLeft: 8, fontSize: 11, color: "#ccc" }}>
-          Último sync: {new Date(syncedAt).toLocaleDateString("es-CO", { dateStyle: "medium" })}
+          Último sync: {formatDateCol(syncedAt)}
         </span>
       )}
     </div>
@@ -382,11 +439,31 @@ export default function CustomerClient({
   detail,
   detailError,
   commercialTimeline,
+  recentPayments,
+  pendingConsignaciones,
+  collectionRecords,
 }: Props) {
   const baseUrl = `/${orgSlug}/customer-360`;
 
   const [scoring, setScoring]   = useState<"idle" | "loading" | "done" | "error">("idle");
   const [scoreMsg, setScoreMsg] = useState<string>("");
+
+  // ── Gestionar cobro panel state ──────────────────────────────────────────────
+  const [cobroOpen,        setCobroOpen]        = useState<string | null>(null);
+  const [cobroResponsable, setCobroResponsable] = useState("");
+  const [cobroPrioridad,   setCobroPrioridad]   = useState<"LOW" | "MEDIUM" | "HIGH" | "URGENT">("MEDIUM");
+  const [cobroFecha,       setCobroFecha]        = useState("");
+  const [cobroCanal,       setCobroCanal]        = useState("WhatsApp");
+
+  function openCobro(customerId: string) {
+    if (cobroOpen === customerId) { setCobroOpen(null); return; }
+    setCobroOpen(customerId);
+    setCobroResponsable("");
+    setCobroPrioridad("MEDIUM");
+    setCobroFecha("");
+    setCobroCanal("WhatsApp");
+  }
+
 
   async function runScoring() {
     setScoring("loading");
@@ -433,7 +510,7 @@ export default function CustomerClient({
           <EmptyState message="Cliente no encontrado." />
         )}
 
-        {detail && <CustomerFicha detail={detail} orgSlug={orgSlug} commercialTimeline={commercialTimeline} />}
+        {detail && <CustomerFicha detail={detail} orgSlug={orgSlug} commercialTimeline={commercialTimeline} recentPayments={recentPayments} pendingConsignaciones={pendingConsignaciones} collectionRecords={collectionRecords} />}
       </div>
     );
   }
@@ -638,80 +715,208 @@ export default function CustomerClient({
               </thead>
               <tbody>
                 {customers.map((c, i) => (
-                  <tr key={c.id} style={{ background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
-                    <TD bold>
-                      <div>{c.name}</div>
-                      {c.nit && <div style={{ fontSize: 10, color: "#888", marginTop: 1 }}>NIT: {c.nit}</div>}
-                    </TD>
-                    <TD>{c.sellerName ?? <span style={{ color: "#ccc" }}>—</span>}</TD>
-                    <TD>{c.city ?? <span style={{ color: "#ccc" }}>—</span>}</TD>
-                    <TD right>{fmtCOP(c.ltv)}</TD>
-                    <TD right>{fmtCOP(c.totalSalesL12)}</TD>
-                    <TD right>
-                      {(c.overdueReceivable ?? 0) > 0
-                        ? <span style={{ color: "#991b1b", fontWeight: 600 }}>{fmtCOP(c.overdueReceivable)}</span>
-                        : <span style={{ color: "#ccc" }}>—</span>}
-                    </TD>
-                    <TD><ChurnBadge risk={c.churnRisk} /></TD>
-                    <TD right>
-                      {c.lastPurchaseAt
-                        ? <span style={{ color: "#555" }}>{fmtDate(c.lastPurchaseAt)}</span>
-                        : <span style={{ color: "#ccc" }}>—</span>}
-                    </TD>
-                    <TD>
-                      <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
-                        <a
-                          href={buildUrl(orgSlug, { slug: c.slug, q, status, churnRisk, sellerSlug, hasOverdue: hasOverdue ? "true" : null })}
-                          style={{
-                            fontSize: 11,
-                            fontWeight: 700,
-                            color: "#111",
-                            textDecoration: "none",
-                            border: "1px solid #ddd",
-                            borderRadius: 4,
-                            padding: "3px 10px",
-                            fontFamily: "monospace",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          360 →
-                        </a>
-                        {(c.overdueReceivable ?? 0) > 0 && (
-                          <ActionButton
-                            orgSlug={orgSlug}
-                            label="Cobro"
-                            icon="💰"
-                            variant="danger"
-                            size="xs"
-                            prefill={{
-                              actionType:   "CREAR_ACCION_COBRANZA",
-                              targetType:   "customer",
-                              targetId:     c.id,
-                              targetLabel:  c.name,
-                              sourceModule: "customer_360",
-                              title:        `Cobranza — ${c.name}`,
-                              priority:     "HIGH",
+                  <React.Fragment key={c.id}>
+                    <tr style={{ background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
+                      <TD bold>
+                        <div>{c.name}</div>
+                        {c.nit && <div style={{ fontSize: 10, color: "#888", marginTop: 1 }}>NIT: {c.nit}</div>}
+                      </TD>
+                      <TD>{c.sellerName ?? <span style={{ color: "#ccc" }}>—</span>}</TD>
+                      <TD>{c.city ?? <span style={{ color: "#ccc" }}>—</span>}</TD>
+                      <TD right>{fmtCOP(c.ltv)}</TD>
+                      <TD right>{fmtCOP(c.totalSalesL12)}</TD>
+                      <TD right>
+                        {(c.overdueReceivable ?? 0) > 0
+                          ? <span style={{ color: "#991b1b", fontWeight: 600 }}>{fmtCOP(c.overdueReceivable)}</span>
+                          : <span style={{ color: "#ccc" }}>—</span>}
+                      </TD>
+                      <TD><ChurnBadge risk={c.churnRisk} /></TD>
+                      <TD right>
+                        {c.lastPurchaseAt
+                          ? <span style={{ color: "#555" }}>{fmtDate(c.lastPurchaseAt)}</span>
+                          : <span style={{ color: "#ccc" }}>—</span>}
+                      </TD>
+                      <TD>
+                        <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+                          <a
+                            href={buildUrl(orgSlug, { customerId: c.id, q, status, churnRisk, sellerSlug, hasOverdue: hasOverdue ? "true" : null })}
+                            style={{
+                              fontSize: 11,
+                              fontWeight: 700,
+                              color: "#111",
+                              textDecoration: "none",
+                              border: "1px solid #ddd",
+                              borderRadius: 4,
+                              padding: "3px 10px",
+                              fontFamily: "monospace",
+                              whiteSpace: "nowrap",
                             }}
-                          />
-                        )}
-                        <ActionButton
-                          orgSlug={orgSlug}
-                          label="Tarea"
-                          variant="ghost"
-                          size="xs"
-                          prefill={{
-                            actionType:   "CREAR_TAREA_COMERCIAL",
-                            targetType:   "customer",
-                            targetId:     c.id,
-                            targetLabel:  c.name,
-                            sourceModule: "customer_360",
-                            title:        `Tarea comercial — ${c.name}`,
-                            assignedTo:   c.sellerName ?? undefined,
-                          }}
-                        />
-                      </div>
-                    </TD>
-                  </tr>
+                          >
+                            360 →
+                          </a>
+                          <button
+                            onClick={() => openCobro(c.id)}
+                            style={{
+                              fontSize: 11,
+                              fontWeight: 700,
+                              color: cobroOpen === c.id ? "#fff" : (c.overdueReceivable ?? 0) > 0 ? "#991b1b" : "#111",
+                              background: cobroOpen === c.id ? "#1e3a5f" : "transparent",
+                              border: `1px solid ${cobroOpen === c.id ? "#1e3a5f" : (c.overdueReceivable ?? 0) > 0 ? "#fca5a5" : "#ddd"}`,
+                              borderRadius: 4,
+                              padding: "3px 10px",
+                              fontFamily: "monospace",
+                              whiteSpace: "nowrap",
+                              cursor: "pointer",
+                            }}
+                          >
+                            Cobro →
+                          </button>
+                        </div>
+                      </TD>
+                    </tr>
+
+                    {/* ── Gestionar cobro inline panel ── */}
+                    {cobroOpen === c.id && (
+                      <tr>
+                        <td colSpan={9} style={{ padding: 0, background: "#f0f5ff", borderBottom: "2px solid #1e3a5f" }}>
+                          <div style={{ padding: "14px 20px", fontFamily: "monospace" }}>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: "#1e3a5f", marginBottom: 12, letterSpacing: "0.05em" }}>
+                              GESTIONAR COBRO — {c.name.toUpperCase()}
+                              {(c.overdueReceivable ?? 0) > 0 && (
+                                <span style={{ marginLeft: 10, color: "#991b1b", fontWeight: 400, fontSize: 11 }}>
+                                  Vencido: {fmtCOP(c.overdueReceivable)}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Form fields */}
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
+                              <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 10, color: "#555", fontWeight: 700, letterSpacing: "0.08em" }}>
+                                RESPONSABLE
+                                <input
+                                  value={cobroResponsable}
+                                  onChange={e => setCobroResponsable(e.target.value)}
+                                  placeholder="Nombre o cargo"
+                                  style={{ fontSize: 11, fontFamily: "monospace", padding: "4px 8px", border: "1px solid #c8d4e8", borderRadius: 3, background: "#fff" }}
+                                />
+                              </label>
+                              <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 10, color: "#555", fontWeight: 700, letterSpacing: "0.08em" }}>
+                                PRIORIDAD
+                                <select
+                                  value={cobroPrioridad}
+                                  onChange={e => setCobroPrioridad(e.target.value as "LOW" | "MEDIUM" | "HIGH" | "URGENT")}
+                                  style={{ fontSize: 11, fontFamily: "monospace", padding: "4px 8px", border: "1px solid #c8d4e8", borderRadius: 3, background: "#fff" }}
+                                >
+                                  <option value="LOW">Baja</option>
+                                  <option value="MEDIUM">Media</option>
+                                  <option value="HIGH">Alta</option>
+                                  <option value="URGENT">Crítica</option>
+                                </select>
+                              </label>
+                              <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 10, color: "#555", fontWeight: 700, letterSpacing: "0.08em" }}>
+                                FECHA SEGUIMIENTO
+                                <input
+                                  type="date"
+                                  value={cobroFecha}
+                                  onChange={e => setCobroFecha(e.target.value)}
+                                  style={{ fontSize: 11, fontFamily: "monospace", padding: "4px 8px", border: "1px solid #c8d4e8", borderRadius: 3, background: "#fff" }}
+                                />
+                              </label>
+                              <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 10, color: "#555", fontWeight: 700, letterSpacing: "0.08em" }}>
+                                CANAL
+                                <select
+                                  value={cobroCanal}
+                                  onChange={e => setCobroCanal(e.target.value)}
+                                  style={{ fontSize: 11, fontFamily: "monospace", padding: "4px 8px", border: "1px solid #c8d4e8", borderRadius: 3, background: "#fff" }}
+                                >
+                                  <option value="WhatsApp">WhatsApp</option>
+                                  <option value="Correo">Correo</option>
+                                  <option value="Llamada">Llamada</option>
+                                  <option value="Manual">Manual</option>
+                                </select>
+                              </label>
+                            </div>
+
+                            {/* Action buttons */}
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                              <ActionButton
+                                orgSlug={orgSlug}
+                                label="Crear seguimiento"
+                                variant="primary"
+                                size="xs"
+                                prefill={{
+                                  actionType:   "CREAR_ACCION_COBRANZA",
+                                  targetType:   "customer",
+                                  targetId:     c.id,
+                                  targetLabel:  c.name,
+                                  sourceModule: "customer_360",
+                                  title:        `Seguimiento cobro — ${c.name}`,
+                                  priority:     cobroPrioridad,
+                                  assignedTo:   cobroResponsable || undefined,
+                                  description:  cobroFecha ? `Fecha: ${cobroFecha} · Canal: ${cobroCanal}` : `Canal: ${cobroCanal}`,
+                                }}
+                              />
+                              <ActionButton
+                                orgSlug={orgSlug}
+                                label="Programar cobro"
+                                variant="ghost"
+                                size="xs"
+                                prefill={{
+                                  actionType:   "ASIGNAR_SEGUIMIENTO_VENDEDOR",
+                                  targetType:   "customer",
+                                  targetId:     c.id,
+                                  targetLabel:  c.name,
+                                  sourceModule: "customer_360",
+                                  title:        `Cobro programado — ${c.name}`,
+                                  priority:     cobroPrioridad,
+                                  assignedTo:   cobroResponsable || undefined,
+                                  description:  cobroFecha ? `Fecha compromiso: ${cobroFecha}` : undefined,
+                                }}
+                              />
+                              <ActionButton
+                                orgSlug={orgSlug}
+                                label="Mensaje WhatsApp"
+                                variant="ghost"
+                                size="xs"
+                                prefill={{
+                                  actionType:   "CREAR_ACCION_COBRANZA",
+                                  targetType:   "customer",
+                                  targetId:     c.id,
+                                  targetLabel:  c.name,
+                                  sourceModule: "customer_360",
+                                  title:        `WhatsApp cobro — ${c.name}`,
+                                  priority:     cobroPrioridad,
+                                  description:  "Preparar mensaje WhatsApp con agente IA",
+                                }}
+                              />
+                              <ActionButton
+                                orgSlug={orgSlug}
+                                label="Escalar a gerencia"
+                                variant="danger"
+                                size="xs"
+                                prefill={{
+                                  actionType:   "ESCALAR_A_GERENCIA",
+                                  targetType:   "customer",
+                                  targetId:     c.id,
+                                  targetLabel:  c.name,
+                                  sourceModule: "customer_360",
+                                  title:        `Escalamiento — ${c.name}`,
+                                  priority:     "HIGH",
+                                  assignedTo:   cobroResponsable || undefined,
+                                }}
+                              />
+                              <button
+                                onClick={() => setCobroOpen(null)}
+                                style={{ fontSize: 10, color: "#888", background: "none", border: "none", cursor: "pointer", fontFamily: "monospace", paddingLeft: 0 }}
+                              >
+                                Cerrar
+                              </button>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>
@@ -728,14 +933,286 @@ function CustomerFicha({
   detail,
   orgSlug,
   commercialTimeline,
+  recentPayments,
+  pendingConsignaciones,
+  collectionRecords,
 }: {
   detail: SerializedCustomer360;
   orgSlug: string;
   commercialTimeline: SerializedCommercialFact[];
+  recentPayments: SerializedPayment[];
+  pendingConsignaciones: SerializedConsignacion[];
+  collectionRecords: SerializedCollectionRecord[];
 }) {
   const { profile, salesSummary, receivables, opportunities, recentActivities, quotes, aiInsight } = detail;
 
+  // ── Conciliation panel state ───────────────────────────────────────────────
+  type ConciliarPanel = {
+    type:           "conciliar" | "manual";
+    receivableId:   string;
+    invoiceNumber:  string | null;
+    balanceDue:     number;
+  } | null;
+  const [conciliarPanel, setConciliarPanel] = useState<ConciliarPanel>(null);
+  const [conciliarCrId,  setConciliarCrId]  = useState<string>("");
+  const [conciliarAmt,   setConciliarAmt]   = useState<string>("");
+  const [conciliarNotes, setConciliarNotes] = useState<string>("");
+  const [conciliarBusy,         setConciliarBusy]         = useState(false);
+  const [conciliarError,        setConciliarError]        = useState<string | null>(null);
+  const [conciliarOk,           setConciliarOk]           = useState<string | null>(null);
+  const [conciliarDocType,      setConciliarDocType]      = useState<"PAGO" | "ND" | "AJUSTE">("PAGO");
+  const [conciliarDocSuggested, setConciliarDocSuggested] = useState<"PAGO" | "ND" | "AJUSTE" | null>(null);
+  const [conciliarRef,          setConciliarRef]          = useState<string>("");
+  const [conciliarMethod,       setConciliarMethod]       = useState<string>("TRANSFERENCIA");
+  const [showAllCobros,  setShowAllCobros]  = useState(false);
+  const [expandedDocs,   setExpandedDocs]   = useState<Set<string>>(new Set());
+
+  function toggleDocExpand(id: string) {
+    setExpandedDocs(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function openConciliar(type: "conciliar" | "manual", doc: {
+    id: string; invoiceNumber: string | null; balanceDue: number;
+  }) {
+    setConciliarPanel({ type, receivableId: doc.id, invoiceNumber: doc.invoiceNumber, balanceDue: doc.balanceDue });
+    setConciliarCrId("");
+    setConciliarAmt(String(doc.balanceDue));
+    setConciliarNotes("");
+    setConciliarDocType("PAGO");
+    setConciliarDocSuggested(null);
+    setConciliarRef("");
+    setConciliarMethod("TRANSFERENCIA");
+    setConciliarError(null);
+    setConciliarOk(null);
+  }
+
+  function detectDocTypeFromRef(ref: string): "PAGO" | "ND" | "AJUSTE" | null {
+    const u = ref.toUpperCase();
+    if (u.includes("ND") || u.includes("DESCUENTO") || u.includes("NOTA DEBITO") || u.includes("NOTA DE")) return "ND";
+    if (u.includes("AJUSTE") || u.includes("CORREC")) return "AJUSTE";
+    return null;
+  }
+
+  function handleConciliarRefChange(val: string) {
+    setConciliarRef(val);
+    const suggested = detectDocTypeFromRef(val);
+    if (suggested) {
+      setConciliarDocSuggested(suggested);
+      setConciliarDocType(suggested);   // auto-select; user can override
+    } else {
+      setConciliarDocSuggested(null);
+    }
+  }
+
+  function closeConciliar() {
+    setConciliarPanel(null);
+    setConciliarError(null);
+    setConciliarOk(null);
+  }
+
+  // ── Deposit panel — apply consignación/cobro SAG to a chosen invoice ─────────
+  type DepositPanel = {
+    sourceType:   "collection" | "consignacion";
+    sourceId:     string;
+    sourceLabel:  string;
+    sourceAmount: number;
+    sourceRef:    string | null;
+    sourceDate:   string;
+  } | null;
+
+  const [depositPanel,   setDepositPanel]   = useState<DepositPanel>(null);
+  const [depositRxId,    setDepositRxId]    = useState<string>("");
+  const [depositAmt,     setDepositAmt]     = useState<string>("");
+  const [depositNotes,   setDepositNotes]   = useState<string>("");
+  const [depositBusy,    setDepositBusy]    = useState(false);
+  const [depositError,   setDepositError]   = useState<string | null>(null);
+  const [depositOk,      setDepositOk]      = useState<string | null>(null);
+
+  function openDeposit(src: NonNullable<DepositPanel>) {
+    setDepositPanel(src);
+    setDepositRxId("");
+    setDepositAmt(String(src.sourceAmount));
+    setDepositNotes("");
+    setDepositError(null);
+    setDepositOk(null);
+  }
+
+  async function submitDeposit() {
+    if (!depositPanel) return;
+    if (!depositRxId) { setDepositError("Selecciona una factura a aplicar"); return; }
+    const amt = parseFloat(depositAmt);
+    if (!amt || amt <= 0) { setDepositError("Monto inválido"); return; }
+    setDepositBusy(true);
+    setDepositError(null);
+    try {
+      const body: Record<string, unknown> = {
+        customerNit:  profile.nit ?? null,
+        customerName: profile.name,
+        amount:       amt,
+        paymentDate:  depositPanel.sourceDate,
+        reference:    depositPanel.sourceRef ?? null,
+        notes:        depositNotes || null,
+        isManual:     depositPanel.sourceType === "consignacion",
+        allocations:  [{ receivableId: depositRxId, allocatedAmount: amt }],
+      };
+      if (depositPanel.sourceType === "collection") {
+        body.collectionRecordId = depositPanel.sourceId;
+      }
+      const res = await fetch(`/api/orgs/${orgSlug}/conciliar`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify(body),
+      });
+      const json = await res.json() as { error?: string; paymentId?: string };
+      if (!res.ok) { setDepositError(json.error ?? "Error al aplicar pago"); return; }
+      setDepositOk(`Pago aplicado — ID ${json.paymentId?.slice(-8)}`);
+      setTimeout(() => { setDepositPanel(null); window.location.reload(); }, 1200);
+    } catch {
+      setDepositError("Error de red — intenta de nuevo");
+    } finally {
+      setDepositBusy(false);
+    }
+  }
+
+  async function submitConciliar() {
+    if (!conciliarPanel) return;
+    const amt = parseFloat(conciliarAmt);
+    if (!amt || amt <= 0) { setConciliarError("Ingresa un monto válido"); return; }
+    if (amt > conciliarPanel.balanceDue) { setConciliarError(`El monto no puede superar el saldo (${fmtCOP(conciliarPanel.balanceDue)})`); return; }
+    setConciliarBusy(true);
+    setConciliarError(null);
+    try {
+      const body: Record<string, unknown> = {
+        customerNit:   profile.nit ?? null,
+        customerName:  profile.name,
+        amount:        amt,
+        paymentDate:   new Date().toISOString(),
+        notes:         conciliarNotes || null,
+        reference:     conciliarRef   || null,
+        paymentMethod: conciliarMethod,
+        documentType:  conciliarDocType,
+        isManual:      conciliarPanel.type === "manual",
+        allocations:   [{ receivableId: conciliarPanel.receivableId, allocatedAmount: amt }],
+      };
+      if (conciliarPanel.type === "conciliar" && conciliarCrId) {
+        body.collectionRecordId = conciliarCrId;
+      }
+      const res = await fetch(`/api/orgs/${orgSlug}/conciliar`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify(body),
+      });
+      const json = await res.json() as { error?: string; paymentId?: string };
+      if (!res.ok) { setConciliarError(json.error ?? "Error al aplicar pago"); return; }
+      setConciliarOk(`Pago aplicado — ID ${json.paymentId?.slice(-8)}`);
+      setTimeout(() => { closeConciliar(); window.location.reload(); }, 1200);
+    } catch {
+      setConciliarError("Error de red — intenta de nuevo");
+    } finally {
+      setConciliarBusy(false);
+    }
+  }
+
+
+  // Open docs with positive balance — used in deposit receivable picker
+  const openDocs = receivables.documents.filter(d => d.balanceDue > 0);
+
   return (
+    <>
+    {/* ── Deposit overlay panel — apply consignación/cobro SAG to chosen invoice ── */}
+    {depositPanel && (
+      <div
+        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+        onClick={e => { if (e.target === e.currentTarget) setDepositPanel(null); }}
+      >
+        <div style={{ background: "#fff", borderRadius: 8, padding: 24, maxWidth: 560, width: "100%", fontFamily: "monospace", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+          <div style={{ display: "flex", alignItems: "center", marginBottom: 16 }}>
+            <strong style={{ fontSize: 13, letterSpacing: "0.03em" }}>
+              {depositPanel.sourceType === "collection" ? "COBRO SAG" : "CONSIGNACIÓN"} → Aplicar a factura
+            </strong>
+            <button onClick={() => setDepositPanel(null)} style={{ marginLeft: "auto", fontFamily: "monospace", fontSize: 12, padding: "2px 8px", border: "1px solid #ddd", borderRadius: 4, cursor: "pointer", background: "#fafafa" }}>
+              ✕ Cerrar
+            </button>
+          </div>
+
+          {/* Source info */}
+          <div style={{ background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 4, padding: "8px 12px", marginBottom: 14, fontSize: 11, lineHeight: 1.6 }}>
+            <div style={{ fontWeight: 700, color: "#1e40af", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>
+              {depositPanel.sourceType === "collection" ? "Cobro SAG disponible" : "Consignación pendiente"}
+            </div>
+            <div style={{ fontSize: 12 }}>{depositPanel.sourceLabel}</div>
+            <div style={{ color: "#888" }}>Monto: <b style={{ color: "#111" }}>{fmtCOP(depositPanel.sourceAmount)}</b>{depositPanel.sourceRef ? ` · Ref: ${depositPanel.sourceRef}` : ""}</div>
+          </div>
+
+          {/* Receivable picker */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#555", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
+              Factura a aplicar
+            </div>
+            {openDocs.length === 0 ? (
+              <div style={{ fontSize: 11, color: "#9ca3af", fontStyle: "italic" }}>Sin facturas abiertas con saldo positivo para este cliente.</div>
+            ) : (
+              <select
+                value={depositRxId}
+                onChange={e => {
+                  setDepositRxId(e.target.value);
+                  const doc = openDocs.find(d => d.id === e.target.value);
+                  if (doc) setDepositAmt(String(Math.min(depositPanel.sourceAmount, doc.balanceDue)));
+                }}
+                style={{ fontFamily: "monospace", fontSize: 11, padding: "5px 8px", border: "1px solid #d1d5db", borderRadius: 4, width: "100%" }}
+              >
+                <option value="">— Seleccionar factura —</option>
+                {openDocs.map(d => (
+                  <option key={d.id} value={d.id}>
+                    {d.invoiceNumber ?? "Sin número"} · {fmtDate(d.dueDate)} · Saldo {fmtCOP(d.balanceDue)}{d.daysOverdue > 0 ? ` · +${d.daysOverdue}d mora` : ""}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {/* Amount + notes */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#555", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>Monto a aplicar (COP)</div>
+              <input
+                type="number"
+                value={depositAmt}
+                onChange={e => setDepositAmt(e.target.value)}
+                min={1}
+                style={{ fontFamily: "monospace", fontSize: 12, padding: "4px 8px", border: "1px solid #d1d5db", borderRadius: 4, width: "100%" }}
+              />
+            </div>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#555", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>Notas (opcional)</div>
+              <input
+                type="text"
+                value={depositNotes}
+                onChange={e => setDepositNotes(e.target.value)}
+                placeholder="Ej: acuerdo de pago"
+                style={{ fontFamily: "monospace", fontSize: 11, padding: "4px 8px", border: "1px solid #d1d5db", borderRadius: 4, width: "100%" }}
+              />
+            </div>
+          </div>
+
+          <button
+            onClick={submitDeposit}
+            disabled={depositBusy || !depositRxId || openDocs.length === 0}
+            style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 700, padding: "7px 18px", borderRadius: 4, cursor: depositBusy ? "not-allowed" : "pointer", border: "none", background: depositBusy ? "#9ca3af" : "#1d4ed8", color: "#fff" }}
+          >
+            {depositBusy ? "Aplicando..." : "Aplicar pago"}
+          </button>
+
+          {depositError && <div style={{ color: "#dc2626", fontSize: 11, marginTop: 8 }}>{depositError}</div>}
+          {depositOk    && <div style={{ color: "#15803d", fontSize: 11, marginTop: 8, fontWeight: 600 }}>{depositOk}</div>}
+        </div>
+      </div>
+    )}
+
     <div style={{ fontFamily: "monospace" }}>
 
       {/* ── Section 1: Header ── */}
@@ -1001,9 +1478,14 @@ function CustomerFicha({
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
         <KpiCard label="LTV Total"       value={fmtCOP(profile.ltv)} />
         <KpiCard label="Ventas L12M"     value={fmtCOP(salesSummary.totalSalesL12)} />
-        <KpiCard label="Cartera Total"   value={fmtCOP(receivables.total)} />
-        <KpiCard label="Cartera Vencida" value={fmtCOP(receivables.overdue)} accent={receivables.overdue > 0 ? "red" : undefined} />
+        <KpiCard label="Cartera abierta histórica"  value={fmtCOP(receivables.total)} />
+        <KpiCard label="Cartera vencida histórica"  value={fmtCOP(receivables.overdue)} accent={receivables.overdue > 0 ? "red" : undefined} />
       </div>
+      {receivables.total > 0 && (
+        <div style={{ fontSize: 10, color: "#9ca3af", fontFamily: "monospace", marginBottom: 16, padding: "4px 2px" }}>
+          Incluye saldos abiertos históricos en SAG. Requiere conciliación.
+        </div>
+      )}
 
       {/* ── Section 4: Sales trend ── */}
       {salesSummary.monthlyTrend.length > 0 && (
@@ -1220,26 +1702,83 @@ function CustomerFicha({
           </div>
         )}
 
+        {/* Reconciliation summary strip */}
+        {receivables.documents.length > 0 && (() => {
+          const docs = receivables.documents;
+          const totalOriginal  = docs.reduce((s, d) => s + d.originalAmount, 0);
+          const totalApplied   = docs.reduce((s, d) => s + d.appliedTotal, 0);
+          const totalRemaining = docs.reduce((s, d) => s + d.remainingBalance, 0);
+          const conciliadas    = docs.filter(d => d.recoStatus === "CONCILIADA").length;
+          const parciales      = docs.filter(d => d.recoStatus === "PARCIAL").length;
+          const sinSoporte     = docs.filter(d => d.recoStatus === "SIN_SOPORTE").length;
+          return (
+            <div style={{
+              padding: "10px 14px", borderBottom: "1px solid #e5e7eb",
+              background: "#fafafa", display: "flex", gap: 20, flexWrap: "wrap",
+              fontFamily: "monospace", fontSize: 11,
+            }}>
+              <div>
+                <span style={{ color: "#6b7280" }}>Total original: </span>
+                <strong>{fmtCOP(totalOriginal)}</strong>
+              </div>
+              <div>
+                <span style={{ color: "#6b7280" }}>Total aplicado: </span>
+                <strong style={{ color: "#15803d" }}>{fmtCOP(totalApplied)}</strong>
+              </div>
+              <div>
+                <span style={{ color: "#6b7280" }}>Saldo real: </span>
+                <strong style={{ color: totalRemaining > 0 ? "#991b1b" : "#15803d" }}>{fmtCOP(totalRemaining)}</strong>
+              </div>
+              <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+                {conciliadas > 0 && <span style={{ ...RECO_COLORS.CONCILIADA, fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 4 }}>{conciliadas} conciliada{conciliadas !== 1 ? "s" : ""}</span>}
+                {parciales   > 0 && <span style={{ ...RECO_COLORS.PARCIAL,     fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 4 }}>{parciales} parcial{parciales !== 1 ? "es" : ""}</span>}
+                {sinSoporte  > 0 && <span style={{ ...RECO_COLORS.SIN_SOPORTE, fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 4 }}>{sinSoporte} sin soporte</span>}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Documents table */}
+        {receivables.documents.length > 0 && (
+          <div style={{ padding: "6px 14px 0", fontFamily: "monospace", fontSize: 10, color: "#6b7280" }}>
+            Mostrando {receivables.documents.length} de {receivables.totalOpenCount} documentos abiertos
+          </div>
+        )}
         {receivables.documents.length > 0 ? (
           <div style={{ overflowX: "auto" }}>
             <table style={TABLE}>
               <thead>
                 <tr style={THEAD_ROW}>
                   <TH>Factura</TH>
+                  <TH right>Emisión</TH>
                   <TH right>Vencimiento</TH>
-                  <TH right>Saldo</TH>
+                  <TH right>Original</TH>
+                  <TH right>Aplicado</TH>
+                  <TH right>Saldo real</TH>
                   <TH right>Días mora</TH>
                   <TH>Antigüedad</TH>
-                  <TH>Estado</TH>
+                  <TH>Concil.</TH>
+                  <TH>Acciones</TH>
                 </tr>
               </thead>
               <tbody>
                 {receivables.documents.slice(0, 20).map((doc, i) => (
-                  <tr key={i} style={{ background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
+                  <React.Fragment key={i}>
+                  <tr style={{ background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
                     <TD bold>{doc.invoiceNumber ?? <span style={{ color: "#ccc" }}>—</span>}</TD>
+                    <TD right>{fmtDate(doc.invoiceDate)}</TD>
                     <TD right>{fmtDate(doc.dueDate)}</TD>
-                    <TD right>{fmtCOP(doc.balanceDue)}</TD>
+                    <TD right>{fmtCOP(doc.originalAmount)}</TD>
+                    <TD right>
+                      {doc.appliedTotal > 0
+                        ? <span style={{ color: "#15803d", fontWeight: 600 }}>{fmtCOP(doc.appliedTotal)}</span>
+                        : <span style={{ color: "#9ca3af" }}>—</span>}
+                    </TD>
+                    <TD right>
+                      <span style={{ fontWeight: 700, color: doc.remainingBalance > 0 ? "#991b1b" : "#15803d" }}>
+                        {fmtCOP(doc.remainingBalance)}
+                      </span>
+                    </TD>
                     <TD right>
                       {doc.daysOverdue > 0
                         ? <span style={{ color: "#991b1b", fontWeight: 600 }}>+{doc.daysOverdue}d</span>
@@ -1259,8 +1798,285 @@ function CustomerFicha({
                         </span>
                       ) : <span style={{ color: "#ccc" }}>—</span>}
                     </TD>
-                    <TD>{statusLabel(doc.status)}</TD>
+                    <TD>
+                      <span style={{
+                        ...(RECO_COLORS[doc.recoStatus] ?? {}),
+                        fontSize: 10, fontWeight: 700, padding: "2px 7px",
+                        borderRadius: 4, fontFamily: "monospace",
+                        cursor: doc.appliedDocuments.length > 0 ? "pointer" : "default",
+                      }}
+                        onClick={() => doc.appliedDocuments.length > 0 && toggleDocExpand(doc.id)}
+                        title={doc.appliedDocuments.length > 0 ? "Ver pagos aplicados" : undefined}
+                      >
+                        {RECO_LABELS[doc.recoStatus] ?? doc.recoStatus}
+                        {doc.appliedDocuments.length > 0 && (
+                          <span style={{ marginLeft: 4 }}>{expandedDocs.has(doc.id) ? "▲" : "▼"}</span>
+                        )}
+                      </span>
+                    </TD>
+                    <TD>
+                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                        <button
+                          onClick={() => openConciliar("conciliar", doc)}
+                          style={{
+                            fontFamily: "monospace", fontSize: 10, fontWeight: 600,
+                            padding: "2px 8px", border: "1px solid #1d4ed8",
+                            borderRadius: 4, background: "#eff6ff", color: "#1d4ed8",
+                            cursor: "pointer", whiteSpace: "nowrap",
+                          }}
+                        >
+                          Conciliar pago
+                        </button>
+                        <button
+                          onClick={() => openConciliar("manual", doc)}
+                          style={{
+                            fontFamily: "monospace", fontSize: 10, fontWeight: 600,
+                            padding: "2px 8px", border: "1px solid #15803d",
+                            borderRadius: 4, background: "#f0fdf4", color: "#15803d",
+                            cursor: "pointer", whiteSpace: "nowrap",
+                          }}
+                        >
+                          Pago manual
+                        </button>
+                      </div>
+                    </TD>
                   </tr>
+                  {/* ── Expandable applied payments panel ── */}
+                  {expandedDocs.has(doc.id) && doc.appliedDocuments.length > 0 && (
+                    <tr>
+                      <td colSpan={10} style={{ padding: 0, background: "#f0fdf4", borderBottom: "1px solid #86efac" }}>
+                        <div style={{ padding: "8px 16px", fontFamily: "monospace", fontSize: 11 }}>
+                          <div style={{ fontWeight: 700, color: "#15803d", marginBottom: 6 }}>
+                            Pagos aplicados — {doc.invoiceNumber ?? "factura"}
+                          </div>
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
+                            <thead>
+                              <tr style={{ color: "#6b7280" }}>
+                                <th style={{ textAlign: "left", padding: "2px 8px 4px 0", fontWeight: 700 }}>Tipo</th>
+                                <th style={{ textAlign: "left", padding: "2px 8px 4px 0", fontWeight: 700 }}>Fecha</th>
+                                <th style={{ textAlign: "left", padding: "2px 8px 4px 0", fontWeight: 700 }}>Método</th>
+                                <th style={{ textAlign: "left", padding: "2px 8px 4px 0", fontWeight: 700 }}>Referencia</th>
+                                <th style={{ textAlign: "right", padding: "2px 0 4px 0", fontWeight: 700 }}>Monto aplicado</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {doc.appliedDocuments.map(ad => {
+                                const typeStyle =
+                                  ad.type === "ND"     ? { background: "#fff7ed", color: "#c2410c", border: "1px solid #fed7aa" }
+                                  : ad.type === "AJUSTE" ? { background: "#f5f3ff", color: "#7c3aed", border: "1px solid #ddd6fe" }
+                                  : { background: "#dcfce7", color: "#15803d", border: "1px solid #86efac" };
+                                return (
+                                  <tr key={ad.id} style={{ borderTop: "1px solid #dcfce7" }}>
+                                    <td style={{ padding: "3px 8px 3px 0" }}>
+                                      <span style={{ ...typeStyle, fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 3, fontFamily: "monospace" }}>
+                                        {ad.type}
+                                      </span>
+                                    </td>
+                                    <td style={{ padding: "3px 8px 3px 0", color: "#374151" }}>{fmtDate(ad.date)}</td>
+                                    <td style={{ padding: "3px 8px 3px 0", color: "#374151" }}>{ad.method ?? "—"}</td>
+                                    <td style={{ padding: "3px 8px 3px 0", color: "#6b7280" }}>{ad.reference ?? "—"}</td>
+                                    <td style={{ padding: "3px 0", color: "#15803d", fontWeight: 700, textAlign: "right" }}>{fmtCOP(ad.amount)}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                          <div style={{ marginTop: 6, display: "flex", justifyContent: "space-between", color: "#374151" }}>
+                            <span>Total aplicado: <strong style={{ color: "#15803d" }}>{fmtCOP(doc.appliedTotal)}</strong></span>
+                            <span>Saldo real: <strong style={{ color: doc.remainingBalance > 0 ? "#991b1b" : "#15803d" }}>{fmtCOP(doc.remainingBalance)}</strong></span>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  {/* ── Inline conciliation panel ── */}
+                  {conciliarPanel?.receivableId === doc.id && (
+                    <tr>
+                      <td colSpan={10} style={{ padding: 0, background: "#f0f9ff", borderBottom: "1px solid #bae6fd" }}>
+                        <div style={{ padding: "12px 16px", fontFamily: "monospace", fontSize: 12 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
+                            <strong style={{ fontSize: 13 }}>
+                              {conciliarPanel.type === "manual" ? "Pago manual" : "Conciliar con cobro SAG"}
+                              {conciliarPanel.invoiceNumber ? ` — Factura ${conciliarPanel.invoiceNumber}` : ""}
+                            </strong>
+                            <button onClick={closeConciliar} style={{ marginLeft: "auto", fontFamily: "monospace", fontSize: 10, padding: "2px 8px", border: "1px solid #ccc", borderRadius: 4, cursor: "pointer", background: "#fff" }}>
+                              Cerrar
+                            </button>
+                          </div>
+                          {conciliarPanel.type === "conciliar" && (() => {
+                            const available = collectionRecords
+                              .filter(cr => cr.appliedStatus === "AVAILABLE" || cr.appliedStatus === "PARTIALLY_APPLIED")
+                              .sort((a, b) => new Date(b.collectionDate).getTime() - new Date(a.collectionDate).getTime());
+                            if (available.length === 0) {
+                              return (
+                                <div style={{ marginBottom: 10, fontSize: 11, color: "#9ca3af", fontStyle: "italic" }}>
+                                  Sin cobros SAG disponibles para este cliente — usar Pago manual.
+                                </div>
+                              );
+                            }
+                            return (
+                              <div style={{ marginBottom: 10 }}>
+                                <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 4 }}>
+                                  Cobros disponibles del cliente
+                                </div>
+                                <select
+                                  value={conciliarCrId}
+                                  onChange={e => {
+                                    setConciliarCrId(e.target.value);
+                                    const cr = available.find(c => c.id === e.target.value);
+                                    if (cr) setConciliarAmt(String(Math.min(cr.amount, conciliarPanel.balanceDue)));
+                                  }}
+                                  style={{
+                                    fontFamily: "monospace", fontSize: 11, padding: "4px 6px",
+                                    border: "1px solid #d1d5db", borderRadius: 4,
+                                    width: "100%", maxWidth: 480,
+                                  }}
+                                >
+                                  <option value="">— Seleccionar cobro disponible —</option>
+                                  {available.map(cr => (
+                                    <option key={cr.id} value={cr.id}>
+                                      {cr.comprobanteCode}
+                                      {cr.documentNumber ? ` ${cr.documentNumber}` : ""}
+                                      {" · "}{formatDateCol(cr.collectionDate)}
+                                      {" · "}{fmtCOP(cr.amount)}
+                                      {cr.appliedStatus === "PARTIALLY_APPLIED" ? " · parcial" : ""}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            );
+                          })()}
+                          {/* Reference + auto-detection */}
+                          <div style={{ marginBottom: 10 }}>
+                            <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 3 }}>
+                              Referencia / No. comprobante
+                              <span style={{ fontSize: 10, color: "#9ca3af", marginLeft: 6 }}>
+                                (detecta tipo automáticamente)
+                              </span>
+                            </div>
+                            <input
+                              type="text"
+                              value={conciliarRef}
+                              onChange={e => handleConciliarRefChange(e.target.value)}
+                              placeholder="Ej: ND-2024-001, cheque #1234, trans. 9876"
+                              style={{ fontFamily: "monospace", fontSize: 11, padding: "4px 8px", border: "1px solid #d1d5db", borderRadius: 4, width: "100%", maxWidth: 380 }}
+                            />
+                          </div>
+
+                          {/* Tipo de documento */}
+                          <div style={{ marginBottom: 10 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                              <span style={{ fontSize: 11, color: "#6b7280" }}>Tipo de documento</span>
+                              {conciliarDocSuggested && (
+                                <span style={{
+                                  fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 3,
+                                  background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe",
+                                  fontFamily: "monospace",
+                                }}>
+                                  Auto-detectado
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ display: "flex", gap: 6 }}>
+                              {(["PAGO", "ND", "AJUSTE"] as const).map(dt => {
+                                const selected  = conciliarDocType === dt;
+                                const suggested = conciliarDocSuggested === dt;
+                                const col = dt === "ND"     ? { bg: "#fff7ed", fg: "#c2410c", border: "#fed7aa" }
+                                           : dt === "AJUSTE" ? { bg: "#f5f3ff", fg: "#7c3aed", border: "#ddd6fe" }
+                                           : { bg: "#dcfce7", fg: "#15803d", border: "#86efac" };
+                                return (
+                                  <button key={dt} onClick={() => { setConciliarDocType(dt); setConciliarDocSuggested(null); }} style={{
+                                    fontFamily: "monospace", fontSize: 10, fontWeight: 700,
+                                    padding: "3px 10px", borderRadius: 4, cursor: "pointer",
+                                    background: selected ? col.bg : "#f9fafb",
+                                    color:      selected ? col.fg : "#6b7280",
+                                    border:     selected ? `1.5px solid ${col.border}` : suggested ? `1px dashed ${col.border}` : "1px solid #e5e7eb",
+                                  }}>
+                                    {dt === "PAGO" ? "Pago" : dt === "ND" ? "Nota descuento" : "Ajuste"}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {/* Payment method */}
+                          <div style={{ marginBottom: 10 }}>
+                            <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 3 }}>Medio de pago</div>
+                            <select
+                              value={conciliarMethod}
+                              onChange={e => setConciliarMethod(e.target.value)}
+                              style={{ fontFamily: "monospace", fontSize: 11, padding: "4px 6px", border: "1px solid #d1d5db", borderRadius: 4 }}
+                            >
+                              <option value="TRANSFERENCIA">Transferencia bancaria</option>
+                              <option value="CONSIGNACION">Consignación</option>
+                              <option value="CHEQUE">Cheque</option>
+                              <option value="EFECTIVO">Efectivo</option>
+                              <option value="PSE">PSE</option>
+                              <option value="OTRO">Otro</option>
+                            </select>
+                          </div>
+
+                          {/* Inconsistency warning — ND + bank transfer */}
+                          {conciliarDocType === "ND" && (conciliarMethod === "TRANSFERENCIA" || conciliarMethod === "CONSIGNACION" || conciliarMethod === "PSE") && (
+                            <div style={{
+                              marginBottom: 10, padding: "7px 10px", borderRadius: 4,
+                              background: "#fff7ed", border: "1px solid #fed7aa",
+                              fontSize: 11, color: "#92400e", fontFamily: "monospace",
+                            }}>
+                              <strong>Advertencia:</strong> Las notas de descuento no suelen registrarse como transferencias bancarias.
+                              Verifica que el tipo de documento sea correcto antes de aplicar.
+                            </div>
+                          )}
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 10 }}>
+                            <div>
+                              <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 2 }}>Monto a aplicar (COP)</div>
+                              <input
+                                type="number"
+                                value={conciliarAmt}
+                                onChange={e => setConciliarAmt(e.target.value)}
+                                min={1}
+                                max={doc.balanceDue}
+                                style={{ fontFamily: "monospace", fontSize: 12, padding: "4px 8px", border: "1px solid #d1d5db", borderRadius: 4, width: 140 }}
+                              />
+                              <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2 }}>Saldo: {fmtCOP(doc.balanceDue)} · Parcial = dividir pago</div>
+                            </div>
+                            <div style={{ flex: 1, minWidth: 180 }}>
+                              <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 2 }}>Notas (opcional)</div>
+                              <input
+                                type="text"
+                                value={conciliarNotes}
+                                onChange={e => setConciliarNotes(e.target.value)}
+                                placeholder="Ej: acuerdo de pago, cheque #1234"
+                                style={{ fontFamily: "monospace", fontSize: 11, padding: "4px 8px", border: "1px solid #d1d5db", borderRadius: 4, width: "100%" }}
+                              />
+                            </div>
+                            {(() => {
+                              const isDisabled = conciliarBusy || (conciliarPanel.type === "conciliar" && !conciliarCrId);
+                              return (
+                                <button
+                                  onClick={() => submitConciliar()}
+                                  disabled={isDisabled}
+                                  style={{
+                                    fontFamily: "monospace", fontSize: 11, fontWeight: 700,
+                                    padding: "5px 14px", borderRadius: 4, border: "none",
+                                    background: isDisabled ? "#9ca3af" : "#1d4ed8",
+                                    color: "#fff",
+                                    cursor: isDisabled ? "not-allowed" : "pointer",
+                                    opacity: isDisabled && !conciliarBusy ? 0.6 : 1,
+                                  }}
+                                >
+                                  {conciliarBusy ? "Aplicando..." : "Aplicar pago"}
+                                </button>
+                              );
+                            })()}
+                          </div>
+                          {conciliarError && <div style={{ color: "#dc2626", fontSize: 11, marginTop: 4 }}>{conciliarError}</div>}
+                          {conciliarOk    && <div style={{ color: "#15803d", fontSize: 11, marginTop: 4, fontWeight: 600 }}>{conciliarOk}</div>}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>
@@ -1268,6 +2084,143 @@ function CustomerFicha({
         ) : (
           <div style={{ padding: "14px 16px", fontSize: 12, color: "#aaa", background: "#fafafa" }}>
             Sin documentos de cartera.
+          </div>
+        )}
+      </Section>
+
+      {/* ── Section 6b: Cobros SAG — compact summary strip + collapsible detail ── */}
+      {collectionRecords.length > 0 && (() => {
+        const available = collectionRecords.filter(
+          cr => cr.appliedStatus === "AVAILABLE" || cr.appliedStatus === "PARTIALLY_APPLIED",
+        );
+        const applied = collectionRecords.filter(
+          cr => cr.appliedStatus === "APPLIED" || cr.appliedStatus === "MANUAL_OVERRIDE",
+        );
+        return (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 12,
+            padding: "9px 16px", background: "#f8fafc",
+            borderTop: "1px solid #e5e7eb", fontSize: 11, fontFamily: "monospace", color: "#6b7280",
+          }}>
+            <span>
+              Cobros SAG:{" "}
+              <strong style={{ color: available.length > 0 ? "#1e40af" : "#9ca3af" }}>
+                {available.length} disponible{available.length !== 1 ? "s" : ""}
+              </strong>
+              {applied.length > 0 && (
+                <span style={{ color: "#9ca3af" }}> · {applied.length} aplicado{applied.length !== 1 ? "s" : ""}</span>
+              )}
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowAllCobros(v => !v)}
+              style={{
+                background: "none", border: "none", color: "#1d4ed8", cursor: "pointer",
+                fontFamily: "monospace", fontSize: 11, padding: 0, textDecoration: "underline",
+              }}
+            >
+              {showAllCobros ? "Ocultar cobros ↑" : "Ver todos los cobros →"}
+            </button>
+          </div>
+        );
+      })()}
+      {showAllCobros && (
+      <div>
+        <div style={{ overflowX: "auto", borderTop: "1px solid #e5e7eb" }}>
+          <table style={TABLE}>
+            <thead>
+              <tr style={THEAD_ROW}>
+                <TH>Fuente</TH>
+                <TH>Recibo</TH>
+                <TH right>Fecha</TH>
+                <TH right>Monto</TH>
+                <TH>Estado</TH>
+              </tr>
+            </thead>
+            <tbody>
+              {collectionRecords.map((cr, i) => {
+                const isApplied = cr.appliedStatus === "APPLIED" || cr.appliedStatus === "MANUAL_OVERRIDE";
+                const isPartial = cr.appliedStatus === "PARTIALLY_APPLIED";
+                const statusBadge = isApplied ? { bg: "#f0fdf4", color: "#166534", label: "Aplicado" }
+                                  : isPartial  ? { bg: "#fefce8", color: "#92400e", label: "Parcial" }
+                                  :              { bg: "#eff6ff", color: "#1e40af", label: "Disponible" };
+                return (
+                  <tr key={cr.id} style={{ background: i % 2 === 0 ? "#fff" : "#fafafa", opacity: isApplied ? 0.55 : 1 }}>
+                    <TD bold>{cr.comprobanteCode}</TD>
+                    <TD>{cr.documentNumber ?? <span style={{ color: "#ccc" }}>—</span>}</TD>
+                    <TD right>{formatDateCol(cr.collectionDate)}</TD>
+                    <TD right>{fmtCOP(cr.amount)}</TD>
+                    <TD>
+                      <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 4, fontFamily: "monospace", background: statusBadge.bg, color: statusBadge.color }}>
+                        {statusBadge.label}
+                      </span>
+                    </TD>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      )}
+
+      {/* ── Section 6c: Consignaciones pendientes ── */}
+      <Section title={`Consignaciones pendientes (${pendingConsignaciones.length})`}>
+        {pendingConsignaciones.length === 0 ? (
+          <div style={{ padding: "14px 16px", fontSize: 12, color: "#aaa", background: "#fafafa" }}>
+            Sin consignaciones pendientes de identificar para este cliente.
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={TABLE}>
+              <thead>
+                <tr style={THEAD_ROW}>
+                  <TH>Fecha</TH>
+                  <TH>Código</TH>
+                  <TH>Canal</TH>
+                  <TH right>Monto</TH>
+                  <TH>Referencia</TH>
+                  <TH>Acciones</TH>
+                </tr>
+              </thead>
+              <tbody>
+                {pendingConsignaciones.map((c, i) => (
+                  <tr key={c.id} style={{ background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
+                    <TD>{fmtDate(c.saleDate)}</TD>
+                    <TD bold>{c.comprobanteCode}</TD>
+                    <TD>{c.channelLabel}</TD>
+                    <TD right>{c.amount !== 0 ? fmtCOP(Math.abs(c.amount)) : <span style={{ color: "#ccc" }}>—</span>}</TD>
+                    <TD>{c.reference ?? <span style={{ color: "#ccc" }}>—</span>}</TD>
+                    <TD>
+                      <button
+                        onClick={() => openDeposit({
+                          sourceType:   "consignacion",
+                          sourceId:     c.id,
+                          sourceLabel:  `${c.comprobanteCode} · ${c.channelLabel} · ${fmtDate(c.saleDate)}`,
+                          sourceAmount: Math.abs(c.amount),
+                          sourceRef:    c.reference,
+                          sourceDate:   c.saleDate ?? new Date().toISOString(),
+                        })}
+                        style={{
+                          fontFamily:   "monospace",
+                          fontSize:     10,
+                          fontWeight:   600,
+                          padding:      "2px 8px",
+                          border:       "1px solid #92400e",
+                          borderRadius: 4,
+                          background:   "#fffbeb",
+                          color:        "#92400e",
+                          cursor:       "pointer",
+                          whiteSpace:   "nowrap",
+                        }}
+                      >
+                        Aplicar a factura
+                      </button>
+                    </TD>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </Section>
@@ -1550,6 +2503,86 @@ function CustomerFicha({
         )}
       </Section>
 
+      {/* ── Section 11: Historial de cobros ── */}
+      <Section title={`Cobros registrados (últimos ${recentPayments.length})`}>
+        {recentPayments.length === 0 ? (
+          <div style={{ padding: "16px 0", color: "#9ca3af", fontSize: 12, fontStyle: "italic" }}>
+            Sin cobros registrados para este cliente. Use "Registrar cobro" en la Cola de Cobranza.
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={TABLE}>
+              <thead>
+                <tr style={THEAD_ROW}>
+                  <TH>Fecha</TH>
+                  <TH>Método</TH>
+                  <TH>Referencia</TH>
+                  <TH right>Monto cobrado</TH>
+                  <TH right>Saldo antes</TH>
+                  <TH right>Saldo después</TH>
+                  <TH>Factura</TH>
+                  <TH>Estado</TH>
+                </tr>
+              </thead>
+              <tbody>
+                {recentPayments.map((p, i) => {
+                  const statusStyle: Record<string, { bg: string; color: string }> = {
+                    RECONCILED:            { bg: "#dcfce7", color: "#15803d" },
+                    PARTIALLY_RECONCILED:  { bg: "#fef9c3", color: "#854d0e" },
+                    PENDING:               { bg: "#fef3c7", color: "#92400e" },
+                    REVERSED:              { bg: "#fee2e2", color: "#991b1b" },
+                    DRAFT:                 { bg: "#f3f4f6", color: "#4b5563" },
+                  };
+                  const ss = statusStyle[p.status] ?? { bg: "#f3f4f6", color: "#555" };
+                  const firstAlloc = p.allocations[0];
+                  return (
+                    <tr key={p.id} style={{ background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
+                      <TD>{fmtDate(p.paymentDate)}</TD>
+                      <TD>
+                        <span style={{ fontSize: 10, fontWeight: 600, color: "#374151" }}>
+                          {p.paymentMethod.replace(/_/g, " ")}
+                        </span>
+                      </TD>
+                      <TD>{p.reference ?? <span style={{ color: "#ccc" }}>—</span>}</TD>
+                      <TD right>
+                        <span style={{ fontWeight: 700, color: "#15803d" }}>{fmtCOP(p.amount)}</span>
+                      </TD>
+                      <TD right>
+                        {firstAlloc ? fmtCOP(firstAlloc.balanceBefore) : <span style={{ color: "#ccc" }}>—</span>}
+                      </TD>
+                      <TD right>
+                        {firstAlloc
+                          ? <span style={{ color: firstAlloc.balanceAfter > 0 ? "#dc2626" : "#15803d" }}>{fmtCOP(firstAlloc.balanceAfter)}</span>
+                          : <span style={{ color: "#ccc" }}>—</span>}
+                      </TD>
+                      <TD>
+                        {firstAlloc?.receivable?.invoiceNumber
+                          ? <span style={{ fontSize: 11, color: "#6b7280" }}>{firstAlloc.receivable.invoiceNumber}</span>
+                          : <span style={{ color: "#ccc" }}>sin conciliar</span>}
+                        {p.allocations.length > 1 && (
+                          <span style={{ fontSize: 10, color: "#9ca3af" }}> +{p.allocations.length - 1} más</span>
+                        )}
+                      </TD>
+                      <TD>
+                        <span style={{
+                          fontSize: 10, fontWeight: 700,
+                          padding: "2px 7px", borderRadius: 4,
+                          background: ss.bg, color: ss.color,
+                          fontFamily: "monospace",
+                        }}>
+                          {p.status.replace(/_/g, " ")}
+                        </span>
+                      </TD>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Section>
+
     </div>
+    </>
   );
 }

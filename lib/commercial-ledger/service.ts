@@ -389,16 +389,16 @@ export async function getUnifiedCommercialKpis(
       _count: { id: true },
     }),
 
-    // Open balance
+    // Open balance — canonical filter (mirrors RX_OPEN_STATUSES in receivables-snapshot.ts)
     prisma.customerReceivable.aggregate({
-      where: { organizationId: orgId, status: { not: "PAID" } },
+      where: { organizationId: orgId, status: { in: ["OPEN", "PARTIAL", "OVERDUE"] } },
       _sum:   { balanceDue: true },
       _count: { id: true },
     }),
 
     // Overdue balance
     prisma.customerReceivable.aggregate({
-      where: { organizationId: orgId, daysOverdue: { gt: 0 }, status: { not: "PAID" } },
+      where: { organizationId: orgId, daysOverdue: { gt: 0 }, status: { in: ["OPEN", "PARTIAL", "OVERDUE"] } },
       _sum: { balanceDue: true },
     }),
   ]);
@@ -528,7 +528,7 @@ export async function getCustomerLedgerKpis(
       _sum: { originalAmount: true, paidAmount: true, balanceDue: true },
     }),
     prisma.customerReceivable.aggregate({
-      where: { ...recvWhere, daysOverdue: { gt: 0 }, status: { not: "PAID" } },
+      where: { ...recvWhere, daysOverdue: { gt: 0 }, status: { in: ["OPEN", "PARTIAL", "OVERDUE"] } },
       _sum: { balanceDue: true },
     }),
   ]);

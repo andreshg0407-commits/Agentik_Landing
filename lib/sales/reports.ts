@@ -324,6 +324,8 @@ export async function getLineaMix(
     FROM   "SaleRecord"
     WHERE  "organizationId" = ${organizationId}
       AND  "periodoAoMes"   = ${periodo}
+      AND  "sagSourceType"  = 'OFICIAL'
+      AND  "sagDocumentFamily" IN ('OFFICIAL_INVOICE', 'OTHER')
       AND  "productLine"    NOT ILIKE 'Total %'
       AND  "productLine"    NOT ILIKE 'Subtotal%'
       AND  "productLine"    NOT ILIKE 'Gran Total%'
@@ -379,6 +381,8 @@ export async function getTopClientes(
     FROM   "SaleRecord"
     WHERE  "organizationId" = ${organizationId}
       AND  "periodoAoMes"   = ${periodo}
+      AND  "sagSourceType"  = 'OFICIAL'
+      AND  "sagDocumentFamily" IN ('OFFICIAL_INVOICE', 'OTHER')
       AND  "customerName"   IS NOT NULL
     GROUP  BY "customerName", "customerNit"
     ORDER  BY ventas DESC
@@ -429,6 +433,7 @@ export async function getPedidosResumidos(
     WHERE  sr."organizationId" = ${organizationId}
       AND  sr."periodoAoMes" IS NOT NULL
       AND  sr."periodoAoMes" BETWEEN ${startPeriodo} AND ${endPeriodo}
+      AND  sr."sagSourceType" = 'OFICIAL'
     GROUP  BY sr."periodoAoMes", sr."sellerSlug", sr."storeSlug", sr."productLine", sr.channel
     ORDER  BY sr."periodoAoMes", SUM(sr.amount) DESC
   `);
@@ -1629,4 +1634,174 @@ export async function getLineasAltaRemision(
   return rows
     .filter(r => r.f2Amount > 0)
     .sort((a, b) => b.f2SharePct - a.f2SharePct);
+}
+
+// ── Canal-aware queries ────────────────────────────────────────────────────────
+//
+// Basadas en source-semantic-rules: EMPRESA / ALMACEN / WEB nunca deben mezclarse
+// en métricas de ventas, top líneas ni clientes nuevos.
+//
+// Usa comprobanteCode para identificar el canal porque es el campo que viene
+// directamente del código de fuente SAG (k_sc_codigo_fuente).
+
+import {
+  CODIGOS_EMPRESA_ACTIVOS,
+  CODIGOS_ALMACEN_ACTIVOS,
+  CODIGOS_WEB_ACTIVOS,
+  CODIGOS_VENTA_ACTIVOS,
+  SQL_FILTER_EXCLUIR_ARKETOPS,
+} from "@/lib/sag/master-data/source-semantic-rules";
+
+type CanalVenta = "EMPRESA" | "ALMACEN" | "WEB" | "TODOS";
+
+function _buildCanalFilter(canal: CanalVenta): string {
+  switch (canal) {
+    case "EMPRESA":
+      return `"comprobanteCode" IN (${CODIGOS_EMPRESA_ACTIVOS.map(c => `'${c}'`).join(", ")})`;
+    case "ALMACEN":
+      return `"comprobanteCode" IN (${CODIGOS_ALMACEN_ACTIVOS.map(c => `'${c}'`).join(", ")})`;
+    case "WEB":
+      return `"comprobanteCode" IN (${CODIGOS_WEB_ACTIVOS.map(c => `'${c}'`).join(", ")})`;
+    case "TODOS":
+      return `"comprobanteCode" IN (${CODIGOS_VENTA_ACTIVOS.map(c => `'${c}'`).join(", ")})`;
+  }
+}
+
+export interface LineaMixCanalRow extends LineaMixRow {
+  canal: CanalVenta;
+}
+
+/**
+ * Top líneas de producto desglosadas por canal.
+ * Garantiza que EMPRESA / ALMACEN / WEB no se mezclen.
+ * Solo incluye facturas de venta activas (excluye C1, G1, R1, F2, etc.).
+ */
+export async function getLineaMixPorCanal(
+  organizationId: string,
+  periodo:        string,
+  canal:          CanalVenta = "TODOS",
+): Promise<LineaMixRow[]> {
+  type RawRow = { linea: string; ventas: number; pedidos: string | null };
+
+  const canalFilter = _buildCanalFilter(canal);
+
+  const rows = await prisma.$queryRaw<RawRow[]>(Prisma.sql`
+    SELECT
+      "productLine"          AS linea,
+      SUM("amount")::float   AS ventas,
+      CASE WHEN COUNT(*) FILTER (WHERE "txCount" IS NULL) > 0 THEN NULL
+           ELSE CAST(SUM("txCount") AS TEXT) END AS pedidos
+    FROM   "SaleRecord"
+    WHERE  "organizationId" = ${organizationId}
+      AND  "periodoAoMes"   = ${periodo}
+      AND  "sagSourceType"  = 'OFICIAL'
+      AND  ${Prisma.raw(canalFilter)}
+      AND  "productLine"    NOT ILIKE 'Total %'
+      AND  "productLine"    NOT ILIKE 'Subtotal%'
+      AND  "productLine"    NOT ILIKE 'Gran Total%'
+    GROUP  BY "productLine"
+    ORDER  BY ventas DESC
+  `);
+
+  const total = rows.reduce((s, r) => s + r.ventas, 0);
+  return rows.map(r => {
+    const ped = r.pedidos != null ? Number(r.pedidos) : null;
+    return {
+      linea:      r.linea,
+      ventas:     r.ventas,
+      pedidos:    ped,
+      ticketProm: ped != null && ped > 0 ? Math.round((r.ventas / ped) * 100) / 100 : null,
+      share:      total > 0 ? Math.round((r.ventas / total) * 10000) / 100 : 0,
+    };
+  });
+}
+
+/**
+ * Top clientes desglosados por canal.
+ * Solo incluye facturas de venta activas por canal — evita mezclar
+ * ventas empresa (B2B) con ventas almacén (B2C).
+ */
+export async function getTopClientesPorCanal(
+  organizationId: string,
+  periodo:        string,
+  canal:          CanalVenta = "TODOS",
+  limit = 10,
+): Promise<TopClienteRow[]> {
+  type RawRow = {
+    customer_name: string | null;
+    customer_nit:  string | null;
+    ventas:        number;
+    pedidos:       string | null;
+    ultima_fecha:  string;
+  };
+
+  const canalFilter = _buildCanalFilter(canal);
+
+  const rows = await prisma.$queryRaw<RawRow[]>(Prisma.sql`
+    SELECT
+      "customerName"                           AS customer_name,
+      "customerNit"                            AS customer_nit,
+      SUM("amount")::float                     AS ventas,
+      CASE WHEN COUNT(*) FILTER (WHERE "txCount" IS NULL) > 0 THEN NULL
+           ELSE CAST(SUM("txCount") AS TEXT) END AS pedidos,
+      TO_CHAR(MAX("saleDate"), 'YYYY-MM-DD')  AS ultima_fecha
+    FROM   "SaleRecord"
+    WHERE  "organizationId" = ${organizationId}
+      AND  "periodoAoMes"   = ${periodo}
+      AND  "sagSourceType"  = 'OFICIAL'
+      AND  ${Prisma.raw(canalFilter)}
+      AND  "customerName"   IS NOT NULL
+    GROUP  BY "customerName", "customerNit"
+    ORDER  BY ventas DESC
+    LIMIT  ${Prisma.raw(String(limit))}
+  `);
+
+  return rows.map(r => ({
+    customerName: r.customer_name ?? "DESCONOCIDO",
+    customerNit:  r.customer_nit,
+    ventas:       r.ventas,
+    pedidos:      r.pedidos != null ? Number(r.pedidos) : null,
+    ultimaFecha:  r.ultima_fecha ?? "",
+  }));
+}
+
+/**
+ * Resumen de ventas del día desglosado por canal.
+ * Útil para el panel ejecutivo: cuánto se vendió hoy en empresa vs almacenes vs web.
+ */
+export async function getVentasHoyPorCanal(
+  organizationId: string,
+  todayStart:     Date,
+): Promise<{ canal: CanalVenta; monto: number; count: number }[]> {
+  type RawRow = { canal: string; monto: number; cnt: string };
+
+  const empresa = CODIGOS_EMPRESA_ACTIVOS.map(c => `'${c}'`).join(", ");
+  const almacen = CODIGOS_ALMACEN_ACTIVOS.map(c => `'${c}'`).join(", ");
+  const web     = CODIGOS_WEB_ACTIVOS.map(c => `'${c}'`).join(", ");
+
+  const rows = await prisma.$queryRaw<RawRow[]>(Prisma.sql`
+    SELECT
+      CASE
+        WHEN "comprobanteCode" IN (${Prisma.raw(empresa)}) THEN 'EMPRESA'
+        WHEN "comprobanteCode" IN (${Prisma.raw(almacen)}) THEN 'ALMACEN'
+        WHEN "comprobanteCode" IN (${Prisma.raw(web)})     THEN 'WEB'
+        ELSE 'OTROS'
+      END                          AS canal,
+      SUM("amount")::float         AS monto,
+      CAST(COUNT(*) AS TEXT)       AS cnt
+    FROM  "SaleRecord"
+    WHERE "organizationId" = ${organizationId}
+      AND "saleDate"        >= ${todayStart}
+      AND "sagSourceType"   = 'OFICIAL'
+      AND "sagDocumentFamily" IN ('OFFICIAL_INVOICE', 'OTHER')
+      AND ${Prisma.raw(SQL_FILTER_EXCLUIR_ARKETOPS)}
+    GROUP BY 1
+    ORDER BY 2 DESC
+  `);
+
+  return rows.map(r => ({
+    canal: r.canal as CanalVenta,
+    monto: r.monto,
+    count: Number(r.cnt),
+  }));
 }

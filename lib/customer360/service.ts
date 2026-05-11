@@ -23,6 +23,8 @@ export interface CustomerProfile_type {
   erpId: string | null;
   crmId: string | null;
   nit: string | null;
+  nitNormalized: string | null;
+  sagTerceroId: number | null;
   slug: string;
   name: string;
   legalName: string | null;
@@ -79,6 +81,18 @@ export interface CustomerReceivable_type {
   status: string;
   rawErpJson: unknown | null;
   syncedAt: Date;
+  // Reconciliation fields — populated from PaymentAllocation joins
+  appliedDocuments: Array<{
+    id: string;
+    type: "PAGO" | "ND" | "AJUSTE";
+    amount: number;
+    date: Date | null;
+    reference: string | null;
+    method: string | null;
+  }>;
+  appliedTotal:     number;
+  remainingBalance: number;
+  recoStatus:       "SIN_SOPORTE" | "PARCIAL" | "CONCILIADA" | "EXCESO";
 }
 
 export interface CRMOpportunity_type {
@@ -195,6 +209,8 @@ export interface Customer360 {
     maxDpd: number;
     byBucket: Array<{ bucket: string; amount: number; count: number }>;
     documents: CustomerReceivable_type[];
+    /** Total open docs in DB (before take:20 slice) — for "Mostrando X de Y" */
+    totalOpenCount: number;
   };
   opportunities: CRMOpportunity_type[];
   recentActivities: CRMActivity_type[];
@@ -304,8 +320,11 @@ export async function getCustomer360(
 
   if (!profile) return null;
 
-  const customerId = profile.id;
-  const customerNit = profile.nit;
+  const customerId  = profile.id;
+  const customerNit = profile.nit ?? profile.nitNormalized;
+  // SaleRecord.customerNit stores the SAG tercero integer ID (ka_nl_tercero), NOT the real NIT.
+  // Use sagTerceroId as the lookup key for all SaleRecord queries.
+  const saleNitKey  = profile.sagTerceroId != null ? String(profile.sagTerceroId) : customerNit;
 
   // 2. Run all queries in parallel
   const [
@@ -319,6 +338,7 @@ export async function getCustomer360(
     opportunities,
     quotes,
     sourceSplit,
+    totalOpenCount,
   ] = await Promise.all([
     // Total sales all time for this customer NIT
     customerNit
@@ -326,7 +346,7 @@ export async function getCustomer360(
           SELECT SUM("amount")::float8 AS total
           FROM "SaleRecord"
           WHERE "organizationId" = ${organizationId}
-            AND "customerNit" = ${customerNit}
+            AND "customerNit" = ${saleNitKey}
             AND "productLine" NOT ILIKE 'Total %'
             AND "productLine" NOT ILIKE 'Subtotal%'
         `)
@@ -346,7 +366,7 @@ export async function getCustomer360(
             END                                               AS avg_ticket
           FROM "SaleRecord"
           WHERE "organizationId" = ${organizationId}
-            AND "customerNit" = ${customerNit}
+            AND "customerNit" = ${saleNitKey}
             AND "productLine" NOT ILIKE 'Total %'
             AND "productLine" NOT ILIKE 'Subtotal%'
             AND "saleDate" >= NOW() - INTERVAL '12 months'
@@ -359,7 +379,7 @@ export async function getCustomer360(
           SELECT SUM("amount")::float8 AS total
           FROM "SaleRecord"
           WHERE "organizationId" = ${organizationId}
-            AND "customerNit" = ${customerNit}
+            AND "customerNit" = ${saleNitKey}
             AND "productLine" NOT ILIKE 'Total %'
             AND "productLine" NOT ILIKE 'Subtotal%'
             AND "saleDate" >= NOW() - INTERVAL '3 months'
@@ -374,7 +394,7 @@ export async function getCustomer360(
             SUM("amount")::float8 AS amount
           FROM "SaleRecord"
           WHERE "organizationId" = ${organizationId}
-            AND "customerNit" = ${customerNit}
+            AND "customerNit" = ${saleNitKey}
             AND "productLine" NOT ILIKE 'Total %'
             AND "productLine" NOT ILIKE 'Subtotal%'
           GROUP BY "productLine"
@@ -391,7 +411,7 @@ export async function getCustomer360(
             SUM("amount")::float8 AS amount
           FROM "SaleRecord"
           WHERE "organizationId" = ${organizationId}
-            AND "customerNit" = ${customerNit}
+            AND "customerNit" = ${saleNitKey}
             AND "productLine" NOT ILIKE 'Total %'
             AND "productLine" NOT ILIKE 'Subtotal%'
             AND "periodoAoMes" IS NOT NULL
@@ -401,18 +421,30 @@ export async function getCustomer360(
         `)
       : Promise.resolve([]),
 
-    // Top 20 most recent open receivable documents
+    // Top 20 open receivable documents — keyed by customerId (SAG tercero NIT ≠ real NIT)
+    // Include PaymentAllocation joins to compute per-invoice reconciliation status.
     db.customerReceivable.findMany({
       where: {
         organizationId,
-        OR: [{ customerId }, ...(customerNit ? [{ customerNit }] : [])],
+        customerId,
         status: { in: ["OPEN", "OVERDUE", "PARTIAL"] },
       },
       orderBy: { dueDate: "asc" },
       take: 20,
+      include: {
+        allocations: {
+          select: {
+            id:              true,
+            allocatedAmount: true,
+            payment: {
+              select: { paymentDate: true, paymentMethod: true, documentType: true, reference: true },
+            },
+          },
+        },
+      },
     }),
 
-    // Receivable bucket summary
+    // Receivable bucket summary — keyed by customerId only
     prisma.$queryRaw<Array<{ bucket: string; amount: number; count: string }>>(Prisma.sql`
       SELECT
         "agingBucket"               AS bucket,
@@ -420,11 +452,8 @@ export async function getCustomer360(
         CAST(COUNT(*) AS TEXT)      AS count
       FROM "CustomerReceivable"
       WHERE "organizationId" = ${organizationId}
-        AND (
-          "customerId" = ${customerId}
-          ${customerNit ? Prisma.sql`OR "customerNit" = ${customerNit}` : Prisma.sql``}
-        )
-        AND "status" NOT IN ('PAID', 'CANCELLED')
+        AND "customerId" = ${customerId}
+        AND "status" IN ('OPEN', 'PARTIAL', 'OVERDUE')
       GROUP BY "agingBucket"
       ORDER BY "agingBucket"
     `),
@@ -451,13 +480,22 @@ export async function getCustomer360(
             CAST(COUNT(*) AS TEXT)         AS count
           FROM "SaleRecord"
           WHERE "organizationId" = ${organizationId}
-            AND "customerNit" = ${customerNit}
+            AND "customerNit" = ${saleNitKey}
             AND "saleDate" >= NOW() - INTERVAL '12 months'
             AND "productLine" NOT ILIKE 'Total %'
             AND "productLine" NOT ILIKE 'Subtotal%'
           GROUP BY "sagSourceType"
         `)
       : Promise.resolve([]),
+
+    // Total open receivable count (no take limit) — for "Mostrando X de Y"
+    db.customerReceivable.count({
+      where: {
+        organizationId,
+        customerId,
+        status: { in: ["OPEN", "OVERDUE", "PARTIAL"] },
+      },
+    }),
   ]);
 
   // Load last 10 activities — include those linked via opportunity so records
@@ -496,8 +534,41 @@ export async function getCustomer360(
     amount: toNumber(r.amount),
   }));
 
-  // Compute receivables summary
-  const allReceivableDocs = receivableRows as CustomerReceivable_type[];
+  // Compute receivables summary — enrich each doc with reconciliation fields
+  const allReceivableDocs: CustomerReceivable_type[] = (receivableRows as any[]).map(r => {
+    const origAmt = toNumber(r.originalAmount);
+    const appliedDocuments = (r.allocations ?? []).map((a: any) => {
+      const rawType: string = a.payment?.documentType ?? "PAGO";
+      const type = (rawType === "ND" || rawType === "AJUSTE" || rawType === "PAGO")
+        ? rawType as "PAGO" | "ND" | "AJUSTE"
+        : "PAGO" as const;
+      return {
+        id:        a.id as string,
+        type,
+        amount:    toNumber(a.allocatedAmount),
+        date:      a.payment?.paymentDate ?? null,
+        reference: a.payment?.reference   ?? null,
+        method:    a.payment?.paymentMethod ?? null,
+      };
+    });
+    const appliedTotal     = appliedDocuments.reduce((s: number, a: { amount: number }) => s + a.amount, 0);
+    const remainingBalance = origAmt - appliedTotal;
+    const recoStatus: CustomerReceivable_type["recoStatus"] =
+      appliedDocuments.length === 0  ? "SIN_SOPORTE"
+      : remainingBalance < 0         ? "EXCESO"
+      : remainingBalance === 0       ? "CONCILIADA"
+      : "PARCIAL";
+    return {
+      ...r,
+      originalAmount:  origAmt,
+      paidAmount:      toNumber(r.paidAmount),
+      balanceDue:      toNumber(r.balanceDue),
+      appliedDocuments,
+      appliedTotal,
+      remainingBalance,
+      recoStatus,
+    } as CustomerReceivable_type;
+  });
   const receivableBucketFormatted = (receivableBuckets as Array<{ bucket: string; amount: number; count: string }>).map(r => ({
     bucket: r.bucket,
     amount: toNumber(r.amount),
@@ -553,6 +624,7 @@ export async function getCustomer360(
       maxDpd,
       byBucket: receivableBucketFormatted,
       documents: allReceivableDocs,
+      totalOpenCount: totalOpenCount as number,
     },
     opportunities: opportunities as CRMOpportunity_type[],
     recentActivities: recentActivities as CRMActivity_type[],
@@ -628,7 +700,7 @@ export async function refreshCustomerFinancials(
     FROM "CustomerReceivable"
     WHERE "organizationId" = ${organizationId}
       AND "customerNit" = ${customerNit}
-      AND "status" NOT IN ('PAID', 'CANCELLED')
+      AND "status" IN ('OPEN', 'PARTIAL', 'OVERDUE')
   `);
 
   const updateData: Record<string, unknown> = {
@@ -765,6 +837,72 @@ export async function bootstrapCustomerProfilesFromSales(
   return created;
 }
 
+// ── linkCustomerSagTerceroIds ─────────────────────────────────────────────────
+
+/**
+ * Populates CustomerProfile.sagTerceroId by bridging through CollectionRecord.
+ *
+ * WHY: SaleRecord.customerNit stores String(ka_nl_tercero) for the SAG PYA SOAP
+ * integration — NOT the real NIT. For SaleRecord queries to return data,
+ * CustomerProfile.sagTerceroId must be set to ka_nl_tercero.
+ *
+ * CollectionRecord has BOTH fields:
+ *   sagTerceroId INT  — ka_nl_tercero (SAG internal PK)
+ *   customerNit  TEXT — real NIT from TERCEROS JOIN
+ *
+ * This function uses CollectionRecord to build the sagTerceroId → real NIT map,
+ * then updates CustomerProfile.sagTerceroId where the nit matches.
+ *
+ * SAFE: only updates rows where sagTerceroId IS NULL (idempotent).
+ * NO SCHEMA CHANGE needed — sagTerceroId already exists on CustomerProfile.
+ *
+ * Run this after every CollectionRecord sync (v_pagosnew).
+ * Also callable manually via scripts/_verify-customer-identity.ts.
+ *
+ * @returns  Number of CustomerProfile rows updated.
+ */
+export async function linkCustomerSagTerceroIds(
+  organizationId: string,
+): Promise<number> {
+  // Build sagTerceroId → real NIT map from CollectionRecord rows that have both.
+  type Mapping = { tercero_id: number; nit: string };
+  const mappings = await prisma.$queryRaw<Mapping[]>(Prisma.sql`
+    SELECT DISTINCT
+      "sagTerceroId"  AS tercero_id,
+      "customerNit"   AS nit
+    FROM  "CollectionRecord"
+    WHERE "organizationId" = ${organizationId}
+      AND "sagTerceroId"   IS NOT NULL
+      AND "customerNit"    IS NOT NULL
+      AND "customerNit"    != ''
+    ORDER BY tercero_id
+  `);
+
+  if (mappings.length === 0) return 0;
+
+  let updated = 0;
+  for (const m of mappings) {
+    // Update CustomerProfile rows that:
+    //   a) have sagTerceroId IS NULL (not yet linked)
+    //   b) have nit OR nitNormalized matching the real NIT from CollectionRecord
+    const rows = await prisma.$executeRaw(Prisma.sql`
+      UPDATE "CustomerProfile"
+      SET
+        "sagTerceroId" = ${m.tercero_id},
+        "updatedAt"    = NOW()
+      WHERE "organizationId" = ${organizationId}
+        AND "sagTerceroId"   IS NULL
+        AND (
+          "nit"           = ${m.nit}
+          OR "nitNormalized" = ${m.nit}
+        )
+    `);
+    updated += Number(rows);
+  }
+
+  return updated;
+}
+
 // ── refreshAllCustomerFinancials ──────────────────────────────────────────────
 
 /**
@@ -817,7 +955,7 @@ export async function refreshAllCustomerFinancials(
       GROUP BY "customerNit"
     ) agg
     WHERE cp."organizationId" = ${organizationId}
-      AND cp."nit" = agg.nit
+      AND (cp."nit" = agg.nit OR cp."sagTerceroId"::text = agg.nit)
   `);
 
   // 2. Refresh receivables KPIs from CustomerReceivable grouped by NIT
@@ -838,7 +976,7 @@ export async function refreshAllCustomerFinancials(
       FROM "CustomerReceivable"
       WHERE "organizationId" = ${organizationId}
         AND "customerNit" IS NOT NULL
-        AND "status" NOT IN ('PAID', 'CANCELLED')
+        AND "status" IN ('OPEN', 'PARTIAL', 'OVERDUE')
       GROUP BY "customerNit"
     ) rec
     WHERE cp."organizationId" = ${organizationId}

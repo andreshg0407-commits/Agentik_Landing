@@ -104,14 +104,21 @@ export async function loadCustomerCommandData(
   // NIT: prefer profile value; fall back when customerKey starts with digits
   const nit = profile?.nit ?? (/^\d/.test(customerKey) ? customerKey : null);
 
-  // ── Tier 2: per-customer SQL — only when NIT is known ────────────────────
+  // S1 — SALE RECORD NIT KEY:
+  // SaleRecord.customerNit stores String(ka_nl_tercero) for the SAG PYA SOAP integration.
+  // Prefer sagTerceroId when populated; fall back to real NIT only when not yet linked.
+  // See: lib/customer360/resolve-customer.ts + ARCHITECTURE_ROADMAP.md § Sprint S1
+  // Run service.linkCustomerSagTerceroIds(orgId) after every CollectionRecord sync to fix the fallback.
+  const saleNitKey = profile?.sagTerceroId != null ? String(profile.sagTerceroId) : nit;
+
+  // ── Tier 2: per-customer SQL — only when SaleRecord key is known ──────────
   let salesL30d        = 0;
   let salesL90d        = 0;
   let topBranch:       CustomerCommandData["topBranch"]    = null;
   let preferredChannel: string | null                      = null;
   let topSellers:      CustomerCommandData["topSellers"]   = [];
 
-  if (nit) {
+  if (saleNitKey) {
     const [l30R, l90R, branchR, channelR, sellersR] = await Promise.allSettled([
 
       // Sales last 30 days
@@ -119,7 +126,7 @@ export async function loadCustomerCommandData(
         SELECT COALESCE(SUM("amount"), 0)::float8 AS total
         FROM   "SaleRecord"
         WHERE  "organizationId" = ${orgId}
-          AND  "customerNit"    = ${nit}
+          AND  "customerNit"    = ${saleNitKey}
           AND  "saleDate"       >= NOW() - INTERVAL '30 days'
           AND  "productLine"    NOT ILIKE 'Total %'
           AND  "productLine"    NOT ILIKE 'Subtotal%'
@@ -130,7 +137,7 @@ export async function loadCustomerCommandData(
         SELECT COALESCE(SUM("amount"), 0)::float8 AS total
         FROM   "SaleRecord"
         WHERE  "organizationId" = ${orgId}
-          AND  "customerNit"    = ${nit}
+          AND  "customerNit"    = ${saleNitKey}
           AND  "saleDate"       >= NOW() - INTERVAL '90 days'
           AND  "productLine"    NOT ILIKE 'Total %'
           AND  "productLine"    NOT ILIKE 'Subtotal%'
@@ -144,7 +151,7 @@ export async function loadCustomerCommandData(
           SUM("amount")::float8 AS amount
         FROM   "SaleRecord"
         WHERE  "organizationId" = ${orgId}
-          AND  "customerNit"    = ${nit}
+          AND  "customerNit"    = ${saleNitKey}
           AND  "productLine"    NOT ILIKE 'Total %'
           AND  "productLine"    NOT ILIKE 'Subtotal%'
         GROUP  BY "storeSlug"
@@ -159,7 +166,7 @@ export async function loadCustomerCommandData(
           SUM("amount")::float8  AS amount
         FROM   "SaleRecord"
         WHERE  "organizationId" = ${orgId}
-          AND  "customerNit"    = ${nit}
+          AND  "customerNit"    = ${saleNitKey}
           AND  "productLine"    NOT ILIKE 'Total %'
           AND  "productLine"    NOT ILIKE 'Subtotal%'
         GROUP  BY "channel"
@@ -175,7 +182,7 @@ export async function loadCustomerCommandData(
           SUM("amount")::float8  AS amount
         FROM   "SaleRecord"
         WHERE  "organizationId" = ${orgId}
-          AND  "customerNit"    = ${nit}
+          AND  "customerNit"    = ${saleNitKey}
           AND  "productLine"    NOT ILIKE 'Total %'
           AND  "productLine"    NOT ILIKE 'Subtotal%'
         GROUP  BY "sellerSlug"

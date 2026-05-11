@@ -17,10 +17,12 @@ import { C, T, S, R }          from "@/lib/ui/tokens";
 import { Panel, PanelHeader, Badge, KpiCard } from "@/components/shell/primitives";
 import ActionButton            from "../_action-button";
 import { OutcomeForm }         from "@/components/collections/outcome-form";
+import RegisterPaymentButton   from "@/components/finance/register-payment-button";
 import { FiscalWindowSelector } from "@/components/shell/fiscal-window-selector";
 import {
   parseFiscalWindowMode,
   getFiscalWindow,
+  CARTERA_WINDOW_MODES,
 } from "@/lib/finance/fiscal-window";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -65,7 +67,7 @@ export default async function CollectionsQueuePage({
   const sp               = await searchParams;
   const windowParam      = typeof sp.window === "string" ? sp.window : undefined;
   // Default for collections: current_and_prior — ensures carry-over balances are visible
-  const windowMode       = parseFiscalWindowMode(windowParam, "current_and_prior");
+  const windowMode       = parseFiscalWindowMode(windowParam, "current_year");
   const fiscalWindow     = getFiscalWindow(windowMode);
 
   const { organization } = await requireOrgAccess(orgSlug);
@@ -127,7 +129,8 @@ export default async function CollectionsQueuePage({
         <FiscalWindowSelector
           currentMode={windowMode}
           baseHref={`/${orgSlug}/collections`}
-          defaultMode="current_and_prior"
+          defaultMode="current_year"
+          modes={CARTERA_WINDOW_MODES}
         />
       </div>
 
@@ -318,6 +321,11 @@ export default async function CollectionsQueuePage({
                       {/* Action button */}
                       <td style={{ padding: `${S[1]}px ${S[2]}px`, borderBottom: `1px solid ${C.lineSubtle}` }}>
                         <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                          <RegisterPaymentButton
+                            orgSlug={orgSlug}
+                            customerNit={row.nit ?? undefined}
+                            customerName={row.name}
+                          />
                           <OutcomeForm
                             orgSlug={orgSlug}
                             customerSlug={row.slug}

@@ -13,6 +13,7 @@
  */
 
 import Link                  from "next/link";
+import { formatDateCol } from "@/lib/utils/formatDate";
 import { requireOrgAccess }  from "@/lib/auth/org-access";
 import { getLatestPeriod }   from "@/lib/sales/reports";
 import { isValidPeriod, fmtPeriodo } from "@/lib/sales/period-utils";
@@ -936,5 +937,5 @@ function churnColor(r: string)  { return r === "HIGH" ? "#dc2626" : r === "MEDIU
 function fmtDate(d: Date | string | null | undefined): string {
   if (!d) return "—";
   const dt = typeof d === "string" ? new Date(d) : d;
-  return dt.toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" });
+  return formatDateCol(dt);
 }

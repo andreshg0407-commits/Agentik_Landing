@@ -26,6 +26,7 @@
  */
 
 import type { SagSourceType } from "@/lib/sag/source-inference";
+import { SQL_FILTER_EXCLUIR_ARKETOPS } from "@/lib/sag/master-data/source-semantic-rules";
 
 // ── Module types ──────────────────────────────────────────────────────────────
 
@@ -131,14 +132,16 @@ export function weightedAmount(amount: number, source: SagSourceType): number {
 // For use in Prisma.$queryRaw via Prisma.raw().
 // See lib/sag/source-semantics.ts for the individual constants.
 
+// Sprint 3.1: All SQL conditions now exclude ARKETOPS codes.
+// ARKETOPS = asientos contables internos que no son operación Castillitos.
 export const MODULE_SQL_CONDITION: Record<TruthModule, string> = {
-  revenue_executive:   `"sagSourceType" = 'OFICIAL'`,
-  operational:         `"sagSourceType" IN ('OFICIAL', 'REMISION')`,
-  forecast:            `"sagSourceType" IN ('OFICIAL', 'REMISION')`,
-  finance_dian:        `"sagSourceType" = 'OFICIAL'`,
-  customer_360:        `"sagSourceType" IN ('OFICIAL', 'REMISION')`,
-  seller_productivity: `"sagSourceType" IN ('OFICIAL', 'REMISION')`,
-  receivables:         `"sagSourceType" = 'OFICIAL'`,
+  revenue_executive:   `"sagSourceType" = 'OFICIAL' AND ${SQL_FILTER_EXCLUIR_ARKETOPS}`,
+  operational:         `"sagSourceType" IN ('OFICIAL', 'REMISION') AND ${SQL_FILTER_EXCLUIR_ARKETOPS}`,
+  forecast:            `"sagSourceType" IN ('OFICIAL', 'REMISION') AND ${SQL_FILTER_EXCLUIR_ARKETOPS}`,
+  finance_dian:        `"sagSourceType" = 'OFICIAL' AND ${SQL_FILTER_EXCLUIR_ARKETOPS}`,
+  customer_360:        `"sagSourceType" IN ('OFICIAL', 'REMISION') AND ${SQL_FILTER_EXCLUIR_ARKETOPS}`,
+  seller_productivity: `"sagSourceType" IN ('OFICIAL', 'REMISION') AND ${SQL_FILTER_EXCLUIR_ARKETOPS}`,
+  receivables:         `"sagSourceType" = 'OFICIAL' AND ${SQL_FILTER_EXCLUIR_ARKETOPS}`,
 };
 
 // ── Source split description for UI ──────────────────────────────────────────

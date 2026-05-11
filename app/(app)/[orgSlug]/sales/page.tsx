@@ -1,4 +1,5 @@
 import { requireOrgAccess } from "@/lib/auth/org-access";
+import { isInternalRole }   from "@/lib/auth/module-access";
 import {
   getLatestPeriod,
   getComparativoAnoMes,
@@ -41,45 +42,50 @@ async function safeCall<T>(fn: () => Promise<T[]>): Promise<ReportResult<T>> {
   }
 }
 
-export default async function SalesDebugPage({
+export default async function SalesPage({
   params,
 }: {
   params: Promise<{ orgSlug: string }>;
 }) {
-  const { orgSlug }    = await params;
-  const { organization } = await requireOrgAccess(orgSlug);
-  const orgId = organization.id;
+  const { orgSlug }                       = await params;
+  const { organization, membership }      = await requireOrgAccess(orgSlug);
+  const orgId                             = organization.id;
+  const isInternal                        = isInternalRole(membership.role);
 
   // ── Dynamic executive period ──────────────────────────────────────────────
-  // Derived from the latest imported data so the dashboard always shows the
-  // most recent available month regardless of when data was imported.
   const latestPeriod = await getLatestPeriod(orgId);
   const dashTrendEnd   = latestPeriod;
-  const dashTrendStart = periodMinusMonths(latestPeriod, 11); // 12-month window
+  const dashTrendStart = periodMinusMonths(latestPeriod, 11);
 
-  const [comparativo, participacion, pedidos, alerts, sourceSplit, sellerSourceKpis, storeSourceKpis] =
-    await Promise.all([
-      safeCall<ComparativoRow>(()       => getComparativoAnoMes(orgId, COMPARATIVO_START, COMPARATIVO_END)),
-      safeCall<ParticipacionVendedorRow>(() => getParticipacionVendedor(orgId, PART_START, PART_END)),
-      safeCall<PedidosResumidosRow>(()  => getPedidosResumidos(orgId, PEDIDOS_START, PEDIDOS_END)),
-      safeCall<BusinessAlertRow>(()     => getSalesAlerts(orgId, PEDIDOS_END)),
-      getSourceSplitOverview(orgId, latestPeriod).catch(() => null),
-      getSourceKpisBySeller(orgId, latestPeriod).catch(() => []),
-      getSourceKpisByStore(orgId, latestPeriod).catch(()  => []),
-    ]);
+  // Source-split KPIs are always shown (not debug-only)
+  const [sourceSplit, sellerSourceKpis, storeSourceKpis] = await Promise.all([
+    getSourceSplitOverview(orgId, latestPeriod).catch(() => null),
+    getSourceKpisBySeller(orgId, latestPeriod).catch(() => []),
+    getSourceKpisByStore(orgId, latestPeriod).catch(()  => []),
+  ]);
 
-  // Compute quick summary counts
-  const comparativoTotal = comparativo.ok
-    ? comparativo.data.reduce((s, r) => s + r.totalAmount, 0)
-    : null;
+  // ── Internal-only debug data ──────────────────────────────────────────────
+  const [comparativo, participacion, pedidos, alerts] = isInternal
+    ? await Promise.all([
+        safeCall<ComparativoRow>(()       => getComparativoAnoMes(orgId, COMPARATIVO_START, COMPARATIVO_END)),
+        safeCall<ParticipacionVendedorRow>(() => getParticipacionVendedor(orgId, PART_START, PART_END)),
+        safeCall<PedidosResumidosRow>(()  => getPedidosResumidos(orgId, PEDIDOS_START, PEDIDOS_END)),
+        safeCall<BusinessAlertRow>(()     => getSalesAlerts(orgId, PEDIDOS_END)),
+      ])
+    : [null, null, null, null];
 
-  const secs = [
+  const secs = isInternal && comparativo && participacion && pedidos ? [
     {
       title:    "Comparativo Año/Mes",
       subtitle: `start=${COMPARATIVO_START} end=${COMPARATIVO_END}`,
       result:   comparativo,
       count:    comparativo.ok ? `${comparativo.data.length} months` : null,
-      extra:    comparativoTotal != null ? `YTD: ${fmtCOP(comparativoTotal)}` : null,
+      extra:    comparativo.ok
+        ? (() => {
+            const t = comparativo.data.reduce((s, r) => s + r.totalAmount, 0);
+            return t ? `YTD: ${fmtCOP(t)}` : null;
+          })()
+        : null,
     },
     {
       title:    "Participación Vendedor",
@@ -95,7 +101,7 @@ export default async function SalesDebugPage({
       count:    pedidos.ok ? `${pedidos.data.length} rows` : null,
       extra:    null,
     },
-  ];
+  ] : [];
 
   return (
     <div style={{ fontFamily: "monospace", maxWidth: 1100 }}>
@@ -165,181 +171,176 @@ export default async function SalesDebugPage({
         />
       )}
 
-      {/* ── Debug separator ── */}
-      <div style={{
-        display: "flex", alignItems: "center", gap: 12,
-        margin: "8px 0 24px",
-      }}>
-        <hr style={{ flex: 1, border: "none", borderTop: "1px solid #e5e7eb", margin: 0 }} />
-        <span style={{
-          fontSize: 10, fontWeight: 700, color: "#aaa",
-          textTransform: "uppercase", letterSpacing: "0.08em",
-          padding: "0 4px",
-        }}>
-          Validación técnica · solo uso interno
-        </span>
-        <hr style={{ flex: 1, border: "none", borderTop: "1px solid #e5e7eb", margin: 0 }} />
-      </div>
-
-      {/* ── Technical validation header ── */}
-      <h2 style={{ fontSize: 14, fontWeight: 700, marginBottom: 4, color: "#888" }}>Validación de datos</h2>
-      <p style={{ fontSize: 12, color: "#aaa", marginBottom: 8 }}>
-        Panel de validación técnica. Carga CSV, verifica el resultado de importación y confirma integridad de los reportes. No visible en producción.
-      </p>
-
-      {/* ── Debug summary bar ── */}
-      <div style={{
-        display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center",
-        padding: "8px 14px", background: "#f5f5f5",
-        border: "1px solid #ddd", borderRadius: 6, marginBottom: 32,
-        fontSize: 12,
-      }}>
-        <span><span style={{ color: "#888" }}>org: </span><b>{orgSlug}</b></span>
-        <span><span style={{ color: "#888" }}>id: </span><b style={{ fontSize: 11 }}>{orgId}</b></span>
-        <span style={{ color: "#bbb" }}>|</span>
-        {secs.map(s => (
-          <span key={s.title}>
-            <span style={{ color: "#888" }}>{s.title.split(" ")[0]}: </span>
-            <span style={{
-              fontWeight: 600,
-              color: s.result.ok ? (s.count && s.count !== "0 months" ? "#14532d" : "#888") : "#991b1b",
-            }}>
-              {s.result.ok ? (s.count ?? "ok") : "error"}
-            </span>
-            {s.extra && <span style={{ color: "#555" }}> · {s.extra}</span>}
-          </span>
-        ))}
-        <span style={{ color: "#bbb", marginLeft: "auto", fontSize: 11 }}>
-          edit periods at top of page.tsx
-        </span>
-      </div>
-
-      {/* ── Pivot import tester (Castillitos format) ── */}
-      <PivotImportTester orgSlug={orgSlug} />
-
-      {/* ── Flat CSV import tester ── */}
-      <ImportTester orgSlug={orgSlug} />
-
-      {/* ── Business Alerts ── */}
-      <section style={{ marginBottom: 32, border: "1px solid #ddd", borderRadius: 6, overflow: "hidden" }}>
-        <div style={{
-          padding: "10px 16px", borderBottom: "1px solid #ddd",
-          background: alerts.ok && alerts.data.some(a => a.severity === "CRITICAL") ? "#fff0f0"
-                    : alerts.ok && alerts.data.length > 0 ? "#fffbeb"
-                    : "#f5f5f5",
-          display: "flex", alignItems: "center", gap: 10,
-        }}>
-          <span style={{ fontWeight: 700, fontSize: 14 }}>Alertas Comerciales</span>
-          <Badge ok={alerts.ok} />
-          <span style={{ fontSize: 11, color: "#666" }}>period: {PEDIDOS_END}</span>
-          {alerts.ok && (
-            <span style={{ fontSize: 11, color: "#888" }}>
-              {alerts.data.length} alert{alerts.data.length !== 1 ? "s" : ""}
-            </span>
-          )}
-        </div>
-
-        {!alerts.ok && (
-          <div style={{ padding: "8px 16px", fontSize: 13, background: "#fff0f0", color: "#991b1b" }}>
-            {alerts.error}
-          </div>
-        )}
-
-        {alerts.ok && alerts.data.length === 0 && (
-          <div style={{ padding: "12px 16px", fontSize: 13, color: "#888", background: "#fafafa" }}>
-            Sin alertas para el período {PEDIDOS_END}. Las alertas se generan automáticamente tras importar datos.
-          </div>
-        )}
-
-        {alerts.ok && alerts.data.length > 0 && (
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-            <thead>
-              <tr style={{ background: "#fafafa", borderBottom: "1px solid #eee" }}>
-                {["Gravedad", "Tipo", "Entidad", "Título", "Mensaje", "Período"].map(h => (
-                  <th key={h} style={{ padding: "6px 12px", textAlign: "left", fontWeight: 600, color: "#555" }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {alerts.data.map((a, i) => (
-                <tr key={a.id} style={{
-                  borderBottom: "1px solid #f0f0f0",
-                  background: i % 2 === 0 ? "#fff" : "#fafafa",
-                }}>
-                  <td style={{ padding: "6px 12px" }}>
-                    <SeverityBadge severity={a.severity} />
-                  </td>
-                  <td style={{ padding: "6px 12px", color: "#555" }}>{a.type}</td>
-                  <td style={{ padding: "6px 12px" }}>
-                    <span style={{ fontSize: 10, color: "#888" }}>{a.entityType} </span>
-                    <b>{a.entityLabel}</b>
-                  </td>
-                  <td style={{ padding: "6px 12px", fontWeight: 600 }}>{a.title}</td>
-                  <td style={{ padding: "6px 12px", color: "#444", maxWidth: 340 }}>{a.message}</td>
-                  <td style={{ padding: "6px 12px", color: "#888" }}>{a.period}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
-
-      {/* ── Report sections ── */}
-      {secs.map(({ title, subtitle, result }) => (
-        <section key={title} style={{
-          marginBottom: 32, border: "1px solid #ddd",
-          borderRadius: 6, overflow: "hidden",
-        }}>
-          {/* Section header */}
+      {/* ── Debug sections — internal only ─────────────────────────────────── */}
+      {isInternal && alerts && secs.length > 0 && (
+        <>
+          {/* Separator */}
           <div style={{
-            padding: "10px 16px", borderBottom: "1px solid #ddd",
-            background: result.ok ? "#f5f5f5" : "#fff0f0",
-            display: "flex", alignItems: "center", gap: 10,
+            display: "flex", alignItems: "center", gap: 12,
+            margin: "8px 0 24px",
           }}>
-            <span style={{ fontWeight: 700, fontSize: 14 }}>{title}</span>
-            <Badge ok={result.ok} />
-            <span style={{ fontSize: 11, color: "#666" }}>{subtitle}</span>
-            <span style={{ fontSize: 11, color: "#aaa", marginLeft: "auto" }}>{result.ms} ms</span>
+            <hr style={{ flex: 1, border: "none", borderTop: "1px solid #e5e7eb", margin: 0 }} />
+            <span style={{
+              fontSize: 10, fontWeight: 700, color: "#aaa",
+              textTransform: "uppercase", letterSpacing: "0.08em",
+              padding: "0 4px",
+            }}>
+              Validación técnica · solo uso interno
+            </span>
+            <hr style={{ flex: 1, border: "none", borderTop: "1px solid #e5e7eb", margin: 0 }} />
           </div>
 
-          {/* Error */}
-          {!result.ok && (
+          <h2 style={{ fontSize: 14, fontWeight: 700, marginBottom: 4, color: "#888" }}>Validación de datos</h2>
+          <p style={{ fontSize: 12, color: "#aaa", marginBottom: 8 }}>
+            Panel de validación técnica. Carga CSV, verifica el resultado de importación y confirma integridad de los reportes.
+          </p>
+
+          {/* Debug summary bar */}
+          <div style={{
+            display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center",
+            padding: "8px 14px", background: "#f5f5f5",
+            border: "1px solid #ddd", borderRadius: 6, marginBottom: 32,
+            fontSize: 12,
+          }}>
+            <span><span style={{ color: "#888" }}>org: </span><b>{orgSlug}</b></span>
+            <span><span style={{ color: "#888" }}>id: </span><b style={{ fontSize: 11 }}>{orgId}</b></span>
+            <span style={{ color: "#bbb" }}>|</span>
+            {secs.map(s => (
+              <span key={s.title}>
+                <span style={{ color: "#888" }}>{s.title.split(" ")[0]}: </span>
+                <span style={{
+                  fontWeight: 600,
+                  color: s.result.ok ? (s.count && s.count !== "0 months" ? "#14532d" : "#888") : "#991b1b",
+                }}>
+                  {s.result.ok ? (s.count ?? "ok") : "error"}
+                </span>
+                {s.extra && <span style={{ color: "#555" }}> · {s.extra}</span>}
+              </span>
+            ))}
+            <span style={{ color: "#bbb", marginLeft: "auto", fontSize: 11 }}>
+              edit periods at top of page.tsx
+            </span>
+          </div>
+
+          {/* Pivot import tester */}
+          <PivotImportTester orgSlug={orgSlug} />
+
+          {/* Flat CSV import tester */}
+          <ImportTester orgSlug={orgSlug} />
+
+          {/* Business Alerts */}
+          <section style={{ marginBottom: 32, border: "1px solid #ddd", borderRadius: 6, overflow: "hidden" }}>
             <div style={{
-              padding: "8px 16px", fontSize: 13,
-              background: "#fff0f0", color: "#991b1b",
-              borderBottom: "1px solid #fca5a5",
+              padding: "10px 16px", borderBottom: "1px solid #ddd",
+              background: alerts.ok && alerts.data.some(a => a.severity === "CRITICAL") ? "#fff0f0"
+                        : alerts.ok && alerts.data.length > 0 ? "#fffbeb"
+                        : "#f5f5f5",
+              display: "flex", alignItems: "center", gap: 10,
             }}>
-              {result.error}
+              <span style={{ fontWeight: 700, fontSize: 14 }}>Alertas Comerciales</span>
+              <Badge ok={alerts.ok} />
+              <span style={{ fontSize: 11, color: "#666" }}>period: {PEDIDOS_END}</span>
+              {alerts.ok && (
+                <span style={{ fontSize: 11, color: "#888" }}>
+                  {alerts.data.length} alert{alerts.data.length !== 1 ? "s" : ""}
+                </span>
+              )}
             </div>
-          )}
 
-          {/* Empty state */}
-          {result.ok && result.data.length === 0 && (
-            <div style={{
-              padding: "12px 16px", fontSize: 13, color: "#888",
-              background: "#fafafa",
+            {!alerts.ok && (
+              <div style={{ padding: "8px 16px", fontSize: 13, background: "#fff0f0", color: "#991b1b" }}>
+                {alerts.error}
+              </div>
+            )}
+
+            {alerts.ok && alerts.data.length === 0 && (
+              <div style={{ padding: "12px 16px", fontSize: 13, color: "#888", background: "#fafafa" }}>
+                Sin alertas para el período {PEDIDOS_END}.
+              </div>
+            )}
+
+            {alerts.ok && alerts.data.length > 0 && (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ background: "#fafafa", borderBottom: "1px solid #eee" }}>
+                    {["Gravedad", "Tipo", "Entidad", "Título", "Mensaje", "Período"].map(h => (
+                      <th key={h} style={{ padding: "6px 12px", textAlign: "left", fontWeight: 600, color: "#555" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {alerts.data.map((a, i) => (
+                    <tr key={a.id} style={{
+                      borderBottom: "1px solid #f0f0f0",
+                      background: i % 2 === 0 ? "#fff" : "#fafafa",
+                    }}>
+                      <td style={{ padding: "6px 12px" }}><SeverityBadge severity={a.severity} /></td>
+                      <td style={{ padding: "6px 12px", color: "#555" }}>{a.type}</td>
+                      <td style={{ padding: "6px 12px" }}>
+                        <span style={{ fontSize: 10, color: "#888" }}>{a.entityType} </span>
+                        <b>{a.entityLabel}</b>
+                      </td>
+                      <td style={{ padding: "6px 12px", fontWeight: 600 }}>{a.title}</td>
+                      <td style={{ padding: "6px 12px", color: "#444", maxWidth: 340 }}>{a.message}</td>
+                      <td style={{ padding: "6px 12px", color: "#888" }}>{a.period}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </section>
+
+          {/* Report sections */}
+          {secs.map(({ title, subtitle, result }) => (
+            <section key={title} style={{
+              marginBottom: 32, border: "1px solid #ddd",
+              borderRadius: 6, overflow: "hidden",
             }}>
-              Sin datos — importe un CSV primero y recargue la página.
-            </div>
-          )}
+              <div style={{
+                padding: "10px 16px", borderBottom: "1px solid #ddd",
+                background: result.ok ? "#f5f5f5" : "#fff0f0",
+                display: "flex", alignItems: "center", gap: 10,
+              }}>
+                <span style={{ fontWeight: 700, fontSize: 14 }}>{title}</span>
+                <Badge ok={result.ok} />
+                <span style={{ fontSize: 11, color: "#666" }}>{subtitle}</span>
+                <span style={{ fontSize: 11, color: "#aaa", marginLeft: "auto" }}>{result.ms} ms</span>
+              </div>
 
-          {/* Data */}
-          {result.ok && result.data.length > 0 && (
-            <pre style={{
-              margin: 0, padding: 16, fontSize: 11, lineHeight: 1.6,
-              overflowX: "auto", background: "#fff", color: "#111",
-              maxHeight: 380, overflowY: "auto",
-            }}>
-              {JSON.stringify(result.data, null, 2)}
-            </pre>
-          )}
-        </section>
-      ))}
+              {!result.ok && (
+                <div style={{
+                  padding: "8px 16px", fontSize: 13,
+                  background: "#fff0f0", color: "#991b1b",
+                  borderBottom: "1px solid #fca5a5",
+                }}>
+                  {result.error}
+                </div>
+              )}
 
-      <p style={{ fontSize: 11, color: "#bbb", marginTop: 4 }}>
-        To change test periods: edit COMPARATIVO_START / COMPARATIVO_END etc. at the top of{" "}
-        <code>app/(app)/[orgSlug]/sales/page.tsx</code>.
-      </p>
+              {result.ok && result.data.length === 0 && (
+                <div style={{ padding: "12px 16px", fontSize: 13, color: "#888", background: "#fafafa" }}>
+                  Sin datos — importe un CSV primero y recargue la página.
+                </div>
+              )}
+
+              {result.ok && result.data.length > 0 && (
+                <pre style={{
+                  margin: 0, padding: 16, fontSize: 11, lineHeight: 1.6,
+                  overflowX: "auto", background: "#fff", color: "#111",
+                  maxHeight: 380, overflowY: "auto",
+                }}>
+                  {JSON.stringify(result.data, null, 2)}
+                </pre>
+              )}
+            </section>
+          ))}
+
+          <p style={{ fontSize: 11, color: "#bbb", marginTop: 4 }}>
+            To change test periods: edit COMPARATIVO_START / COMPARATIVO_END etc. at the top of{" "}
+            <code>app/(app)/[orgSlug]/sales/page.tsx</code>.
+          </p>
+        </>
+      )}
     </div>
   );
 }
