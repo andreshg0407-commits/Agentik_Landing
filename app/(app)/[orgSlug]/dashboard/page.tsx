@@ -26,8 +26,11 @@
  */
 
 import Link                          from "next/link";
+import { formatDateWeekday }         from "@/lib/utils/formatDate";
 import { MembershipStatus }          from "@prisma/client";
 import { requireOrgAccess }          from "@/lib/auth/org-access";
+import { isInternalRole }            from "@/lib/auth/module-access";
+import { getEnabledModules }         from "@/lib/tenant/modules";
 import { statusLabel, severityLabel } from "@/lib/ui/status-labels";
 import { getAccessibleOrganizations } from "@/lib/auth/user-orgs";
 import { getOrgDashboardActivity }   from "@/lib/dashboard/org-activity";
@@ -41,20 +44,36 @@ const TECHNICAL_ROLES = new Set(["SUPER_ADMIN"]);
 
 // ── Module access directory ────────────────────────────────────────────────────
 
-const MODULES = [
-  { label: "Torre de Control",        icon: "⚡", href: "executive",       accent: "#1e1e2e", description: "Vista ejecutiva" },
-  { label: "Control Comercial",        icon: "📊", href: "sales",           accent: "#7c3aed", description: "KPIs, vendedores, líneas" },
-  { label: "Informes Inteligentes",    icon: "✨", href: "reports",         accent: "#7c3aed", description: "Reportes con IA" },
-  { label: "Embudo Comercial",         icon: "🔁", href: "pipeline",        accent: "#0369a1", description: "Pipeline CRM → SAG" },
-  { label: "Cliente 360",              icon: "👤", href: "customer-360",    accent: "#059669", description: "Cartera y perfil" },
-  { label: "Centro de Conciliación",   icon: "🔗", href: "reconciliation",  accent: "#b45309", description: "XML vs SAG" },
-  { label: "Finanzas",                 icon: "💰", href: "finance",         accent: "#b45309", description: "Documentos y alertas" },
-  { label: "Explorador de Datos",      icon: "🔍", href: "data-explorer",   accent: "#444",    description: "Consulta libre" },
-  { label: "Agentik",                  icon: "🤖", href: "agentik",         accent: "#6d28d9", description: "Asistente de operaciones" },
-  { label: "Alertas",                  icon: "🔔", href: "alerts",          accent: "#dc2626", description: "Alertas activas" },
-  { label: "Integraciones",            icon: "⚙️",  href: "integrations",   accent: "#374151", description: "Conectores y SAG" },
-  { label: "Workforce · RRHH",         icon: "👥", href: "workforce",       accent: "#b45309", description: "Equipos" },
-] as const;
+/**
+ * Quick-access modules grid.
+ *
+ * `internal: true`  → only shown to SUPER_ADMIN / AGENTIK_ADMIN.
+ * `internal: false` → shown to all roles that land on this dashboard.
+ */
+const MODULES: ReadonlyArray<{
+  label:       string;
+  icon:        string;
+  href:        string;
+  accent:      string;
+  description: string;
+  internal:    boolean;
+  moduleKey?:  string; // opt-in module key — only shown when enabled for the tenant
+}> = [
+  { label: "Torre de Control",       icon: "⚡", href: "executive",       accent: "#1e1e2e", description: "Vista ejecutiva",          internal: false },
+  { label: "Control Comercial",      icon: "📊", href: "sales",           accent: "#7c3aed", description: "KPIs, vendedores, líneas", internal: false },
+  { label: "Informes Inteligentes",  icon: "✨", href: "reports",         accent: "#7c3aed", description: "Reportes con IA",          internal: false },
+  { label: "Marketing Studio",       icon: "📸", href: "agentik/marketing-studio", accent: "#7c2d92", description: "Foto Estudio, Biblioteca, Redes", internal: false, moduleKey: "marketing_studio" },
+  { label: "Embudo Comercial",       icon: "🔁", href: "pipeline",        accent: "#0369a1", description: "Pipeline CRM → SAG",       internal: false },
+  { label: "Cliente 360",            icon: "👤", href: "customer-360",    accent: "#059669", description: "Cartera y perfil",          internal: false },
+  { label: "Conciliación Inteligente", icon: "🔗", href: "reconciliation",  accent: "#b45309", description: "Cartera · Banco · DIAN",     internal: false },
+  { label: "Finanzas",               icon: "💰", href: "finance",         accent: "#b45309", description: "Documentos y alertas",      internal: false },
+  { label: "Explorador de Datos",    icon: "🔍", href: "data-explorer",   accent: "#444",    description: "Consulta libre",           internal: false },
+  { label: "Alertas",                icon: "🔔", href: "alerts",          accent: "#dc2626", description: "Alertas activas",          internal: false },
+  { label: "Workforce · RRHH",       icon: "👥", href: "workforce",       accent: "#b45309", description: "Equipos",                  internal: false, moduleKey: "workforce" },
+  // Internal-only entries
+  { label: "Agentik",                icon: "🤖", href: "agentik",         accent: "#6d28d9", description: "Consola de operaciones",   internal: true  },
+  { label: "Integraciones",          icon: "⚙️",  href: "integrations",   accent: "#374151", description: "Conectores y SAG",         internal: true  },
+];
 
 // ── Severity display ───────────────────────────────────────────────────────────
 
@@ -76,20 +95,16 @@ export default async function CentroDeOperacionesPage({
   params: { orgSlug: string };
 }) {
   const { user, organization, membership } = await requireOrgAccess(params.orgSlug);
-  const firstName = user.name?.split(" ")[0] ?? "usuario";
+  const firstName  = user.name?.split(" ")[0] ?? "usuario";
+  const isInternal = isInternalRole(membership.role);
 
   const yesterday = new Date(Date.now() - 86_400_000);
 
-  const [workspaceMemberships, organizations, activity, briefing, totalActiveAlerts, pendingTasks, pendingApprovals] = await Promise.all([
-    prisma.workspaceMembership.findMany({
-      where: {
-        userId: user.id,
-        status: MembershipStatus.ACTIVE,
-        workspace: { organizationId: organization.id },
-      },
-      select: { workspace: { select: { id: true, name: true, slug: true } } },
-    }),
-    getAccessibleOrganizations(),
+  // Fetch enabled modules to filter the quick-access grid
+  const mods = await getEnabledModules(organization.id);
+
+  // Queries that are always needed
+  const [activity, briefing, totalActiveAlerts, pendingTasks] = await Promise.all([
     getOrgDashboardActivity(organization.id),
     generateOrganizationDailyBriefing({
       organizationId:   organization.id,
@@ -102,10 +117,25 @@ export default async function CentroDeOperacionesPage({
     (prisma as any).actionTask.count({
       where: { organizationId: organization.id, status: { in: ["PENDING", "IN_PROGRESS"] } },
     }).catch(() => 0) as Promise<number>,
-    (prisma as any).sagWriteOperation.count({
-      where: { organizationId: organization.id, status: "PENDING" },
-    }).catch(() => 0) as Promise<number>,
   ]);
+
+  // Internal-only queries — skip entirely for client roles to avoid leaking data
+  const [workspaceMemberships, organizations, pendingApprovals] = isInternal
+    ? await Promise.all([
+        prisma.workspaceMembership.findMany({
+          where: {
+            userId: user.id,
+            status: MembershipStatus.ACTIVE,
+            workspace: { organizationId: organization.id },
+          },
+          select: { workspace: { select: { id: true, name: true, slug: true } } },
+        }),
+        getAccessibleOrganizations(),
+        (prisma as any).sagWriteOperation.count({
+          where: { organizationId: organization.id, status: "PENDING" },
+        }).catch(() => 0) as Promise<number>,
+      ])
+    : [[], [], 0];
 
   const urgentAlerts = activity.alerts.filter(
     a => a.severity === "CRITICAL" || a.severity === "WARNING"
@@ -113,9 +143,15 @@ export default async function CentroDeOperacionesPage({
   const newAlertsSinceYesterday = activity.alerts.filter(a => a.createdAt >= yesterday).length;
   const isTechnical = TECHNICAL_ROLES.has(membership.role);
 
-  const today = new Date().toLocaleDateString("es-CO", {
-    weekday: "long", year: "numeric", month: "long", day: "numeric",
-  });
+  // Filter quick-access modules:
+  //   - internal entries only visible to isInternalRole
+  //   - entries with moduleKey only visible when the module is enabled for this tenant
+  const visibleModules = MODULES.filter(m =>
+    (!m.internal || isInternal) &&
+    (!m.moduleKey || mods.has(m.moduleKey as any)),
+  );
+
+  const today = formatDateWeekday(new Date());
 
   return (
     <div style={{ fontFamily: "monospace", maxWidth: 1100 }}>
@@ -241,20 +277,22 @@ export default async function CentroDeOperacionesPage({
           >
             ✨ Informes Inteligentes →
           </Link>
-          <Link
-            href={`/${params.orgSlug}/agentik`}
-            style={{
-              fontSize:       T.sz.sm,
-              color:          C.inkLight,
-              fontWeight:     T.wt.bold,
-              textDecoration: "none",
-              padding:        "5px 12px",
-              border:         `1px solid ${C.line}`,
-              borderRadius:   R.sm,
-            }}
-          >
-            🤖 Consultar Agentik →
-          </Link>
+          {isInternal && (
+            <Link
+              href={`/${params.orgSlug}/agentik`}
+              style={{
+                fontSize:       T.sz.sm,
+                color:          C.inkLight,
+                fontWeight:     T.wt.bold,
+                textDecoration: "none",
+                padding:        "5px 12px",
+                border:         `1px solid ${C.line}`,
+                borderRadius:   R.sm,
+              }}
+            >
+              🤖 Consultar Agentik →
+            </Link>
+          )}
         </div>
       </div>
 
@@ -264,7 +302,7 @@ export default async function CentroDeOperacionesPage({
           a false extension of the right rail.                                */}
       <div style={{
         display:             "grid",
-        gridTemplateColumns: "1fr 1fr 1fr",
+        gridTemplateColumns: isInternal ? "1fr 1fr 1fr" : "1fr 1fr",
         gap:                 S[3],
         marginBottom:        S[5],
       }}>
@@ -282,16 +320,18 @@ export default async function CentroDeOperacionesPage({
           value={pendingTasks}
           sublabel={pendingTasks === 0 ? "sin pendientes" : "pendientes o en progreso"}
           urgent={false}
-          href={`/${params.orgSlug}/agentik`}
+          href={`/${params.orgSlug}/reports`}
         />
-        <DaySignal
-          icon="✍"
-          label="Aprobaciones SAG"
-          value={pendingApprovals}
-          sublabel={pendingApprovals === 0 ? "al día" : "esperando aprobación"}
-          urgent={pendingApprovals > 0}
-          href={`/${params.orgSlug}/sag/write`}
-        />
+        {isInternal && (
+          <DaySignal
+            icon="✍"
+            label="Aprobaciones SAG"
+            value={pendingApprovals as number}
+            sublabel={(pendingApprovals as number) === 0 ? "al día" : "esperando aprobación"}
+            urgent={(pendingApprovals as number) > 0}
+            href={`/${params.orgSlug}/sag/write`}
+          />
+        )}
       </div>
 
       {/* ── Alertas urgentes ───────────────────────────────────────────────────
@@ -393,7 +433,7 @@ export default async function CentroDeOperacionesPage({
           gridTemplateColumns: "repeat(4, 1fr)",
           gap:                 S[2] + 2,
         }}>
-          {MODULES.map(mod => (
+          {visibleModules.map(mod => (
             <Link
               key={mod.href}
               href={`/${params.orgSlug}/${mod.href}`}
@@ -426,8 +466,9 @@ export default async function CentroDeOperacionesPage({
       </div>
 
       {/* ── Actividad técnica ──────────────────────────────────────────────────
-          Full panels for SUPER_ADMIN. Tonal slim bar for all other roles.   */}
-      {isTechnical ? (
+          Only shown to internal roles. Client roles don't have access to
+          runs/events so these links and counters are not relevant to them.  */}
+      {isInternal && isTechnical ? (
         <div style={{
           display:             "grid",
           gridTemplateColumns: "1fr 1fr",
@@ -488,8 +529,8 @@ export default async function CentroDeOperacionesPage({
             )}
           </Panel>
         </div>
-      ) : (
-        /* Slim tonal bar — keeps access to runs/events without visual weight */
+      ) : isInternal ? (
+        /* Slim tonal bar — keeps access to runs/events without visual weight (non-SUPER_ADMIN internals) */
         <div style={{
           background:   C.surface,
           border:       `1px solid ${C.line}`,
@@ -534,7 +575,7 @@ export default async function CentroDeOperacionesPage({
             Eventos →
           </Link>
         </div>
-      )}
+      ) : null}
 
       {/* ── Organizaciones y espacios de trabajo ── */}
       {(organizations.length > 1 || workspaceMemberships.length > 0) && (

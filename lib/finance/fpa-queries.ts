@@ -22,6 +22,7 @@ import {
   fromSagSourceType,
   getSourceSemantics,
 } from "@/lib/sag/source-semantics";
+import { PRISMA_EXCLUIR_ARKETOPS, SQL_FILTER_EXCLUIR_ARKETOPS } from "@/lib/sag/master-data/source-semantic-rules";
 import type { FiscalWindow } from "@/lib/finance/fiscal-window";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -168,7 +169,8 @@ export async function getFpaRevenueForecast(
   // to recognized revenue, budget actuals, and DIAN reconciliation.
   // REMISION (FUENTE_2) feeds operational demand / near-term forecast only.
   // See: REVENUE_SOURCE_CONDITION in lib/sag/source-semantics.ts
-  const revenueWhere = { organizationId, sagSourceType: "OFICIAL" } as any;
+  // Sprint 3.1: exclude ARKETOPS codes from all revenue KPIs.
+  const revenueWhere = { organizationId, sagSourceType: "OFICIAL", ...PRISMA_EXCLUIR_ARKETOPS } as any;
 
   const [mtdAgg, qtdAgg, pyAgg, rolling12Raw] = await Promise.all([
     // Month to date — OFICIAL only
@@ -283,7 +285,8 @@ export async function getFpaVariance(
   // Finance rule: only OFICIAL (Fuente 1) contributes to recognized revenue actuals.
   const yearStart = new Date(year, 0, 1);
   const yearEnd   = new Date(year + 1, 0, 1);
-  const where     = { organizationId, saleDate: { gte: yearStart, lt: yearEnd }, sagSourceType: "OFICIAL" as const };
+  // Sprint 3.1: exclude ARKETOPS codes from variance actuals.
+  const where     = { organizationId, saleDate: { gte: yearStart, lt: yearEnd }, sagSourceType: "OFICIAL" as const, ...PRISMA_EXCLUIR_ARKETOPS } as any;
 
   const [
     byStore,
@@ -359,18 +362,21 @@ export async function getFpaCashFlow(
   const d90    = new Date(now.getTime() + 90  * 86_400_000);
 
   // Apply fiscal window to invoiceDate scope.
-  // For any mode except full_history, include invoices from (window.from − 1 year) onwards.
-  // This mirrors the buildCarryOverWhere carry-over rule: current window + one prior year
-  // of still-open (carry-over) invoices.
+  // strict_year: hard range [Jan 1, Jan 1 next year) — no carry-over.
+  // Other modes: include one prior year of carry-over open invoices.
   // Horizon forecasts (30/60/90d future due) are always unscoped — they are forward-looking.
   let invoiceDateFilter: object = {};
-  if (window && window.mode !== "full_history") {
+  if (window && window.mode === "strict_year") {
+    const to = new Date(window.year + 1, 0, 1);
+    invoiceDateFilter = { invoiceDate: { gte: window.from, lt: to } };
+  } else if (window && window.mode !== "full_history") {
     const priorYearFrom = new Date(window.from);
     priorYearFrom.setFullYear(priorYearFrom.getFullYear() - 1);
     invoiceDateFilter = { invoiceDate: { gte: priorYearFrom } };
   }
 
-  const where  = { organizationId, status: { in: ["OPEN", "PARTIAL"] }, ...invoiceDateFilter };
+  // Canonical open status — mirrors RX_OPEN_STATUSES in receivables-snapshot.ts
+  const where  = { organizationId, status: { in: ["OPEN", "PARTIAL", "OVERDUE"] }, ...invoiceDateFilter };
 
   const [totalAgg, overdueAgg, agingRaw, future30, future60, future90] = await Promise.all([
     prisma.customerReceivable.aggregate({
@@ -378,8 +384,10 @@ export async function getFpaCashFlow(
       _sum: { balanceDue: true },
       _count: true,
     }),
+    // Vencido: daysOverdue > 0 — campo calculado por SAG en sync.
+    // NO usar dueDate < now (live comparison que diverge del campo almacenado).
     prisma.customerReceivable.aggregate({
-      where: { ...where, dueDate: { lt: now } },
+      where: { ...where, daysOverdue: { gt: 0 } },
       _sum: { balanceDue: true },
     }),
     // Aging breakdown by bucket
@@ -661,6 +669,7 @@ export async function getSourceSplitOverview(
       AND  COALESCE("periodoAoMes", TO_CHAR("saleDate", 'YYYYMM')) = ${p}
       AND  "productLine" NOT ILIKE 'Total %'
       AND  "productLine" NOT ILIKE 'Subtotal%'
+      AND  ${Prisma.raw(SQL_FILTER_EXCLUIR_ARKETOPS)}
     GROUP  BY 1
   `);
 

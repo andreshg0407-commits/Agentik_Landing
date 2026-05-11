@@ -75,10 +75,12 @@ import { Panel, PanelHeader, Badge } from "@/components/shell/primitives";
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 
-type FinanceTab = "ops" | "planning";
+type FinanceTab = "hub" | "docs" | "cierre" | "planning";
 const TABS: { id: FinanceTab; label: string }[] = [
-  { id: "ops",      label: "Operaciones" },
-  { id: "planning", label: "Planeación y Presupuesto" },
+  { id: "hub",      label: "Centro Financiero"      },
+  { id: "docs",     label: "Documentos Financieros" },
+  { id: "cierre",   label: "Cierre Financiero"      },
+  { id: "planning", label: "Planeación"             },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -164,7 +166,12 @@ export default async function FinancePage({
   searchParams: { vs?: string; pm?: string; dt?: string; tab?: string };
 }) {
   const { organization } = await requireOrgAccess(params.orgSlug);
-  const tab: FinanceTab  = searchParams.tab === "planning" ? "planning" : "ops";
+  const rawTab = searchParams.tab;
+  const tab: FinanceTab =
+    rawTab === "hub" || rawTab === "docs" || rawTab === "cierre" || rawTab === "planning"
+      ? rawTab
+      : rawTab === "ops" ? "hub"  // backward compat
+      : "hub";
 
   const filters: FinanceDocumentFilters = {
     validationStatus: searchParams.vs || undefined,
@@ -172,31 +179,29 @@ export default async function FinancePage({
     docType:          (searchParams.dt as DocumentType) || undefined,
   };
 
-  // Load ops data always; FP&A data only on the planning tab.
-  // cashFlow is always loaded for the close score widget.
-  const [overview, documents, alerts, activity, validationCounts, reconciliation, accountingBatch, fiscal, cashFlow] = await Promise.all([
+  // ── Data loading strategy ─────────────────────────────────────────────────
+  // Core: always loaded — drives hub signals + closeScore computation.
+  const [overview, validationCounts, reconciliation, accountingBatch, fiscal, cashFlow] = await Promise.all([
     getFinanceOverview(organization.id),
-    getRecentFinancialDocuments(organization.id, filters),
-    getFinancialAlerts(organization.id),
-    getRecentFinancialActivity(organization.id),
     getValidationStatusCounts(organization.id),
     getReconciliationSummary(organization.id),
-    getAccountingClassifications(organization.id),
+    getAccountingClassifications(organization.id),  // also needed by closeScore
     getDianFiscalSummary(organization.id),
     getFpaCashFlow(organization.id),
   ]);
 
-  const groupedAlerts = SEVERITY_ORDER.map((severity) => ({
-    severity,
-    items: alerts.filter((a) => a.severity === severity),
-  })).filter((g) => g.items.length > 0);
+  // Documents table: only loaded for the docs tab (can be large).
+  let documents: RecentFinancialDocument[] = [];
+  if (tab === "docs") {
+    documents = await getRecentFinancialDocuments(organization.id, filters);
+  }
 
-  let forecast:  RevenueForecast   | null = null;
-  let budgets:   BudgetRow[]              = [];
+  // FP&A: planning tab + cierre tab (committee needs variance + fpaRecs).
+  let forecast:  RevenueForecast | null = null;
+  let budgets:   BudgetRow[]            = [];
   let variance:  { rows: VarianceRow[]; hasData: boolean } = { rows: [], hasData: false };
-  let fpaRecs:   FpaRecommendation[]      = [];
-
-  if (tab === "planning") {
+  let fpaRecs:   FpaRecommendation[]    = [];
+  if (tab === "planning" || tab === "cierre") {
     const year = new Date().getFullYear();
     [forecast, budgets, variance] = await Promise.all([
       getFpaRevenueForecast(organization.id),
@@ -206,9 +211,9 @@ export default async function FinancePage({
     fpaRecs = buildFpaRecommendations(forecast, variance, cashFlow);
   }
 
-  // ── Cierre financiero — sprint 4 ──────────────────────────────────────────
-  const closeScore    = computeCloseScore(fiscal, reconciliation, accountingBatch, validationCounts, cashFlow);
-  const committee     = buildCommitteeReport(
+  // ── Derived (pure, no DB) ─────────────────────────────────────────────────
+  const closeScore = computeCloseScore(fiscal, reconciliation, accountingBatch, validationCounts, cashFlow);
+  const committee  = buildCommitteeReport(
     closeScore, fiscal, reconciliation, accountingBatch, cashFlow,
     variance.hasData ? variance.rows : null,
     overview, fpaRecs,
@@ -223,12 +228,12 @@ export default async function FinancePage({
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div style={{ display: "flex", alignItems: "center", gap: S[4], marginBottom: S[1] }}>
         <h1 style={{ margin: 0, fontSize: T.sz["4xl"], fontWeight: T.wt.black, color: C.ink, letterSpacing: "-0.02em" }}>Finanzas</h1>
-        {tab === "ops" && <ProcessAllButton organizationId={organization.id} />}
       </div>
       <p style={{ color: C.inkLight, marginTop: S[1], marginBottom: S[4], fontSize: T.sz.md }}>
-        {tab === "ops"
-          ? "Operaciones financieras — documentos, alertas y actividad reciente."
-          : "Planeación estratégica — proyecciones, presupuesto, varianza y flujo de caja."}
+        {tab === "hub"      ? "Centro de gestión financiera — señales, conciliación y estado de cierre."
+        : tab === "docs"    ? "Documentos financieros, clasificación contable y validación DIAN."
+        : tab === "cierre"  ? "Cierre financiero inteligente — score, comité ejecutivo y decisiones."
+        :                     "Planeación estratégica — proyecciones, presupuesto y varianza."}
       </p>
 
       {/* ── Tabs ───────────────────────────────────────────────────────────── */}
@@ -257,34 +262,121 @@ export default async function FinancePage({
       </div>
 
       {/* ══════════════════════════════════════════════════════════════════════
-          TAB 1 — OPERACIONES (existing)
+          TAB 1 — CENTRO FINANCIERO: señales + acciones, sin tablas grandes
           ══════════════════════════════════════════════════════════════════ */}
-      {tab === "ops" && (
+      {tab === "hub" && (
         <>
-          {/* Summary */}
+          {/* ── 4 señales de atención ────────────────────────────────────── */}
           <section style={{
             display: "grid", gridTemplateColumns: "repeat(4, 1fr)",
             gap: 12, margin: "0 0 24px",
           }}>
-            <StatCard value={overview.documents.pending}  label="Documentos pendientes"
-              note={`${overview.documents.total} total`}
-              highlight={overview.documents.pending > 0} />
-            <StatCard value={overview.documents.processed} label="Documentos procesados" />
-            <StatCard value={overview.documents.errors}    label="Errores en documentos"
-              highlight={overview.documents.errors > 0} highlightColor="#c00" />
-            <StatCard value={overview.openAlerts}          label="Alertas abiertas"
-              highlight={overview.openAlerts > 0}
-              highlightColor={overview.openAlerts > 0 ? "#b45" : undefined}
-              note={overview.recentFailedRuns > 0
-                ? `${overview.recentFailedRuns} ejecuciones fallidas (7d)`
-                : undefined} />
+            <FinHubCard
+              icon="📄"
+              label="Documentos"
+              status={overview.documents.errors > 0 ? "critical" : overview.documents.pending > 0 ? "warning" : "ok"}
+              headline={
+                overview.documents.errors > 0   ? `${overview.documents.errors} con error`
+                : overview.documents.pending > 0 ? `${overview.documents.pending} pendientes`
+                : "Sin pendientes"
+              }
+              detail={`${overview.documents.processed} procesados · ${overview.documents.total} total`}
+              href={`/${params.orgSlug}/finance?tab=docs`}
+              cta="Ver documentos"
+            />
+            <FinHubCard
+              icon="⇄"
+              label="Conciliación"
+              status={reconciliation.inconsistente > 0 ? "critical" : reconciliation.pendiente > 0 ? "warning" : "ok"}
+              headline={
+                !reconciliation.hasData             ? "Sin datos aún"
+                : reconciliation.inconsistente > 0  ? `${reconciliation.inconsistente} inconsistentes`
+                : reconciliation.pendiente > 0       ? `${reconciliation.pendiente} pendientes`
+                : `${reconciliation.conciliado} conciliados`
+              }
+              detail={
+                reconciliation.hasData
+                  ? `${reconciliation.conciliado} ok · ${reconciliation.parcial} parcial · ${reconciliation.total} total`
+                  : "Importa documentos y cartera para activar"
+              }
+              href={`/${params.orgSlug}/finance?tab=docs`}
+              cta="Ver conciliación"
+            />
+            <FinHubCard
+              icon="⊛"
+              label="Estado DIAN"
+              status={
+                fiscal.rechazado > 0 || fiscal.duplicado > 0 ? "critical"
+                : fiscal.inconsistente > 0 ? "warning"
+                : "ok"
+              }
+              headline={
+                !fiscal.hasData ? "Sin documentos XML"
+                : (fiscal.rechazado + fiscal.duplicado + fiscal.inconsistente) > 0
+                  ? `${fiscal.rechazado + fiscal.duplicado + fiscal.inconsistente} con problema`
+                  : `${fiscal.validado} validados`
+              }
+              detail={
+                fiscal.hasData
+                  ? `${fiscal.validado} válidos · ${fiscal.noEncontrado} sin CUFE`
+                  : "Sube facturas electrónicas XML (UBL 2.1)"
+              }
+              href={`/${params.orgSlug}/finance?tab=docs`}
+              cta="Ver estado DIAN"
+            />
+            <FinHubCard
+              icon="⊞"
+              label="Cierre financiero"
+              status={
+                closeScore.grade === "A" || closeScore.grade === "B" ? "ok"
+                : closeScore.grade === "C" ? "warning"
+                : "critical"
+              }
+              headline={`Score ${closeScore.total} · Grado ${closeScore.grade}`}
+              detail={
+                closeScore.closeable
+                  ? "✓ Apto para cierre mensual"
+                  : closeScore.blockers[0] ?? "Bloqueantes pendientes"
+              }
+              href={`/${params.orgSlug}/finance?tab=cierre`}
+              cta="Ver informe de cierre"
+            />
           </section>
 
-          {/* ── Cierre financiero — compact widget ─────────────────────── */}
-          <CloseScoreWidget
-            score={closeScore}
-            orgSlug={params.orgSlug}
-          />
+          {/* ── Acciones rápidas ─────────────────────────────────────────── */}
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 28 }}>
+            <QuickAction href={`/${params.orgSlug}/documents/new`}        label="Subir documento"         variant="primary" />
+            <QuickAction href={`/${params.orgSlug}/reconciliation`}        label="Ir a conciliación"       />
+            <QuickAction href={`/${params.orgSlug}/finance?tab=cierre`}   label="Abrir informe de cierre" />
+            <QuickAction href={`/${params.orgSlug}/finance?tab=planning`} label="Ver planeación"           />
+            {overview.openAlerts > 0 && (
+              <QuickAction href={`/${params.orgSlug}/alerts`} label={`Alertas abiertas (${overview.openAlerts})`} />
+            )}
+          </div>
+
+          {/* ── Resúmenes compactos (sin tablas) ─────────────────────────── */}
+          <ValidationSummaryBar counts={validationCounts} orgSlug={params.orgSlug} />
+          {reconciliation.hasData && (
+            <div style={{ marginTop: 8 }}>
+              <ReconciliationSummaryBar r={reconciliation} />
+            </div>
+          )}
+          {fiscal.hasData && (
+            <div style={{ marginTop: 8 }}>
+              <FiscalSummaryBar f={fiscal} />
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          TAB 2 — DOCUMENTOS FINANCIEROS
+          ══════════════════════════════════════════════════════════════════ */}
+      {tab === "docs" && (
+        <>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: S[4] }}>
+            <ProcessAllButton organizationId={organization.id} />
+          </div>
 
           {/* Recent Documents */}
           <section>
@@ -405,143 +497,26 @@ export default async function FinancePage({
 
           {/* ── Verdad fiscal / DIAN ──────────────────────────────────────── */}
           <DianFiscalSection fiscal={fiscal} orgSlug={params.orgSlug} />
-
-          {/* Alerts */}
-          <section>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 12, margin: "24px 0 8px" }}>
-              <h2 style={{ margin: 0 }}>Alertas</h2>
-              <Link href={`/${params.orgSlug}/alerts`} style={{ fontSize: 13, opacity: 0.7 }}>
-                Ver todas →
-              </Link>
-            </div>
-            {groupedAlerts.length === 0 ? (
-              <p>Sin alertas financieras abiertas.</p>
-            ) : (
-              groupedAlerts.map(({ severity, items }) => (
-                <div key={severity} style={{ marginBottom: 16 }}>
-                  <h3 style={{
-                    margin: "0 0 6px", fontSize: 13, fontWeight: 600,
-                    color: severity === "CRITICAL" ? "#c00" : severity === "WARNING" ? "#a60" : "#555",
-                  }}>
-                    {severityLabel(severity)}
-                  </h3>
-                  <table>
-                    <thead><tr><th>Título</th><th>Tipo</th><th>Estado</th><th>Desde</th><th></th></tr></thead>
-                    <tbody>
-                      {items.map((alert) => (
-                        <tr key={alert.id}>
-                          <td>
-                            <Link href={`/${params.orgSlug}/alerts/${alert.id}`}>{alert.title}</Link>
-                          </td>
-                          <td style={{ fontSize: 12 }}>{alert.type}</td>
-                          <td>{statusLabel(alert.status)}</td>
-                          <td>{fmt(alert.createdAt)}</td>
-                          <td>
-                            <ActionButton
-                              orgSlug={params.orgSlug}
-                              label={severity === "CRITICAL" ? "Escalar" : "Crear acción"}
-                              size="xs"
-                              variant={severity === "CRITICAL" ? "danger" : "outline"}
-                              prefill={{
-                                sourceModule: "finanzas",
-                                actionType:   severity === "CRITICAL"
-                                  ? ActionTaskType.ESCALAR_A_GERENCIA
-                                  : ActionTaskType.ABRIR_ALERTA_OPERATIVA,
-                                priority: severity === "CRITICAL"
-                                  ? ActionTaskPriority.URGENT
-                                  : ActionTaskPriority.HIGH,
-                                targetType:  "alerta_financiera",
-                                targetLabel: alert.title,
-                                title: severity === "CRITICAL"
-                                  ? `Escalar alerta: ${alert.title}`
-                                  : `Revisar alerta: ${alert.title}`,
-                                description: `Alerta ${alert.type} con severidad ${severity}. Estado actual: ${alert.status}.`,
-                              }}
-                            />
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ))
-            )}
-          </section>
-
-          {/* Activity */}
-          <section>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 12, margin: "24px 0 8px" }}>
-              <h2 style={{ margin: 0 }}>Actividad</h2>
-              <Link href={`/${params.orgSlug}/runs`}   style={{ fontSize: 13, opacity: 0.7 }}>Ejecuciones →</Link>
-              <Link href={`/${params.orgSlug}/events`} style={{ fontSize: 13, opacity: 0.7 }}>Eventos →</Link>
-            </div>
-            {activity.length === 0 ? (
-              <p>Sin actividad financiera reciente.</p>
-            ) : (
-              <table>
-                <thead>
-                  <tr><th>Tipo</th><th>Operación</th><th>Estado</th><th>Origen</th><th>Fecha</th><th></th></tr>
-                </thead>
-                <tbody>
-                  {activity.map((item) => {
-                    const isFailed = item.status === "FAILED" || item.status === "ERROR";
-                    return (
-                      <tr key={`${item.kind}-${item.id}`}>
-                        <td style={{ fontSize: 12, opacity: 0.7 }}>
-                          {item.kind === "run" ? "Ejecución" : "Evento"}
-                        </td>
-                        <td>
-                          <Link href={`/${params.orgSlug}/${item.kind}s/${item.id}`} style={{ fontSize: 13 }}>
-                            {item.type}
-                          </Link>
-                        </td>
-                        <td><StatusBadge status={item.status} /></td>
-                        <td style={{ fontSize: 12, opacity: 0.7 }}>{item.sourceType ?? "—"}</td>
-                        <td style={{ fontSize: 12 }}>
-                          {item.createdAt.toISOString().slice(0, 19).replace("T", " ")} UTC
-                        </td>
-                        <td>
-                          {isFailed && (
-                            <ActionButton
-                              orgSlug={params.orgSlug}
-                              label="Acción"
-                              size="xs"
-                              variant="outline"
-                              prefill={{
-                                sourceModule: "finanzas",
-                                actionType:   ActionTaskType.ABRIR_ALERTA_OPERATIVA,
-                                priority:     ActionTaskPriority.HIGH,
-                                targetType:   item.kind === "run" ? "ejecucion" : "evento",
-                                title:        `Revisar ejecución fallida: ${item.type}`,
-                                description:  `${item.kind === "run" ? "Ejecución" : "Evento"} de tipo "${item.type}" falló con estado ${item.status}. Origen: ${item.sourceType ?? "desconocido"}.`,
-                              }}
-                            />
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
-          </section>
         </>
       )}
 
       {/* ══════════════════════════════════════════════════════════════════════
-          TAB 2 — PLANEACIÓN Y PRESUPUESTO (FP&A)
+          TAB 3 — CIERRE FINANCIERO (protagonista)
+          ══════════════════════════════════════════════════════════════════ */}
+      {tab === "cierre" && (
+        <CloseSection
+          score={closeScore}
+          committee={committee}
+          orgSlug={params.orgSlug}
+        />
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          TAB 4 — PLANEACIÓN Y PRESUPUESTO
           ══════════════════════════════════════════════════════════════════ */}
       {tab === "planning" && (
         <>
-          {/* ── Cierre financiero inteligente ──────────────────────────────── */}
-          <CloseSection
-            score={closeScore}
-            committee={committee}
-            orgSlug={params.orgSlug}
-          />
-
-          {/* ── FP&A View ─────────────────────────────────────────────────── */}
-          {forecast && cashFlow && (
+          {forecast && cashFlow ? (
             <FpaView
               orgSlug={params.orgSlug}
               forecast={forecast}
@@ -550,6 +525,15 @@ export default async function FinancePage({
               cashFlow={cashFlow}
               recommendations={fpaRecs}
             />
+          ) : (
+            <div style={{
+              padding: "40px 20px", textAlign: "center",
+              background: C.surface, border: `1px dashed ${C.line}`, borderRadius: R.md,
+            }}>
+              <p style={{ color: C.inkLight, fontSize: T.sz.md, margin: 0 }}>
+                Cargando datos de planeación…
+              </p>
+            </div>
           )}
         </>
       )}
@@ -1161,6 +1145,79 @@ function FpaJoinPointsNotice() {
   );
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// CENTRO FINANCIERO — hub components
+// ══════════════════════════════════════════════════════════════════════════════
+
+/** Signal card for the hub tab. Communicates status + single CTA. No tables. */
+function FinHubCard({
+  icon, label, status, headline, detail, href, cta,
+}: {
+  icon:     string;
+  label:    string;
+  status:   "ok" | "warning" | "critical";
+  headline: string;
+  detail:   string;
+  href:     string;
+  cta:      string;
+}) {
+  const palette = {
+    ok:       { bg: "#f0fdf4", border: "#a5d6a7", accent: "#2e7d32" },
+    warning:  { bg: "#fff8e1", border: "#ffe082", accent: "#e65100" },
+    critical: { bg: "#fce4ec", border: "#f48fb1", accent: "#b71c1c" },
+  }[status];
+  return (
+    <div style={{
+      background: palette.bg, border: `1px solid ${palette.border}`,
+      borderRadius: R.md, padding: `${S[3] + 2}px ${S[4]}px`,
+      display: "flex", flexDirection: "column", gap: S[1] + 2,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
+        <span style={{ fontSize: T.sz.base }}>{icon}</span>
+        <span style={{ fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.inkMid, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+          {label}
+        </span>
+      </div>
+      <div style={{ fontSize: T.sz.xl, fontWeight: T.wt.bold, color: palette.accent, lineHeight: 1.2 }}>
+        {headline}
+      </div>
+      <div style={{ fontSize: T.sz.sm, color: C.inkLight, lineHeight: 1.4 }}>{detail}</div>
+      <Link href={href} style={{
+        fontSize: T.sz.sm, color: C.blue, fontWeight: T.wt.semibold,
+        textDecoration: "none", marginTop: S[1],
+      }}>
+        {cta} →
+      </Link>
+    </div>
+  );
+}
+
+/** Quick action link for the hub tab. */
+function QuickAction({
+  href, label, variant = "default",
+}: {
+  href:     string;
+  label:    string;
+  variant?: "primary" | "default";
+}) {
+  return (
+    <Link href={href} style={{
+      display: "inline-block",
+      padding: `${S[2]}px ${S[4]}px`,
+      fontSize: T.sz.base,
+      fontWeight: variant === "primary" ? T.wt.semibold : T.wt.normal,
+      color:   variant === "primary" ? "#fff" : C.inkMid,
+      background: variant === "primary" ? C.ink : C.surface,
+      border: `1px solid ${variant === "primary" ? C.ink : C.line}`,
+      borderRadius: R.md,
+      textDecoration: "none",
+      whiteSpace: "nowrap",
+    }}>
+      {label}
+    </Link>
+  );
+}
+
 // ── Ops sub-components (unchanged from V1) ────────────────────────────────────
 
 function buildUrl(
@@ -1175,8 +1232,8 @@ function buildUrl(
   if (vs) p.set("vs", vs);
   if (pm) p.set("pm", pm);
   if (dt) p.set("dt", dt);
-  // Always preserve tab=ops so filter navigation doesn't reset the tab
-  p.set("tab", "ops");
+  // Always preserve tab=docs so filter navigation doesn't reset the tab
+  p.set("tab", "docs");
   const qs = p.toString();
   return `/${orgSlug}/finance?${qs}`;
 }
@@ -1250,7 +1307,7 @@ function FilterBar({ orgSlug, filters }: { orgSlug: string; filters: FinanceDocu
       </div>
       {hasActiveFilter && (
         <div style={{ marginTop: 2 }}>
-          <Link href={`/${orgSlug}/finance?tab=ops`} style={{ fontSize: 11, color: "#888", textDecoration: "underline" }}>
+          <Link href={`/${orgSlug}/finance?tab=docs`} style={{ fontSize: 11, color: "#888", textDecoration: "underline" }}>
             Limpiar filtros
           </Link>
         </div>

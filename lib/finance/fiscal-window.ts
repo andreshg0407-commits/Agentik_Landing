@@ -1,3 +1,5 @@
+import { formatDateWeekdayMonthShort, formatMonthYear } from "@/lib/utils/formatDate";
+
 /**
  * lib/finance/fiscal-window.ts
  *
@@ -50,9 +52,13 @@
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 export type FiscalWindowMode =
+  | "today"             // Start of today → now
+  | "current_month"     // 1st of current month → today
+  | "trailing_6"        // Rolling 6-month window
   | "current_year"      // Jan 1 current year → today
   | "current_and_prior" // Jan 1 prior year → today (carry-over default)
   | "trailing_12"       // Rolling 12-month window
+  | "strict_year"       // Jan 1 current year → Dec 31 current year — NO carry-over. Used for B2 cartera principal.
   | "full_history";     // All time — no date filter
 
 export interface FiscalWindow {
@@ -66,24 +72,48 @@ export interface FiscalWindow {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 export const FISCAL_WINDOW_MODES: FiscalWindowMode[] = [
+  "today",
+  "current_month",
+  "trailing_6",
   "current_year",
   "current_and_prior",
+  "trailing_12",
+  "strict_year",
+  "full_history",
+];
+
+/**
+ * Modes shown in cartera/collections selectors.
+ * "current_and_prior" is intentionally excluded from the UI —
+ * it's kept internally for carry-over logic but not surfaced to managers.
+ */
+export const CARTERA_WINDOW_MODES: FiscalWindowMode[] = [
+  "strict_year",
+  "current_year",
   "trailing_12",
   "full_history",
 ];
 
 export const FISCAL_WINDOW_LABELS: Record<FiscalWindowMode, string> = {
+  today:             "Hoy",
+  current_month:     "Mes actual",
+  trailing_6:        "Últimos 6 meses",
   current_year:      "Año fiscal",
   current_and_prior: "AF + año anterior",
   trailing_12:       "Últimos 12 meses",
+  strict_year:       "Facturación 2026",
   full_history:      "Todo el historial",
 };
 
 /** Short labels for compact UI selectors */
 export const FISCAL_WINDOW_SHORT_LABELS: Record<FiscalWindowMode, string> = {
+  today:             "Hoy",
+  current_month:     "Mes actual",
+  trailing_6:        "6 meses",
   current_year:      "AF actual",
   current_and_prior: "AF + anterior",
   trailing_12:       "12 meses",
+  strict_year:       "2026 (estricto)",
   full_history:      "Historial",
 };
 
@@ -106,6 +136,25 @@ export function getFiscalWindow(
   const year = now.getFullYear();
 
   switch (mode) {
+
+    case "today": {
+      const from = new Date(year, now.getMonth(), now.getDate(), 0, 0, 0, 0);
+      const dayLabel = formatDateWeekdayMonthShort(now);
+      return { mode, from, to: now, label: `Hoy · ${dayLabel}`, year };
+    }
+
+    case "current_month": {
+      const from = new Date(year, now.getMonth(), 1, 0, 0, 0, 0);
+      const monthLabel = formatMonthYear(now);
+      return { mode, from, to: now, label: monthLabel, year };
+    }
+
+    case "trailing_6": {
+      const from = new Date(now);
+      from.setMonth(from.getMonth() - 6);
+      from.setHours(0, 0, 0, 0);
+      return { mode, from, to: now, label: "Últimos 6 meses", year };
+    }
 
     case "current_year": {
       const from = new Date(year, 0, 1, 0, 0, 0, 0); // Jan 1 current year
@@ -144,6 +193,22 @@ export function getFiscalWindow(
       };
     }
 
+    case "strict_year": {
+      // Jan 1 – Dec 31 of the current year.
+      // NO carry-over from prior years. Used for B2 cartera principal (facturación 2026).
+      // `to` is Jan 1 of the NEXT year (exclusive upper bound) — differs from other modes
+      // where `to` is always today.
+      const from = new Date(year, 0, 1, 0, 0, 0, 0);
+      const to   = new Date(year + 1, 0, 1, 0, 0, 0, 0);
+      return {
+        mode,
+        from,
+        to,
+        label: `Facturación ${year}`,
+        year,
+      };
+    }
+
     case "full_history": {
       // Sentinel: very early date — treated as "no filter" in queries
       const from = new Date(2000, 0, 1, 0, 0, 0, 0);
@@ -162,10 +227,11 @@ export function getFiscalWindow(
 
 /**
  * Default window for cartera and collections views:
- * current_and_prior — ensures carry-over balances are always included.
+ * current_year — shows the active fiscal year only (carry-over via OR clause).
+ * "current_and_prior" is still available internally but not the UI default.
  */
 export function defaultCarteraWindow(today?: Date): FiscalWindow {
-  return getFiscalWindow("current_and_prior", today);
+  return getFiscalWindow("current_year", today);
 }
 
 /**

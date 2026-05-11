@@ -17,8 +17,16 @@
 import { useState } from "react";
 import { C, T, S, R } from "@/lib/ui/tokens";
 
-export function F2Toggle({ children }: { children: React.ReactNode }) {
+export function F2Toggle({
+  children,
+  label,
+}: {
+  children: React.ReactNode;
+  label?:   string;
+}) {
   const [open, setOpen] = useState(false);
+  const closedLabel = label ? label : "Ver composición avanzada · F1 / F2";
+  const openLabel   = label ? `Ocultar: ${label}` : "Ocultar desglose de fuentes";
 
   return (
     <div style={{ marginBottom: S[6] }}>
@@ -43,9 +51,7 @@ export function F2Toggle({ children }: { children: React.ReactNode }) {
         <span style={{ fontSize: T.sz["2xs"], lineHeight: 1 }}>
           {open ? "▾" : "▸"}
         </span>
-        {open
-          ? "Ocultar desglose de fuentes"
-          : "Ver composición avanzada · F1 / F2"}
+        {open ? openLabel : closedLabel}
       </button>
 
       {open && children}
