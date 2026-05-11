@@ -25,7 +25,7 @@ export default async function IntakeSchemaReferencePage({
   const { orgSlug }    = await params;
   const { membership } = await requireOrgAccess(orgSlug);
 
-  if (!isInternalRole(membership.role)) redirect(`/${orgSlug}/agentik`);
+  if (!isInternalRole(membership.role)) redirect(`/${orgSlug}/agentik/marketing-studio`);
 
   return (
     <div style={{ fontFamily: "monospace", maxWidth: 900 }}>

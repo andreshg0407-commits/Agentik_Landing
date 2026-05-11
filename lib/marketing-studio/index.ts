@@ -56,6 +56,12 @@ export type {
   TenantMarketingConfig,
   LucaSubmitPayload,
   ValidationResult,
+  // Castillitos retail dimensions (Sprint M1)
+  RetailSeason,
+  CampaignChannel,
+  MarketingBusinessLine,
+  PresetCategory,
+  CopilotRequest,
 } from "./types";
 
 // ── Garment fingerprint engine ────────────────────────────────────────────────
@@ -75,6 +81,10 @@ export {
   getPreset,
   getPresetsForCategory,
   getTenantPresets,
+  // Castillitos preset helpers (Sprint M1)
+  getPresetsByCategory,
+  getPresetsForSeason,
+  getPresetsForChannel,
 } from "./preset-registry";
 
 // ── Tenant config ─────────────────────────────────────────────────────────────
@@ -243,3 +253,22 @@ export {
   canAdvanceFrom,
   getStepIndex,
 } from "./guided-flow";
+
+// ── Castillitos Prompt Engine (Sprint M1) ─────────────────────────────────────
+
+export type { CastillitosPromptContext } from "./castillitos-prompts";
+
+export {
+  buildCastillitosPrompt,
+  buildCastillitosHashtags,
+  buildCastillitosCopy,
+} from "./castillitos-prompts";
+
+// ── Marketing Copilot (Sprint M1) ─────────────────────────────────────────────
+
+export type { CopilotStrategy, CampaignPlan } from "./copilot";
+
+export {
+  parseCopilotIntent,
+  buildCampaignStrategy,
+} from "./copilot";

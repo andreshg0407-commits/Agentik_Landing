@@ -48,8 +48,6 @@ import {
 import { extractDetailLocks }                       from "@/lib/marketing-studio/do-jeans-intake";
 import { validateDoJeansStrictIntake }              from "@/lib/marketing-studio/do-jeans-intake";
 
-const DO_JEANS_TENANT = "do-jeans";
-
 type RouteContext = { params: Promise<{ orgSlug: string; sessionId: string }> };
 
 export async function POST(
@@ -76,8 +74,14 @@ export async function POST(
       );
     }
 
-    const isDoJeansStrict = session.tenantId === DO_JEANS_TENANT;
-    const objective       = session.objective as UserObjective;
+    // ── 2a. Resolve tenant config (needed before workflow resolution) ─────────
+    const tenantCfgEarly = getTenantConfig(session.tenantId);
+    if (!tenantCfgEarly) {
+      return NextResponse.json({ error: `Unknown tenantId: ${session.tenantId}` }, { status: 422 });
+    }
+
+    const isStrictMode = tenantCfgEarly.fidelityMode === "strict";
+    const objective    = session.objective as UserObjective;
     const inputs          = (session.inputsJson ?? {}) as Partial<MinimumInputFields>;
     const productUpload   = {
       sku:          session.productSku    ?? "",
@@ -86,7 +90,7 @@ export async function POST(
     };
 
     // ── 2. Strict Do Jeans validation ────────────────────────────────────────
-    if (isDoJeansStrict && objective === "shopify_listing") {
+    if (isStrictMode && objective === "shopify_listing") {
       const check = validateDoJeansStrictIntake(productUpload, inputs);
       if (!check.valid) {
         return NextResponse.json({ error: "Strict intake validation failed", details: check.errors }, { status: 422 });
@@ -94,21 +98,18 @@ export async function POST(
     }
 
     // ── 3. Resolve workflow ──────────────────────────────────────────────────
-    const workflow = isDoJeansStrict && objective === "shopify_listing"
+    const workflow = isStrictMode && objective === "shopify_listing"
       ? resolveDoJeansWorkflow()
       : resolveWorkflow(objective);
 
-    // ── 4. Tenant config + fingerprint ───────────────────────────────────────
-    const tenantCfg = getTenantConfig(session.tenantId);
-    if (!tenantCfg) {
-      return NextResponse.json({ error: `Unknown tenantId: ${session.tenantId}` }, { status: 422 });
-    }
+    // ── 4. Garment fingerprint ───────────────────────────────────────────────
+    const tenantCfg = tenantCfgEarly;
 
     const garmentAttrs: GarmentAttributes = {
       category:    inputs.category    ?? "other",
       colors:      inputs.colors      ?? [],
       gender:      "unisex",
-      detailLocks: isDoJeansStrict ? extractDetailLocks(inputs) : undefined,
+      detailLocks: isStrictMode ? extractDetailLocks(inputs) : undefined,
     };
 
     const fingerprint  = computeGarmentFingerprint(
@@ -123,10 +124,10 @@ export async function POST(
       return NextResponse.json({ error: `Preset not found: ${workflow.presetId}` }, { status: 500 });
     }
 
-    const detailLocks = isDoJeansStrict ? extractDetailLocks(inputs) : undefined;
+    const detailLocks = isStrictMode ? extractDetailLocks(inputs) : undefined;
 
     // ── 5. Per-asset prompts ─────────────────────────────────────────────────
-    const assetPrompts = isDoJeansStrict && objective === "shopify_listing"
+    const assetPrompts = isStrictMode && objective === "shopify_listing"
       ? buildDoJeansAssetPrompts(productUpload, inputs, fingerprint, preset)
       : workflow.assets.map((assetType) => ({
           assetType,
@@ -167,9 +168,9 @@ export async function POST(
       contentObjective: tenantCfg.luca.defaultObjective,
       contentTone:     tenantCfg.brandVoice.tones[0] ?? "casual",
       locale:          "es-CO",
-      // Do Jeans strict fields
-      frontImageUrl:   isDoJeansStrict ? productUpload.imageUrl : undefined,
-      backImageUrl:    isDoJeansStrict ? productUpload.backImageUrl : undefined,
+      // Strict-mode fields: front/back source images and detail locks
+      frontImageUrl:   isStrictMode ? productUpload.imageUrl : undefined,
+      backImageUrl:    isStrictMode ? productUpload.backImageUrl : undefined,
       detailLocks,
       draftShopify:    workflow.createProductDraft,
       assets: buildAssetRequests(

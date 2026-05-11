@@ -55,13 +55,30 @@ export interface AssetGenerationRequest {
    * Examples: "black-forest-labs/flux-kontext-pro", "cuuupid/idm-vton"
    */
   replicateModelId?: string;
+  /**
+   * Per-asset fidelity requirement.
+   * "strict"   → catalog outputs (front_clean, back_clean, product_photo):
+   *              maximum garment preservation, high guidance_scale, zero hallucination.
+   * "standard" → social outputs (social_image, social_video):
+   *              more creative freedom, lower guidance_scale, lifestyle energy.
+   * n8n uses this to adjust Replicate parameters (guidance_scale, strength, steps).
+   */
+  fidelityMode?: "strict" | "standard";
   /** Pre-rendered copy body — skips generation for text assets where we already have the value */
   content?:  string;
   /**
    * Reference image URL for img2img generation (front or back source photo).
    * Set for front_clean (frontImageUrl) and back_clean (backImageUrl) assets.
+   * Used in standard mode (single-image flux-kontext-pro).
    */
   sourceImageUrl?: string;
+  /**
+   * Multi-reference image URLs for strict catalog mode.
+   * Passed as `input_images` array to flux-kontext-apps/multi-image-list.
+   * Order: [front, back, detail1, detail2] — empty strings excluded.
+   * When present, takes precedence over sourceImageUrl.
+   */
+  sourceImages?: string[];
   /** Angle hint for the generation provider — "front" or "back" */
   angle?: "front" | "back";
 }
@@ -115,6 +132,16 @@ export interface StudioExecutionPayload {
   socialPublicationType?:  string;
   /** Reference image URL for custom_template — style is matched from this */
   referenceImageUrl?:      string;
+  /** Optional model reference photo URL — used when modelType = "personalizada" */
+  modelReferenceUrl?:      string;
+  /** Model ethnicity/look profile: latina_rubia | latina_morena | ... */
+  modelType?:              string;
+  /** Model body shape: slim | curvy | voluptuosa | atletica | plus_size | petite | personalizada */
+  bodyType?:               string;
+  /** Output resolution tier: standard_hd | full_hd | 2k_editorial | 4k_premium */
+  visualQuality?:          string;
+  /** Shot framing: frontal_catalogo | americano | full_body_editorial | ... */
+  framingType?:            string;
 
   // ── Mode discriminator ────────────────────────────────────────────────────
   /**
@@ -223,10 +250,11 @@ export function buildAssetRequests(
     replicateModelId?: string;
     content?:          string;
     sourceImageUrl?:   string;
+    sourceImages?:     string[];
     angle?:            "front" | "back";
   }>,
 ): AssetGenerationRequest[] {
-  return assets.map(({ id, assetType, prompt, negativePrompt, replicateModelId, content, sourceImageUrl, angle }) => ({
+  return assets.map(({ id, assetType, prompt, negativePrompt, replicateModelId, content, sourceImageUrl, sourceImages, angle }) => ({
     assetId: id,
     assetType,
     prompt,
@@ -234,6 +262,7 @@ export function buildAssetRequests(
     replicateModelId,
     content,
     sourceImageUrl,
+    sourceImages,
     angle,
   }));
 }

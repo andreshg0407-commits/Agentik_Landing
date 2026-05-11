@@ -26,16 +26,18 @@
 
 import type { ShopifyDraftPackage }                     from "./guided-flow";
 import type { MinimumInputFields, ProductUpload }       from "./guided-flow";
+import type { TenantShopifyConfig }                     from "./types";
 import { extractDetailLocks }                           from "./do-jeans-intake";
 import { describeJeansDetailLocks }                     from "./detail-locks";
 
 // ── Tag builder ───────────────────────────────────────────────────────────────
 
 function buildShopifyTags(
-  inputs:     Partial<MinimumInputFields>,
-  sku?:       string,
+  inputs:       Partial<MinimumInputFields>,
+  shopifyCfg:   TenantShopifyConfig,
+  sku?:         string,
 ): string[] {
-  const tags: string[] = ["jeans", "denim", "do-jeans"];
+  const tags: string[] = [...shopifyCfg.defaultTags];
 
   // Colors
   for (const color of inputs.colors ?? []) {
@@ -61,8 +63,9 @@ function buildShopifyTags(
 // ── Body HTML builder ─────────────────────────────────────────────────────────
 
 function buildBodyHtml(
-  title:  string,
-  inputs: Partial<MinimumInputFields>,
+  title:      string,
+  inputs:     Partial<MinimumInputFields>,
+  shopifyCfg: TenantShopifyConfig,
 ): string {
   const locks    = extractDetailLocks(inputs);
   const lockDesc = describeJeansDetailLocks(locks);
@@ -77,10 +80,9 @@ function buildBodyHtml(
     lines.push(`<p>Detalles: ${lockDesc}</p>`);
   }
 
-  lines.push(
-    "<p>Denim colombiano de alta calidad. " +
-    "Fabricado en Colombia con los mejores materiales.</p>",
-  );
+  if (shopifyCfg.productBlurb) {
+    lines.push(`<p>${shopifyCfg.productBlurb}</p>`);
+  }
 
   return lines.join("\n");
 }
@@ -93,6 +95,8 @@ export interface BuildShopifyDraftOptions {
   /** GeneratedAsset IDs in order: [frontAssetId, backAssetId] */
   frontAssetId:   string;
   backAssetId:    string;
+  /** Tenant Shopify config — vendor, productType, tags and blurb. */
+  shopifyConfig:  TenantShopifyConfig;
 }
 
 /**
@@ -105,18 +109,18 @@ export interface BuildShopifyDraftOptions {
 export function buildShopifyDraft(
   opts: BuildShopifyDraftOptions,
 ): ShopifyDraftPackage {
-  const { product, inputs, frontAssetId, backAssetId } = opts;
+  const { product, inputs, frontAssetId, backAssetId, shopifyConfig } = opts;
 
-  const title   = inputs.title?.trim() ?? "Jean Do Jeans";
+  const title   = inputs.title?.trim() ?? opts.shopifyConfig.vendor;
   const price   = inputs.price ?? 0;
   const sku     = product.sku?.trim() || undefined;
 
   return {
     title,
-    productType: "Jeans",
-    vendor:      "Do Jeans",
-    tags:        buildShopifyTags(inputs, sku),
-    bodyHtml:    buildBodyHtml(title, inputs),
+    productType: shopifyConfig.productType,
+    vendor:      shopifyConfig.vendor,
+    tags:        buildShopifyTags(inputs, shopifyConfig, sku),
+    bodyHtml:    buildBodyHtml(title, inputs, shopifyConfig),
 
     variants: [
       {

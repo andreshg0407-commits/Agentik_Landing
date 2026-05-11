@@ -42,6 +42,11 @@ import {
   describeJeansDetailLocks,
   buildFidelityDirective,
 } from "./detail-locks";
+import {
+  buildCastillitosPrompt,
+  buildCastillitosHashtags,
+  buildCastillitosCopy,
+} from "./castillitos-prompts";
 
 // ── Fidelity mode resolver ────────────────────────────────────────────────────
 
@@ -65,14 +70,9 @@ export function getEffectiveFidelityMode(
  * Constructs the generative AI prompt seed for an image / video generation job.
  *
  * Routing logic:
- *   strict + jeans  → buildJeansStrictPrompt()
- *   everything else → standard generic prompt
- *
- * Combines:
- *   • Garment semantic attributes (category, colors, fit, fabric)
- *   • Preset visual treatment (background, lighting, style, aiPromptHint)
- *   • Tenant brand adjectives (injected at the end for style calibration)
- *   • In strict+jeans mode: detail locks + PRESERVE EXACTLY directive
+ *   castillitos tenant  → buildCastillitosPrompt()  (Sprint M1 retail engine)
+ *   strict + jeans      → buildJeansStrictPrompt()   (Do Jeans legacy path)
+ *   everything else     → buildStandardPrompt()      (generic fallback)
  */
 export function buildGenerativePrompt(
   fingerprint: GarmentFingerprint,
@@ -80,6 +80,11 @@ export function buildGenerativePrompt(
   config:      TenantMarketingConfig,
   fidelityMode: FidelityMode = "standard",
 ): string {
+  // Castillitos retail path — uses dedicated prompt engine
+  if (config.tenantId === "castillitos") {
+    return buildCastillitosPrompt({ fingerprint, preset, config });
+  }
+  // Do Jeans strict path
   if (fidelityMode === "strict" && fingerprint.attributes.category === "jeans") {
     return buildJeansStrictPrompt(fingerprint, preset, config);
   }
@@ -195,76 +200,63 @@ function buildJeansStrictPrompt(
 // ── Hashtag builder ───────────────────────────────────────────────────────────
 
 /**
- * Generates hashtag suggestions for a garment based on:
- *   • Garment attributes (category, colors, occasion, season)
- *   • Tenant signature hashtags
- *   • Platform-safe formatting (#PascalCase for readability)
- *
- * Returns a deduplicated array of hashtags. TikTok/Instagram safe.
+ * Generates hashtag suggestions.
+ * Castillitos → dedicated retail/kids engine.
+ * Other tenants → legacy garment attribute engine.
  */
 export function buildHashtagSuggestions(
   fingerprint: GarmentFingerprint,
   config:      TenantMarketingConfig,
   maxCount     = 12,
 ): string[] {
+  // Castillitos retail hashtag engine
+  if (config.tenantId === "castillitos") {
+    return buildCastillitosHashtags(fingerprint, config, undefined, undefined, undefined, maxCount);
+  }
+
+  // Legacy engine (Do Jeans + generic tenants)
   const { attributes } = fingerprint;
   const tags = new Set<string>();
-
-  // Tenant signature tags (highest priority)
   config.brandVoice.signatureHashtags.forEach(t => tags.add(t));
-
-  // Category tag
   const catTag = "#" + attributes.category.charAt(0).toUpperCase() + attributes.category.slice(1);
   tags.add(catTag);
-
-  // Color tags (1–2 main colors)
   attributes.colors.slice(0, 2).forEach(c => {
-    const t = "#" + c.charAt(0).toUpperCase() + c.slice(1);
-    tags.add(t);
+    tags.add("#" + c.charAt(0).toUpperCase() + c.slice(1));
   });
-
-  // Occasion tags
   (attributes.occasion ?? []).forEach(o => {
-    const t = "#" + o.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join("");
-    tags.add(t);
+    tags.add("#" + o.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(""));
   });
-
-  // Season
   (attributes.season ?? []).forEach(s => {
-    const t = "#" + s.charAt(0).toUpperCase() + s.slice(1) + "Fashion";
-    tags.add(t);
+    tags.add("#" + s.charAt(0).toUpperCase() + s.slice(1) + "Fashion");
   });
-
-  // Generic fashion tags
   tags.add("#ModaColombia");
   tags.add("#FashionInspo");
-
   return Array.from(tags).slice(0, maxCount);
 }
 
 // ── Copy suggestion ───────────────────────────────────────────────────────────
 
 /**
- * Returns a copy (caption / post text) suggestion based on:
- *   • Tenant brand voice sample hints
- *   • Garment category + occasion context
- *
- * Selects a sample hint and appends a garment-specific complement.
- * For now this is rule-based; future versions will call the AI layer.
+ * Returns a copy (caption / post text) suggestion.
+ * Castillitos → season + channel aware retail copy engine.
+ * Other tenants → legacy brand voice hint engine.
  */
 export function buildCopySuggestion(
   fingerprint: GarmentFingerprint,
   config:      TenantMarketingConfig,
 ): string {
+  // Castillitos retail copy engine
+  if (config.tenantId === "castillitos") {
+    return buildCastillitosCopy(fingerprint, config);
+  }
+
+  // Legacy engine (Do Jeans + generic tenants)
   const { attributes } = fingerprint;
   const hints = config.brandVoice.copySampleHints;
-  // Cycle through hints based on category hash
-  const idx  = attributes.category.length % hints.length;
-  const hint = hints[idx] ?? hints[0] ?? "Descubre nuestra nueva colección.";
-
+  const idx   = attributes.category.length % hints.length;
+  const hint  = hints[idx] ?? hints[0] ?? "Descubre nuestra nueva colección.";
   const colorCtx = attributes.colors.slice(0, 1).join(" y ");
   const catCtx   = attributes.category;
-
   return `${hint} ${colorCtx ? `Nuevo ${catCtx} en ${colorCtx}.` : `Nuevo ${catCtx}.`}`;
 }
 

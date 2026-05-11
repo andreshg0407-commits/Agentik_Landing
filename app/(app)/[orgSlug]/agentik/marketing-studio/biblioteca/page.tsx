@@ -5,9 +5,10 @@
  */
 
 import Link                      from "next/link";
+import { formatDateCol }         from "@/lib/utils/formatDate";
 import { redirect }              from "next/navigation";
 import { requireOrgAccess }      from "@/lib/auth/org-access";
-import { isInternalRole }        from "@/lib/auth/module-access";
+import { canAccessMarketingStudio } from "@/lib/auth/module-access";
 import { listOrgApprovedAssets } from "@/lib/marketing-studio/asset-service";
 import { C, T, S, R, E }        from "@/lib/ui/tokens";
 import { Badge, Panel, PanelHeader } from "@/components/shell/primitives";
@@ -19,7 +20,7 @@ export default async function BibliotecaPage({
 }) {
   const { orgSlug }       = await params;
   const { membership, organization } = await requireOrgAccess(orgSlug);
-  if (!isInternalRole(membership.role)) redirect(`/${orgSlug}/agentik`);
+  if (!canAccessMarketingStudio(membership.role)) redirect(`/${orgSlug}/agentik`);
 
   const assets = await listOrgApprovedAssets(organization.id, 60);
 
@@ -103,7 +104,7 @@ export default async function BibliotecaPage({
                     )}
                   </div>
                   <div style={{ fontSize: T.sz.xs, color: C.inkFaint }}>
-                    {new Date(asset.createdAt).toLocaleDateString("es-CO")}
+                    {formatDateCol(asset.createdAt)}
                     {" · "}{asset.session.tenantId}
                   </div>
                   <div style={{ display: "flex", gap: S[1], marginTop: S[2] }}>

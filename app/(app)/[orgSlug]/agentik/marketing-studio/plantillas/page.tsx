@@ -5,14 +5,14 @@
 import Link             from "next/link";
 import { redirect }     from "next/navigation";
 import { requireOrgAccess } from "@/lib/auth/org-access";
-import { isInternalRole }   from "@/lib/auth/module-access";
+import { canAccessMarketingStudio } from "@/lib/auth/module-access";
 import { C, T, S, R }       from "@/lib/ui/tokens";
 import { Badge, Panel }     from "@/components/shell/primitives";
 
 export default async function PlantillasStudioPage({ params }: { params: Promise<{ orgSlug: string }> }) {
   const { orgSlug }    = await params;
   const { membership } = await requireOrgAccess(orgSlug);
-  if (!isInternalRole(membership.role)) redirect(`/${orgSlug}/agentik`);
+  if (!canAccessMarketingStudio(membership.role)) redirect(`/${orgSlug}/agentik`);
 
   return (
     <div style={{ fontFamily: "monospace", maxWidth: 860 }}>

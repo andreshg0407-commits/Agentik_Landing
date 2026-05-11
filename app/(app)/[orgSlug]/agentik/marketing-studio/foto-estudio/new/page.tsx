@@ -2,13 +2,15 @@
  * /[orgSlug]/agentik/marketing-studio/foto-estudio/new
  *
  * Foto Estudio — sesión guiada de generación de producto.
- * Auth gate: SUPER_ADMIN / AGENTIK_ADMIN only.
+ * Auth gate: SUPER_ADMIN / AGENTIK_ADMIN / ORG_ADMIN / MANAGER (canAccessMarketingStudio).
  */
 
 import Link                 from "next/link";
 import { redirect }         from "next/navigation";
 import { requireOrgAccess } from "@/lib/auth/org-access";
-import { isInternalRole }   from "@/lib/auth/module-access";
+import { canAccessMarketingStudio } from "@/lib/auth/module-access";
+import { getTenantConfig }  from "@/lib/marketing-studio/tenant-config";
+import type { GarmentType, BrandLine } from "@/lib/marketing-studio/foto-estudio-types";
 import { C, T, S }          from "@/lib/ui/tokens";
 import { Badge }            from "@/components/shell/primitives";
 import { FotoEstudioWizard } from "./wizard";
@@ -21,7 +23,23 @@ export default async function FotoEstudioNewPage({
   const { orgSlug }    = await params;
   const { membership } = await requireOrgAccess(orgSlug);
 
-  if (!isInternalRole(membership.role)) redirect(`/${orgSlug}/agentik`);
+  if (!canAccessMarketingStudio(membership.role)) redirect(`/${orgSlug}/agentik`);
+
+  // tenantId is always the orgSlug from the URL — never a forced env var.
+  const tenantId  = orgSlug;
+  const tenantCfg = getTenantConfig(tenantId);
+
+  // Diagnostic: confirm which tenant config loaded (server log only).
+  console.log(
+    `[FotoEstudio] orgSlug=${orgSlug} tenantId=${tenantId} ` +
+    `configFound=${!!tenantCfg} ` +
+    `fidelityMode=${tenantCfg?.fidelityMode ?? "n/a"} ` +
+    `defaultGarmentType=${tenantCfg?.fotoEstudio?.defaultGarmentType ?? "n/a"} ` +
+    `presets=${tenantCfg?.allowedPresets?.slice(0,3).join(",") ?? "n/a"}...`,
+  );
+
+  const defaultBrandLine:   BrandLine   = (tenantCfg?.fotoEstudio?.defaultBrandLine   ?? "casual") as BrandLine;
+  const defaultGarmentType: GarmentType = (tenantCfg?.fotoEstudio?.defaultGarmentType ?? "otro")   as GarmentType;
 
   return (
     <div style={{ fontFamily: "monospace", maxWidth: 860 }}>
@@ -61,12 +79,11 @@ export default async function FotoEstudioNewPage({
       </div>
 
       {/* ── Wizard ── */}
-      {/* DEMO: force do-jeans tenant config when accessed via /agentik — remove after do-jeans org is provisioned */}
       <FotoEstudioWizard
         orgSlug={orgSlug}
-        tenantId={process.env.FOTO_ESTUDIO_DEMO_TENANT ?? orgSlug}
-        defaultBrandLine="luxury"
-        defaultGarmentType="jean"
+        tenantId={tenantId}
+        defaultBrandLine={defaultBrandLine}
+        defaultGarmentType={defaultGarmentType}
       />
 
     </div>

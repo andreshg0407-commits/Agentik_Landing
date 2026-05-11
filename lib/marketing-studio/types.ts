@@ -21,9 +21,13 @@
  *   via the adapter in tenant-config.ts.
  */
 
-// ── Garment taxonomy ──────────────────────────────────────────────────────────
+// ── Product taxonomy ─────────────────────────────────────────────────────────
+//
+// Extended to cover Castillitos retail: kids clothing, toys, school supplies.
+// Legacy fashion values kept for Do Jeans backward compat.
 
 export type GarmentCategory =
+  // ── Fashion (legacy / Do Jeans) ──────────────────
   | "jeans"
   | "pants"
   | "shorts"
@@ -36,10 +40,63 @@ export type GarmentCategory =
   | "activewear"
   | "accessories"
   | "footwear"
+  // ── Retail Kids + Toys (Castillitos) ─────────────
+  | "kids_clothing"       // ropa infantil genérica
+  | "toy"                 // juguete
+  | "school_supplies"     // útiles / material escolar
+  | "baby"                // bebé (0–2 años)
+  | "game"                // juego de mesa / videojuego
+  | "seasonal_item"       // artículo de temporada (navidad, día del niño)
   | "other";
 
-export type GarmentGender   = "men" | "women" | "unisex" | "kids";
+export type GarmentGender   = "men" | "women" | "unisex" | "kids" | "baby";
 export type PriceSegment    = "economy" | "mid" | "premium" | "luxury";
+
+// ── Retail dimensions (Castillitos) ──────────────────────────────────────────
+
+/**
+ * Retail commercial season — maps to campaign calendar and preset selection.
+ * Used by the Marketing Copilot and campaign preset resolution.
+ */
+export type RetailSeason =
+  | "regreso_clases"   // Jul–Aug: back to school
+  | "navidad"          // Nov–Dec: Christmas / end of year
+  | "dia_nino"         // Apr 30 (Colombia) / last Sun of April
+  | "halloween"        // Oct
+  | "san_valentin"     // Feb 14
+  | "dia_madre"        // May
+  | "normal";          // off-season
+
+/**
+ * Sales channel dimension — mirrors business-structure SalesChannelKey.
+ * Drives which presets and copy tones are most relevant.
+ */
+export type CampaignChannel =
+  | "empresa"         // B2B institucional
+  | "mayoristas"      // wholesale distributors
+  | "tiendas"         // physical retail stores
+  | "web"             // e-commerce
+  | "all";            // cross-channel / unspecified
+
+/**
+ * Business line dimension for Marketing Studio — operational lines only.
+ *
+ * FINANCIAL_ONLY lines (OTROS / OTHER in BusinessLine) are deliberately excluded:
+ * OTROS exists only for invoicing packaging bags under Colombian tax law and carries
+ * no product, no campaign, no creative content.
+ *
+ * Mirrors operational subset of business-structure BusinessLine.
+ */
+export type MarketingBusinessLine =
+  | "castillitos"
+  | "latin_kids"
+  | "importacion"
+  | "pets";
+
+/**
+ * Preset group / category — groups presets in the UI and copilot.
+ */
+export type PresetCategory = "catalogo" | "redes" | "campanas";
 
 export type FitType =
   | "slim" | "relaxed" | "oversized" | "regular"
@@ -230,6 +287,23 @@ export interface PhotoPreset {
   aiPromptHint?: string;
   tags:          string[];
   overridePolicy: PresetOverridePolicy;
+  /**
+   * Preset group — used for UI organisation and copilot routing.
+   * catalogo: product catalogue (ecommerce / print)
+   * redes:    social media content
+   * campanas: commercial campaigns
+   */
+  presetCategory?: PresetCategory;
+  /**
+   * Recommended for these retail seasons (Castillitos).
+   * When copilot resolves a season, presets matching it rank higher.
+   */
+  recommendedSeasons?: RetailSeason[];
+  /**
+   * Recommended for these channels (Castillitos).
+   * When copilot resolves a channel, presets matching it rank higher.
+   */
+  recommendedChannels?: CampaignChannel[];
 }
 
 // ── Intake schema ─────────────────────────────────────────────────────────────
@@ -329,6 +403,32 @@ export interface LucaIntegrationConfig {
 }
 
 /**
+ * Foto Estudio UI defaults for a tenant.
+ * Drives the initial state of the wizard — never a global default.
+ */
+export interface TenantFotoEstudioDefaults {
+  /** Default brand line selected in Step 3 of the Foto Estudio wizard. */
+  defaultBrandLine:   "luxury" | "casual" | "kids_fun" | "latin_kids" | "institutional" | "importacion" | "otros";
+  /** Default garment type selected in Step 3 of the Foto Estudio wizard. */
+  defaultGarmentType: string;
+}
+
+/**
+ * Shopify integration config per tenant.
+ * Used by shopify-draft-builder.ts to avoid hardcoding vendor names and tags.
+ */
+export interface TenantShopifyConfig {
+  /** Product vendor name as it appears in Shopify, e.g. "Do Jeans". */
+  vendor:        string;
+  /** Product type string, e.g. "Jeans", "Vestidos", "Accesorios". */
+  productType:   string;
+  /** Base tags always applied to every draft, e.g. ["denim", "do-jeans"]. */
+  defaultTags:   string[];
+  /** One-line product description injected into bodyHtml. Tenant brand voice. */
+  productBlurb?: string;
+}
+
+/**
  * Per-tenant marketing studio configuration.
  * Owned and edited by AGENTIK_ADMIN / SUPER_ADMIN only.
  * Tenant-facing surfaces consume a read-only projection of this.
@@ -352,7 +452,19 @@ export interface TenantMarketingConfig {
    * Do Jeans = "strict" (garment identity must be product-accurate).
    * Castillitos = "standard" (editorial latitude allowed).
    */
-  fidelityMode:     FidelityMode;
+  fidelityMode:      FidelityMode;
+  /**
+   * Foto Estudio wizard defaults.
+   * When absent the wizard falls back to generic neutral defaults ("casual", "otro").
+   * Tenants without Foto Estudio active should omit this block entirely.
+   */
+  fotoEstudio?:      TenantFotoEstudioDefaults;
+  /**
+   * Shopify integration config.
+   * When absent the Shopify draft builder will refuse to produce a draft
+   * rather than falling back to a global default.
+   */
+  shopify?:          TenantShopifyConfig;
 }
 
 // ── Luca bridge payload ───────────────────────────────────────────────────────
@@ -380,4 +492,35 @@ export interface LucaSubmitPayload {
 export interface ValidationResult {
   valid:   boolean;
   errors:  string[];
+}
+
+// ── Marketing Copilot types ────────────────────────────────────────────────────
+
+/**
+ * Structured input for the Marketing Copilot.
+ *
+ * Produced by parseCopilotIntent() from free-text input, or built directly
+ * by the campaign wizard.  All fields optional — copilot fills gaps with
+ * sensible defaults.
+ *
+ * Example:
+ *   "quiero campaña regreso a clases para Latin Kids en Gran Plaza"
+ *   →  { season: "regreso_clases", businessLine: "latin_kids",
+ *          operatingUnit: "GRAN_PLAZA", channel: "tiendas" }
+ */
+export interface CopilotRequest {
+  /** Free-text intent — preserved for display / logging */
+  rawIntent?:      string;
+  season?:         RetailSeason;
+  businessLine?:   MarketingBusinessLine;
+  channel?:        CampaignChannel;
+  /** OperatingUnitKey from business-structure — e.g. "GRAN_PLAZA" */
+  operatingUnit?:  string;
+  productCategory?: GarmentCategory;
+  /** Budget tier hint — drives output quality and volume */
+  budgetTier?:     "mini" | "standard" | "full";
+  /** Specific campaign objective */
+  objective?:      ContentObjective;
+  /** Target social platforms */
+  platforms?:      SocialPlatform[];
 }

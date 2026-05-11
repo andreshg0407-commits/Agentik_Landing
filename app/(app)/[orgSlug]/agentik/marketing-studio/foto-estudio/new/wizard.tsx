@@ -29,6 +29,11 @@ import {
   BODY_TYPE_LABELS,
   VISUAL_QUALITY_LABELS,
   FRAMING_TYPE_LABELS,
+  KIDS_MODEL_TYPE_LABELS,
+  KIDS_AGE_RANGE_LABELS,
+  KIDS_VISUAL_TRAIT_LABELS,
+  KIDS_VISUAL_STYLE_LABELS,
+  KIDS_EXPRESSION_LABELS,
 } from "@/lib/marketing-studio/foto-estudio-types";
 import type {
   FotoOutputType,
@@ -42,11 +47,18 @@ import type {
   BodyType,
   VisualQuality,
   FramingType,
+  KidsModelType,
+  KidsAgeRange,
+  KidsVisualTrait,
+  KidsVisualStyle,
+  KidsExpression,
 } from "@/lib/marketing-studio/foto-estudio-types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type WizardStep = "upload" | "choose_outputs" | "visual_settings" | "generation";
+
+type GenerationIntent = "product_photo" | "social_photo" | "social_video" | "creative_template";
 
 interface AssetState {
   id:               string;
@@ -130,13 +142,185 @@ const OUTPUT_CARDS: Array<{
 const VISUAL_STYLES:    VisualStyle[]           = ["clean_studio", "editorial", "urban", "lifestyle", "luxury", "minimal"];
 const BACKGROUNDS:      BackgroundType[]         = ["white", "light_gray", "black", "gradient", "outdoor_scene", "indoor_scene", "transparent"];
 const ASPECT_RATIOS:    AspectRatio[]            = ["1:1", "9:16", "4:5", "4:3", "16:9"];
-const GARMENT_TYPES:    GarmentType[]            = ["jean", "short", "falda", "body", "top", "chaqueta", "vestido", "otro"];
-const BRAND_LINES:      BrandLine[]              = ["luxury", "casual"];
-const SOCIAL_PUB_TYPES: SocialPublicationType[]  = ["feed", "reel", "story"];
-const MODEL_TYPES:      ModelType[]              = ["latina_rubia", "latina_morena", "europea_rubia", "morena_editorial", "luxury_curvy", "casual_urbana", "fitness", "premium_catalogo", "personalizada"];
-const BODY_TYPES:       BodyType[]               = ["slim", "curvy", "voluptuosa", "atletica", "plus_size", "petite", "personalizada"];
-const VISUAL_QUALITIES: VisualQuality[]          = ["standard_hd", "full_hd", "2k_editorial", "4k_premium"];
-const FRAMING_TYPES:    FramingType[]            = ["frontal_catalogo", "americano", "full_body_editorial", "close_up_producto", "back_view", "side_view", "tres_cuartos", "movimiento_lifestyle"];
+const SOCIAL_PUB_TYPES:    SocialPublicationType[]  = ["feed", "reel", "story"];
+const MODEL_TYPES:         ModelType[]              = ["latina_rubia", "latina_morena", "europea_rubia", "morena_editorial", "luxury_curvy", "casual_urbana", "fitness", "premium_catalogo", "personalizada"];
+const BODY_TYPES:          BodyType[]               = ["slim", "curvy", "voluptuosa", "atletica", "plus_size", "petite", "personalizada"];
+const VISUAL_QUALITIES:    VisualQuality[]          = ["standard_hd", "full_hd", "2k_editorial", "4k_premium"];
+const FRAMING_TYPES:       FramingType[]            = ["frontal_catalogo", "americano", "full_body_editorial", "close_up_producto", "back_view", "side_view", "tres_cuartos", "movimiento_lifestyle"];
+// Kids profile option arrays (Castillitos)
+const KIDS_MODEL_TYPES:    KidsModelType[]    = ["nino", "nina", "bebe_nino", "bebe_nina", "unisex_infantil", "sin_modelo", "flat_lay", "maniqui", "producto_ambientado"];
+const KIDS_AGE_RANGES:     KidsAgeRange[]     = ["0_12m", "1_3", "4_6", "7_9", "10_12", "teen"];
+const KIDS_VISUAL_TRAITS:  KidsVisualTrait[]  = ["latino", "afro", "rubio", "moreno", "mixto_internacional", "personalizado"];
+const KIDS_VISUAL_STYLES:  KidsVisualStyle[]  = ["catalogo_comercial", "lifestyle_infantil", "escolar", "jugueton", "premium_retail", "marketplace"];
+const KIDS_EXPRESSIONS:    KidsExpression[]   = ["sonriente", "natural", "activo", "formal_escolar", "neutro_catalogo"];
+
+// ── Tenant-aware wizard options ───────────────────────────────────────────────
+
+// TODO: Rename garmentTypes → productCategories (future sprint).
+// These no longer represent garment types. They are BUSINESS categories.
+// hiddenLines is already enforced at the data level — nothing from that array is rendered.
+interface TenantWizardOptions {
+  /** Product categories shown in Step 3 (replaces garment-type picker). */
+  garmentTypes:        GarmentType[];
+  /** Commercial lines shown in Step 3 — already excludes fiscal-only lines. */
+  brandLines:          BrandLine[];
+  /**
+   * Lines intentionally hidden from the wizard UI (fiscal/contable only).
+   * Not rendered; kept for documentation and future rule enforcement.
+   */
+  hiddenLines?:        BrandLine[];
+  garmentSectionLabel: string;
+  brandSectionLabel:   string;
+  /** Show adult fashion model profile (Do Jeans). */
+  showModelProfile:    boolean;
+  /** Show kids visual context profile (Castillitos). */
+  showKidsProfile:     boolean;
+  // Step 1 labels
+  step1PanelTitle:     string;
+  frontLabel:          string;
+  backLabel:           string;
+  skuPlaceholder:      string;
+}
+
+function getTenantWizardOptions(tenantId: string): TenantWizardOptions {
+  if (tenantId === "castillitos") {
+    return {
+      // Castillitos business categories — broad commercial segments, NOT garment subtypes.
+      // Ropa niño/niña/bebé already contains bodies, pijamas, sets, etc.
+      // Do NOT add subcategories like "bodys", "pijamas", "camisetas" here.
+      garmentTypes: [
+        "ropa_nino", "ropa_nina", "bebe",
+        "juguete", "accesorio_bebe", "transporte", "aseo",
+        "otro",
+      ],
+      // Commercial lines visible in wizard. Fiscal-only lines are in hiddenLines.
+      brandLines:          ["kids_fun", "latin_kids", "importacion"],
+      // Hidden from UI — fiscal/contable only, no marketing assets generated.
+      hiddenLines:         ["otros", "institutional"],
+      garmentSectionLabel: "Categoría de producto",
+      brandSectionLabel:   "Línea",
+      showModelProfile:    false,
+      showKidsProfile:     true,
+      step1PanelTitle:     "Sube las fotos del producto",
+      frontLabel:          "Foto principal del producto",
+      backLabel:           "Foto secundaria",
+      skuPlaceholder:      "Ej. LK-SET-SONIC-228 / JUG-001 / ESCOLAR-045",
+    };
+  }
+  // Default / Do Jeans fashion
+  return {
+    garmentTypes:        ["jean", "short", "falda", "body", "top", "chaqueta", "vestido", "otro"],
+    brandLines:          ["luxury", "casual"],
+    garmentSectionLabel: "Tipo de prenda",
+    brandSectionLabel:   "Línea de marca",
+    showModelProfile:    true,
+    showKidsProfile:     false,
+    step1PanelTitle:     "Sube las fotos del producto",
+    frontLabel:          "Frontal",
+    backLabel:           "Trasera",
+    skuPlaceholder:      "Ej. PROD-001 / VAQUERO-AZ-32",
+  };
+}
+
+// ── Tenant-aware output cards ─────────────────────────────────────────────────
+
+type OutputCardDef = typeof OUTPUT_CARDS[number];
+
+function getOutputCards(tenantId: string): OutputCardDef[] {
+  if (tenantId === "castillitos") {
+    return [
+      {
+        value:         "catalog_photo",
+        icon:          "📸",
+        label:         "Foto de producto",
+        desc:          "Fondo limpio, encuadre catálogo. Lista para tienda y e-commerce.",
+        formats:       "JPEG · PNG · hasta 4K",
+        requiresAngle: "front",
+      },
+      {
+        value:         "back_photo",
+        icon:          "🔙",
+        label:         "Foto secundaria",
+        desc:          "Vista adicional del producto con fondo limpio.",
+        formats:       "JPEG · PNG · hasta 4K",
+        requiresAngle: "back",
+      },
+      {
+        value:         "social_photo",
+        icon:          "🖼️",
+        label:         "Foto para redes",
+        desc:          "Composición lista para feed de Instagram o TikTok.",
+        formats:       "1:1 · 4:5 · 9:16",
+        requiresAngle: "front",
+      },
+      {
+        value:         "short_video",
+        icon:          "🎬",
+        label:         "Video corto para redes",
+        desc:          "Clip de 8 s en vertical — óptimo para Reels y TikTok.",
+        formats:       "MP4 · 9:16 · 1080p",
+        requiresAngle: "front",
+      },
+      {
+        value:         "custom_template",
+        icon:          "🎨",
+        label:         "Plantilla promocional",
+        desc:          "Composición de marca — flyer, banner, promo campaña.",
+        formats:       "Según plantilla",
+        requiresAngle: "front",
+      },
+    ] as OutputCardDef[];
+  }
+  return OUTPUT_CARDS;
+}
+
+// ── Intent card definitions ───────────────────────────────────────────────────
+
+const INTENT_CARDS: Array<{
+  value: GenerationIntent;
+  icon:  string;
+  title: string;
+  desc:  string;
+  uses:  string;
+}> = [
+  {
+    value: "product_photo",
+    icon:  "📸",
+    title: "Foto de producto",
+    desc:  "Crea imágenes limpias para ecommerce, catálogo, Shopify y galería.",
+    uses:  "Producto · catálogo · tienda · CRM",
+  },
+  {
+    value: "social_photo",
+    icon:  "🖼️",
+    title: "Foto para redes",
+    desc:  "Diseña piezas adaptadas para Instagram, TikTok, Facebook, WhatsApp o Google Ads.",
+    uses:  "Feed · historias · reels · anuncios",
+  },
+  {
+    value: "social_video",
+    icon:  "🎬",
+    title: "Video para redes",
+    desc:  "Genera clips cortos con o sin modelo usando fotos de producto o una escena guiada.",
+    uses:  "Reels · TikTok · shorts · campañas",
+  },
+  {
+    value: "creative_template",
+    icon:  "🎨",
+    title: "Plantillas / catálogos / banners / carruseles",
+    desc:  "Crea piezas comerciales usando productos y activos aprobados desde la Biblioteca Creativa.",
+    uses:  "Flyers · banners · catálogos · carruseles",
+  },
+];
+
+// ── Intent → output type auto-mapping ─────────────────────────────────────────
+
+const INTENT_TO_OUTPUTS: Record<GenerationIntent, FotoOutputType[]> = {
+  product_photo:     ["catalog_photo"],
+  social_photo:      ["social_photo"],
+  social_video:      ["short_video"],
+  creative_template: ["custom_template"],
+};
 
 const ASSET_META: Record<string, { icon: string; label: string }> = {
   front_clean:    { icon: "📸", label: "Vista frontal" },
@@ -145,6 +329,23 @@ const ASSET_META: Record<string, { icon: string; label: string }> = {
   social_video:   { icon: "🎬", label: "Video corto"  },
   product_photo:  { icon: "🎨", label: "Plantilla"    },
 };
+
+// ── Step 3 pill-button helper ─────────────────────────────────────────────────
+
+function pillBtn(active: boolean, compact = false): React.CSSProperties {
+  return {
+    padding:      compact ? `${S[1] + 2}px ${S[2]}px` : `${S[2]}px ${S[3]}px`,
+    border:       active ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
+    borderRadius: R.md,
+    background:   active ? C.brandLight : C.surface,
+    cursor:       "pointer",
+    fontFamily:   T.mono,
+    fontSize:     compact ? T.sz.xs : T.sz.sm,
+    fontWeight:   active ? T.wt.bold : T.wt.normal,
+    color:        active ? C.brand : C.inkMid,
+    transition:   "border-color 0.1s",
+  };
+}
 
 // ── Shared styles ─────────────────────────────────────────────────────────────
 
@@ -365,7 +566,7 @@ function UploadStep({
   frontUrl, setFrontUrl, backUrl, setBackUrl,
   detail1Url, setDetail1Url, detail2Url, setDetail2Url,
   referenceImageUrl, setReferenceImageUrl,
-  sku, setSku, onNext, tenantId, sessionId, selectedOutputs,
+  sku, setSku, onNext, tenantId, sessionId, selectedOutputs, tenantOpts,
 }: {
   frontUrl:              string;
   setFrontUrl:           (v: string) => void;
@@ -383,19 +584,20 @@ function UploadStep({
   tenantId:              string;
   sessionId:             string;
   selectedOutputs:       FotoOutputType[];
+  tenantOpts:            TenantWizardOptions;
 }) {
   const hasCustomTemplate = selectedOutputs.includes("custom_template");
 
   return (
     <Panel style={{ marginBottom: 0 }}>
-      <PanelHeader title="Sube las fotos del producto" icon="📦" />
+      <PanelHeader title={tenantOpts.step1PanelTitle} icon="📦" />
       <div style={{ padding: `${S[4]}px` }}>
         <div style={{ display: "grid", gap: S[4] }}>
           {/* SKU */}
           <div>
             <label style={labelStyle} htmlFor="sku-input">SKU del producto</label>
             <input id="sku-input" style={inputStyle} type="text"
-              placeholder="Ej. PROD-001 / VAQUERO-AZ-32"
+              placeholder={tenantOpts.skuPlaceholder}
               value={sku} onChange={e => setSku(e.target.value)} autoComplete="off" />
             <div style={{ fontSize: T.sz.xs, color: C.inkFaint, marginTop: 4 }}>
               Opcional. Ayuda a organizar la biblioteca.
@@ -404,10 +606,10 @@ function UploadStep({
 
           {/* 2x2 upload grid */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[3] }}>
-            <ImageUploadZone label="Frontal"   required={false} angle="front"   tenantId={tenantId} sessionId={sessionId} onUploaded={setFrontUrl}   />
-            <ImageUploadZone label="Trasera"   required={false} angle="back"    tenantId={tenantId} sessionId={sessionId} onUploaded={setBackUrl}    />
-            <ImageUploadZone label="Detalle 1" required={false} angle="detail1" tenantId={tenantId} sessionId={sessionId} onUploaded={setDetail1Url} />
-            <ImageUploadZone label="Detalle 2" required={false} angle="detail2" tenantId={tenantId} sessionId={sessionId} onUploaded={setDetail2Url} />
+            <ImageUploadZone label={tenantOpts.frontLabel} required={false} angle="front"   tenantId={tenantId} sessionId={sessionId} onUploaded={setFrontUrl}   />
+            <ImageUploadZone label={tenantOpts.backLabel}  required={false} angle="back"    tenantId={tenantId} sessionId={sessionId} onUploaded={setBackUrl}    />
+            <ImageUploadZone label="Detalle 1"             required={false} angle="detail1" tenantId={tenantId} sessionId={sessionId} onUploaded={setDetail1Url} />
+            <ImageUploadZone label="Detalle 2"             required={false} angle="detail2" tenantId={tenantId} sessionId={sessionId} onUploaded={setDetail2Url} />
           </div>
 
           {/* Reference image — only shown when custom_template is selected */}
@@ -443,72 +645,101 @@ function UploadStep({
   );
 }
 
-// ── Step 2: Choose outputs ────────────────────────────────────────────────────
+// ── Step 2: Choose generation intent ─────────────────────────────────────────
 
 function ChooseOutputsStep({
-  selected, onToggle, onNext, onBack, hasFront, hasBack,
+  intent, onSelectIntent, onNext, onBack,
 }: {
-  selected:  FotoOutputType[];
-  onToggle:  (v: FotoOutputType) => void;
-  onNext:    () => void;
-  onBack:    () => void;
-  hasFront:  boolean;
-  hasBack:   boolean;
+  intent:         GenerationIntent | null;
+  onSelectIntent: (v: GenerationIntent) => void;
+  onNext:         () => void;
+  onBack:         () => void;
 }) {
-  const visibleCards = OUTPUT_CARDS.filter(c =>
-    (c.requiresAngle === "front" && hasFront) ||
-    (c.requiresAngle === "back"  && hasBack)  ||
-    (c.requiresAngle === "any"   && (hasFront || hasBack)),
-  );
-
   return (
     <Panel style={{ marginBottom: 0 }}>
-      <PanelHeader title="¿Qué quieres generar?" icon="🎯"
-        badge={<Badge variant={selected.length > 0 ? "brand" : "neutral"}>{selected.length} seleccionados</Badge>} />
+      <PanelHeader
+        title="Elige el tipo de contenido que vas a producir"
+        icon="🎯"
+        badge={<Badge variant={intent !== null ? "brand" : "neutral"}>{intent !== null ? "Listo" : "Selecciona uno"}</Badge>}
+      />
       <div style={{ padding: `${S[4]}px` }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[3] }}>
-          {visibleCards.map(card => {
-            const isSelected = selected.includes(card.value);
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[4] }}>
+          {INTENT_CARDS.map(card => {
+            const isSelected = intent === card.value;
             return (
-              <button key={card.value} onClick={() => onToggle(card.value)} style={{
-                padding: `${S[3]}px ${S[4]}px`,
-                border:  isSelected ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
-                borderRadius: R.md,
-                background: isSelected ? C.brandLight : C.white,
-                cursor: "pointer", textAlign: "left", fontFamily: T.mono,
-                transition: "border-color 0.12s, background 0.12s",
-                boxShadow: isSelected ? E.sm : E.xs,
-              }}>
-                <div style={{ display: "flex", alignItems: "flex-start", gap: S[2] }}>
-                  <div style={{ fontSize: 26, lineHeight: 1, flexShrink: 0 }}>{card.icon}</div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: T.wt.bold, fontSize: T.sz.base,
-                      color: isSelected ? C.brand : C.ink, marginBottom: 4 }}>
-                      {card.label}
-                    </div>
-                    <div style={{ fontSize: T.sz.xs, color: C.inkLight, marginBottom: S[1] }}>
-                      {card.desc}
-                    </div>
-                    <div style={{ fontSize: T.sz["2xs"], color: isSelected ? C.brandDark : C.inkFaint,
-                      fontFamily: T.mono }}>
-                      {card.formats}
-                    </div>
-                  </div>
-                  {isSelected && (
-                    <div style={{ flexShrink: 0, width: 20, height: 20, borderRadius: R.pill,
-                      background: C.brand, color: C.white, display: "flex",
-                      alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: T.wt.bold }}>
-                      ✓
-                    </div>
-                  )}
+              <button
+                key={card.value}
+                onClick={() => onSelectIntent(card.value)}
+                style={{
+                  padding:      `${S[4]}px`,
+                  border:       isSelected ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
+                  borderRadius: R.lg,
+                  background:   isSelected ? C.brandLight : C.white,
+                  cursor:       "pointer",
+                  textAlign:    "left" as const,
+                  fontFamily:   T.mono,
+                  transition:   "border-color 0.12s, background 0.12s",
+                  boxShadow:    isSelected ? E.sm : E.xs,
+                  position:     "relative" as const,
+                }}
+              >
+                {isSelected && (
+                  <div style={{
+                    position:       "absolute" as const,
+                    top:            S[2],
+                    right:          S[2],
+                    width:          22,
+                    height:         22,
+                    borderRadius:   R.pill,
+                    background:     C.brand,
+                    color:          C.white,
+                    display:        "flex",
+                    alignItems:     "center",
+                    justifyContent: "center",
+                    fontSize:       12,
+                    fontWeight:     T.wt.bold,
+                  }}>✓</div>
+                )}
+                <div style={{ fontSize: 30, lineHeight: 1, marginBottom: S[2] }}>{card.icon}</div>
+                <div style={{
+                  fontWeight:   T.wt.bold,
+                  fontSize:     T.sz.base,
+                  color:        isSelected ? C.brand : C.ink,
+                  marginBottom: S[1],
+                }}>
+                  {card.title}
+                </div>
+                <div style={{
+                  fontSize:     T.sz.xs,
+                  color:        C.inkMid,
+                  lineHeight:   1.6,
+                  marginBottom: S[3],
+                }}>
+                  {card.desc}
+                </div>
+                <div style={{
+                  fontSize:     T.sz["2xs"],
+                  color:        isSelected ? C.brandDark : C.inkFaint,
+                  background:   isSelected ? `${C.brand}15` : C.surface,
+                  border:       `1px solid ${isSelected ? C.brandBorder : C.lineSubtle}`,
+                  borderRadius: R.sm,
+                  padding:      `${S[1]}px ${S[2]}px`,
+                  fontWeight:   T.wt.medium,
+                }}>
+                  {card.uses}
                 </div>
               </button>
             );
           })}
         </div>
       </div>
-      <ActionRow nextLabel="Continuar →" canNext={selected.length > 0}
-        onNext={onNext} onBack={onBack} showBack={true} />
+      <ActionRow
+        nextLabel="Continuar →"
+        canNext={intent !== null}
+        onNext={onNext}
+        onBack={onBack}
+        showBack={true}
+      />
     </Panel>
   );
 }
@@ -523,8 +754,27 @@ function VisualSettingsStep({
   modelType, setModelType, bodyType, setBodyType,
   visualQuality, setVisualQuality, framingType, setFramingType,
   modelReferenceUrl, setModelReferenceUrl,
+  kidsModelType, setKidsModelType,
+  kidsAgeRange, setKidsAgeRange,
+  kidsVisualTrait, setKidsVisualTrait,
+  kidsVisualStyle, setKidsVisualStyle,
+  kidsExpression, setKidsExpression,
   onNext, onBack, selectedOutputs,
   tenantId, sessionId,
+  // Sprint 3 — intent-aware fields
+  generationIntent,
+  socialChannel, setSocialChannel,
+  socialPubType, setSocialPubType,
+  socialText, setSocialText,
+  socialCta, setSocialCta,
+  socialCampaign, setSocialCampaign,
+  videoType, setVideoType,
+  videoDuration, setVideoDuration,
+  videoScene, setVideoScene,
+  videoCameraMove, setVideoCameraMove,
+  pieceType, setPieceType,
+  templateIncludePrice, setTemplateIncludePrice,
+  freePrompt, setFreePrompt,
 }: {
   visualStyle:              VisualStyle;
   setVisualStyle:           (v: VisualStyle) => void;
@@ -550,307 +800,532 @@ function VisualSettingsStep({
   setFramingType:           (v: FramingType) => void;
   modelReferenceUrl:        string;
   setModelReferenceUrl:     (v: string) => void;
+  kidsModelType:            KidsModelType;
+  setKidsModelType:         (v: KidsModelType) => void;
+  kidsAgeRange:             KidsAgeRange;
+  setKidsAgeRange:          (v: KidsAgeRange) => void;
+  kidsVisualTrait:          KidsVisualTrait;
+  setKidsVisualTrait:       (v: KidsVisualTrait) => void;
+  kidsVisualStyle:          KidsVisualStyle;
+  setKidsVisualStyle:       (v: KidsVisualStyle) => void;
+  kidsExpression:           KidsExpression;
+  setKidsExpression:        (v: KidsExpression) => void;
   onNext:                   () => void;
   onBack:                   () => void;
   selectedOutputs:          FotoOutputType[];
   tenantId:                 string;
   sessionId:                string;
+  // Sprint 3 — new types
+  generationIntent:         GenerationIntent | null;
+  socialChannel:            string;
+  setSocialChannel:         (v: string) => void;
+  socialPubType:            string;
+  setSocialPubType:         (v: string) => void;
+  socialText:               string;
+  setSocialText:            (v: string) => void;
+  socialCta:                string;
+  setSocialCta:             (v: string) => void;
+  socialCampaign:           string;
+  setSocialCampaign:        (v: string) => void;
+  videoType:                string;
+  setVideoType:             (v: string) => void;
+  videoDuration:            string;
+  setVideoDuration:         (v: string) => void;
+  videoScene:               string;
+  setVideoScene:            (v: string) => void;
+  videoCameraMove:          string;
+  setVideoCameraMove:       (v: string) => void;
+  pieceType:                string;
+  setPieceType:             (v: string) => void;
+  templateIncludePrice:     boolean;
+  setTemplateIncludePrice:  (v: boolean) => void;
+  freePrompt:               string;
+  setFreePrompt:            (v: string) => void;
+  // TODO [Sprint 5 — Producto]: productDescription, productPrice, productColors,
+  //   productSizes, productNotes — recolectar en paso de publicación post-aprobación.
 }) {
-  const hasVideo  = selectedOutputs.includes("short_video");
-  const hasSocial = selectedOutputs.includes("social_photo");
+  const tenantOpts = getTenantWizardOptions(tenantId);
+
+  // ── Minimum validation per intent ──────────────────────────────────────
+  const canNext = (() => {
+    if (!generationIntent) return false;
+    if (generationIntent === "product_photo") {
+      // "Otro" requires freePrompt so the AI has enough context to generate.
+      if (garmentType === "otro") return freePrompt.trim() !== "";
+      return true;
+    }
+    if (generationIntent === "social_photo")      return socialChannel !== "" && socialPubType !== "";
+    if (generationIntent === "social_video")      return videoDuration !== "";
+    if (generationIntent === "creative_template") return pieceType !== "";
+    return false;
+  })();
+
+  // ── Null safety guard ───────────────────────────────────────────────────
+  if (!generationIntent) {
+    return (
+      <Panel style={{ marginBottom: 0 }}>
+        <PanelHeader title="Ajustes de producción" icon="⚙️" />
+        <div style={{ padding: `${S[6]}px ${S[4]}px`, textAlign: "center" as const }}>
+          <div style={{ fontSize: 36, marginBottom: S[3] }}>⚠️</div>
+          <div style={{ fontSize: T.sz.base, color: C.inkMid, marginBottom: S[4] }}>
+            No se seleccionó ningún tipo de contenido. Vuelve al Paso 2 para elegir.
+          </div>
+          <button onClick={onBack} style={btnSecondary}>← Volver al Paso 2</button>
+        </div>
+      </Panel>
+    );
+  }
+
+  // ── Intent-specific constants ───────────────────────────────────────────
+  const SOCIAL_CHANNELS = [
+    { value: "instagram",  label: "Instagram" },
+    { value: "tiktok",     label: "TikTok" },
+    { value: "facebook",   label: "Facebook" },
+    { value: "whatsapp",   label: "Estados de WhatsApp" },
+    { value: "google_ads", label: "Google Ads" },
+  ];
+  const SOCIAL_PUB_TYPES_EXT = [
+    { value: "feed",       label: "Feed" },
+    { value: "historia",   label: "Historia" },
+    { value: "reel_cover", label: "Reel cover" },
+    { value: "anuncio",    label: "Anuncio" },
+    { value: "post_promo", label: "Post promocional" },
+    { value: "carrusel",   label: "Carrusel" },
+  ];
+  const CHANNEL_FORMAT: Record<string, string> = {
+    instagram:  "Feed: 1:1 · 4:5 | Historia: 9:16 | Reel: 9:16",
+    tiktok:     "9:16 · 1080×1920px",
+    facebook:   "Feed: 4:5 · 1:1 | Anuncio: 1.91:1",
+    whatsapp:   "Estado: 9:16 · hasta 30s",
+    google_ads: "Banner: 1.91:1 | Square: 1:1",
+  };
+  const VIDEO_TYPES = [
+    { value: "con_modelo",          label: "Con modelo",              desc: "Modelo infantil con prenda" },
+    { value: "sin_modelo",          label: "Sin modelo",              desc: "Producto solo, sin persona" },
+    { value: "producto_ambientado", label: "Producto ambientado",     desc: "Producto en escena o contexto" },
+    { value: "desde_fotos",         label: "Desde fotos de producto", desc: "Animación a partir de fotos" },
+  ];
+  const CAMERA_MOVES = ["Estático", "Zoom in", "Zoom out", "Pan lateral", "Travelling", "Drone / aéreo"];
+  const PIECE_TYPES = [
+    { value: "flyer",               label: "Flyer",               desc: "Piezas promocionales de campaña" },
+    { value: "banner_shopify",      label: "Banner Shopify",      desc: "Cabeceras y banners de tienda" },
+    { value: "catalogo",            label: "Catálogo",            desc: "Grilla organizada de productos" },
+    { value: "carrusel",            label: "Carrusel",            desc: "Secuencia de slides para redes" },
+    { value: "plantilla_shopify",   label: "Plantilla Shopify",   desc: "Layout reutilizable de producto" },
+    { value: "landing_informativa", label: "Landing informativa", desc: "Página de colección o campaña" },
+  ];
+
+  const intentLabel =
+    generationIntent === "product_photo"    ? "Foto de producto" :
+    generationIntent === "social_photo"     ? "Foto para redes"  :
+    generationIntent === "social_video"     ? "Video para redes" :
+    "Plantillas / catálogos";
+
+  const secHeaderStyle: React.CSSProperties = {
+    fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.inkLight,
+    textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: S[3],
+  };
+  const secBoxStyle: React.CSSProperties = {
+    border: `1px solid ${C.lineSubtle}`, borderRadius: R.md,
+    padding: `${S[3]}px`, background: C.surface,
+  };
 
   return (
     <Panel style={{ marginBottom: 0 }}>
-      <PanelHeader title="Ajustes visuales" icon="🎨" />
+      <PanelHeader title="Ajustes de producción" icon="⚙️"
+        badge={<Badge variant="brand">{intentLabel}</Badge>} />
       <div style={{ padding: `${S[4]}px` }}>
         <div style={{ display: "grid", gap: S[4] }}>
 
-          {/* ── Tipo de prenda ─────────────────────────────────────────── */}
-          <div>
-            <div style={labelStyle}>Tipo de prenda</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: S[2] }}>
-              {GARMENT_TYPES.map(gt => (
-                <button key={gt} onClick={() => setGarmentType(gt)} style={{
-                  padding: `${S[2]}px ${S[2]}px`,
-                  border: garmentType === gt ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
-                  borderRadius: R.md,
-                  background: garmentType === gt ? C.brandLight : C.surface,
-                  cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.sm,
-                  fontWeight: garmentType === gt ? T.wt.bold : T.wt.normal,
-                  color: garmentType === gt ? C.brand : C.inkMid,
-                  transition: "border-color 0.1s",
-                }}>
-                  {GARMENT_TYPE_LABELS[gt]}
-                </button>
-              ))}
-            </div>
-          </div>
+          {/* ══ PRODUCT PHOTO ═════════════════════════════════════════════ */}
+          {generationIntent === "product_photo" && (<>
 
-          {/* ── Línea de marca ─────────────────────────────────────────── */}
-          <div>
-            <div style={labelStyle}>Línea de marca</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
-              {BRAND_LINES.map(bl => (
-                <button key={bl} onClick={() => setBrandLine(bl)} style={{
-                  padding: `${S[3]}px ${S[3]}px`,
-                  border: brandLine === bl ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
-                  borderRadius: R.md,
-                  background: brandLine === bl ? C.brandLight : C.surface,
-                  cursor: "pointer", fontFamily: T.mono,
-                  textAlign: "left" as const,
-                  transition: "border-color 0.1s",
-                }}>
-                  <div style={{ fontWeight: T.wt.bold, fontSize: T.sz.sm,
-                    color: brandLine === bl ? C.brand : C.ink, marginBottom: 3 }}>
-                    {BRAND_LINE_LABELS[bl]}
+            <div style={secBoxStyle}>
+              <div style={secHeaderStyle}>A. Información comercial</div>
+              <div style={{ display: "grid", gap: S[3] }}>
+                <div>
+                  <div style={labelStyle}>{tenantOpts.garmentSectionLabel} *</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: S[2] }}>
+                    {tenantOpts.garmentTypes.map(gt => (
+                      <button key={gt} onClick={() => setGarmentType(gt)} style={pillBtn(garmentType === gt, true)}>
+                        {GARMENT_TYPE_LABELS[gt]}
+                      </button>
+                    ))}
                   </div>
-                  <div style={{ fontSize: T.sz.xs,
-                    color: brandLine === bl ? C.brandDark : C.inkLight }}>
-                    {BRAND_LINE_DESCRIPTIONS[bl]}
+                </div>
+                <div>
+                  <div style={labelStyle}>{tenantOpts.brandSectionLabel} *</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: S[2] }}>
+                    {tenantOpts.brandLines.map(bl => (
+                      <button key={bl} onClick={() => setBrandLine(bl)} style={{
+                        ...pillBtn(brandLine === bl), textAlign: "left" as const,
+                      }}>
+                        <div style={{ fontWeight: T.wt.bold, fontSize: T.sz.sm,
+                          color: brandLine === bl ? C.brand : C.ink, marginBottom: 2 }}>
+                          {BRAND_LINE_LABELS[bl]}
+                        </div>
+                        <div style={{ fontSize: T.sz.xs, color: brandLine === bl ? C.brandDark : C.inkLight }}>
+                          {BRAND_LINE_DESCRIPTIONS[bl]}
+                        </div>
+                      </button>
+                    ))}
                   </div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* ── Tipo de publicación (solo para Foto para redes) ─────────── */}
-          {hasSocial && (
-            <div>
-              <div style={labelStyle}>Tipo de publicación — Foto para redes</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: S[2] }}>
-                {SOCIAL_PUB_TYPES.map(pt => (
-                  <button key={pt} onClick={() => setSocialPublicationType(pt)} style={{
-                    padding: `${S[3]}px ${S[2]}px`,
-                    border: socialPublicationType === pt ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
-                    borderRadius: R.md,
-                    background: socialPublicationType === pt ? C.brandLight : C.surface,
-                    cursor: "pointer", fontFamily: T.mono,
-                    textAlign: "left" as const,
-                    transition: "border-color 0.1s",
-                  }}>
-                    <div style={{ fontWeight: T.wt.bold, fontSize: T.sz.sm,
-                      color: socialPublicationType === pt ? C.brand : C.ink, marginBottom: 3 }}>
-                      {SOCIAL_PUBLICATION_LABELS[pt]}
-                    </div>
-                    <div style={{ fontSize: T.sz["2xs"],
-                      color: socialPublicationType === pt ? C.brandDark : C.inkFaint }}>
-                      {SOCIAL_PUBLICATION_DESCRIPTIONS[pt]}
-                    </div>
-                  </button>
-                ))}
+                </div>
+                {/* TODO [Sprint 5 — Producto]: Después de aprobar el asset, recolectar aquí:
+                    precio, tallas, colores, descripción, SKU.
+                    Estos datos pertenecen al flujo de PUBLICACIÓN, no al de generación visual. */}
               </div>
             </div>
-          )}
 
-          {/* ══ PERFIL DE MODELO ══════════════════════════════════════ */}
-          <div style={{
-            padding: `${S[3]}px ${S[3]}px ${S[1]}px`,
-            border: `1.5px solid ${C.brand}`,
-            borderRadius: R.md,
-            background: C.brandLight,
-          }}>
-            <div style={{ fontWeight: T.wt.black, fontSize: T.sz.sm, color: C.brand,
-              textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: S[3] }}>
-              Perfil de modelo
+            <div style={{ padding: `${S[3]}px ${S[3]}px ${S[1]}px`,
+              border: `1.5px solid ${C.brand}`, borderRadius: R.md, background: C.brandLight }}>
+              <div style={{ fontWeight: T.wt.black, fontSize: T.sz.sm, color: C.brand,
+                textTransform: "uppercase" as const, letterSpacing: "0.08em", marginBottom: S[3] }}>
+                B. Contexto visual infantil
+              </div>
+              <div style={{ display: "grid", gap: S[4] }}>
+                <div>
+                  <div style={labelStyle}>Tipo de modelo</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: S[2] }}>
+                    {KIDS_MODEL_TYPES.map(mt => (
+                      <button key={mt} onClick={() => setKidsModelType(mt)} style={{
+                        padding: `${S[2]}px ${S[2]}px`,
+                        border: kidsModelType === mt ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
+                        borderRadius: R.md, background: kidsModelType === mt ? C.brand : C.white,
+                        cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.xs,
+                        fontWeight: kidsModelType === mt ? T.wt.bold : T.wt.normal,
+                        color: kidsModelType === mt ? C.white : C.inkMid, transition: "all 0.1s",
+                      }}>
+                        {KIDS_MODEL_TYPE_LABELS[mt]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {!["sin_modelo", "flat_lay", "producto_ambientado"].includes(kidsModelType) && (
+                  <div>
+                    <div style={labelStyle}>Rango de edad</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: S[2] }}>
+                      {KIDS_AGE_RANGES.map(ar => (
+                        <button key={ar} onClick={() => setKidsAgeRange(ar)} style={{
+                          padding: `${S[2]}px ${S[2]}px`,
+                          border: kidsAgeRange === ar ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
+                          borderRadius: R.md, background: kidsAgeRange === ar ? C.brand : C.white,
+                          cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.xs,
+                          fontWeight: kidsAgeRange === ar ? T.wt.bold : T.wt.normal,
+                          color: kidsAgeRange === ar ? C.white : C.inkMid, transition: "all 0.1s",
+                        }}>
+                          {KIDS_AGE_RANGE_LABELS[ar]}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {!["sin_modelo", "flat_lay", "maniqui", "producto_ambientado"].includes(kidsModelType) && (
+                  <div>
+                    <div style={labelStyle}>Características</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: S[2] }}>
+                      {KIDS_VISUAL_TRAITS.map(vt => (
+                        <button key={vt} onClick={() => setKidsVisualTrait(vt)} style={{
+                          padding: `${S[2]}px ${S[2]}px`,
+                          border: kidsVisualTrait === vt ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
+                          borderRadius: R.md, background: kidsVisualTrait === vt ? C.brand : C.white,
+                          cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.xs,
+                          fontWeight: kidsVisualTrait === vt ? T.wt.bold : T.wt.normal,
+                          color: kidsVisualTrait === vt ? C.white : C.inkMid, transition: "all 0.1s",
+                        }}>
+                          {KIDS_VISUAL_TRAIT_LABELS[vt]}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div>
+                  <div style={labelStyle}>Estilo visual</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: S[2] }}>
+                    {KIDS_VISUAL_STYLES.map(vs => (
+                      <button key={vs} onClick={() => setKidsVisualStyle(vs)} style={{
+                        padding: `${S[2]}px ${S[2]}px`,
+                        border: kidsVisualStyle === vs ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
+                        borderRadius: R.md, background: kidsVisualStyle === vs ? C.brand : C.white,
+                        cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.xs,
+                        fontWeight: kidsVisualStyle === vs ? T.wt.bold : T.wt.normal,
+                        color: kidsVisualStyle === vs ? C.white : C.inkMid, transition: "all 0.1s",
+                      }}>
+                        {KIDS_VISUAL_STYLE_LABELS[vs]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div style={labelStyle}>Fondo / escena</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
+                    {BACKGROUNDS.map(bg => (
+                      <button key={bg} onClick={() => setBackground(bg)} style={pillBtn(background === bg)}>
+                        {BACKGROUND_LABELS[bg]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div style={labelStyle}>Formato</div>
+                  <div style={{ display: "flex", gap: S[2] }}>
+                    {ASPECT_RATIOS.map(r => (
+                      <button key={r} onClick={() => setAspectRatio(r)} style={pillBtn(aspectRatio === r, true)}>
+                        {ASPECT_RATIO_LABELS[r]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </div>
-            <div style={{ display: "grid", gap: S[4] }}>
 
-              {/* Tipo de modelo */}
-              <div>
-                <div style={labelStyle}>Tipo de modelo</div>
+            <div>
+              <div style={labelStyle}>Prompt libre controlado{" "}
+                <span style={{ fontWeight: T.wt.normal, textTransform: "none" as const, letterSpacing: 0, color: C.inkFaint }}>(opcional)</span>
+              </div>
+              <textarea value={freePrompt} onChange={e => setFreePrompt(e.target.value)}
+                placeholder="Ej. niño sentado en parque, colores vibrantes, luz natural."
+                rows={3} style={{ ...inputStyle, resize: "vertical" as const }} />
+            </div>
+
+          </>)}
+
+          {/* ══ SOCIAL PHOTO ══════════════════════════════════════════════ */}
+          {generationIntent === "social_photo" && (<>
+
+            <div style={secBoxStyle}>
+              <div style={secHeaderStyle}>A. Canal de publicación *</div>
+              <div style={{ display: "grid", gap: S[3] }}>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: S[2] }}>
-                  {MODEL_TYPES.map(mt => (
-                    <button key={mt} onClick={() => setModelType(mt)} style={{
-                      padding: `${S[2]}px ${S[2]}px`,
-                      border: modelType === mt ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
-                      borderRadius: R.md,
-                      background: modelType === mt ? C.brand : C.white,
-                      cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.xs,
-                      fontWeight: modelType === mt ? T.wt.bold : T.wt.normal,
-                      color: modelType === mt ? C.white : C.inkMid,
-                      transition: "all 0.1s",
-                    }}>
-                      {MODEL_TYPE_LABELS[mt]}
+                  {SOCIAL_CHANNELS.map(ch => (
+                    <button key={ch.value} onClick={() => setSocialChannel(ch.value)} style={pillBtn(socialChannel === ch.value)}>
+                      {ch.label}
                     </button>
                   ))}
                 </div>
+                {socialChannel && (
+                  <div style={{ fontSize: T.sz.xs, color: C.inkMid, background: C.white,
+                    border: `1px solid ${C.lineSubtle}`, borderRadius: R.sm, padding: `${S[2]}px ${S[3]}px` }}>
+                    <span style={{ fontWeight: T.wt.bold, color: C.ink }}>Formato recomendado: </span>
+                    {CHANNEL_FORMAT[socialChannel] ?? "—"}
+                  </div>
+                )}
               </div>
-
-              {/* Contextura corporal */}
-              <div>
-                <div style={labelStyle}>Contextura corporal</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
-                  {BODY_TYPES.map(bt => (
-                    <button key={bt} onClick={() => setBodyType(bt)} style={{
-                      padding: `${S[2]}px ${S[3]}px`,
-                      border: bodyType === bt ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
-                      borderRadius: R.md,
-                      background: bodyType === bt ? C.brand : C.white,
-                      cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.sm,
-                      fontWeight: bodyType === bt ? T.wt.bold : T.wt.normal,
-                      color: bodyType === bt ? C.white : C.inkMid,
-                      textAlign: "left" as const,
-                      transition: "all 0.1s",
-                    }}>
-                      {BODY_TYPE_LABELS[bt]}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Calidad visual */}
-              <div>
-                <div style={labelStyle}>Calidad visual</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
-                  {VISUAL_QUALITIES.map(vq => (
-                    <button key={vq} onClick={() => setVisualQuality(vq)} style={{
-                      padding: `${S[2]}px ${S[3]}px`,
-                      border: visualQuality === vq ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
-                      borderRadius: R.md,
-                      background: visualQuality === vq ? C.brand : C.white,
-                      cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.sm,
-                      fontWeight: visualQuality === vq ? T.wt.bold : T.wt.normal,
-                      color: visualQuality === vq ? C.white : C.inkMid,
-                      textAlign: "left" as const,
-                      transition: "all 0.1s",
-                    }}>
-                      {VISUAL_QUALITY_LABELS[vq]}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Tipo de encuadre */}
-              <div>
-                <div style={labelStyle}>Tipo de encuadre</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
-                  {FRAMING_TYPES.map(ft => (
-                    <button key={ft} onClick={() => setFramingType(ft)} style={{
-                      padding: `${S[2]}px ${S[3]}px`,
-                      border: framingType === ft ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
-                      borderRadius: R.md,
-                      background: framingType === ft ? C.brand : C.white,
-                      cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.sm,
-                      fontWeight: framingType === ft ? T.wt.bold : T.wt.normal,
-                      color: framingType === ft ? C.white : C.inkMid,
-                      textAlign: "left" as const,
-                      transition: "all 0.1s",
-                    }}>
-                      {FRAMING_TYPE_LABELS[ft]}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Modelo de referencia (opcional) */}
-              <div>
-                <div style={labelStyle}>Modelo de referencia <span style={{ fontWeight: T.wt.normal, textTransform: "none" as const, letterSpacing: 0, color: C.inkFaint }}>(opcional)</span></div>
-                <ImageUploadZone
-                  label="Foto de modelo de referencia"
-                  required={false}
-                  angle={"detail2" as UploadAngle}
-                  tenantId={tenantId}
-                  sessionId={sessionId}
-                  onUploaded={setModelReferenceUrl}
-                />
-                <div style={{ fontSize: T.sz.xs, color: C.inkFaint, marginTop: 4 }}>
-                  Sube una foto del tipo de modelo que quieres usar. La IA replicará ese look.
-                </div>
-              </div>
-
             </div>
-          </div>
-          {/* ══ FIN PERFIL DE MODELO ══════════════════════════════════ */}
 
-          {/* ── Estilo visual ──────────────────────────────────────────── */}
-          <div>
-            <div style={labelStyle}>Estilo visual</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: S[2] }}>
-              {VISUAL_STYLES.map(style => (
-                <button key={style} onClick={() => setVisualStyle(style)} style={{
-                  padding: `${S[2]}px ${S[3]}px`,
-                  border: visualStyle === style ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
-                  borderRadius: R.md,
-                  background: visualStyle === style ? C.brandLight : C.surface,
-                  cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.sm,
-                  fontWeight: visualStyle === style ? T.wt.bold : T.wt.normal,
-                  color: visualStyle === style ? C.brand : C.inkMid,
-                  transition: "border-color 0.1s",
-                }}>
-                  {VISUAL_STYLE_LABELS[style]}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* ── Fondo ──────────────────────────────────────────────────── */}
-          <div>
-            <div style={labelStyle}>Fondo</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
-              {BACKGROUNDS.map(bg => (
-                <button key={bg} onClick={() => setBackground(bg)} style={{
-                  padding: `${S[1] + 2}px ${S[3]}px`,
-                  border: background === bg ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
-                  borderRadius: R.sm,
-                  background: background === bg ? C.brandLight : C.surface,
-                  cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.sm,
-                  fontWeight: background === bg ? T.wt.bold : T.wt.normal,
-                  color: background === bg ? C.brand : C.inkMid,
-                  textAlign: "left" as const,
-                }}>
-                  {BACKGROUND_LABELS[bg]}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* ── Formato / aspect ratio (no aplica para video) ─────────── */}
-          {!hasVideo && (
-            <div>
-              <div style={labelStyle}>Formato</div>
+            <div style={secBoxStyle}>
+              <div style={secHeaderStyle}>B. Tipo de publicación *</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: S[2] }}>
-                {ASPECT_RATIOS.map(ratio => (
-                  <button key={ratio} onClick={() => setAspectRatio(ratio)} style={{
-                    padding: `${S[1] + 2}px ${S[2]}px`,
-                    border: aspectRatio === ratio ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
-                    borderRadius: R.sm,
-                    background: aspectRatio === ratio ? C.brandLight : C.surface,
-                    cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.xs,
-                    color: aspectRatio === ratio ? C.brand : C.inkMid,
-                  }}>
-                    {ASPECT_RATIO_LABELS[ratio]}
+                {SOCIAL_PUB_TYPES_EXT.map(pt => (
+                  <button key={pt.value} onClick={() => setSocialPubType(pt.value)} style={pillBtn(socialPubType === pt.value)}>
+                    {pt.label}
                   </button>
                 ))}
               </div>
             </div>
-          )}
 
-          {/* ── Variantes ─────────────────────────────────────────────── */}
-          <div>
-            <div style={labelStyle}>Variantes por tipo</div>
-            <div style={{ display: "flex", gap: S[2] }}>
-              {[1, 2, 3, 4].map(n => (
-                <button key={n} onClick={() => setQuantity(n)} style={{
-                  width: 44, height: 44,
-                  border: quantity === n ? `2px solid ${C.brand}` : `1px solid ${C.line}`,
-                  borderRadius: R.md,
-                  background: quantity === n ? C.brandLight : C.surface,
-                  cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.base,
-                  fontWeight: quantity === n ? T.wt.bold : T.wt.normal,
-                  color: quantity === n ? C.brand : C.inkMid,
-                }}>
-                  {n}
-                </button>
-              ))}
+            <div style={secBoxStyle}>
+              <div style={secHeaderStyle}>C. Contenido</div>
+              <div style={{ display: "grid", gap: S[3] }}>
+                <div>
+                  <div style={labelStyle}>Texto principal</div>
+                  <input value={socialText} onChange={e => setSocialText(e.target.value)}
+                    placeholder="Ej. ¡Nueva colección Kids Fun ya disponible!" style={inputStyle} />
+                </div>
+                <div>
+                  <div style={labelStyle}>CTA (llamada a la acción)</div>
+                  <input value={socialCta} onChange={e => setSocialCta(e.target.value)}
+                    placeholder="Ej. Ver colección, Comprar ahora, Descubrir" style={inputStyle} />
+                </div>
+                <div>
+                  <div style={labelStyle}>Campaña / colección</div>
+                  <input value={socialCampaign} onChange={e => setSocialCampaign(e.target.value)}
+                    placeholder="Ej. Back to School 2026, Temporada Vacaciones" style={inputStyle} />
+                </div>
+              </div>
             </div>
-            <div style={{ fontSize: T.sz.xs, color: C.inkFaint, marginTop: 4 }}>
-              Cuántas variantes generar de cada tipo seleccionado.
+
+            <div>
+              <div style={labelStyle}>Prompt libre controlado{" "}
+                <span style={{ fontWeight: T.wt.normal, textTransform: "none" as const, letterSpacing: 0, color: C.inkFaint }}>(opcional)</span>
+              </div>
+              <textarea value={freePrompt} onChange={e => setFreePrompt(e.target.value)}
+                placeholder="Instrucciones de estilo, paleta de colores, referencias, contexto de la campaña…"
+                rows={3} style={{ ...inputStyle, resize: "vertical" as const }} />
             </div>
-          </div>
+
+          </>)}
+
+          {/* ══ SOCIAL VIDEO ══════════════════════════════════════════════ */}
+          {generationIntent === "social_video" && (<>
+
+            <div style={secBoxStyle}>
+              <div style={secHeaderStyle}>A. Tipo de video</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[3] }}>
+                {VIDEO_TYPES.map(vt => (
+                  <button key={vt.value} onClick={() => setVideoType(vt.value)} style={{
+                    ...pillBtn(videoType === vt.value), textAlign: "left" as const, padding: `${S[3]}px`,
+                  }}>
+                    <div style={{ fontWeight: T.wt.bold, marginBottom: 3,
+                      color: videoType === vt.value ? C.brand : C.ink }}>{vt.label}</div>
+                    <div style={{ fontSize: T.sz.xs,
+                      color: videoType === vt.value ? C.brandDark : C.inkLight }}>{vt.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={secBoxStyle}>
+              <div style={secHeaderStyle}>B. Configuración</div>
+              <div style={{ display: "grid", gap: S[3] }}>
+                <div>
+                  <div style={labelStyle}>Duración *</div>
+                  <div style={{ display: "flex", gap: S[2] }}>
+                    {["15s", "60s"].map(d => (
+                      <button key={d} onClick={() => setVideoDuration(d)} style={pillBtn(videoDuration === d)}>
+                        {d}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div style={labelStyle}>Formato</div>
+                  <div style={{ display: "flex", gap: S[2] }}>
+                    {(["9:16", "1:1", "16:9"] as AspectRatio[]).map(r => (
+                      <button key={r} onClick={() => setAspectRatio(r)} style={pillBtn(aspectRatio === r)}>
+                        {r}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div style={labelStyle}>Calidad</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
+                    {VISUAL_QUALITIES.map(vq => (
+                      <button key={vq} onClick={() => setVisualQuality(vq)} style={pillBtn(visualQuality === vq)}>
+                        {VISUAL_QUALITY_LABELS[vq]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div style={labelStyle}>Escena / fondo</div>
+                  <input value={videoScene} onChange={e => setVideoScene(e.target.value)}
+                    placeholder="Ej. Habitación infantil, parque, fondo blanco limpio" style={inputStyle} />
+                </div>
+                <div>
+                  <div style={labelStyle}>Movimiento de cámara</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: S[2] }}>
+                    {CAMERA_MOVES.map(cm => (
+                      <button key={cm} onClick={() => setVideoCameraMove(cm)} style={pillBtn(videoCameraMove === cm, true)}>
+                        {cm}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div style={labelStyle}>Prompt libre controlado{" "}
+                <span style={{ fontWeight: T.wt.normal, textTransform: "none" as const, letterSpacing: 0, color: C.inkFaint }}>(opcional)</span>
+              </div>
+              <textarea value={freePrompt} onChange={e => setFreePrompt(e.target.value)}
+                placeholder="Instrucciones adicionales para el clip. Ej: transiciones suaves, logo en esquina."
+                rows={3} style={{ ...inputStyle, resize: "vertical" as const }} />
+            </div>
+
+          </>)}
+
+          {/* ══ CREATIVE TEMPLATE ══════════════════════════════════════════ */}
+          {generationIntent === "creative_template" && (<>
+
+            <div style={secBoxStyle}>
+              <div style={secHeaderStyle}>A. Tipo de pieza *</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: S[3] }}>
+                {PIECE_TYPES.map(pt => (
+                  <button key={pt.value} onClick={() => setPieceType(pt.value)} style={{
+                    ...pillBtn(pieceType === pt.value), textAlign: "left" as const, padding: `${S[3]}px`,
+                  }}>
+                    <div style={{ fontWeight: T.wt.bold, marginBottom: 3,
+                      color: pieceType === pt.value ? C.brand : C.ink }}>{pt.label}</div>
+                    <div style={{ fontSize: T.sz.xs,
+                      color: pieceType === pt.value ? C.brandDark : C.inkLight }}>{pt.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={secBoxStyle}>
+              <div style={secHeaderStyle}>B. Filtros de productos</div>
+              <div style={{ display: "grid", gap: S[3] }}>
+                <div>
+                  <div style={labelStyle}>Categoría</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: S[2] }}>
+                    {tenantOpts.garmentTypes.map(gt => (
+                      <button key={gt} onClick={() => setGarmentType(gt)} style={pillBtn(garmentType === gt, true)}>
+                        {GARMENT_TYPE_LABELS[gt]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div style={labelStyle}>Línea</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: S[2] }}>
+                    {tenantOpts.brandLines.map(bl => (
+                      <button key={bl} onClick={() => setBrandLine(bl)} style={pillBtn(brandLine === bl)}>
+                        {BRAND_LINE_LABELS[bl]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div style={labelStyle}>Colección</div>
+                  <input value={socialCampaign} onChange={e => setSocialCampaign(e.target.value)}
+                    placeholder="Ej. Back to School 2026" style={inputStyle} />
+                </div>
+                {/* TODO [Sprint 5 — Producto]: Colores, tallas y precio se recolectarán
+                    en el paso de publicación, después de aprobar el asset generado. */}
+                <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
+                  <button onClick={() => setTemplateIncludePrice(!templateIncludePrice)} style={{
+                    padding: `${S[1] + 2}px ${S[3]}px`,
+                    border: `2px solid ${templateIncludePrice ? C.brand : C.line}`,
+                    borderRadius: R.md,
+                    background: templateIncludePrice ? C.brandLight : C.surface,
+                    cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.sm,
+                    fontWeight: T.wt.bold, color: templateIncludePrice ? C.brand : C.inkMid,
+                  }}>
+                    {templateIncludePrice ? "✓ Con precio" : "Sin precio"}
+                  </button>
+                  <span style={{ fontSize: T.sz.xs, color: C.inkFaint }}>
+                    Incluir precio visible en la pieza
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: S[3], padding: `${S[3]}px ${S[4]}px`,
+              background: "#fefce8", border: `1px solid #fde047`, borderRadius: R.md }}>
+              <div style={{ fontSize: 18, flexShrink: 0 }}>ℹ️</div>
+              <div style={{ fontSize: T.sz.xs, color: "#713f12", lineHeight: 1.6 }}>
+                Los catálogos se organizarán automáticamente por categoría para evitar mezclar ropa, juguetes, accesorios y transporte sin lógica.
+              </div>
+            </div>
+
+            <div>
+              <div style={labelStyle}>Prompt libre controlado{" "}
+                <span style={{ fontWeight: T.wt.normal, textTransform: "none" as const, letterSpacing: 0, color: C.inkFaint }}>(opcional)</span>
+              </div>
+              <textarea value={freePrompt} onChange={e => setFreePrompt(e.target.value)}
+                placeholder="Instrucciones adicionales. Ej: fondo institucional, colores de la marca, incluir logo."
+                rows={3} style={{ ...inputStyle, resize: "vertical" as const }} />
+            </div>
+
+          </>)}
 
         </div>
       </div>
-      <ActionRow nextLabel="Generar →" canNext={true} onNext={onNext} onBack={onBack} showBack={true} />
+      <ActionRow nextLabel="Generar →" canNext={canNext} onNext={onNext} onBack={onBack} showBack={true} />
     </Panel>
   );
 }
@@ -858,13 +1333,14 @@ function VisualSettingsStep({
 // ── Step 4: Generation + approval ────────────────────────────────────────────
 
 interface AssetCardProps {
-  asset:     AssetState | null;
-  onApprove: (id: string) => void;
-  onReject:  (id: string) => void;
-  orgSlug:   string;
+  asset:           AssetState | null;
+  onApprove:       (id: string) => void;
+  onReject:        (id: string) => void;
+  orgSlug:         string;
+  sourceImageUrl?: string;
 }
 
-function AssetCard({ asset, onApprove, onReject, orgSlug }: AssetCardProps) {
+function AssetCard({ asset, onApprove, onReject, orgSlug, sourceImageUrl }: AssetCardProps) {
   const downloadHref = asset?.id
     ? `/api/orgs/${orgSlug}/marketing-studio/assets/${asset.id}/download`
     : undefined;
@@ -902,14 +1378,39 @@ function AssetCard({ asset, onApprove, onReject, orgSlug }: AssetCardProps) {
       </div>
 
       {/* Preview */}
-      <div style={{ padding: `${S[3]}px`, textAlign: "center",
-        minHeight: 120, display: "flex", flexDirection: "column",
+      <div style={{ padding: `${S[3]}px`, minHeight: 120,
+        display: "flex", flexDirection: "column",
         alignItems: "center", justifyContent: "center", gap: S[2] }}>
         {isReady && asset?.assetUrl ? (
-          /* eslint-disable-next-line @next/next/no-img-element */
-          <img src={asset.assetUrl} alt={meta.label}
-            style={{ maxHeight: 180, maxWidth: "100%", borderRadius: R.md,
-              objectFit: "contain", boxShadow: E.sm }} />
+          sourceImageUrl ? (
+            // ── Side-by-side: Original vs Generado ────────────────────────
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr",
+              gap: S[3], width: "100%", alignItems: "start" }}>
+              <div>
+                <div style={{ fontSize: T.sz["2xs"], color: C.inkFaint, fontWeight: T.wt.medium,
+                  textAlign: "center", marginBottom: S[1] }}>Original</div>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={sourceImageUrl} alt="Original"
+                  style={{ width: "100%", maxHeight: 260, borderRadius: R.sm,
+                    objectFit: "contain", border: `1px solid ${C.line}`,
+                    background: C.surfaceAlt }} />
+              </div>
+              <div>
+                <div style={{ fontSize: T.sz["2xs"], color: C.green, fontWeight: T.wt.bold,
+                  textAlign: "center", marginBottom: S[1] }}>✓ Generado</div>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={asset.assetUrl} alt={meta.label}
+                  style={{ width: "100%", maxHeight: 320, borderRadius: R.md,
+                    objectFit: "contain", boxShadow: E.sm }} />
+              </div>
+            </div>
+          ) : (
+            // ── Solo generado (sin fuente para comparar) ───────────────────
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img src={asset.assetUrl} alt={meta.label}
+              style={{ maxHeight: 320, maxWidth: "100%", borderRadius: R.md,
+                objectFit: "contain", boxShadow: E.sm }} />
+          )
         ) : isFailed ? (
           <div style={{ color: C.red, fontSize: T.sz.sm }}>La generación de este activo falló.</div>
         ) : (
@@ -965,6 +1466,7 @@ function AssetCard({ asset, onApprove, onReject, orgSlug }: AssetCardProps) {
 function GenerationStep({
   assets, isGenerating, generateError, onGenerate,
   onApprove, onReject, onReset, onSaveAll, orgSlug,
+  frontUrl, backUrl,
 }: {
   assets:         AssetState[];
   isGenerating:   boolean;
@@ -975,7 +1477,8 @@ function GenerationStep({
   onReset:        () => void;
   onSaveAll:      () => void;
   orgSlug:        string;
-  sessionId:      string;
+  frontUrl?:      string;
+  backUrl?:       string;
 }) {
   const readyCount    = assets.filter(a => a.generationStatus === "READY").length;
   const approvedCount = assets.filter(a => a.reviewStatus === "approved").length;
@@ -1028,12 +1531,19 @@ function GenerationStep({
       <div style={{ padding: `${S[4]}px` }}>
         {assets.length === 0 ? (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[3] }}>
-            {[0, 1].map(i => <AssetCard key={i} asset={null} onApprove={() => {}} onReject={() => {}} orgSlug={orgSlug} />)}
+            {[0, 1].map(i => <AssetCard key={i} asset={null} onApprove={() => {}} onReject={() => {}} orgSlug={orgSlug} sourceImageUrl={frontUrl} />)}
           </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: assets.length === 1 ? "1fr" : "1fr 1fr", gap: S[3] }}>
             {assets.map(a => (
-              <AssetCard key={a.id} asset={a} onApprove={onApprove} onReject={onReject} orgSlug={orgSlug} />
+              <AssetCard
+                key={a.id}
+                asset={a}
+                onApprove={onApprove}
+                onReject={onReject}
+                orgSlug={orgSlug}
+                sourceImageUrl={a.assetType === "back_clean" ? (backUrl || frontUrl) : frontUrl}
+              />
             ))}
           </div>
         )}
@@ -1084,7 +1594,7 @@ export function FotoEstudioWizard({
   orgSlug,
   tenantId,
   defaultBrandLine  = "casual",
-  defaultGarmentType = "jean",
+  defaultGarmentType = "otro",
 }: {
   orgSlug:            string;
   tenantId:           string;
@@ -1106,7 +1616,8 @@ export function FotoEstudioWizard({
   const [sku,         setSku]         = useState("");
 
   // Step 2
-  const [selectedOutputs, setSelectedOutputs] = useState<FotoOutputType[]>([]);
+  const [selectedOutputs,  setSelectedOutputs]  = useState<FotoOutputType[]>([]);
+  const [generationIntent, setGenerationIntent] = useState<GenerationIntent | null>(null);
 
   // Step 1 extra
   const [referenceImageUrl, setReferenceImageUrl] = useState("");
@@ -1124,6 +1635,28 @@ export function FotoEstudioWizard({
   const [visualQuality,     setVisualQuality]      = useState<VisualQuality>("full_hd");
   const [framingType,       setFramingType]        = useState<FramingType>("frontal_catalogo");
   const [modelReferenceUrl, setModelReferenceUrl]  = useState("");
+  // Kids visual profile (Castillitos)
+  const [kidsModelType,   setKidsModelType]   = useState<KidsModelType>("sin_modelo");
+  const [kidsAgeRange,    setKidsAgeRange]    = useState<KidsAgeRange>("4_6");
+  const [kidsVisualTrait, setKidsVisualTrait] = useState<KidsVisualTrait>("latino");
+  const [kidsVisualStyle, setKidsVisualStyle] = useState<KidsVisualStyle>("catalogo_comercial");
+  const [kidsExpression,  setKidsExpression]  = useState<KidsExpression>("sonriente");
+
+  // Intent-specific fields (Step 3 dynamic forms)
+  const [socialChannel,        setSocialChannel]        = useState("");
+  const [socialPubType,        setSocialPubType]        = useState("");
+  const [socialText,           setSocialText]           = useState("");
+  const [socialCta,            setSocialCta]            = useState("");
+  const [socialCampaign,       setSocialCampaign]       = useState("");
+  const [videoType,            setVideoType]            = useState("");
+  const [videoDuration,        setVideoDuration]        = useState("");
+  const [videoScene,           setVideoScene]           = useState("");
+  const [videoCameraMove,      setVideoCameraMove]      = useState("");
+  const [pieceType,            setPieceType]            = useState("");
+  const [templateIncludePrice, setTemplateIncludePrice] = useState(false);
+  const [freePrompt,           setFreePrompt]           = useState("");
+  // TODO [Sprint 5 — Producto]: productDescription, productPrice, productColors,
+  //   productSizes, productNotes — state will live in the post-approval publication step.
 
   // Step 4
   const [assets,        setAssets]        = useState<AssetState[]>([]);
@@ -1146,11 +1679,17 @@ export function FotoEstudioWizard({
   // Polling cleanup
   useEffect(() => () => { if (pollTimerRef.current) clearInterval(pollTimerRef.current); }, []);
 
-  // ── Toggle output type ───────────────────────────────────────────────────
+  // ── Toggle output type (kept for internal compatibility) ─────────────────
   function toggleOutput(type: FotoOutputType) {
     setSelectedOutputs(prev =>
       prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type],
     );
+  }
+
+  // ── Select generation intent (Step 2) ────────────────────────────────────
+  function selectIntent(intent: GenerationIntent) {
+    setGenerationIntent(intent);
+    setSelectedOutputs(INTENT_TO_OUTPUTS[intent]);
   }
 
   // ── Polling ──────────────────────────────────────────────────────────────
@@ -1200,6 +1739,11 @@ export function FotoEstudioWizard({
           visualQuality,
           framingType,
           modelReferenceUrl:    modelReferenceUrl   || undefined,
+          kidsModelType,
+          kidsAgeRange,
+          kidsVisualTrait,
+          kidsVisualStyle,
+          kidsExpression,
         },
       }),
     }).catch(err => console.warn("[wizard] failed to save inputs:", err));
@@ -1276,6 +1820,8 @@ export function FotoEstudioWizard({
     window.location.reload();
   }
 
+  const tenantOpts = getTenantWizardOptions(tenantId);
+
   // ── Render ───────────────────────────────────────────────────────────────
   return (
     <div>
@@ -1292,22 +1838,22 @@ export function FotoEstudioWizard({
           onNext={() => setStep("choose_outputs")}
           tenantId={tenantId} sessionId={sessionId}
           selectedOutputs={selectedOutputs}
+          tenantOpts={tenantOpts}
         />
       )}
 
       {step === "choose_outputs" && (
         <ChooseOutputsStep
-          selected={selectedOutputs}
-          onToggle={toggleOutput}
+          intent={generationIntent}
+          onSelectIntent={selectIntent}
           onNext={() => setStep("visual_settings")}
           onBack={() => setStep("upload")}
-          hasFront={frontUrl.trim().length > 0}
-          hasBack={backUrl.trim().length > 0}
         />
       )}
 
       {step === "visual_settings" && (
         <VisualSettingsStep
+          generationIntent={generationIntent}
           visualStyle={visualStyle}                   setVisualStyle={setVisualStyle}
           background={background}                     setBackground={setBackground}
           aspectRatio={aspectRatio}                   setAspectRatio={setAspectRatio}
@@ -1320,6 +1866,23 @@ export function FotoEstudioWizard({
           visualQuality={visualQuality}               setVisualQuality={setVisualQuality}
           framingType={framingType}                   setFramingType={setFramingType}
           modelReferenceUrl={modelReferenceUrl}       setModelReferenceUrl={setModelReferenceUrl}
+          kidsModelType={kidsModelType}               setKidsModelType={setKidsModelType}
+          kidsAgeRange={kidsAgeRange}                 setKidsAgeRange={setKidsAgeRange}
+          kidsVisualTrait={kidsVisualTrait}           setKidsVisualTrait={setKidsVisualTrait}
+          kidsVisualStyle={kidsVisualStyle}           setKidsVisualStyle={setKidsVisualStyle}
+          kidsExpression={kidsExpression}             setKidsExpression={setKidsExpression}
+          socialChannel={socialChannel}               setSocialChannel={setSocialChannel}
+          socialPubType={socialPubType}               setSocialPubType={setSocialPubType}
+          socialText={socialText}                     setSocialText={setSocialText}
+          socialCta={socialCta}                       setSocialCta={setSocialCta}
+          socialCampaign={socialCampaign}             setSocialCampaign={setSocialCampaign}
+          videoType={videoType}                       setVideoType={setVideoType}
+          videoDuration={videoDuration}               setVideoDuration={setVideoDuration}
+          videoScene={videoScene}                     setVideoScene={setVideoScene}
+          videoCameraMove={videoCameraMove}           setVideoCameraMove={setVideoCameraMove}
+          pieceType={pieceType}                       setPieceType={setPieceType}
+          templateIncludePrice={templateIncludePrice} setTemplateIncludePrice={setTemplateIncludePrice}
+          freePrompt={freePrompt}                     setFreePrompt={setFreePrompt}
           tenantId={tenantId}                         sessionId={sessionId}
           onNext={() => setStep("generation")}
           onBack={() => setStep("choose_outputs")}
@@ -1338,7 +1901,8 @@ export function FotoEstudioWizard({
           onReset={handleReset}
           onSaveAll={handleSaveAll}
           orgSlug={orgSlug}
-          sessionId={sessionId}
+          frontUrl={frontUrl || undefined}
+          backUrl={backUrl   || undefined}
         />
       )}
     </div>

@@ -37,6 +37,7 @@ import type {
 import { canAdvanceDoJeansStrict }    from "@/lib/marketing-studio/do-jeans-intake";
 import { resolveDoJeansWorkflow }     from "@/lib/marketing-studio/do-jeans-workflow";
 import { buildShopifyDraft }          from "@/lib/marketing-studio/shopify-draft-builder";
+import type { TenantShopifyConfig }   from "@/lib/marketing-studio/types";
 import {
   JEANS_POCKET_STYLES,
   DENIM_WASHES,
@@ -1436,9 +1437,11 @@ function PublishExportStep({
 export function StudioWizard({
   orgSlug,
   tenantId,
+  shopifyConfig,
 }: {
-  orgSlug:  string;
-  tenantId: string;
+  orgSlug:        string;
+  tenantId:       string;
+  shopifyConfig?: TenantShopifyConfig;
 }) {
   const [session, dispatch] = useReducer(
     studioReducer,
@@ -1548,15 +1551,16 @@ export function StudioWizard({
 
   function handleAdvanceToPublish() {
     // Build Shopify draft package for Do Jeans before entering publish step
-    if (isDoJeansJeans) {
+    if (isDoJeansJeans && shopifyConfig) {
       const frontItem = session.reviewItems.find(i => i.type === "front_clean");
       const backItem  = session.reviewItems.find(i => i.type === "back_clean");
       if (frontItem && backItem) {
         const draft = buildShopifyDraft({
-          product:      { sku: sku.trim(), imageUrl: imageUrl.trim(), backImageUrl: backImageUrl.trim() || undefined },
-          inputs:       session.inputs,
-          frontAssetId: frontItem.id,
-          backAssetId:  backItem.id,
+          product:       { sku: sku.trim(), imageUrl: imageUrl.trim(), backImageUrl: backImageUrl.trim() || undefined },
+          inputs:        session.inputs,
+          frontAssetId:  frontItem.id,
+          backAssetId:   backItem.id,
+          shopifyConfig,
         });
         setShopifyDraft(draft);
       }

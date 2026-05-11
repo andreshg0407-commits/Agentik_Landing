@@ -29,7 +29,7 @@ export default async function PresetRegistryPage({
   const { orgSlug }    = await params;
   const { membership } = await requireOrgAccess(orgSlug);
 
-  if (!isInternalRole(membership.role)) redirect(`/${orgSlug}/agentik`);
+  if (!isInternalRole(membership.role)) redirect(`/${orgSlug}/agentik/marketing-studio`);
 
   // Compute which tenants use each preset
   const presetTenantMap = buildPresetTenantMap();
