@@ -259,21 +259,6 @@ interface FlowRowDef {
 function FlowRow({ def }: { def: FlowRowDef }) {
   const isLive = def.status === "live";
 
-  const ctaBtnStyle: CSSProperties = {
-    fontFamily:     T.mono,
-    fontSize:       T.sz.sm,
-    fontWeight:     T.wt.bold,
-    padding:        "5px 14px",
-    background:     C.ink,
-    color:          C.white,
-    border:         "none",
-    borderRadius:   R.sm,
-    cursor:         "pointer",
-    textDecoration: "none",
-    display:        "inline-block",
-    whiteSpace:     "nowrap",
-  };
-
   return (
     <div
       className={isLive ? "ag-op-row" : "ag-op-row ag-op-row--passive"}
@@ -281,72 +266,55 @@ function FlowRow({ def }: { def: FlowRowDef }) {
         display:      "flex",
         alignItems:   "center",
         gap:          S[3],
-        padding:      `${S[2]+2}px ${S[4]}px`,
+        padding:      `${S[3]}px ${S[4]}px`,
         borderBottom: `1px solid ${C.lineSubtle}`,
+        borderLeft:   isLive ? `3px solid ${C.green}` : `3px solid transparent`,
+        background:   isLive ? C.white : C.surface,
+        minHeight:    52,
       }}
     >
-      {/* Status dot */}
-      <div style={{
-        width:        6,
-        height:       6,
-        borderRadius: "50%",
-        background:   isLive ? C.green : C.inkGhost,
-        flexShrink:   0,
-      }} />
-
-      {/* Title + category tag */}
-      <div style={{ flex: "0 0 210px", display: "flex", alignItems: "center", gap: 7 }}>
+      {/* Title + tag block */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "0 0 auto", minWidth: 0 }}>
+        <div style={{ width: 7, height: 7, borderRadius: "50%", background: isLive ? C.green : C.inkGhost, flexShrink: 0 }} />
         <span style={{
-          fontFamily: T.mono,
-          fontSize:   T.sz.md,
-          fontWeight: T.wt.bold,
-          color:      isLive ? C.ink : C.inkLight,
-          whiteSpace: "nowrap",
+          fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.black,
+          color: isLive ? C.ink : C.inkFaint, whiteSpace: "nowrap",
         }}>
           {def.title}
         </span>
         <span style={{
-          fontFamily:    T.mono,
-          fontSize:      T.sz["2xs"],
-          fontWeight:    T.wt.black,
-          padding:       "2px 6px",
-          borderRadius:  R.xs,
-          background:    isLive ? def.tagBg    : C.surface,
-          color:         isLive ? def.tagColor : C.inkFaint,
-          textTransform: "uppercase",
-          letterSpacing: "0.04em",
-          whiteSpace:    "nowrap",
+          fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.black,
+          padding: "2px 7px", borderRadius: R.xs,
+          background: isLive ? def.tagBg  : C.surface,
+          color:      isLive ? def.tagColor : C.inkGhost,
+          textTransform: "uppercase", letterSpacing: "0.04em", whiteSpace: "nowrap",
         }}>
           {def.tag}
         </span>
+        {isLive && (
+          <span style={{
+            fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold,
+            color: C.green, background: C.greenLight, borderRadius: R.xs, padding: "2px 6px",
+          }}>
+            Listo
+          </span>
+        )}
       </div>
 
       {/* Description */}
       <div style={{
-        flex:         1,
-        fontFamily:   T.mono,
-        fontSize:     T.sz.sm,
-        color:        C.inkLight,
-        overflow:     "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace:   "nowrap",
-        minWidth:     0,
+        flex: 1, fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight,
+        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0,
       }}>
         {def.description}
       </div>
 
-      {/* Blocker reason */}
+      {/* Blocker badge */}
       {!isLive && def.blockerReason && (
         <span style={{
-          fontFamily:   T.mono,
-          fontSize:     T.sz.xs,
-          color:        C.amberDark,
-          background:   C.amberLight,
-          border:       `1px solid ${C.amberBorder}`,
-          borderRadius: R.xs,
-          padding:      "2px 8px",
-          whiteSpace:   "nowrap",
-          flexShrink:   0,
+          fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint,
+          background: C.surface, border: `1px solid ${C.line}`,
+          borderRadius: R.xs, padding: "2px 8px", whiteSpace: "nowrap", flexShrink: 0,
         }}>
           {def.blockerReason}
         </span>
@@ -355,13 +323,17 @@ function FlowRow({ def }: { def: FlowRowDef }) {
       {/* CTA */}
       <div style={{ flexShrink: 0 }}>
         {isLive && def.ctaHref && (
-          <a href={def.ctaHref} style={ctaBtnStyle}>{def.ctaLabel}</a>
+          <a href={def.ctaHref} className="ag-action-primary" style={{ textDecoration: "none" }}>
+            {def.ctaLabel}
+          </a>
         )}
         {isLive && !def.ctaHref && def.onSelect && (
-          <button onClick={def.onSelect} style={ctaBtnStyle}>{def.ctaLabel}</button>
+          <button onClick={def.onSelect} className="ag-action-primary">
+            {def.ctaLabel}
+          </button>
         )}
         {!isLive && (
-          <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint }}>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkGhost }}>
             Próximamente
           </span>
         )}
@@ -1049,103 +1021,469 @@ function ReconModuleHeader({
   );
 }
 
-// ── Source status chip (data sources layer) ───────────────────────────────────
+// ── Source definition types + builder ────────────────────────────────────────
 
-function SourceStatusChip({
-  label,
-  sublabel,
-  status,
-  detail,
-}: {
-  label:    string;
-  sublabel: string;
-  status:   "connected" | "pending" | "partial";
-  detail:   string;
-}) {
-  const dotColor = status === "connected" ? C.green
-                 : status === "partial"   ? C.amber
-                 : C.inkGhost;
-  const txtColor = status === "connected" ? C.green
-                 : status === "partial"   ? C.amberDark
-                 : C.inkLight;
-  const bg       = status === "connected" ? C.greenLight
-                 : status === "partial"   ? C.amberLight
-                 : C.surface;
-  const border   = status === "connected" ? C.greenBorder
-                 : status === "partial"   ? C.amberBorder
-                 : C.line;
+type SourceGroup  = "all" | "bancos" | "tarjetas" | "plataformas" | "fiscal" | "erp";
+type SourceStatus = "connected" | "requires_action" | "partial" | "pending";
+type SourceActionType = "review" | "validate" | "upload" | "configure" | "connect" | "none";
+
+interface SourceDef {
+  id:           string;
+  name:         string;
+  type:         SourceGroup;
+  typeLabel:    string;
+  status:       SourceStatus;
+  signal?:      string;
+  pucCode?:     string;
+  actionType:   SourceActionType;
+  actionLabel?: string;
+  href?:        string;
+}
+
+function buildSourceDefs(streams: FinancialStream[], orgSlug: string): SourceDef[] {
+  const statics: SourceDef[] = [
+    {
+      id: "sag", name: "SAG", type: "erp", typeLabel: "ERP",
+      status: "connected", signal: "Cobros · Ventas · Pedidos · Cartera",
+      actionType: "review", actionLabel: "Revisar", href: `/${orgSlug}/integrations`,
+    },
+    {
+      id: "dian", name: "DIAN", type: "fiscal", typeLabel: "Fiscal",
+      status: "pending", signal: "Requiere configuración de integración",
+      actionType: "configure", actionLabel: "Configurar",
+    },
+  ];
+
+  const streamDefs: SourceDef[] = streams.map(s => {
+    const type: SourceGroup    = s.group === "bancos" ? "bancos" : s.group === "tarjetas" ? "tarjetas" : "plataformas";
+    const typeLabel            = s.group === "bancos" ? "Banco"  : s.group === "tarjetas" ? "Tarjeta"  : "Plataforma";
+    const status: SourceStatus = s.requiresAction
+      ? "requires_action"
+      : s.status === "integration_pending" || s.status === "missing_sag_mapping"
+        ? "pending"
+        : s.status === "partial_visibility" ? "partial" : "connected";
+    const actionType: SourceActionType = s.requiresAction
+      ? (s.status === "reconciliation_pending" ? "validate" : "upload")
+      : s.status === "integration_pending" ? "connect" : "review";
+    const actionLabel = s.requiresAction
+      ? (s.status === "reconciliation_pending" ? "Validar" : "Subir extracto")
+      : s.status === "integration_pending" ? "Preparar integración" : "Ver actividad";
+    const primary = s.signals.find(sig => sig.level === "warn")
+                 ?? s.signals.find(sig => sig.level === "info")
+                 ?? s.signals[0];
+    return {
+      id: s.id, name: s.displayName, type, typeLabel, status,
+      signal:      primary?.value ?? undefined,
+      pucCode:     s.sagAccountCode || undefined,
+      actionType,  actionLabel,
+    };
+  });
+
+  return [...statics, ...streamDefs];
+}
+
+// ── Source card ───────────────────────────────────────────────────────────────
+
+const SOURCE_TYPE_COLORS: Record<SourceGroup, { bg: string; color: string }> = {
+  erp:         { bg: C.blueLight,  color: C.blueDark   },
+  fiscal:      { bg: C.redLight,   color: C.redDark    },
+  bancos:      { bg: C.greenLight, color: C.greenDark  },
+  tarjetas:    { bg: C.brandLight, color: C.brandDark  },
+  plataformas: { bg: C.amberLight, color: C.amberDark  },
+  all:         { bg: C.surface,    color: C.inkFaint   },
+};
+
+function SourceCard({ def }: { def: SourceDef }) {
+  const isConnected = def.status === "connected";
+  const isAction    = def.status === "requires_action";
+  const isPending   = def.status === "pending";
+
+  const dotColor    = isConnected ? C.green : isAction ? C.amber : isPending ? C.inkGhost : C.blue;
+  const borderColor = isConnected ? C.greenBorder : isAction ? C.amberBorder : isPending ? C.line : C.blueBorder;
+  const bg          = isConnected ? C.greenLight  : isAction ? C.amberLight  : isPending ? C.surface : C.blueLight;
+  const statusLabel = isConnected ? "Conectado" : isAction ? "Requiere acción" : isPending ? "Pendiente" : "Parcial";
+  const tc          = SOURCE_TYPE_COLORS[def.type] ?? SOURCE_TYPE_COLORS.all;
+
+  const handleAction = () => {
+    // Placeholder — backend endpoint required to activate
+    console.log("[recon] source action:", def.id, def.actionType);
+  };
+
+  const ctaBase: CSSProperties = {
+    display:      "block",
+    width:        "100%",
+    fontFamily:   T.mono,
+    fontSize:     T.sz.sm,
+    fontWeight:   T.wt.bold,
+    padding:      "4px 10px",
+    borderRadius: R.sm,
+    whiteSpace:   "nowrap",
+    cursor:       "pointer",
+    border:       "none",
+    textAlign:    "center",
+    boxSizing:    "border-box",
+  };
 
   return (
     <div style={{
-      flex:         "1 1 180px",
-      padding:      `${S[2]+2}px ${S[3]+2}px`,
-      border:       `1px solid ${border}`,
-      borderRadius: R.lg,
-      background:   bg,
-      boxShadow:    E.xs,
+      flex:          "0 0 auto",
+      width:         200,
+      border:        `1px solid ${borderColor}`,
+      borderRadius:  R.lg,
+      background:    bg,
+      padding:       `${S[3]}px ${S[3]+2}px`,
+      boxShadow:     E.xs,
+      display:       "flex",
+      flexDirection: "column",
+      gap:           S[1]+1,
     }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: S[1] }}>
-        <div style={{ width: 7, height: 7, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />
-        <span style={{ fontFamily: T.mono, fontSize: T.sz.base, fontWeight: T.wt.black, color: txtColor }}>
-          {label}
+      {/* Type badge + status dot row */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span style={{
+          fontFamily:    T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.black,
+          background: tc.bg, color: tc.color, borderRadius: R.xs, padding: "2px 6px",
+          textTransform: "uppercase", letterSpacing: "0.05em",
+        }}>
+          {def.typeLabel}
         </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <div style={{ width: 6, height: 6, borderRadius: "50%", background: dotColor }} />
+          <span style={{
+            fontFamily: T.mono, fontSize: T.sz["2xs"],
+            color: isConnected ? C.greenDark : isAction ? C.amberDark : C.inkFaint,
+          }}>
+            {statusLabel}
+          </span>
+        </div>
       </div>
-      <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginBottom: 2 }}>
-        {sublabel}
+
+      {/* Name */}
+      <div
+        title={def.name}
+        style={{
+          fontFamily: T.mono, fontSize: T.sz.md, fontWeight: T.wt.black, color: C.ink,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: S[1],
+        }}
+      >
+        {def.name}
       </div>
-      <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight }}>
-        {detail}
-      </div>
+
+      {/* PUC code */}
+      {def.pucCode && (
+        <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkGhost, letterSpacing: "0.02em" }}>
+          PUC {def.pucCode}
+        </div>
+      )}
+
+      {/* Signal */}
+      {def.signal && (
+        <div
+          title={def.signal}
+          style={{
+            fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight,
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1,
+          }}
+        >
+          {def.signal}
+        </div>
+      )}
+
+      {/* Action */}
+      {def.actionLabel && (
+        <div style={{ marginTop: "auto", paddingTop: S[1]+1 }}>
+          {def.href && def.actionType === "review" ? (
+            <a
+              href={def.href}
+              style={{ ...ctaBase, background: C.ink, color: C.white, textDecoration: "none" }}
+            >
+              {def.actionLabel}
+            </a>
+          ) : isPending ? (
+            <button
+              disabled
+              style={{ ...ctaBase, background: C.surface, color: C.inkFaint, border: `1px solid ${C.line}`, cursor: "not-allowed" }}
+            >
+              {def.actionLabel}
+            </button>
+          ) : (
+            <button
+              onClick={handleAction}
+              style={{ ...ctaBase, background: isAction ? C.amberDark : C.ink, color: C.white }}
+            >
+              {def.actionLabel}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-// ── Data Sources Layer ─────────────────────────────────────────────────────────
+// ── Data Sources Layer — carousel + filters + collapsed technical matrix ──────
+
+const SOURCE_FILTER_LABELS: Record<SourceGroup, string> = {
+  all: "Todas", bancos: "Bancos", tarjetas: "Tarjetas",
+  plataformas: "Plataformas", fiscal: "Fiscal", erp: "ERP",
+};
+const SOURCE_FILTER_ORDER: SourceGroup[] = ["all", "bancos", "tarjetas", "plataformas", "fiscal", "erp"];
 
 function DataSourcesLayer({ streams, orgSlug }: { streams?: FinancialStream[]; orgSlug: string }) {
-  const allStreams     = streams ?? [];
-  const bankCount     = allStreams.filter(s => s.group === "bancos").length;
-  const platformCount = allStreams.filter(s => s.group === "plataformas").length;
-  const cardCount     = allStreams.filter(s => s.group === "tarjetas").length;
+  const allStreams  = streams ?? [];
+  const sourceDefs = buildSourceDefs(allStreams, orgSlug);
+
+  const actionCount  = sourceDefs.filter(s => s.status === "requires_action").length;
+  const activeCount  = sourceDefs.filter(s => s.status === "connected" || s.status === "partial").length;
+
+  const [filter,  setFilter]  = useState<SourceGroup>("all");
+  const [techOpen, setTechOpen] = useState(false);
+
+  const filtered = filter === "all" ? sourceDefs : sourceDefs.filter(s => s.type === filter);
 
   return (
-    <WorkspaceSection title="Fuentes de datos" divider={false}>
-      {/* Source chips row */}
-      <div style={{ display: "flex", gap: S[2]+2, marginBottom: S[4], flexWrap: "wrap" }}>
-        <SourceStatusChip
-          label="SAG"
-          sublabel="Sistema administrativo"
-          status="connected"
-          detail="Cobros · Ventas · Pedidos · Cartera"
-        />
-        <SourceStatusChip
-          label="DIAN"
-          sublabel="Facturación electrónica"
-          status="pending"
-          detail="Requiere configuración de integración"
-        />
-        {bankCount > 0 && (
-          <SourceStatusChip
-            label={`${bankCount} cuentas bancarias`}
-            sublabel="Bancos"
-            status="partial"
-            detail="Códigos PUC registrados · pendiente validación"
-          />
-        )}
-        {(platformCount + cardCount) > 0 && (
-          <SourceStatusChip
-            label={`${platformCount + cardCount} plataformas`}
-            sublabel="PayCo · MercadoPago · EnvíoClick · Tarjetas"
-            status="pending"
-            detail="Pendiente integración de API"
-          />
-        )}
+    <div style={{ marginTop: S[8] }}>
+      <WorkspaceSection
+        title="Fuentes de datos"
+        subtitle={`${sourceDefs.length} fuentes · ${activeCount} activas`}
+      >
+        {/* Filter chips */}
+        <div style={{ display: "flex", gap: S[2], marginBottom: S[4], flexWrap: "wrap", alignItems: "center" }}>
+          {SOURCE_FILTER_ORDER.map(g => {
+            const count = g === "all" ? sourceDefs.length : sourceDefs.filter(s => s.type === g).length;
+            if (count === 0 && g !== "all") return null;
+            const active = filter === g;
+            return (
+              <button
+                key={g}
+                onClick={() => setFilter(g)}
+                style={{
+                  fontFamily: T.mono, fontSize: T.sz.sm,
+                  fontWeight: active ? T.wt.bold : T.wt.normal,
+                  padding: "4px 12px", borderRadius: R.sm,
+                  background: active ? C.ink : C.surface,
+                  color:      active ? C.white : C.inkLight,
+                  border:     `1px solid ${active ? C.ink : C.line}`,
+                  cursor: "pointer", whiteSpace: "nowrap",
+                }}
+              >
+                {SOURCE_FILTER_LABELS[g]}
+                <span style={{ marginLeft: 5, fontSize: T.sz["2xs"], color: active ? C.white : C.inkGhost }}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+          {actionCount > 0 && (
+            <span style={{
+              fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold,
+              color: C.amberDark, background: C.amberLight, border: `1px solid ${C.amberBorder}`,
+              borderRadius: R.sm, padding: "4px 10px", marginLeft: "auto", whiteSpace: "nowrap",
+            }}>
+              {actionCount} requiere{actionCount !== 1 ? "n" : ""} atención
+            </span>
+          )}
+        </div>
+
+        {/* Source cards carousel */}
+        <div style={{ display: "flex", gap: S[3], overflowX: "auto", paddingBottom: S[2] }}>
+          {filtered.length === 0 ? (
+            <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkFaint, padding: `${S[3]}px 0` }}>
+              Sin fuentes en este grupo
+            </div>
+          ) : (
+            filtered.map(def => <SourceCard key={def.id} def={def} />)
+          )}
+        </div>
+
+        {/* Collapsed technical matrix */}
+        <div style={{ marginTop: S[4] }}>
+          <button
+            onClick={() => setTechOpen(o => !o)}
+            style={{
+              fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold,
+              color: C.inkFaint, background: "none", border: "none", cursor: "pointer",
+              padding: 0, textDecoration: "underline", letterSpacing: "0.02em",
+            }}
+          >
+            {techOpen ? "▲ Ocultar matriz técnica" : "▼ Ver matriz técnica"}
+          </button>
+          {techOpen && (
+            <div style={{ marginTop: S[3] }}>
+              {allStreams.length > 0
+                ? <FinancialStreamsPanel streams={allStreams} orgSlug={orgSlug} />
+                : <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkFaint, padding: `${S[3]}px 0` }}>
+                    Sin fuentes financieras registradas
+                  </div>
+              }
+            </div>
+          )}
+        </div>
+      </WorkspaceSection>
+    </div>
+  );
+}
+
+// ── Manual File Reconciliation Workspace ─────────────────────────────────────
+
+type FileFormat = "xml" | "csv";
+
+function FileUploadZone({
+  label,
+  format,
+  onFormatChange,
+}: {
+  label:          string;
+  format:         FileFormat;
+  onFormatChange: (f: FileFormat) => void;
+}) {
+  return (
+    <div style={{
+      flex:         "1 1 0",
+      border:       `1px solid ${C.line}`,
+      borderRadius: R.lg,
+      background:   C.surface,
+      padding:      `${S[4]}px`,
+      minWidth:     200,
+    }}>
+      <div style={{
+        fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.black,
+        color: C.inkFaint, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: S[2],
+      }}>
+        {label}
       </div>
 
-      {/* Financial streams detail sub-layer */}
-      {allStreams.length > 0 && (
-        <FinancialStreamsPanel streams={allStreams} orgSlug={orgSlug} />
-      )}
+      {/* Format selector */}
+      <div style={{ display: "flex", gap: S[1]+1, marginBottom: S[3], alignItems: "center" }}>
+        {(["xml", "csv"] as FileFormat[]).map(f => (
+          <button
+            key={f}
+            onClick={() => onFormatChange(f)}
+            style={{
+              fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold,
+              padding: "3px 10px", borderRadius: R.sm,
+              background: format === f ? C.ink : C.white,
+              color:      format === f ? C.white : C.inkLight,
+              border:     `1px solid ${format === f ? C.ink : C.line}`,
+              cursor: "pointer", textTransform: "uppercase",
+            }}
+          >
+            {f}
+          </button>
+        ))}
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkGhost }}>
+          · PDF/XLSX próximamente
+        </span>
+      </div>
+
+      {/* Drop zone */}
+      <div style={{
+        border:       `1.5px dashed ${C.line}`,
+        borderRadius: R.md,
+        background:   C.white,
+        padding:      `${S[4]+2}px ${S[3]}px`,
+        textAlign:    "center",
+        marginBottom: S[3],
+      }}>
+        <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight, marginBottom: S[1]+1 }}>
+          Selecciona archivo {format.toUpperCase()}
+        </div>
+        <input
+          type="file"
+          accept={format === "xml" ? ".xml" : ".csv"}
+          disabled
+          style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkFaint }}
+        />
+      </div>
+
+      {/* Description input */}
+      <input
+        type="text"
+        disabled
+        placeholder={`Descripción (ej. Extracto ${label} Abr 2026)`}
+        style={{
+          width:        "100%",
+          fontFamily:   T.mono,
+          fontSize:     T.sz.sm,
+          padding:      "5px 8px",
+          border:       `1px solid ${C.line}`,
+          borderRadius: R.sm,
+          background:   C.white,
+          color:        C.inkLight,
+          boxSizing:    "border-box",
+        }}
+      />
+    </div>
+  );
+}
+
+function ManualReconciliationWorkspace() {
+  const [fmtA, setFmtA] = useState<FileFormat>("csv");
+  const [fmtB, setFmtB] = useState<FileFormat>("csv");
+
+  return (
+    <WorkspaceSection
+      title="Conciliación manual asistida"
+      subtitle="Carga dos fuentes · Agentik prepara la comparación"
+    >
+      <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight, marginBottom: S[4], lineHeight: 1.7 }}>
+        Carga dos fuentes y Agentik preparará una conciliación asistida cuando el motor manual esté activo.
+        Soporta XML y CSV — útil para extractos bancarios, exportaciones SAG, y archivos DIAN.
+      </div>
+
+      {/* Upload zones */}
+      <div style={{ display: "flex", gap: S[4], flexWrap: "wrap", marginBottom: S[5] }}>
+        <FileUploadZone label="Fuente A" format={fmtA} onFormatChange={setFmtA} />
+        <FileUploadZone label="Fuente B" format={fmtB} onFormatChange={setFmtB} />
+      </div>
+
+      {/* Engine status */}
+      <div style={{
+        display:      "flex",
+        alignItems:   "center",
+        gap:          S[3],
+        padding:      `${S[3]}px ${S[4]}px`,
+        border:       `1px solid ${C.blueBorder}`,
+        borderLeft:   `3px solid ${C.blue}`,
+        borderRadius: R.md,
+        background:   C.blueLight,
+        marginBottom: S[4],
+      }}>
+        <div style={{ width: 6, height: 6, borderRadius: "50%", background: C.blue, flexShrink: 0 }} />
+        <div>
+          <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold, color: C.blueDark }}>
+            Preparando motor de carga manual
+          </div>
+          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight, marginTop: 2 }}>
+            El motor de carga manual estará disponible próximamente. El operador recibirá notificación cuando esté activo.
+          </div>
+        </div>
+      </div>
+
+      {/* CTA (disabled) */}
+      <div style={{ display: "flex", alignItems: "center", gap: S[3] }}>
+        <button
+          disabled
+          className="ag-action-primary"
+          style={{ opacity: 0.4, cursor: "not-allowed" }}
+        >
+          Preparar conciliación
+        </button>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint }}>
+          Requiere seleccionar ambas fuentes y motor activo
+        </span>
+      </div>
+
+      {/* Copilot note (below CTA — visible but secondary) */}
+      <div style={{
+        marginTop:  S[5],
+        fontFamily: T.mono,
+        fontSize:   T.sz.sm,
+        color:      C.inkLight,
+        borderTop:  `1px solid ${C.lineSubtle}`,
+        paddingTop: S[3],
+      }}>
+        <span style={{ fontWeight: T.wt.bold, color: C.brand }}>Agentik Copilot</span>
+        {" "}podrá ayudarte a interpretar diferencias y sugerir reglas de conciliación cuando el motor esté activo.
+      </div>
     </WorkspaceSection>
   );
 }
@@ -1238,24 +1576,6 @@ function ReconciliationBuilder({
       subtitle={`${liveCount} activo · ${soonCount} próximamente`}
     >
       <div className="ag-op-table">
-        {/* Column headers */}
-        <div className="ag-op-table-head" style={{
-          display:    "flex",
-          alignItems: "center",
-          gap:        S[3],
-          padding:    `5px ${S[4]}px`,
-        }}>
-          <div style={{ width: 6, flexShrink: 0 }} />
-          <div style={{ flex: "0 0 210px", fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.inkFaint, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-            Flujo
-          </div>
-          <div style={{ flex: 1, fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.inkFaint, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-            Descripción
-          </div>
-          <div style={{ width: 90 }} />
-          <div style={{ width: 90 }} />
-        </div>
-
         {flows.map(f => <FlowRow key={f.id} def={f} />)}
       </div>
     </WorkspaceSection>
@@ -1741,13 +2061,18 @@ export default function ReconClient({
             onSelectFlow={(id) => setSelectedFlow(id)}
           />
 
-          {/* Layer 3: Data Sources — SAG / DIAN / Bancos + FinancialStreamsPanel (detail layer) */}
+          {/* Layer 3: Data Sources — carousel + filters + collapsed technical matrix */}
           <DataSourcesLayer streams={streams} orgSlug={orgSlug} />
 
-          {/* Layer 4: Sesiones recientes */}
+          {/* Layer 4: Manual File Reconciliation Workspace */}
+          <div style={{ marginTop: S[8] }}>
+            <ManualReconciliationWorkspace />
+          </div>
+
+          {/* Layer 5: Sesiones recientes */}
           <RecentSessionsSection sessions={recentSessions ?? []} />
 
-          {/* Layer 5: Copilot readiness */}
+          {/* Layer 6: Copilot readiness (secondary — copilot note already in ManualWorkspace) */}
           <div style={{ marginTop: S[6] }}>
             <CopilotReadinessSlot
               label="Agentik Copilot — Conciliación"
