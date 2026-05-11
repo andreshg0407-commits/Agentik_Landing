@@ -12,6 +12,7 @@
  */
 
 import { useState, useEffect, useCallback, type FormEvent } from "react";
+import { formatDateCol } from "@/lib/utils/formatDate";
 import type { CSSProperties } from "react";
 import {
   serverCreateAction,
@@ -79,7 +80,7 @@ const SOURCE_LABELS: Record<string, string> = {
 function fmtDate(d: Date | string | null | undefined): string {
   if (!d) return "—";
   const dt = typeof d === "string" ? new Date(d) : d;
-  return dt.toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" });
+  return formatDateCol(dt);
 }
 
 function fmtRelTime(d: Date | string): string {

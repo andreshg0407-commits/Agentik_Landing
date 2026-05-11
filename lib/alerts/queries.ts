@@ -60,12 +60,47 @@ export async function listAlerts(
       id: true,
       type: true,
       title: true,
+      message: true,
       severity: true,
       status: true,
+      sourceType: true,
+      sourceId: true,
+      metadataJson: true,
+      resolvedAt: true,
       createdAt: true,
       updatedAt: true,
     },
   });
+}
+
+// ── Alert Rules ───────────────────────────────────────────────────────────────
+
+export interface AlertRuleRow {
+  id:           string;
+  name:         string;
+  description:  string | null;
+  eventType:    string;
+  conditionJson: unknown;
+  actionJson:    unknown;
+  priority:     number;
+  status:       "ACTIVE" | "PAUSED" | "ARCHIVED";
+  moduleCode:   string | null;
+  createdAt:    Date;
+  updatedAt:    Date;
+}
+
+export async function listAlertRules(
+  organizationId: string,
+): Promise<AlertRuleRow[]> {
+  return prisma.rule.findMany({
+    where: { organizationId, status: { not: "ARCHIVED" } },
+    orderBy: [{ priority: "asc" }, { createdAt: "desc" }],
+    select: {
+      id: true, name: true, description: true, eventType: true,
+      conditionJson: true, actionJson: true, priority: true,
+      status: true, moduleCode: true, createdAt: true, updatedAt: true,
+    },
+  }) as Promise<AlertRuleRow[]>;
 }
 
 export async function getAlert(alertId: string, organizationId: string) {
