@@ -40,12 +40,12 @@ const ACTION_META: Record<CopilotActionType, {
   bg:     string;
   border: string;
 }> = {
-  ask:       { label: "Consultar",  color: C.brand,    bg: C.brandLight,  border: C.brandBorder },
-  recommend: { label: "Recomendar", color: C.blue,     bg: C.blueLight,   border: C.blueBorder  },
-  execute:   { label: "Ejecutar",   color: C.green,    bg: C.greenLight,  border: C.greenBorder },
-  delegate:  { label: "Delegar",    color: C.amber,    bg: C.amberLight,  border: C.amberBorder },
-  escalate:  { label: "Escalar",    color: C.red,      bg: C.redLight,    border: C.redBorder   },
-  schedule:  { label: "Programar",  color: C.inkMid,   bg: C.surfaceAlt,  border: C.line        },
+  ask:       { label: "Consultar",  color: C.blueDark, bg: "#EEF5FF",     border: "rgba(0,74,173,.18)" },
+  recommend: { label: "Recomendar", color: C.blue,     bg: C.blueLight,   border: C.blueBorder         },
+  execute:   { label: "Ejecutar",   color: C.green,    bg: C.greenLight,  border: C.greenBorder        },
+  delegate:  { label: "Delegar",    color: C.amber,    bg: C.amberLight,  border: C.amberBorder        },
+  escalate:  { label: "Escalar",    color: C.red,      bg: C.redLight,    border: C.redBorder          },
+  schedule:  { label: "Programar",  color: C.inkMid,   bg: C.surfaceAlt,  border: C.line               },
 };
 
 // ── Specialist display names ──────────────────────────────────────────────────
@@ -80,18 +80,18 @@ function ActionButton({
   // "task" is the remaining mode (ActionTask created for manual follow-up)
 
   // Colour scheme per outcome
-  const doneBorder = isChain     ? C.brandBorder
+  const doneBorder = isChain     ? "rgba(0,74,173,.18)"
                    : isExec      ? C.greenBorder
                    : isDelegated ? C.amberBorder
-                   : C.brandBorder;
-  const doneBg     = isChain     ? C.brandLight
+                   : "rgba(0,74,173,.18)";
+  const doneBg     = isChain     ? "#EEF5FF"
                    : isExec      ? C.greenLight
                    : isDelegated ? C.amberLight
-                   : C.brandLight;
-  const doneColor  = isChain     ? C.brand
+                   : "#EEF5FF";
+  const doneColor  = isChain     ? C.blueDark
                    : isExec      ? C.green
                    : isDelegated ? C.amber
-                   : C.brand;
+                   : C.blueDark;
 
   const doneLabel  = isChain     ? "✓ Workflow Ejecutado"
                    : isExec      ? (result?.resultMessage || "✓ Ejecutado")
@@ -159,7 +159,7 @@ function ChainProgress({ steps }: { steps: ChainStepResult[] }) {
       marginTop:     S[1],
       marginLeft:    S[1] + 2,
       paddingLeft:   S[2],
-      borderLeft:    `2px solid ${C.brandBorder}`,
+      borderLeft:    "2px solid rgba(0,74,173,.18)",
       display:       "flex",
       flexDirection: "column",
       gap:           3,
@@ -169,11 +169,11 @@ function ChainProgress({ steps }: { steps: ChainStepResult[] }) {
         const isTask      = step.mode === "task";
         const isDelegate  = step.mode === "delegated";
         const dotColor    = isFailed   ? C.red
-                          : isTask     ? C.brand
+                          : isTask     ? C.blueDark
                           : isDelegate ? C.amber
                           : C.green;
         const msgColor    = isFailed   ? C.redDark
-                          : isTask     ? C.brand
+                          : isTask     ? C.blueDark
                           : isDelegate ? C.amberDark
                           : C.green;
 
@@ -358,7 +358,7 @@ export function CopilotRail({ orgSlug, moduleContext }: CopilotRailProps) {
         <span style={{
           fontSize:   T.sz.base,
           fontFamily: T.mono,
-          color:      C.brand,
+          color:      C.blueDark,
           fontWeight: T.wt.bold,
           flexShrink: 0,
         }}>
@@ -371,7 +371,7 @@ export function CopilotRail({ orgSlug, moduleContext }: CopilotRailProps) {
             fontFamily:    T.sans,
             fontSize:      T.sz["2xs"],
             fontWeight:    T.wt.bold,
-            color:         C.brandDark,
+            color:         C.blueDark,
             textTransform: "uppercase" as const,
             letterSpacing: "0.06em",
           }}>
@@ -393,9 +393,9 @@ export function CopilotRail({ orgSlug, moduleContext }: CopilotRailProps) {
         <span style={{
           fontSize:     T.sz["2xs"],
           fontFamily:   T.mono,
-          color:        C.brand,
-          background:   C.brandLight,
-          border:       `1px solid ${C.brandBorder}`,
+          color:        C.blueDark,
+          background:   "#EEF5FF",
+          border:       "1px solid rgba(0,74,173,.18)",
           borderRadius: R.pill,
           padding:      "1px 6px",
           whiteSpace:   "nowrap" as const,
@@ -413,7 +413,7 @@ export function CopilotRail({ orgSlug, moduleContext }: CopilotRailProps) {
         lineHeight:    1.45,
         marginBottom:  S[2],
         paddingBottom: S[2],
-        borderBottom:  `1px solid ${C.sidebarLine}`,
+        borderBottom:  "1px solid var(--ag-line, rgba(0,74,173,.12))",
       }}>
         {moduleContext.description}
       </div>
@@ -437,16 +437,16 @@ export function CopilotRail({ orgSlug, moduleContext }: CopilotRailProps) {
                 fontSize:     T.sz["2xs"],
                 fontFamily:   T.sans,
                 lineHeight:   1.5,
-                background:   isUser ? C.brandLight  : C.surface,
-                border:       `1px solid ${isUser ? C.brandBorder : C.line}`,
-                color:        isUser ? C.brandDark   : C.inkMid,
+                background:   isUser ? "#EEF5FF"    : C.surface,
+                border:       `1px solid ${isUser ? "rgba(0,74,173,.18)" : C.line}`,
+                color:        isUser ? C.blueDark   : C.inkMid,
                 alignSelf:    isUser ? "flex-end"    : "flex-start",
                 maxWidth:     "92%",
               }}>
                 <div style={{
                   fontSize:     T.sz["2xs"],
                   fontWeight:   T.wt.bold,
-                  color:        isUser ? C.brand : C.inkFaint,
+                  color:        isUser ? C.blueDark : C.inkFaint,
                   marginBottom: 2,
                   fontFamily:   T.mono,
                 }}>
@@ -459,7 +459,7 @@ export function CopilotRail({ orgSlug, moduleContext }: CopilotRailProps) {
 
           {/* Thinking indicator */}
           {isPending && messages[messages.length - 1]?.role === "user" && (
-            <div style={{
+            <div className="ag-copilot-thinking" style={{
               padding:      `${S[1] + 2}px ${S[2]}px`,
               borderRadius: R.md,
               fontSize:     T.sz["2xs"],
@@ -485,7 +485,7 @@ export function CopilotRail({ orgSlug, moduleContext }: CopilotRailProps) {
           gap:           S[1],
           marginBottom:  S[2],
           paddingBottom: S[2],
-          borderBottom:  `1px solid ${C.sidebarLine}`,
+          borderBottom:  "1px solid var(--ag-line, rgba(0,74,173,.12))",
         }}>
           <div style={{
             fontSize:      T.sz["2xs"],
@@ -550,10 +550,10 @@ export function CopilotRail({ orgSlug, moduleContext }: CopilotRailProps) {
                 textAlign:    "left" as const,
                 fontSize:     T.sz["2xs"],
                 fontFamily:   T.sans,
-                color:        C.brand,
+                color:        C.blueDark,
                 background:   "transparent",
                 border:       "none",
-                borderBottom: `1px solid ${C.sidebarLine}`,
+                borderBottom: "1px solid var(--ag-line, rgba(0,74,173,.12))",
                 padding:      `${S[1] + 1}px 0`,
                 cursor:       isPending ? "not-allowed" : "pointer",
                 lineHeight:   1.4,
@@ -666,7 +666,7 @@ export function CopilotRail({ orgSlug, moduleContext }: CopilotRailProps) {
               padding:       `${S[1]}px ${S[2]}px`,
               borderRadius:  R.sm,
               border:        "none",
-              background:    !input.trim() || isPending ? C.surfaceAlt : C.brand,
+              background:    !input.trim() || isPending ? C.surfaceAlt : "var(--ag-grad-hero, linear-gradient(135deg, #004AAD, #1E63D8))",
               color:         !input.trim() || isPending ? C.inkGhost   : C.white,
               fontSize:      T.sz["2xs"],
               fontFamily:    T.sans,

@@ -22,6 +22,9 @@ import {
   type FiscalWindowMode,
 } from "@/lib/finance/fiscal-window";
 
+const FULL_HISTORY_WARNING =
+  "Esta vista incluye historial completo y puede contener saldos antiguos no conciliados.";
+
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface FiscalWindowSelectorProps {
@@ -31,6 +34,16 @@ interface FiscalWindowSelectorProps {
   baseHref:     string;
   /** The mode that is the "natural default" for this page — gets a subtle indicator */
   defaultMode?: FiscalWindowMode;
+  /**
+   * Override which modes to show and in which order.
+   * When omitted, falls back to FISCAL_WINDOW_MODES (all modes).
+   */
+  modes?:       FiscalWindowMode[];
+  /**
+   * URL search param name. Defaults to FISCAL_WINDOW_PARAM ("window").
+   * Use "carteraWindow" for independent cartera selectors on multi-section pages.
+   */
+  paramName?:   string;
 }
 
 // ── Style helpers ─────────────────────────────────────────────────────────────
@@ -53,9 +66,13 @@ const INACTIVE_STYLE: React.CSSProperties = {
 };
 
 const MODE_COLORS: Record<FiscalWindowMode, { active: string; border: string; bg: string }> = {
+  today:             { active: "#dc2626", border: "#fca5a5", bg: "#fff1f2" },
+  current_month:     { active: "#7c3aed", border: "#ddd6fe", bg: "#f5f3ff" },
+  trailing_6:        { active: "#0891b2", border: "#a5f3fc", bg: "#ecfeff" },
   current_year:      { active: "#7c3aed", border: "#ddd6fe", bg: "#f5f3ff" },
   current_and_prior: { active: "#1e40af", border: "#bfdbfe", bg: "#eff6ff" },
   trailing_12:       { active: "#065f46", border: "#6ee7b7", bg: "#ecfdf5" },
+  strict_year:       { active: "#b45309", border: "#fde68a", bg: "#fffbeb" },
   full_history:      { active: "#374151", border: "#e5e7eb", bg: "#f9fafb" },
 };
 
@@ -65,8 +82,34 @@ export function FiscalWindowSelector({
   currentMode,
   baseHref,
   defaultMode,
+  modes,
+  paramName,
 }: FiscalWindowSelectorProps) {
+  const visibleModes = modes ?? FISCAL_WINDOW_MODES;
+  const param = paramName ?? FISCAL_WINDOW_PARAM;
   return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+
+    {/* Warning banner — only visible when full_history is active */}
+    {currentMode === "full_history" && (
+      <div style={{
+        display:      "flex",
+        alignItems:   "center",
+        gap:          8,
+        background:   "#fffbeb",
+        border:       "1px solid #f59e0b",
+        borderRadius: 6,
+        padding:      "6px 12px",
+        fontSize:     11,
+        fontFamily:   "monospace",
+        color:        "#92400e",
+        fontWeight:   600,
+      }}>
+        <span style={{ fontSize: 14, flexShrink: 0 }}>⚠</span>
+        <span>{FULL_HISTORY_WARNING}</span>
+      </div>
+    )}
+
     <div style={{
       display:    "flex",
       alignItems: "center",
@@ -82,16 +125,16 @@ export function FiscalWindowSelector({
         letterSpacing: "0.06em",
         marginRight:   4,
       }}>
-        Ventana fiscal:
+        Período:
       </span>
 
-      {FISCAL_WINDOW_MODES.map(mode => {
+      {visibleModes.map(mode => {
         const isActive  = mode === currentMode;
         const isDefault = mode === defaultMode;
         const colors    = MODE_COLORS[mode];
         const label     = FISCAL_WINDOW_SHORT_LABELS[mode];
 
-        const href = `${baseHref}?${FISCAL_WINDOW_PARAM}=${mode}`;
+        const href = `${baseHref}?${param}=${mode}`;
 
         const style: React.CSSProperties = isActive
           ? {
@@ -127,6 +170,8 @@ export function FiscalWindowSelector({
           </Link>
         );
       })}
+    </div>
+
     </div>
   );
 }

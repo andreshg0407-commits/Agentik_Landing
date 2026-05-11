@@ -1,0 +1,1027 @@
+/* ══════════════════════════════════════════════════════════════════════════════
+ * AGENTIK ENTERPRISE OS — Official Visual Design System Foundation
+ * Version: 1.0  |  Sprint: AGENTIK-UX-FOUNDATION-01
+ *
+ * This file is the single source of truth for all visual primitives.
+ * Imported by app/globals.css — available throughout the entire application.
+ *
+ * Structure:
+ *   1. Color palette & brand tokens
+ *   2. Semantic surface system  (8 named surfaces)
+ *   3. Elevation system         (4 shadow levels)
+ *   4. Radius system            (5 named radii)
+ *   5. Motion system            (timing + easing)
+ *   6. AI brand surface layer
+ *   7. KPI & card primitives    (operational UI)
+ *   8. Navigation primitives
+ *   9. Operational interaction states
+ *  10. Responsive shell utilities
+ * ══════════════════════════════════════════════════════════════════════════════ */
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   §1 — COLOR PALETTE & BRAND TOKENS
+   All color decisions live here. Never use raw hex outside this file unless
+   referencing a CSS variable defined here.
+   ══════════════════════════════════════════════════════════════════════════════ */
+:root {
+  /* ── Brand blue family ─────────────────────────────────────────────────── */
+  --ag-brand:      #004AAD;   /* primary action color  */
+  --ag-brand-700:  #003A8C;   /* pressed / deepened     */
+  --ag-brand-500:  #1E63D8;   /* gradient midpoint      */
+  --ag-brand-400:  #4F8FE8;   /* light accent           */
+  --ag-brand-100:  #D0E4FF;   /* border highlight       */
+  --ag-brand-50:   #EEF5FF;   /* surface tint           */
+
+  /* ── Gradients ─────────────────────────────────────────────────────────── */
+  --ag-grad-brand:   linear-gradient(90deg,  #004AAD, #1E63D8, #4F8FE8);
+  --ag-grad-brand-v: linear-gradient(180deg, #004AAD, #1E63D8);
+  --ag-grad-card:    linear-gradient(135deg, #ffffff, #F7F9FF);
+  --ag-grad-hero:    linear-gradient(135deg, #004AAD, #1E63D8);
+  --ag-grad-ai:      linear-gradient(135deg, #001E4A 0%, #003A8A 100%);
+  --ag-grad-shell:   linear-gradient(180deg, #001E4A 0%, #003A8A 100%);
+
+  /* ── Neutral ink scale ──────────────────────────────────────────────────── */
+  --ag-ink:          #0f0f1a;
+  --ag-ink-mid:      #374151;
+  --ag-ink-light:    #6b7280;
+  --ag-ink-faint:    #9ca3af;
+  --ag-ink-ghost:    #d1d5db;
+
+  /* ── Surface borders ────────────────────────────────────────────────────── */
+  --ag-line:         rgba(0, 74, 173, 0.12);  /* brand-tinted border */
+  --ag-line-sub:     rgba(0, 74, 173, 0.06);  /* subtle inset border */
+  --ag-line-neutral: #e5e7eb;                 /* neutral border      */
+
+  /* ── Semantic signal colors ─────────────────────────────────────────────── */
+  --ag-ok:       #22c55e;
+  --ag-warn:     #f59e0b;
+  --ag-critical: #ef4444;
+  --ag-info:     #004AAD;
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   §2 — ELEVATION SYSTEM
+   4 levels of depth. Each level communicates a specific layer in the OS stack.
+
+   sm       → cards resting on the canvas surface
+   md       → panels with slight lift (context sidebar, rail cards)
+   focus    → focus ring — 3px brand halo, replaces default outlines
+   floating → modals, drawers, popovers lifted above everything
+   ══════════════════════════════════════════════════════════════════════════════ */
+:root {
+  --ag-shadow-sm:       0 1px 4px  rgba(0,74,173,.06), 0 1px 2px rgba(0,74,173,.03);
+  --ag-shadow-md:       0 2px 12px rgba(0,74,173,.10), 0 1px 4px rgba(0,74,173,.06);
+  --ag-shadow-focus:    0 0 0 3px  rgba(0,74,173,.18);
+  --ag-shadow-floating: 0 8px 32px rgba(0,74,173,.14), 0 2px 8px rgba(0,74,173,.08);
+}
+
+.ag-elevation-sm    { box-shadow: var(--ag-shadow-sm); }
+.ag-elevation-md    { box-shadow: var(--ag-shadow-md); }
+.ag-elevation-focus { box-shadow: var(--ag-shadow-focus); }
+.ag-elevation-float { box-shadow: var(--ag-shadow-floating); }
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   §3 — RADIUS SYSTEM
+   5 named radii. Choose by component role, not by visual preference.
+
+   sm   → chips, tags, small badges
+   md   → buttons, inputs, icon buttons
+   card → cards, panels, all major containers
+   xl   → large drawers, sheet surfaces
+   pill → pills, full-round badges, toggle thumbs
+   ══════════════════════════════════════════════════════════════════════════════ */
+:root {
+  --ag-radius-sm:   4px;
+  --ag-radius-md:   8px;
+  --ag-radius-card: 18px;
+  --ag-radius-xl:   24px;
+  --ag-radius-pill: 9999px;
+}
+
+.ag-radius-sm   { border-radius: var(--ag-radius-sm);   }
+.ag-radius-md   { border-radius: var(--ag-radius-md);   }
+.ag-radius-card { border-radius: var(--ag-radius-card); }
+.ag-radius-xl   { border-radius: var(--ag-radius-xl);   }
+.ag-radius-pill { border-radius: var(--ag-radius-pill); }
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   §4 — MOTION SYSTEM
+   Purposeful transitions. Operationally clear. Never decorative.
+
+   Rules:
+   — All transitions ≤ 200ms (enterprise UX — speed is usability)
+   — Use ease-standard for most interactions (smooth deceleration)
+   — Hover lifts are 1px max — subtle depth signal, not a jump
+   — NO spinning, bouncing, or dramatic entrance animations
+   ══════════════════════════════════════════════════════════════════════════════ */
+:root {
+  --ag-dur-fast:     100ms;
+  --ag-dur-base:     150ms;
+  --ag-dur-moderate: 200ms;
+  --ag-ease:         cubic-bezier(0.4, 0, 0.2, 1);
+  --ag-ease-enter:   cubic-bezier(0, 0, 0.2, 1);
+  --ag-ease-exit:    cubic-bezier(0.4, 0, 1, 1);
+}
+
+/* Hover lift — elevated cards */
+.ag-hover-lift {
+  transition: box-shadow var(--ag-dur-base)     var(--ag-ease),
+              transform  var(--ag-dur-fast)     var(--ag-ease);
+}
+.ag-hover-lift:hover {
+  box-shadow: var(--ag-shadow-floating);
+  transform:  translateY(-1px);
+}
+
+/* Hover border — list rows, nav items */
+.ag-hover-border {
+  transition: border-color var(--ag-dur-base) var(--ag-ease),
+              background   var(--ag-dur-base) var(--ag-ease);
+}
+.ag-hover-border:hover {
+  border-color: var(--ag-brand-400) !important;
+  background:   var(--ag-brand-50)  !important;
+}
+
+/* Fade context — sidebar section transitions */
+.ag-fade-context {
+  transition: opacity var(--ag-dur-moderate) var(--ag-ease);
+}
+
+/* Rail transition — panel expand/collapse */
+.ag-rail-transition {
+  transition: width     var(--ag-dur-moderate) var(--ag-ease),
+              min-width var(--ag-dur-moderate) var(--ag-ease),
+              max-width var(--ag-dur-moderate) var(--ag-ease);
+}
+
+/* Focus ring — replaces browser default outlines */
+.ag-focus-ring:focus-visible {
+  outline:    none;
+  box-shadow: var(--ag-shadow-focus);
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   §5 — SEMANTIC SURFACE SYSTEM
+   8 named surfaces that map to distinct visual layers in the OS hierarchy.
+
+   Use a surface class instead of writing background/border/shadow inline.
+   Every surface in the product should match one of these 8 levels.
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* 1. Shell — persistent navigation rail, OS-level chrome */
+.ag-surface-shell {
+  background: var(--ag-grad-shell);
+  color:      #ffffff;
+}
+
+/* 2. Workspace — main content canvas, page background */
+.ag-surface-workspace {
+  background: #ffffff;
+}
+
+/* 3. Elevated — standard card or panel above the canvas */
+.ag-surface-elevated {
+  background:  var(--ag-grad-card);
+  border:      1px solid var(--ag-line);
+  box-shadow:  var(--ag-shadow-sm);
+}
+
+/* 4. Floating — modals, command palettes, dropdowns */
+.ag-surface-floating {
+  background:  #ffffff;
+  border:      1px solid var(--ag-line);
+  box-shadow:  var(--ag-shadow-floating);
+  border-radius: var(--ag-radius-card);
+}
+
+/* 5. AI — copilot panels, intelligence strips */
+.ag-surface-ai {
+  background: var(--ag-grad-ai);
+  color:      #ffffff;
+}
+
+/* 6. Subtle — secondary backgrounds, sidebar tints, rail footers */
+.ag-surface-subtle {
+  background: var(--ag-brand-50);
+  border:     1px solid var(--ag-line);
+}
+
+/* 7. Danger — critical alerts, error states, overdue signals */
+.ag-surface-danger {
+  background: #fff0f0;
+  border:     1px solid #fca5a5;
+}
+
+/* 8. Insight — operational data cards with a left accent signal bar */
+.ag-surface-insight {
+  background:   var(--ag-grad-card);
+  border:       1px solid var(--ag-line);
+  border-left:  4px solid var(--ag-brand);
+  box-shadow:   var(--ag-shadow-sm);
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   §6 — AI BRAND SURFACE LAYER
+   Unified visual language for all AI and intelligence surfaces.
+   Copilot, intelligence strips, AI suggestion blocks.
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* AI strip — full-width intelligence band (Tesorería Agentik insight, etc.) */
+.ag-ai-strip {
+  background:    var(--ag-grad-ai);
+  border-radius: 14px;
+  color:         #ffffff;
+}
+
+/* AI card — smaller contextual AI insight */
+.ag-ai-card {
+  background:    var(--ag-grad-card);
+  border:        1px solid var(--ag-line);
+  border-left:   3px solid var(--ag-brand);
+  border-radius: var(--ag-radius-card);
+  box-shadow:    var(--ag-shadow-sm);
+}
+
+/* Copilot surface — contextual AI panel wrapper */
+.ag-copilot-surface {
+  background:    var(--ag-brand-50);
+  border:        1px solid var(--ag-line);
+  border-radius: var(--ag-radius-card);
+  box-shadow:    var(--ag-shadow-sm);
+  overflow:      hidden;
+}
+
+/* Intelligence context badge — subtle AI attribution */
+.ag-intelligence-ctx {
+  background:    rgba(0,74,173,.06);
+  border:        1px solid var(--ag-line);
+  border-radius: var(--ag-radius-md);
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   §7 — KPI & CARD PRIMITIVES
+   Core operational card classes used across all modules.
+   These are the workhorse surfaces of the operational canvas.
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* KPI signal card — primary operational metric display */
+.ag-kpi-card {
+  background:    var(--ag-grad-card);
+  border:        1px solid var(--ag-line);
+  border-radius: var(--ag-radius-card);
+  position:      relative;
+  overflow:      hidden;
+  box-shadow:    var(--ag-shadow-sm);
+  transition:    box-shadow var(--ag-dur-base) var(--ag-ease),
+                 transform  var(--ag-dur-fast) var(--ag-ease);
+  cursor:        pointer;
+  text-decoration: none;
+  color:         inherit;
+}
+.ag-kpi-card:hover {
+  box-shadow: var(--ag-shadow-floating);
+  transform:  translateY(-1px);
+}
+
+/* Left accent bar inside .ag-kpi-card */
+.ag-kpi-bar {
+  position:   absolute;
+  left: 0; top: 0; bottom: 0;
+  width:      3px;
+  background: var(--ag-grad-brand-v);
+}
+
+/* Operational tcard — Tesorería and treasury-style operational cards */
+.ag-tcard {
+  background:    var(--ag-grad-card) !important;
+  border:        1px solid var(--ag-line) !important;
+  border-radius: var(--ag-radius-card) !important;
+  position:      relative;
+  overflow:      hidden;
+  box-shadow:    var(--ag-shadow-sm);
+  transition:    box-shadow var(--ag-dur-base) var(--ag-ease);
+}
+.ag-tcard:hover {
+  box-shadow: var(--ag-shadow-floating);
+}
+
+/* Top accent bar inside .ag-tcard */
+.ag-tcard-bar {
+  position:   absolute;
+  left: 0; right: 0; top: 0;
+  height:     3px;
+  background: var(--ag-grad-brand);
+}
+
+/* Rail section card — right ops rail sections */
+.ag-rail-card {
+  background:    var(--ag-grad-card);
+  border:        1px solid var(--ag-line);
+  border-radius: var(--ag-radius-card);
+  box-shadow:    var(--ag-shadow-sm);
+  overflow:      hidden;
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   §8 — NAVIGATION PRIMITIVES
+   Visual atoms for navigation chrome and shell headers.
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* Gradient text — section H1 titles, hero headings */
+.ag-hero-title {
+  background:              var(--ag-grad-hero);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip:         text;
+}
+
+/* Active channel / tab selector button */
+.ag-chan-active {
+  background:   var(--ag-grad-hero) !important;
+  color:        #ffffff !important;
+  border-color: transparent !important;
+  box-shadow:   0 2px 8px rgba(0,74,173,.25) !important;
+}
+
+/* Shell logo mark container */
+.ag-shell-logo {
+  background:    linear-gradient(135deg, #004AAD, #1E63D8);
+  border-radius: 10px;
+  box-shadow:    0 2px 8px rgba(0,74,173,.40);
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   §9 — OPERATIONAL CARD INTERACTION STATES
+   Enterprise-grade interactive signals for operational cards.
+   These classes manage hover/focus behavior for the Torre de Control KPI rows.
+   ══════════════════════════════════════════════════════════════════════════════ */
+.op-sig-card {
+  transition: box-shadow  var(--ag-dur-base) var(--ag-ease),
+              border-color var(--ag-dur-base) var(--ag-ease);
+}
+.op-sig-card:hover {
+  box-shadow: var(--ag-shadow-floating);
+}
+.op-sig-card:focus-visible {
+  outline:    none;
+  box-shadow: var(--ag-shadow-focus);
+}
+
+.op-trea-card > div {
+  transition: box-shadow var(--ag-dur-base) var(--ag-ease),
+              background var(--ag-dur-base) var(--ag-ease);
+}
+.op-trea-card:hover > div {
+  box-shadow: var(--ag-shadow-floating);
+  background: var(--ag-brand-50) !important;
+}
+.op-trea-card:focus-visible {
+  outline:    none;
+  box-shadow: var(--ag-shadow-focus);
+}
+
+.op-radar-card > div {
+  transition: box-shadow var(--ag-dur-base) var(--ag-ease),
+              background var(--ag-dur-base) var(--ag-ease);
+}
+.op-radar-card:hover > div {
+  box-shadow: var(--ag-shadow-floating);
+  background: var(--ag-brand-50) !important;
+}
+.op-radar-card:focus-visible {
+  outline:    none;
+  box-shadow: var(--ag-shadow-focus);
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   §10 — RESPONSIVE SHELL
+   Executive page responsive layout toggles.
+   ══════════════════════════════════════════════════════════════════════════════ */
+.mob-exec { display: block; }
+.dsk-exec { display: none;  }
+
+@media (min-width: 769px) {
+  .mob-exec { display: none  !important; }
+  .dsk-exec { display: block !important; }
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   §11 — LEGACY UTILITY CLASSES
+   Retained for backward compatibility with existing JSX classNames.
+   ══════════════════════════════════════════════════════════════════════════════ */
+.agentik-text { color: var(--ag-brand); }
+.agentik-bg   { background-color: var(--ag-brand); }
+.agentik-bg-hover:hover { filter: brightness(0.92); }
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   §12 — OPERATIONAL WORKSPACE HIERARCHY
+   Sprint: AGENTIK-UX-OPS-01
+   4-level focus system for AI Enterprise OS operational workspaces.
+
+   Level 1 — Critical Focus:    .ag-urgent on cards
+   Level 2 — Active Execution:  .ag-kpi-card, .ag-tcard (§7)
+   Level 3 — Context Intell.:   .ag-surface-ai, .ag-level-context
+   Level 4 — Ambient Structure: .ag-view-switcher, labels, metadata
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* Workspace title zone — main H1 + controls + status row */
+.ag-workspace-header {
+  display:        flex;
+  align-items:    center;
+  gap:            14px;
+  margin-bottom:  20px;
+  padding-bottom: 16px;
+  border-bottom:  1px solid var(--ag-line);
+}
+
+/* View switcher / Centro de Mando control bar */
+.ag-view-switcher {
+  background:    var(--ag-surface);
+  border:        1px solid var(--ag-line);
+  border-radius: var(--ag-radius-xl);
+  padding:       10px 16px;
+  display:       flex;
+  align-items:   center;
+  flex-wrap:     wrap;
+  gap:           8px;
+  margin-bottom: 20px;
+}
+
+/* Signal strip — 3-column channel card grid wrapper */
+.ag-signal-strip {
+  border:        1px solid var(--ag-line);
+  border-radius: var(--ag-radius-card);
+  overflow:      hidden;
+  background:    #ffffff;
+  margin-bottom: 16px;
+}
+
+/* ── KPI card severity modifiers — extend .ag-kpi-card ───────────────────────
+   Communicates operational urgency via surface + left-bar color change.
+   Apply as: className="ag-kpi-card ag-urgent" or "ag-kpi-card ag-warning"    */
+
+/* Level 1 — Critical / Urgent */
+.ag-kpi-card.ag-urgent {
+  background:   linear-gradient(135deg, #fff8f8, #fff0f0);
+  border-color: rgba(239,68,68,.25);
+}
+.ag-kpi-card.ag-urgent .ag-kpi-bar {
+  background: linear-gradient(180deg, #ef4444, #dc2626);
+}
+.ag-kpi-card.ag-urgent:hover {
+  box-shadow: 0 4px 20px rgba(239,68,68,.16), 0 2px 8px rgba(239,68,68,.10);
+}
+
+/* Level 2 (modified) — Warning */
+.ag-kpi-card.ag-warning {
+  background:   linear-gradient(135deg, #fffbeb, #fef9ee);
+  border-color: rgba(245,158,11,.25);
+}
+.ag-kpi-card.ag-warning .ag-kpi-bar {
+  background: linear-gradient(180deg, #f59e0b, #d97706);
+}
+.ag-kpi-card.ag-warning:hover {
+  box-shadow: 0 4px 20px rgba(245,158,11,.16), 0 2px 8px rgba(245,158,11,.10);
+}
+
+/* Level 3 — Intelligence context panel (dark AI surface) */
+.ag-level-context {
+  background:    var(--ag-grad-ai);
+  color:         #ffffff;
+  border-radius: var(--ag-radius-card);
+}
+
+/* Intelligence context card header — tinted section labels inside white cards */
+.ag-intel-header {
+  background:    var(--ag-brand-50);
+  border-bottom: 1px solid var(--ag-line);
+  padding:       8px 16px;
+}
+
+/* Insight card container — white card with brand-tinted border */
+.ag-insight-card {
+  border:        1px solid var(--ag-line);
+  border-radius: var(--ag-radius-card);
+  background:    #ffffff;
+  overflow:      hidden;
+  margin-bottom: 16px;
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   §13  OPERATIONAL TABLES
+   Sprint: AGENTIK-UX-TABLES-01
+   Intelligent data tables with scan-speed UX, row hierarchy, and
+   operational status system. Container / Header / Row / Status primitives.
+   All hover + severity states live here — dynamic values stay inline.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Table container ────────────────────────────────────────────────────── */
+.ag-op-table {
+  border:        1px solid var(--ag-line, rgba(0,74,173,.12));
+  border-radius: var(--ag-radius-card, 18px);
+  overflow:      hidden;
+  box-shadow:    var(--ag-shadow-sm, 0 1px 4px rgba(0,74,173,.06));
+}
+
+/* ── Header zone ────────────────────────────────────────────────────────── */
+.ag-op-table-head {
+  background:    var(--ag-brand-50, #EEF5FF);
+  border-bottom: 1px solid var(--ag-line, rgba(0,74,173,.12));
+}
+
+/* ── Row base ───────────────────────────────────────────────────────────── */
+.ag-op-row {
+  position:   relative;
+  transition: background 0.12s ease;
+  cursor:     pointer;
+}
+.ag-op-row::before {
+  content:    "";
+  position:   absolute;
+  left:       0;
+  top:        0;
+  bottom:     0;
+  width:      3px;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+.ag-op-row:hover {
+  background: var(--ag-brand-50, #EEF5FF) !important;
+}
+.ag-op-row:hover::before {
+  background: var(--ag-brand, #004AAD);
+}
+
+/* ── Row severity modifiers ─────────────────────────────────────────────── */
+.ag-op-row--critical {
+  background: linear-gradient(90deg, rgba(239,68,68,.05) 0%, transparent 60%) !important;
+}
+.ag-op-row--critical::before {
+  background: #ef4444;
+}
+.ag-op-row--critical:hover {
+  background: linear-gradient(90deg, rgba(239,68,68,.10) 0%, #fff5f5 80%) !important;
+}
+.ag-op-row--warning {
+  background: linear-gradient(90deg, rgba(245,158,11,.05) 0%, transparent 60%) !important;
+}
+.ag-op-row--warning::before {
+  background: #f59e0b;
+}
+.ag-op-row--warning:hover {
+  background: linear-gradient(90deg, rgba(245,158,11,.10) 0%, #fffdf5 80%) !important;
+}
+.ag-op-row--passive {
+  opacity: 0.70;
+}
+
+/* ── Operational status badges ──────────────────────────────────────────── */
+.ag-op-status {
+  display:        inline-flex;
+  align-items:    center;
+  font-size:      10px;
+  font-weight:    700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius:  4px;
+  padding:        2px 6px;
+  white-space:    nowrap;
+  font-family:    var(--ag-font-mono, ui-monospace, "JetBrains Mono", "Fira Code", monospace);
+}
+.ag-op-status--ok {
+  color:      #15803d;
+  background: #f0fdf4;
+  border:     1px solid #86efac;
+}
+.ag-op-status--pending {
+  color:      #b45309;
+  background: #fffbeb;
+  border:     1px solid #fcd34d;
+}
+.ag-op-status--warning {
+  color:      #92400e;
+  background: #fef3c7;
+  border:     1px solid #f59e0b;
+}
+.ag-op-status--critical {
+  color:      #dc2626;
+  background: #fff8f8;
+  border:     1px solid rgba(239,68,68,.30);
+}
+.ag-op-status--info {
+  color:      var(--ag-brand, #004AAD);
+  background: var(--ag-brand-50, #EEF5FF);
+  border:     1px solid var(--ag-line, rgba(0,74,173,.18));
+}
+
+/* ── Search input focus ring ────────────────────────────────────────────── */
+.ag-op-search {
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.ag-op-search:focus {
+  border-color: var(--ag-brand, #004AAD) !important;
+  box-shadow:   0 0 0 3px rgba(0,74,173,.10) !important;
+  outline:      none !important;
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   §14  INTELLIGENCE CONNECTION SYSTEM
+   Sprint: AGENTIK-UX-INTELLIGENCE-01
+   Inline relationship hint tags, contextual notes, and living-system
+   indicators that connect operational signals to intelligence context.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Operational context tag — inline relationship hint ─────────────────── */
+/* Used to communicate operational linkage: "impacta flujo", "en seguimiento" */
+.ag-intel-tag {
+  display:        inline-flex;
+  align-items:    center;
+  font-size:      9px;
+  font-weight:    700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-family:    ui-monospace, "JetBrains Mono", "Fira Code", monospace;
+  color:          var(--ag-brand, #004AAD);
+  background:     var(--ag-brand-50, #EEF5FF);
+  border:         1px solid var(--ag-line, rgba(0,74,173,.12));
+  border-radius:  var(--ag-radius-sm, 4px);
+  padding:        1px 5px;
+  white-space:    nowrap;
+  flex-shrink:    0;
+}
+.ag-intel-tag--warn {
+  color:        #b45309;
+  background:   #fffbeb;
+  border-color: rgba(245,158,11,.28);
+}
+.ag-intel-tag--critical {
+  color:        #dc2626;
+  background:   #fff8f8;
+  border-color: rgba(239,68,68,.25);
+}
+.ag-intel-tag--ok {
+  color:        #15803d;
+  background:   #f0fdf4;
+  border-color: #86efac;
+}
+
+/* ── Copilot thinking state — subtle pulse on "Analizando…" indicator ───── */
+.ag-copilot-thinking {
+  animation: ag-thinking-pulse 1.6s ease-in-out infinite;
+}
+@keyframes ag-thinking-pulse {
+  0%, 100% { opacity: 0.45; }
+  50%       { opacity: 1;   }
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   §15  ACTION HIERARCHY SYSTEM
+   Sprint: AGENTIK-UX-EXECUTION-01
+   4-level operational action hierarchy for command surfaces.
+
+   Level 1 — Primary Execution:  .ag-action-primary, .ag-action-danger
+   Level 2 — Operational Action: .ag-action-secondary
+   Level 3 — Contextual Action:  .ag-action-ghost
+   Level 4 — Passive Metadata:   not interactive — handled by typography tokens
+
+   Containers: .ag-action-tray (grouped inline), .ag-action-row (command item)
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Level 1 — Primary Execution (brand blue) ───────────────────────────── */
+.ag-action-primary {
+  display:         inline-flex;
+  align-items:     center;
+  gap:             5px;
+  font-family:     ui-monospace, "JetBrains Mono", "Fira Code", monospace;
+  font-size:       10px;
+  font-weight:     700;
+  letter-spacing:  0.03em;
+  padding:         5px 13px;
+  border-radius:   var(--ag-radius-md, 8px);
+  background:      var(--ag-grad-hero, linear-gradient(135deg, #004AAD, #1E63D8));
+  color:           #ffffff;
+  border:          none;
+  cursor:          pointer;
+  text-decoration: none;
+  white-space:     nowrap;
+  flex-shrink:     0;
+  transition:      box-shadow var(--ag-dur-base) var(--ag-ease),
+                   transform  var(--ag-dur-fast) var(--ag-ease);
+}
+.ag-action-primary:hover {
+  box-shadow: var(--ag-shadow-md, 0 2px 12px rgba(0,74,173,.22));
+  transform:  translateY(-1px);
+}
+.ag-action-primary:focus-visible {
+  outline:    none;
+  box-shadow: var(--ag-shadow-focus);
+}
+
+/* ── Level 1 Danger — Escalation / Critical Execution ───────────────────── */
+.ag-action-danger {
+  display:         inline-flex;
+  align-items:     center;
+  gap:             5px;
+  font-family:     ui-monospace, "JetBrains Mono", "Fira Code", monospace;
+  font-size:       10px;
+  font-weight:     700;
+  letter-spacing:  0.03em;
+  padding:         5px 13px;
+  border-radius:   var(--ag-radius-md, 8px);
+  background:      #fef2f2;
+  color:           #dc2626;
+  border:          1px solid #fca5a5;
+  cursor:          pointer;
+  text-decoration: none;
+  white-space:     nowrap;
+  flex-shrink:     0;
+  transition:      background var(--ag-dur-base) var(--ag-ease),
+                   box-shadow  var(--ag-dur-base) var(--ag-ease);
+}
+.ag-action-danger:hover {
+  background:  #fee2e2;
+  box-shadow:  0 2px 8px rgba(239,68,68,.16);
+}
+
+/* ── Level 2 — Operational Action (brand surface) ────────────────────────── */
+.ag-action-secondary {
+  display:         inline-flex;
+  align-items:     center;
+  gap:             5px;
+  font-family:     ui-monospace, "JetBrains Mono", "Fira Code", monospace;
+  font-size:       10px;
+  font-weight:     600;
+  letter-spacing:  0.03em;
+  padding:         4px 11px;
+  border-radius:   var(--ag-radius-md, 8px);
+  background:      var(--ag-brand-50, #EEF5FF);
+  color:           var(--ag-brand, #004AAD);
+  border:          1px solid var(--ag-line, rgba(0,74,173,.18));
+  cursor:          pointer;
+  text-decoration: none;
+  white-space:     nowrap;
+  flex-shrink:     0;
+  transition:      background  var(--ag-dur-base) var(--ag-ease),
+                   box-shadow  var(--ag-dur-base) var(--ag-ease);
+}
+.ag-action-secondary:hover {
+  background:  #dbeafe;
+  box-shadow:  var(--ag-shadow-sm);
+}
+.ag-action-secondary:focus-visible {
+  outline:    none;
+  box-shadow: var(--ag-shadow-focus);
+}
+
+/* ── Level 3 — Contextual / Ghost ────────────────────────────────────────── */
+.ag-action-ghost {
+  display:         inline-flex;
+  align-items:     center;
+  gap:             4px;
+  font-family:     ui-monospace, "JetBrains Mono", "Fira Code", monospace;
+  font-size:       10px;
+  font-weight:     600;
+  color:           var(--ag-brand, #004AAD);
+  background:      transparent;
+  border:          none;
+  cursor:          pointer;
+  text-decoration: none;
+  padding:         3px 0;
+  white-space:     nowrap;
+  transition:      opacity var(--ag-dur-fast) var(--ag-ease);
+}
+.ag-action-ghost:hover {
+  opacity: 0.72;
+}
+
+/* ── Action tray — grouped inline action container ───────────────────────── */
+.ag-action-tray {
+  display:     flex;
+  align-items: center;
+  flex-wrap:   wrap;
+  gap:         6px;
+}
+
+/* ── Action row — execution item in command tray ─────────────────────────── */
+/* Links and buttons that represent a complete operational task row.          */
+.ag-action-row {
+  display:         flex;
+  align-items:     center;
+  gap:             8px;
+  padding:         8px 12px;
+  border-radius:   var(--ag-radius-md, 8px);
+  border:          1px solid var(--ag-line, rgba(0,74,173,.12));
+  background:      var(--ag-grad-card, linear-gradient(135deg, #ffffff, #F7F9FF));
+  text-decoration: none;
+  cursor:          pointer;
+  transition:      background  var(--ag-dur-base) var(--ag-ease),
+                   box-shadow  var(--ag-dur-base) var(--ag-ease);
+}
+.ag-action-row:hover {
+  background:  var(--ag-brand-50, #EEF5FF);
+  box-shadow:  var(--ag-shadow-sm);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/* §16 — Cross-Workspace Flow & Continuity                                   */
+/* Hover states and navigation affordances for workspace primitives.         */
+/* Targets: RelatedWorkspaces, WorkspaceActions, OperationalWorkspaceHeader  */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Flow card — RelatedWorkspaces navigation item ───────────────────────── */
+.ag-flow-card {
+  transition: background 0.12s ease, box-shadow 0.12s ease, transform 0.1s ease;
+}
+.ag-flow-card:hover {
+  background: var(--ag-brand-50, #EEF5FF) !important;
+  box-shadow: 0 3px 10px rgba(0,74,173,.12)  !important;
+  transform:  translateY(-1px);
+}
+
+/* ── Workspace action — primary (Level 1 — brand gradient) ───────────────── */
+.ag-ws-primary {
+  background: var(--ag-grad-hero, linear-gradient(135deg, #004AAD, #1E63D8)) !important;
+  transition: box-shadow 0.12s ease, transform 0.1s ease;
+}
+.ag-ws-primary:hover {
+  box-shadow: var(--ag-shadow-md, 0 4px 12px rgba(0,74,173,.22));
+  transform:  translateY(-1px);
+}
+
+/* ── Workspace action — secondary (Level 2 — brand-50 surface) ───────────── */
+.ag-ws-secondary {
+  background: var(--ag-brand-50, #EEF5FF)                  !important;
+  border:     1px solid var(--ag-line, rgba(0,74,173,.12)) !important;
+  transition: box-shadow 0.12s ease;
+}
+.ag-ws-secondary:hover {
+  box-shadow: var(--ag-shadow-sm, 0 1px 4px rgba(0,74,173,.08));
+}
+
+/* ── Breadcrumb link — hover affordance ──────────────────────────────────── */
+.ag-breadcrumb-link:hover {
+  color:           var(--ag-brand, #004AAD) !important;
+  text-decoration: underline;
+}
+
+/* ── Context back — subtle back-navigation link ──────────────────────────── */
+.ag-context-back {
+  transition: color 0.1s ease;
+}
+.ag-context-back:hover {
+  color: var(--ag-brand, #004AAD) !important;
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/* §17 — KPI NUMERIC CONTAINMENT SYSTEM                                      */
+/* Sprint: AGENTIK-KPI-DENSITY-01                                             */
+/* Ensures all KPI primary numbers stay inside their card — no wrap, no clip. */
+/* Apply .ag-kpi-number as base + one size modifier on the value container.   */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/* Base containment — required on every KPI value element */
+.ag-kpi-number {
+  display:              block;
+  white-space:          nowrap;
+  overflow:             hidden;
+  text-overflow:        ellipsis;
+  max-width:            100%;
+  min-width:            0;
+  line-height:          1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* XL — Primary signal cards: DailyCarousel, Radar Comercial (B4) */
+/* clamp reduced from 34px to 26px — prevents ellipsis on long COP values     */
+/* in 1/3-column cards (~310px content area). title attribute shows full value. */
+.ag-kpi-number--xl {
+  font-size:      clamp(14px, 1.8vw, 26px);
+  font-weight:    900;
+  letter-spacing: -0.03em;
+}
+
+/* LG — Secondary KPI rows: B2 signal cards, Tesorería cards */
+.ag-kpi-number--lg {
+  font-size:      clamp(16px, 2.0vw, 24px);
+  font-weight:    900;
+  letter-spacing: -0.02em;
+}
+
+/* Compact — Aging buckets, supplementary KPI tiles */
+.ag-kpi-number--compact {
+  font-size:      clamp(13px, 1.5vw, 18px);
+  font-weight:    900;
+  letter-spacing: -0.01em;
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/* §18 — EXECUTIVE ATTENTION LAYER                                            */
+/* Sprint: AGENTIK-EXECUTIVE-LAYER-01                                         */
+/* Hierarchy, operational pulse, AI zone boundary. No decoration — structure. */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Operational pulse bar — one-line situational status before B1 ────────── */
+/* Gives immediate executive orientation without forcing page scan.            */
+.ag-op-pulse {
+  display:       flex;
+  align-items:   center;
+  gap:           8px;
+  padding:       6px 14px;
+  border-radius: 10px;
+  background:    var(--ag-surface, #F7F9FF);
+  border:        1px solid var(--ag-line, rgba(0,74,173,.12));
+  margin-bottom: 20px;
+}
+.ag-op-pulse--ok       { border-color: rgba(34,197,94,.22); }
+.ag-op-pulse--warn     { border-color: rgba(245,158,11,.28); background: #fffdf4; }
+.ag-op-pulse--critical { border-color: rgba(239,68,68,.28);  background: #fff8f8; }
+
+/* ── Copilot zone — visual boundary for the AI intelligence layer ─────────── */
+/* Separates AI synthesis from operational blocks above with a dashed rule.    */
+/* The dashed style signals "interpretive" vs "operational" content.           */
+.ag-copilot-zone {
+  padding-top: 24px;
+  border-top:  1px dashed var(--ag-line, rgba(0,74,173,.18));
+  margin-top:  8px;
+}
+
+/* ── Zone separator — structural breathing between functional zones ────────── */
+.ag-zone-breath {
+  margin-top:    8px;
+  margin-bottom: 28px;
+  border:        none;
+  border-top:    1px solid var(--ag-line, rgba(0,74,173,.08));
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/* §19 — TEMPORAL INTELLIGENCE SYSTEM                                         */
+/* Sprint: AGENTIK-TEMPORAL-INTELLIGENCE-01                                   */
+/* Movement awareness primitives. Communicates operational evolution without   */
+/* numeric deltas — derives movement from structural data patterns.            */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Movement tag — compact semantic state annotation ─────────────────────── */
+/* Use for short movement-language strings derived from current data.           */
+/* Never use for raw numbers. Vocabulary: cartera envejeciendo, flujo activo… */
+.ag-movement-tag {
+  display:        inline-flex;
+  align-items:    center;
+  font-family:    var(--ag-mono, 'JetBrains Mono', monospace);
+  font-size:      9px;
+  font-weight:    700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding:        2px 8px;
+  border-radius:  4px;
+  border:         1px solid transparent;
+  line-height:    1.4;
+}
+
+/* Stable — no deterioration signal */
+.ag-movement-tag--stable {
+  color:        #166534;
+  background:   #f0fdf4;
+  border-color: rgba(34,197,94,.22);
+}
+
+/* Watch — early warning, follow-up required */
+.ag-movement-tag--watch {
+  color:        #92400e;
+  background:   #fffdf4;
+  border-color: rgba(245,158,11,.24);
+}
+
+/* Risk — active deterioration, escalation signal */
+.ag-movement-tag--risk {
+  color:        #991b1b;
+  background:   #fff8f8;
+  border-color: rgba(239,68,68,.22);
+}
+
+/* ── Temporal context line — secondary movement annotation ─────────────────── */
+.ag-temporal-ctx {
+  font-family:    var(--ag-mono, 'JetBrains Mono', monospace);
+  font-size:      9px;
+  color:          var(--ag-ink-faint, #9ca3af);
+  letter-spacing: 0.04em;
+  line-height:    1.5;
+}

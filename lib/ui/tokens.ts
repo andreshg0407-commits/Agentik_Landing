@@ -59,9 +59,9 @@ export const C = {
   redLight:    "#fff0f0",
   redBorder:   "#fca5a5",
 
-  // Semantic — info
+  // Semantic — info / brand blue
   blue:        "#0369a1",
-  blueDark:    "#1e40af",
+  blueDark:    "#004AAD",   // Agentik primary brand blue
   blueLight:   "#eff6ff",
   blueBorder:  "#bfdbfe",
 
@@ -127,17 +127,20 @@ export const R = {
   md:   6,
   lg:   8,
   xl:  12,
+  card: 18,
   pill: 9999,
 } as const;
 
 // ── Elevation (box-shadow) ────────────────────────────────────────────────────
+// Brand-tinted shadows — matches --ag-shadow-* CSS variables in design-system.css
 
 export const E = {
-  none: "none",
-  xs:   "0 1px 2px rgba(15,15,26,.04)",
-  sm:   "0 1px 4px rgba(15,15,26,.06), 0 1px 2px rgba(15,15,26,.03)",
-  md:   "0 2px 8px rgba(15,15,26,.08), 0 1px 3px rgba(15,15,26,.05)",
-  lg:   "0 4px 16px rgba(15,15,26,.10), 0 2px 6px rgba(15,15,26,.06)",
+  none:     "none",
+  xs:       "0 1px 2px rgba(0,74,173,.04)",
+  sm:       "0 1px 4px rgba(0,74,173,.06), 0 1px 2px rgba(0,74,173,.03)",
+  md:       "0 2px 12px rgba(0,74,173,.10), 0 1px 4px rgba(0,74,173,.06)",
+  lg:       "0 8px 32px rgba(0,74,173,.14), 0 2px 8px rgba(0,74,173,.08)",
+  focus:    "0 0 0 3px rgba(0,74,173,.18)",
 } as const;
 
 // ── Composite style objects ───────────────────────────────────────────────────

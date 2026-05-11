@@ -16,8 +16,10 @@
  */
 
 import Link        from "next/link";
+import type { Role } from "@prisma/client";
 import { prisma }  from "@/lib/prisma";
 import { C, T, S, R, E } from "@/lib/ui/tokens";
+import { isInternalRole }  from "@/lib/auth/module-access";
 import { getModuleContext } from "@/lib/agentik/copilot-context";
 import { CopilotRail }     from "@/components/layout/copilot-rail";
 
@@ -27,25 +29,33 @@ interface RightOpsRailProps {
   orgSlug:  string;
   orgId:    string;
   pathname: string;
+  role:     Role;
 }
 
 // ── Rail ───────────────────────────────────────────────────────────────────────
 
-export default async function RightOpsRail({ orgSlug, orgId, pathname }: RightOpsRailProps) {
+export default async function RightOpsRail({ orgSlug, orgId, pathname, role }: RightOpsRailProps) {
+  const isInternal    = isInternalRole(role);
   const moduleContext = getModuleContext(orgSlug, pathname);
-  const [criticalAlerts, pendingApprovals, openTasks] = await Promise.all([
+
+  const baseQueries = [
     prisma.businessAlert.count({
       where: { organizationId: orgId, severity: "CRITICAL", status: "OPEN" },
     }).catch(() => 0),
 
-    (prisma as any).sagWriteOperation.count({
-      where: { organizationId: orgId, status: "PENDING" },
-    }).catch(() => 0) as Promise<number>,
-
     (prisma as any).actionTask.count({
       where: { organizationId: orgId, status: { in: ["PENDING", "IN_PROGRESS"] } },
     }).catch(() => 0) as Promise<number>,
-  ]);
+  ] as const;
+
+  const [criticalAlerts, openTasks, pendingApprovals] = isInternal
+    ? await Promise.all([
+        ...baseQueries,
+        (prisma as any).sagWriteOperation.count({
+          where: { organizationId: orgId, status: "PENDING" },
+        }).catch(() => 0) as Promise<number>,
+      ])
+    : [...(await Promise.all(baseQueries)), 0];
 
   const hasAlerts    = criticalAlerts   > 0;
   const hasApprovals = pendingApprovals > 0;
@@ -53,37 +63,62 @@ export default async function RightOpsRail({ orgSlug, orgId, pathname }: RightOp
 
   return (
     <aside style={{
-      padding:        `${S[4]}px ${S[3]}px`,
+      padding:        `0 ${S[3]}px ${S[4]}px`,
       fontFamily:     T.mono,
       fontSize:       T.sz.xs,
       display:        "flex",
       flexDirection:  "column",
       gap:            0,
       overflowY:      "auto",
-      background:     C.sidebarBg,
+      background:     "var(--ag-surface, #F7F9FF)",
       minHeight:      "100vh",
     }}>
 
+      {/* ── Top brand accent strip — intelligence rail signal ── */}
+      <div style={{
+        height:      3,
+        background:  "var(--ag-grad-brand, linear-gradient(90deg,#004AAD,#1E63D8,#4F8FE8))",
+        marginLeft:  -S[3],
+        marginRight: -S[3],
+        marginBottom: S[4],
+        flexShrink:  0,
+      }} />
+
       {/* ── Rail header — card ── */}
       <div style={{
-        background:   C.surface,
-        border:       `1px solid ${C.sidebarLine}`,
-        borderRadius: R.xl,
+        background:   "var(--ag-grad-card, linear-gradient(135deg,#fff,#F7F9FF))",
+        border:       `1px solid var(--ag-line, rgba(0,74,173,.12))`,
+        borderRadius: R.card,
         padding:      `${S[2] + 4}px ${S[3]}px`,
         marginBottom: S[3],
       }}>
         <div style={{
-          fontFamily:    T.sans,
-          fontSize:      T.sz["2xs"],
-          fontWeight:    T.wt.bold,
-          color:         C.inkFaint,
-          letterSpacing: "0.08em",
-          textTransform: "uppercase" as const,
-          marginBottom:  S[1],
+          display:     "flex",
+          alignItems:  "center",
+          gap:         S[1],
+          marginBottom: S[1],
         }}>
-          Ops · Hoy
+          {/* Live signal dot */}
+          <div style={{
+            width:        5,
+            height:       5,
+            borderRadius: "50%",
+            background:   "rgba(34,197,94,.80)",
+            boxShadow:    "0 0 4px rgba(34,197,94,.50)",
+            flexShrink:   0,
+          }} />
+          <div style={{
+            fontFamily:    T.sans,
+            fontSize:      T.sz["2xs"],
+            fontWeight:    T.wt.bold,
+            color:         C.inkMid,
+            letterSpacing: "0.08em",
+            textTransform: "uppercase" as const,
+          }}>
+            Ops · Hoy
+          </div>
         </div>
-        <div style={{ fontSize: T.sz["2xs"], color: C.inkGhost }}>
+        <div style={{ fontSize: T.sz["2xs"], color: C.inkFaint, paddingLeft: S[1] + 5 }}>
           Centro operativo diario
         </div>
       </div>
@@ -110,37 +145,15 @@ export default async function RightOpsRail({ orgSlug, orgId, pathname }: RightOp
         )}
       </RailSection>
 
-      {/* ── 2. Aprobaciones SAG ── */}
-      <RailSection
-        icon="✍"
-        title="Aprobaciones SAG"
-        count={pendingApprovals}
-        countColor={hasApprovals ? C.amber  : C.inkLight}
-        countLabel={hasApprovals ? `${pendingApprovals} pendiente${pendingApprovals > 1 ? "s" : ""}` : "Al día"}
-        href={`/${orgSlug}/sag/write`}
-        linkLabel="Revisar →"
-        urgent={hasApprovals}
-      >
-        {hasApprovals ? (
-          <div style={{ fontSize: T.sz["2xs"], color: C.amberDark, marginTop: S[1], lineHeight: 1.4 }}>
-            Operaciones esperando aprobación manual.
-          </div>
-        ) : (
-          <div style={{ fontSize: T.sz["2xs"], color: C.inkFaint, marginTop: S[1] }}>
-            Sin aprobaciones pendientes.
-          </div>
-        )}
-      </RailSection>
-
-      {/* ── 3. Tareas ── */}
+      {/* ── 2. Tareas activas ── */}
       <RailSection
         icon="✅"
         title="Tareas activas"
         count={openTasks}
-        countColor={hasTasks ? C.brand : C.inkLight}
+        countColor={hasTasks ? C.blueDark : C.inkLight}
         countLabel={hasTasks ? `${openTasks} activa${openTasks > 1 ? "s" : ""}` : "Sin tareas"}
-        href={`/${orgSlug}/agentik`}
-        linkLabel="Centro de acciones →"
+        href={isInternal ? `/${orgSlug}/agentik` : `/${orgSlug}/reports`}
+        linkLabel={isInternal ? "Centro de acciones →" : "Informes →"}
         urgent={false}
       >
         <div style={{ fontSize: T.sz["2xs"], color: C.inkFaint, marginTop: S[1], lineHeight: 1.4 }}>
@@ -148,30 +161,80 @@ export default async function RightOpsRail({ orgSlug, orgId, pathname }: RightOp
         </div>
       </RailSection>
 
-      {/* ── 4. Agentik Copilot — card wrapper ── */}
+      {/* ── Context bridge — connects operational signals to the intelligence layer ── */}
+      {/* Shows current module context + operational state tag — creates the
+          "operational memory" feeling without fake data or logic changes.    */}
       <div style={{
-        background:   C.brandLight,
-        border:       `1px solid ${C.brandBorder}`,
-        borderRadius: R.xl,
-        boxShadow:    E.xs,
-        marginBottom: S[2],
-        overflow:     "hidden",
+        display:        "flex",
+        alignItems:     "center",
+        justifyContent: "space-between",
+        padding:        `3px ${S[2]}px`,
+        marginBottom:   S[2],
       }}>
+        <span style={{
+          fontFamily:    T.mono,
+          fontSize:      T.sz["2xs"],
+          color:         C.inkFaint,
+          letterSpacing: "0.04em",
+        }}>
+          {moduleContext.moduleLabel}
+        </span>
+        <span className={
+          hasAlerts ? "ag-intel-tag ag-intel-tag--critical"
+          : hasTasks  ? "ag-intel-tag"
+          :             "ag-intel-tag ag-intel-tag--ok"
+        }>
+          {hasAlerts ? "señales activas" : hasTasks ? "en seguimiento" : "sin urgencias"}
+        </span>
+      </div>
+
+      {/* ── 3. Copilot contextual — todos los roles ── */}
+      {/* El copilot es una capa transversal, no un módulo separado.
+          Vive aquí como AI Dock permanente, contextual al módulo actual. */}
+      <div className="ag-copilot-surface" style={{ marginBottom: S[2] }}>
         <CopilotRail orgSlug={orgSlug} moduleContext={moduleContext} />
       </div>
 
-      {/* ── Footer ── */}
+      {/* ── 4. Aprobaciones SAG — internal only ── */}
+      {isInternal && (
+        <RailSection
+          icon="✍"
+          title="Aprobaciones SAG"
+          count={pendingApprovals}
+          countColor={hasApprovals ? C.amber  : C.inkLight}
+          countLabel={hasApprovals ? `${pendingApprovals} pendiente${pendingApprovals > 1 ? "s" : ""}` : "Al día"}
+          href={`/${orgSlug}/sag/write`}
+          linkLabel="Revisar →"
+          urgent={hasApprovals}
+        >
+          {hasApprovals ? (
+            <div style={{ fontSize: T.sz["2xs"], color: C.amberDark, marginTop: S[1], lineHeight: 1.4 }}>
+              Operaciones esperando aprobación manual.
+            </div>
+          ) : (
+            <div style={{ fontSize: T.sz["2xs"], color: C.inkFaint, marginTop: S[1] }}>
+              Sin aprobaciones pendientes.
+            </div>
+          )}
+        </RailSection>
+      )}
+
+      {/* ── Footer — operational memory indicator ── */}
       <div style={{
         marginTop:    "auto",
-        background:   C.surface,
-        border:       `1px solid ${C.sidebarLine}`,
-        borderRadius: R.xl,
+        background:   "var(--ag-brand-50, #EEF5FF)",
+        border:       `1px solid var(--ag-line, rgba(0,74,173,.10))`,
+        borderRadius: R.card,
         padding:      `${S[1] + 2}px ${S[3]}px`,
-        fontSize:     T.sz["2xs"],
-        color:        C.inkGhost,
         textAlign:    "center" as const,
+        fontFamily:   T.mono,
       }}>
-        Agentik Enterprise
+        <div style={{ fontSize: T.sz["2xs"], color: C.inkFaint, letterSpacing: "0.04em" }}>
+          Agentik Enterprise
+        </div>
+        <div style={{ fontSize: T.sz["2xs"], color: C.inkGhost, letterSpacing: "0.04em", marginTop: 1 }}>
+          {moduleContext.moduleLabel}
+        </div>
       </div>
 
     </aside>
@@ -215,10 +278,10 @@ function RailSection({
     <div style={{
       background:   cardBg,
       border:       `1px solid ${cardBorder}`,
-      borderRadius: R.xl,
+      borderRadius: R.card,
       padding:      S[3],
       marginBottom: S[2],
-      boxShadow:    E.xs,
+      boxShadow:    "var(--ag-shadow-sm, 0 1px 4px rgba(0,74,173,.06))",
     }}>
       {/* Card header row */}
       <div style={{
@@ -274,7 +337,7 @@ function RailSection({
         display:        "inline-block",
         marginTop:      S[1] + 2,
         fontSize:       T.sz["2xs"],
-        color:          urgent ? countColor : C.brand,
+        color:          urgent ? countColor : C.blueDark,
         fontWeight:     T.wt.bold,
         textDecoration: "none",
       }}>

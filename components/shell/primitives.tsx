@@ -113,7 +113,7 @@ export function Panel({
   return (
     <div style={{
       border:       urgent ? `1.5px solid ${C.redBorder}` : `1px solid ${C.line}`,
-      borderRadius: R.md,
+      borderRadius: R.card,
       overflow:     "hidden",
       background:   urgent ? C.redLight : C.white,
       boxShadow:    E.sm,
@@ -162,7 +162,7 @@ export function PanelHeader({
         <Link href={cta.href} style={{
           marginLeft:     "auto",
           fontSize:       T.sz.xs,
-          color:          C.brand,
+          color:          C.blueDark,
           fontWeight:     T.wt.bold,
           textDecoration: "none",
         }}>
@@ -191,6 +191,40 @@ export function EmptyState({ message }: { message: string }) {
 
 // ── KpiCard ───────────────────────────────────────────────────────────────────
 
+// ── DataSourceTag ─────────────────────────────────────────────────────────────
+// Small inline badge communicating the origin system of a metric.
+// "SAG" = official ERP  |  "CRM" = commercial pipeline  |  "Manual" = manual/Excel
+
+const DATA_SOURCE_STYLES: Record<string, { color: string; bg: string; border: string }> = {
+  "SAG":       { color: "#15803d", bg: "#f0fdf4", border: "#86efac" },
+  "SAG·F1":    { color: "#166534", bg: "#dcfce7", border: "#4ade80" },
+  "CRM":       { color: "#1e40af", bg: "#eff6ff", border: "#93c5fd" },
+  "Manual":    { color: "#6b7280", bg: "#f9fafb", border: "#d1d5db" },
+  "Sistema":   { color: "#7c3aed", bg: "#f5f3ff", border: "#c4b5fd" },
+};
+
+export function DataSourceTag({ source }: { source: string }) {
+  const sty = DATA_SOURCE_STYLES[source] ?? DATA_SOURCE_STYLES["Manual"];
+  return (
+    <span style={{
+      fontSize:      8,
+      fontWeight:    700,
+      letterSpacing: "0.06em",
+      textTransform: "uppercase" as const,
+      fontFamily:    T.mono,
+      color:         sty.color,
+      background:    sty.bg,
+      border:        `1px solid ${sty.border}`,
+      borderRadius:  2,
+      padding:       "1px 4px",
+      whiteSpace:    "nowrap" as const,
+      flexShrink:    0,
+    }}>
+      {source}
+    </span>
+  );
+}
+
 export function KpiCard({
   label,
   value,
@@ -199,6 +233,7 @@ export function KpiCard({
   urgent,
   href,
   empty,
+  source,
 }: {
   label:     string;
   value:     string | number;
@@ -207,6 +242,8 @@ export function KpiCard({
   urgent?:   boolean;
   href?:     string;
   empty?:    boolean;
+  /** Data origin tag shown in the label row. E.g. "SAG·F1", "CRM", "Manual" */
+  source?:   string;
 }) {
   const dot   = dotColor ?? (urgent ? C.red : C.inkGhost);
   const vColor = empty ? C.inkGhost : urgent ? C.red : C.ink;
@@ -214,7 +251,7 @@ export function KpiCard({
   const inner = (
     <div style={{
       border:       urgent ? `1.5px solid ${C.redBorder}` : `1px solid ${C.line}`,
-      borderRadius: R.md,
+      borderRadius: R.card,
       padding:      `${S[3]}px ${S[4]}px`,
       background:   urgent ? "#fff8f8" : C.surface,
       boxShadow:    E.xs,
@@ -229,9 +266,11 @@ export function KpiCard({
           color:         C.inkLight,
           textTransform: "uppercase" as const,
           letterSpacing: "0.05em",
+          flex:          1,
         }}>
           {label}
         </span>
+        {source && <DataSourceTag source={source} />}
       </div>
       <div style={{
         fontSize:      empty ? T.sz.xl : T.sz["3xl"],
