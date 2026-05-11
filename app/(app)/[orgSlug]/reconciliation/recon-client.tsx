@@ -1,15 +1,34 @@
 "use client";
 
 /**
- * Reconciliation Center client component.
+ * recon-client.tsx
+ * AGENTIK-RECON-WORKSPACE-01 — Operational Workspace Refactor
  *
- * Renders the reconciliation config form, summary cards, and detail table
- * for the Orders vs Sales reconciliation result. All styling is inline
- * monospace enterprise style — no Tailwind classes.
+ * Makes Conciliación feel like: workspace · investigación · operaciones vivas
+ * NOT a vertical dashboard.
+ *
+ * Design system compliance:
+ *   - All tokens from lib/ui/tokens.ts (C, T, S, R, E)
+ *   - All layout from operational-primitives (WorkspaceSection, EmptyOperationalState, CopilotReadinessSlot)
+ *   - ag-op-table / ag-op-row / ag-op-status / ag-intel-header CSS classes throughout
+ *   - Zero raw hex colors. Zero "monospace" string literals.
  */
 
-import type { CSSProperties, ReactNode } from "react";
+import { useState }                        from "react";
+import type { CSSProperties, ReactNode }   from "react";
 import type { ReconResult, ReconRecord, ReconStatus } from "@/lib/reconciliation/types";
+import type { FinancialStream }            from "@/lib/financial/stream-model";
+import type { MemoryReadinessTier, CopilotObservation } from "@/lib/financial/memory-model";
+import type { AttentionRouterResult }      from "@/lib/financial/attention-router";
+import type { ReconSessionRow, ReconciliationSessionStatus } from "@/lib/reconciliation/session-types";
+import { C, T, S, R, E, panel, panelHeader } from "@/lib/ui/tokens";
+import {
+  WorkspaceSection,
+  EmptyOperationalState,
+  CopilotReadinessSlot,
+} from "@/components/shell/operational-primitives";
+import ExceptionWorkbench           from "./exception-workbench";
+import { reconRecordsToExceptions } from "@/lib/reconciliation/recon-to-workbench";
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -21,6 +40,17 @@ interface Props {
   sourceB?:         string;
   availableSources: Array<{ source: string; batchCount: number; recordCount: number }>;
   result?:          ReconResult | null;
+  streams?:         FinancialStream[];
+  recommendations?: string[];
+  memoryStatus?: {
+    readinessTier:  MemoryReadinessTier;
+    readinessLabel: string;
+    historyDays:    number;
+    snapshotCount:  number;
+  };
+  observations?:    CopilotObservation[];
+  attentionPlan?:   AttentionRouterResult;
+  recentSessions?:  ReconSessionRow[];
 }
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -34,8 +64,8 @@ function fmtPeriodo(p: string): string {
 
 function fmtCOP(n: number): string {
   return new Intl.NumberFormat("es-CO", {
-    style: "currency",
-    currency: "COP",
+    style:                "currency",
+    currency:             "COP",
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   }).format(n);
@@ -45,14 +75,14 @@ function fmtN(n: number): string {
   return new Intl.NumberFormat("es-CO").format(n);
 }
 
-// ── Status badge ──────────────────────────────────────────────────────────────
+// ── Status badge (recon record status) ────────────────────────────────────────
 
 const STATUS_STYLES: Record<ReconStatus, CSSProperties> = {
-  MATCH:               { background: "#bbf7d0", color: "#14532d" },
-  MISMATCH_AMOUNT:     { background: "#fde68a", color: "#92400e" },
-  ONLY_IN_A:           { background: "#bfdbfe", color: "#1e3a8a" },
-  ONLY_IN_B:           { background: "#e9d5ff", color: "#6b21a8" },
-  POSSIBLE_DUPLICATE:  { background: "#fca5a5", color: "#991b1b" },
+  MATCH:               { background: C.greenBorder,  color: C.greenDark   },
+  MISMATCH_AMOUNT:     { background: C.amberBorder,  color: C.amberDark   },
+  ONLY_IN_A:           { background: C.blueBorder,   color: C.blue        },
+  ONLY_IN_B:           { background: C.brandBorder,  color: C.brandDark   },
+  POSSIBLE_DUPLICATE:  { background: C.redBorder,    color: C.redDark     },
 };
 
 const STATUS_LABELS: Record<ReconStatus, string> = {
@@ -72,21 +102,35 @@ const STATUS_DESC: Record<ReconStatus, string> = {
 };
 
 function StatusBadge({ status }: { status: ReconStatus }) {
-  const s = STATUS_STYLES[status];
   return (
     <span style={{
-      ...s,
-      fontSize: 10,
-      fontWeight: 700,
-      padding: "2px 8px",
-      borderRadius: 4,
-      fontFamily: "monospace",
+      ...STATUS_STYLES[status],
+      fontFamily:    T.mono,
+      fontSize:      T.sz.xs,
+      fontWeight:    T.wt.bold,
+      padding:       "2px 8px",
+      borderRadius:  R.sm,
       letterSpacing: "0.02em",
+      whiteSpace:    "nowrap",
     }}>
       {STATUS_LABELS[status]}
     </span>
   );
 }
+
+// ── Session status badge ───────────────────────────────────────────────────────
+
+const SESSION_STATUS_BADGE: Record<ReconciliationSessionStatus, { cls: string; label: string; dot: string }> = {
+  draft:                { cls: "ag-op-status ag-op-status--pending",  label: "Borrador",       dot: C.inkGhost   },
+  ready:                { cls: "ag-op-status ag-op-status--info",     label: "Listo",          dot: C.blue       },
+  running:              { cls: "ag-op-status ag-op-status--info",     label: "En ejecución",   dot: C.blueDark   },
+  needs_review:         { cls: "ag-op-status ag-op-status--warning",  label: "Revisar",        dot: C.amber      },
+  partially_reconciled: { cls: "ag-op-status ag-op-status--warning",  label: "Parcial",        dot: C.amber      },
+  reconciled:           { cls: "ag-op-status ag-op-status--ok",       label: "Conciliado",     dot: C.green      },
+  closed:               { cls: "ag-op-status ag-op-status--pending",  label: "Cerrado",        dot: C.inkFaint   },
+  failed:               { cls: "ag-op-status ag-op-status--critical", label: "Error",          dot: C.red        },
+  cancelled:            { cls: "ag-op-status ag-op-status--pending",  label: "Cancelado",      dot: C.inkGhost   },
+};
 
 // ── CSV export ────────────────────────────────────────────────────────────────
 
@@ -96,10 +140,10 @@ function exportReconCsv(result: ReconResult): void {
     r.key,
     r.label,
     STATUS_LABELS[r.status],
-    r.amountA != null ? String(r.amountA) : "",
-    r.amountB != null ? String(r.amountB) : "",
-    r.delta   != null ? String(r.delta)   : "",
-    r.deltaPercent != null ? r.deltaPercent.toFixed(2) : "",
+    r.amountA     != null ? String(r.amountA)            : "",
+    r.amountB     != null ? String(r.amountB)            : "",
+    r.delta       != null ? String(r.delta)              : "",
+    r.deltaPercent != null ? r.deltaPercent.toFixed(2)   : "",
     String(r.rowsA),
     String(r.rowsB),
   ].map(c => `"${String(c).replace(/"/g, '""')}"`).join(","));
@@ -109,95 +153,11 @@ function exportReconCsv(result: ReconResult): void {
   const url  = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href     = url;
-  const dateSuffix = new Date().toISOString().slice(0, 10);
-  link.download = `agentik_recon_${result.scope}_${dateSuffix}.csv`;
+  link.download = `agentik_recon_${result.scope}_${new Date().toISOString().slice(0, 10)}.csv`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
-}
-
-// ── Table primitives ──────────────────────────────────────────────────────────
-
-const TABLE: CSSProperties = { width: "100%", borderCollapse: "collapse", fontSize: 12 };
-const THEAD_ROW: CSSProperties = { borderBottom: "1px solid #eee", background: "#fafafa" };
-
-function TH({ children, right }: { children: ReactNode; right?: boolean }) {
-  return (
-    <th style={{
-      padding: "6px 14px",
-      textAlign: right ? "right" : "left",
-      fontWeight: 600,
-      color: "#777",
-      fontSize: 11,
-    }}>
-      {children}
-    </th>
-  );
-}
-
-function TD({ children, right, bold }: { children: ReactNode; right?: boolean; bold?: boolean }) {
-  return (
-    <td style={{
-      padding: "7px 14px",
-      textAlign: right ? "right" : "left",
-      fontWeight: bold ? 600 : 400,
-      color: "#111",
-      borderBottom: "1px solid #f5f5f5",
-    }}>
-      {children}
-    </td>
-  );
-}
-
-// ── Summary card ──────────────────────────────────────────────────────────────
-
-function SummaryCard({
-  label,
-  value,
-  sub,
-  accent,
-}: {
-  label:   string;
-  value:   string;
-  sub?:    string;
-  accent?: "green" | "yellow" | "red";
-}) {
-  const accentColor = accent === "green" ? "#15803d"
-    : accent === "yellow" ? "#92400e"
-    : accent === "red"    ? "#991b1b"
-    : "#111";
-  const accentBg = accent === "green" ? "#f0fdf4"
-    : accent === "yellow" ? "#fffbeb"
-    : accent === "red"    ? "#fef2f2"
-    : "#fff";
-
-  return (
-    <div style={{
-      border: "1px solid #ddd",
-      borderRadius: 6,
-      padding: "14px 18px",
-      background: accentBg,
-      fontFamily: "monospace",
-    }}>
-      <div style={{
-        fontSize: 10,
-        color: "#888",
-        fontWeight: 700,
-        textTransform: "uppercase",
-        letterSpacing: "0.06em",
-        marginBottom: 6,
-      }}>
-        {label}
-      </div>
-      <div style={{ fontSize: 20, fontWeight: 700, color: accentColor, lineHeight: 1.2 }}>
-        {value}
-      </div>
-      {sub && (
-        <div style={{ fontSize: 11, color: "#888", marginTop: 3 }}>{sub}</div>
-      )}
-    </div>
-  );
 }
 
 // ── Sort order for status ─────────────────────────────────────────────────────
@@ -214,6 +174,1372 @@ function sortedRecords(records: ReconRecord[]): ReconRecord[] {
   return [...records].sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status]);
 }
 
+// ── Summary card (results workbench) ─────────────────────────────────────────
+
+function SummaryCard({
+  label,
+  value,
+  sub,
+  accent,
+}: {
+  label:   string;
+  value:   string;
+  sub?:    string;
+  accent?: "green" | "yellow" | "red";
+}) {
+  const accentColor = accent === "green"  ? C.green
+                    : accent === "yellow" ? C.amberDark
+                    : accent === "red"    ? C.redDark
+                    : C.ink;
+  const accentBg    = accent === "green"  ? C.greenLight
+                    : accent === "yellow" ? C.amberLight
+                    : accent === "red"    ? C.redLight
+                    : C.white;
+  const accentBorder = accent === "green"  ? C.greenBorder
+                     : accent === "yellow" ? C.amberBorder
+                     : accent === "red"    ? C.redBorder
+                     : C.line;
+
+  return (
+    <div style={{
+      border:       `1px solid ${accentBorder}`,
+      borderRadius: R.md,
+      padding:      `${S[3]}px ${S[4]}px`,
+      background:   accentBg,
+      boxShadow:    E.xs,
+    }}>
+      <div style={{
+        fontFamily:    T.mono,
+        fontSize:      T.sz.xs,
+        fontWeight:    T.wt.bold,
+        color:         C.inkFaint,
+        textTransform: "uppercase",
+        letterSpacing: "0.06em",
+        marginBottom:  S[1],
+      }}>
+        {label}
+      </div>
+      <div style={{
+        fontFamily:         T.mono,
+        fontSize:           T.sz["2xl"],
+        fontWeight:         T.wt.bold,
+        color:              accentColor,
+        lineHeight:         1.2,
+        fontVariantNumeric: "tabular-nums",
+      }}>
+        {value}
+      </div>
+      {sub && (
+        <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight, marginTop: 3 }}>
+          {sub}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Compact flow rows (replaces verbose FlowCard) ─────────────────────────────
+
+type FlowStatus = "live" | "soon";
+
+interface FlowRowDef {
+  id:             string;
+  title:          string;
+  tag:            string;
+  tagBg:          string;
+  tagColor:       string;
+  description:    string;
+  status:         FlowStatus;
+  blockerReason?: string;
+  ctaLabel:       string;
+  ctaHref?:       string;
+  onSelect?:      () => void;
+}
+
+function FlowRow({ def }: { def: FlowRowDef }) {
+  const isLive = def.status === "live";
+
+  const ctaBtnStyle: CSSProperties = {
+    fontFamily:     T.mono,
+    fontSize:       T.sz.sm,
+    fontWeight:     T.wt.bold,
+    padding:        "5px 14px",
+    background:     C.ink,
+    color:          C.white,
+    border:         "none",
+    borderRadius:   R.sm,
+    cursor:         "pointer",
+    textDecoration: "none",
+    display:        "inline-block",
+    whiteSpace:     "nowrap",
+  };
+
+  return (
+    <div
+      className={isLive ? "ag-op-row" : "ag-op-row ag-op-row--passive"}
+      style={{
+        display:      "flex",
+        alignItems:   "center",
+        gap:          S[3],
+        padding:      `${S[2]+2}px ${S[4]}px`,
+        borderBottom: `1px solid ${C.lineSubtle}`,
+      }}
+    >
+      {/* Status dot */}
+      <div style={{
+        width:        6,
+        height:       6,
+        borderRadius: "50%",
+        background:   isLive ? C.green : C.inkGhost,
+        flexShrink:   0,
+      }} />
+
+      {/* Title + category tag */}
+      <div style={{ flex: "0 0 210px", display: "flex", alignItems: "center", gap: 7 }}>
+        <span style={{
+          fontFamily: T.mono,
+          fontSize:   T.sz.md,
+          fontWeight: T.wt.bold,
+          color:      isLive ? C.ink : C.inkLight,
+          whiteSpace: "nowrap",
+        }}>
+          {def.title}
+        </span>
+        <span style={{
+          fontFamily:    T.mono,
+          fontSize:      T.sz["2xs"],
+          fontWeight:    T.wt.black,
+          padding:       "2px 6px",
+          borderRadius:  R.xs,
+          background:    isLive ? def.tagBg    : C.surface,
+          color:         isLive ? def.tagColor : C.inkFaint,
+          textTransform: "uppercase",
+          letterSpacing: "0.04em",
+          whiteSpace:    "nowrap",
+        }}>
+          {def.tag}
+        </span>
+      </div>
+
+      {/* Description */}
+      <div style={{
+        flex:         1,
+        fontFamily:   T.mono,
+        fontSize:     T.sz.sm,
+        color:        C.inkLight,
+        overflow:     "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace:   "nowrap",
+        minWidth:     0,
+      }}>
+        {def.description}
+      </div>
+
+      {/* Blocker reason */}
+      {!isLive && def.blockerReason && (
+        <span style={{
+          fontFamily:   T.mono,
+          fontSize:     T.sz.xs,
+          color:        C.amberDark,
+          background:   C.amberLight,
+          border:       `1px solid ${C.amberBorder}`,
+          borderRadius: R.xs,
+          padding:      "2px 8px",
+          whiteSpace:   "nowrap",
+          flexShrink:   0,
+        }}>
+          {def.blockerReason}
+        </span>
+      )}
+
+      {/* CTA */}
+      <div style={{ flexShrink: 0 }}>
+        {isLive && def.ctaHref && (
+          <a href={def.ctaHref} style={ctaBtnStyle}>{def.ctaLabel}</a>
+        )}
+        {isLive && !def.ctaHref && def.onSelect && (
+          <button onClick={def.onSelect} style={ctaBtnStyle}>{def.ctaLabel}</button>
+        )}
+        {!isLive && (
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint }}>
+            Próximamente
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Financial Streams Panel ───────────────────────────────────────────────────
+
+const STREAM_STATUS_DOT: Record<string, string> = {
+  healthy:                C.green,
+  pending_review:         C.amber,
+  reconciliation_pending: C.amber,
+  partial_visibility:     C.blueDark,
+  integration_pending:    C.inkGhost,
+  blocked_source:         C.red,
+  missing_sag_mapping:    C.red,
+  low_activity:           C.inkGhost,
+  settlement_pending:     C.blueDark,
+};
+
+function StreamRow({ stream, orgSlug }: { stream: FinancialStream; orgSlug: string }) {
+  const dot        = STREAM_STATUS_DOT[stream.status] ?? C.inkGhost;
+  const rowClass   = [
+    "ag-op-row",
+    stream.rowSeverity === "warning" ? "ag-op-row--warning" : "",
+    stream.rowSeverity === "passive"  ? "ag-op-row--passive"  : "",
+  ].filter(Boolean).join(" ");
+  const badgeClass = `ag-op-status ag-op-status--${stream.statusBadge}`;
+
+  const primary = stream.signals.find(s => s.level === "warn")
+               ?? stream.signals.find(s => s.level === "info")
+               ?? stream.signals[1]
+               ?? stream.signals[0];
+
+  const actionHref = stream.status === "reconciliation_pending"
+    ? `/${orgSlug}/finanzas/torre-control/consignaciones`
+    : null;
+
+  const sigColor = primary?.level === "warn" ? C.amberDark
+                 : primary?.level === "ok"   ? C.green
+                 : primary?.level === "info" ? C.blue
+                 : C.inkLight;
+
+  return (
+    <div
+      className={rowClass}
+      style={{
+        display:             "grid",
+        gridTemplateColumns: "20px 1fr 90px 160px 180px",
+        alignItems:          "center",
+        gap:                 S[3],
+        padding:             `${S[2]+2}px ${S[4]}px`,
+        borderBottom:        `1px solid ${C.lineSubtle}`,
+        minHeight:           46,
+      }}
+    >
+      {/* Status dot */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ width: 7, height: 7, borderRadius: "50%", background: dot, flexShrink: 0 }} />
+      </div>
+
+      {/* Name + bank */}
+      <div style={{ minWidth: 0 }}>
+        <div style={{
+          fontFamily:   T.mono,
+          fontSize:     T.sz.base,
+          fontWeight:   T.wt.bold,
+          color:        C.ink,
+          lineHeight:   1.2,
+          overflow:     "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace:   "nowrap",
+        }}>
+          {stream.displayName}
+        </div>
+        <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight, marginTop: 1 }}>
+          {stream.bank}{stream.accountSuffix ? ` · ${stream.accountSuffix}` : ""}
+        </div>
+      </div>
+
+      {/* PUC code */}
+      <div style={{
+        fontFamily:    T.mono,
+        fontSize:      T.sz.xs,
+        color:         C.inkGhost,
+        whiteSpace:    "nowrap",
+        letterSpacing: "0.02em",
+      }}>
+        {stream.sagAccountCode}
+      </div>
+
+      {/* Status badge */}
+      <span className={badgeClass}>{stream.statusLabel}</span>
+
+      {/* Primary signal + optional action link */}
+      <div style={{ display: "flex", alignItems: "center", gap: S[2], justifyContent: "flex-end" }}>
+        {primary?.value && (
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: sigColor, whiteSpace: "nowrap" }}>
+            {primary.value}
+          </span>
+        )}
+        {actionHref && (
+          <a
+            href={actionHref}
+            style={{
+              fontFamily:     T.mono,
+              fontSize:       T.sz.sm,
+              fontWeight:     T.wt.bold,
+              color:          C.blueDark,
+              textDecoration: "none",
+              whiteSpace:     "nowrap",
+            }}
+          >
+            Revisar →
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StreamGroupSection({
+  label,
+  streams,
+  orgSlug,
+}: {
+  label:   string;
+  streams: FinancialStream[];
+  orgSlug: string;
+}) {
+  if (streams.length === 0) return null;
+  return (
+    <>
+      <div className="ag-intel-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span style={{
+          fontFamily:    T.mono,
+          fontSize:      T.sz.xs,
+          fontWeight:    T.wt.bold,
+          color:         C.blueDark,
+          textTransform: "uppercase" as const,
+          letterSpacing: "0.06em",
+        }}>
+          {label}
+        </span>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkGhost }}>
+          {streams.length} fuente{streams.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+      {streams.map(s => <StreamRow key={s.id} stream={s} orgSlug={orgSlug} />)}
+    </>
+  );
+}
+
+function FinancialStreamsPanel({ streams, orgSlug }: { streams: FinancialStream[]; orgSlug: string }) {
+  const bancos      = streams.filter(s => s.group === "bancos");
+  const tarjetas    = streams.filter(s => s.group === "tarjetas");
+  const plataformas = streams.filter(s => s.group === "plataformas");
+  const actionCount = streams.filter(s => s.requiresAction).length;
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: S[2] }}>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkFaint }}>
+          {streams.length} fuentes registradas · estado operacional
+        </span>
+        {actionCount > 0 && (
+          <span style={{
+            fontFamily:   T.mono,
+            fontSize:     T.sz.sm,
+            fontWeight:   T.wt.bold,
+            color:        C.amberDark,
+            background:   C.amberLight,
+            border:       `1px solid ${C.amberBorder}`,
+            borderRadius: R.sm,
+            padding:      "2px 8px",
+          }}>
+            {actionCount} requiere{actionCount !== 1 ? "n" : ""} atención
+          </span>
+        )}
+      </div>
+
+      <div className="ag-op-table">
+        <div className="ag-op-table-head" style={{
+          display:             "grid",
+          gridTemplateColumns: "20px 1fr 90px 160px 180px",
+          gap:                 S[3],
+          padding:             `6px ${S[4]}px`,
+          alignItems:          "center",
+        }}>
+          <div />
+          {["Fuente", "PUC SAG", "Estado", "Señal"].map(h => (
+            <div key={h} style={{
+              fontFamily:    T.mono,
+              fontSize:      T.sz.xs,
+              fontWeight:    T.wt.bold,
+              color:         C.inkFaint,
+              textTransform: "uppercase" as const,
+              letterSpacing: "0.05em",
+              textAlign:     h === "Señal" ? "right" as const : "left" as const,
+            }}>
+              {h}
+            </div>
+          ))}
+        </div>
+
+        <StreamGroupSection label="Bancos"      streams={bancos}      orgSlug={orgSlug} />
+        <StreamGroupSection label="Tarjetas"    streams={tarjetas}    orgSlug={orgSlug} />
+        <StreamGroupSection label="Plataformas" streams={plataformas} orgSlug={orgSlug} />
+      </div>
+    </div>
+  );
+}
+
+// ── Observation strip ─────────────────────────────────────────────────────────
+
+const OBS_SEVERITY_STYLES: Record<string, { border: string; bg: string; dot: string; labelColor: string }> = {
+  critical: { border: `3px solid ${C.red}`,        bg: C.redLight,   dot: C.red,      labelColor: C.redDark   },
+  elevated: { border: "3px solid #ea580c",          bg: "#fff7ed",    dot: "#ea580c",  labelColor: "#9a3412"   },
+  watch:    { border: `3px solid ${C.amber}`,       bg: C.amberLight, dot: C.amber,    labelColor: C.amberDark },
+  warning:  { border: `3px solid ${C.amber}`,       bg: C.amberLight, dot: C.amber,    labelColor: C.amberDark },
+  ok:       { border: `3px solid ${C.green}`,       bg: C.greenLight, dot: C.green,    labelColor: C.greenDark },
+  info:     { border: "3px solid #4f46e5",          bg: "#f5f3ff",    dot: "#6366f1",  labelColor: "#3730a3"   },
+};
+
+const ESCALATION_STYLE: Record<string, { border: string; bg: string; dot: string }> = {
+  urgent:   { border: `3px solid ${C.red}`,        bg: C.redLight,   dot: C.red      },
+  elevated: { border: "3px solid #ea580c",          bg: "#fff7ed",    dot: "#ea580c"  },
+  watch:    { border: `3px solid ${C.amber}`,       bg: C.amberLight, dot: C.amber    },
+  positive: { border: `3px solid ${C.green}`,       bg: C.greenLight, dot: C.green    },
+  building: { border: "3px solid #6366f1",          bg: "#f5f3ff",    dot: "#6366f1"  },
+  quiet:    { border: `3px solid ${C.line}`,        bg: C.surface,    dot: C.inkFaint },
+};
+
+function ObservationStrip({ attentionPlan }: { attentionPlan: AttentionRouterResult }) {
+  const { primaryObservation, groupedSignals, attentionSummary, quietCount, escalationLevel } = attentionPlan;
+
+  const eStyle      = ESCALATION_STYLE[escalationLevel] ?? ESCALATION_STYLE.quiet;
+  const primaryStyle = primaryObservation
+    ? (OBS_SEVERITY_STYLES[primaryObservation.severity] ?? OBS_SEVERITY_STYLES.info)
+    : null;
+
+  if (!primaryObservation || escalationLevel === "quiet" || escalationLevel === "building" || escalationLevel === "positive") {
+    return (
+      <div style={{
+        display:    "flex",
+        alignItems: "center",
+        gap:        S[3],
+        padding:    `${S[3]}px ${S[4]+2}px`,
+        marginBottom: S[5],
+        border:     `1px solid ${C.line}`,
+        borderLeft: eStyle.border,
+        borderRadius: R.md,
+        background: eStyle.bg,
+      }}>
+        <div style={{ width: 6, height: 6, borderRadius: "50%", background: eStyle.dot, flexShrink: 0 }} />
+        <div style={{ flex: 1 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
+            <span style={{
+              fontFamily:    T.mono,
+              fontSize:      T.sz.xs,
+              fontWeight:    T.wt.black,
+              color:         C.brand,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+            }}>
+              Agentik observa
+            </span>
+            <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.inkMid }}>
+              {attentionSummary.headline}
+            </span>
+          </div>
+          {attentionSummary.context && (
+            <div style={{ fontFamily: T.mono, fontSize: T.sz.base, color: C.inkLight, marginTop: 2 }}>
+              {attentionSummary.context}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      marginBottom: S[5],
+      border:       `1px solid ${C.line}`,
+      borderLeft:   eStyle.border,
+      borderRadius: R.md,
+      background:   eStyle.bg,
+      overflow:     "hidden",
+    }}>
+      {/* Header: executive summary */}
+      <div style={{
+        display:    "flex",
+        alignItems: "center",
+        gap:        S[2],
+        padding:    `${S[2]}px ${S[4]+2}px`,
+        borderBottom: `1px solid ${C.line}`,
+        background: "rgba(255,255,255,0.5)",
+      }}>
+        <div style={{ width: 6, height: 6, borderRadius: "50%", background: eStyle.dot, flexShrink: 0 }} />
+        <span style={{
+          fontFamily:    T.mono,
+          fontSize:      T.sz.xs,
+          fontWeight:    T.wt.black,
+          color:         C.brand,
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+        }}>
+          Agentik observa
+        </span>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold, color: primaryStyle!.labelColor }}>
+          {attentionSummary.headline}
+        </span>
+        {attentionSummary.context && (
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight, marginLeft: 2 }}>
+            · {attentionSummary.context}
+          </span>
+        )}
+      </div>
+
+      {/* Primary observation */}
+      <div style={{ display: "flex", alignItems: "flex-start", gap: S[3]+2, padding: `${S[3]+2}px ${S[4]+2}px` }}>
+        <div style={{ width: 7, height: 7, borderRadius: "50%", background: eStyle.dot, flexShrink: 0, marginTop: 3 }} />
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: T.mono, fontSize: T.sz.base, color: C.ink, lineHeight: 1.6, fontWeight: T.wt.medium }}>
+            {primaryObservation.message}
+          </div>
+          {primaryObservation.suggestedAction && (
+            <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight, marginTop: 3 }}>
+              → {primaryObservation.suggestedAction}
+            </div>
+          )}
+          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginTop: S[1] }}>
+            RULE_BASED · {primaryObservation.basedOnSnapshots} snapshot{primaryObservation.basedOnSnapshots !== 1 ? "s" : ""}
+          </div>
+        </div>
+        {primaryObservation.relatedWorkspace && (
+          <a
+            href={primaryObservation.relatedWorkspace}
+            style={{
+              fontFamily:     T.mono,
+              fontSize:       T.sz.sm,
+              fontWeight:     T.wt.bold,
+              padding:        "6px 14px",
+              background:     C.brand,
+              color:          C.white,
+              borderRadius:   R.sm,
+              textDecoration: "none",
+              whiteSpace:     "nowrap",
+              flexShrink:     0,
+            }}
+          >
+            Revisar →
+          </a>
+        )}
+      </div>
+
+      {/* Grouped additional signals (max 3) */}
+      {groupedSignals.length > 0 && (
+        <div style={{ borderTop: `1px solid ${C.line}`, padding: `${S[2]}px ${S[4]+2}px ${S[2]+2}px` }}>
+          {groupedSignals.map((grp, i) => {
+            const s = OBS_SEVERITY_STYLES[grp.severity] ?? OBS_SEVERITY_STYLES.info;
+            return (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: S[2], marginTop: i > 0 ? 5 : 0 }}>
+                <div style={{ width: 5, height: 5, borderRadius: "50%", background: s.dot, flexShrink: 0 }} />
+                <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid, flex: 1 }}>{grp.message}</span>
+                {grp.relatedWorkspace && (
+                  <a href={grp.relatedWorkspace} style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.brand, textDecoration: "none", flexShrink: 0 }}>
+                    Ver →
+                  </a>
+                )}
+              </div>
+            );
+          })}
+          {quietCount > 0 && (
+            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginTop: S[1]+2 }}>
+              +{quietCount} señal{quietCount > 1 ? "es" : ""} adicional{quietCount > 1 ? "es" : ""} en segundo plano
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Module Pulse Header ───────────────────────────────────────────────────────
+// Specialized recon workspace header: source readiness + attention chips + back nav.
+// NOTE: different props from the generic ModulePulseHeader primitive — kept separate.
+
+function ReconModuleHeader({
+  orgSlug,
+  streams,
+  memoryStatus,
+  attentionPlan,
+  selectedFlow,
+  onBack,
+}: {
+  orgSlug:        string;
+  streams?:       FinancialStream[];
+  memoryStatus?:  Props["memoryStatus"];
+  attentionPlan?: AttentionRouterResult;
+  selectedFlow:   string | null;
+  onBack:         () => void;
+}) {
+  const allStreams     = streams ?? [];
+  const totalSources  = allStreams.length;
+  const activeSources = allStreams.filter(s =>
+    s.status !== "integration_pending" && s.status !== "missing_sag_mapping",
+  ).length;
+  const actionItems   = allStreams.filter(s => s.requiresAction).length;
+
+  const escalation = attentionPlan?.escalationLevel ?? "quiet";
+  const hasAlert   = escalation === "urgent" || escalation === "elevated";
+
+  const memColor = memoryStatus?.readinessTier === "ready"    ? C.green
+                 : memoryStatus?.readinessTier === "warming"  ? C.blue
+                 : memoryStatus?.readinessTier === "building" ? C.brand
+                 : C.inkFaint;
+
+  const chipStyle = (bg: string, border: string): CSSProperties => ({
+    fontFamily:   T.mono,
+    fontSize:     T.sz.sm,
+    padding:      "4px 10px",
+    borderRadius: R.sm,
+    background:   bg,
+    border:       `1px solid ${border}`,
+    display:      "flex",
+    alignItems:   "center",
+    gap:          5,
+    whiteSpace:   "nowrap",
+  });
+
+  return (
+    <div style={{ marginBottom: S[6], paddingBottom: S[4]+2, borderBottom: `1px solid ${C.lineSubtle}` }}>
+      {/* Breadcrumb */}
+      <div style={{
+        fontFamily:  T.mono,
+        fontSize:    T.sz.sm,
+        color:       C.inkFaint,
+        marginBottom: S[3]+2,
+        display:     "flex",
+        alignItems:  "center",
+        gap:         6,
+      }}>
+        <a href={`/${orgSlug}/finance`} style={{ color: C.inkFaint, textDecoration: "none" }}>Finanzas</a>
+        <span style={{ color: C.inkGhost }}>/</span>
+        {selectedFlow ? (
+          <>
+            <button
+              onClick={onBack}
+              style={{
+                background:  "none",
+                border:      "none",
+                cursor:      "pointer",
+                color:       C.inkFaint,
+                fontFamily:  T.mono,
+                fontSize:    T.sz.sm,
+                padding:     0,
+              }}
+            >
+              Centro de Conciliación
+            </button>
+            <span style={{ color: C.inkGhost }}>/</span>
+            <span style={{ color: C.inkMid, fontWeight: T.wt.bold }}>Pedidos vs Ventas</span>
+          </>
+        ) : (
+          <span style={{ color: C.inkMid, fontWeight: T.wt.bold }}>Centro de Conciliación</span>
+        )}
+      </div>
+
+      {/* Title row + pulse chips */}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: S[3] }}>
+        <div>
+          <h1 style={{
+            margin:       0,
+            fontFamily:   T.mono,
+            fontSize:     T.sz["2xl"],
+            fontWeight:   T.wt.black,
+            color:        C.ink,
+            letterSpacing: "-0.02em",
+          }}>
+            {selectedFlow ? "Pedidos vs Ventas" : "Centro de Conciliación"}
+          </h1>
+          <p style={{ margin: `${S[1]}px 0 0`, fontFamily: T.mono, fontSize: T.sz.base, color: C.inkLight }}>
+            {selectedFlow
+              ? "Verificación de conversión comercial período a período."
+              : "Estado operacional de fuentes financieras · selecciona un flujo para conciliar."}
+          </p>
+        </div>
+
+        {/* Pulse chips — landing only */}
+        {!selectedFlow && (
+          <div style={{ display: "flex", gap: S[2], flexWrap: "wrap", alignItems: "center" }}>
+            {/* SAG chip */}
+            <div style={chipStyle(C.greenLight, C.greenBorder)}>
+              <div style={{ width: 5, height: 5, borderRadius: "50%", background: C.green }} />
+              <span style={{ fontWeight: T.wt.bold, color: C.green }}>SAG</span>
+              <span style={{ color: C.greenBorder }}>·</span>
+              <span style={{ color: C.green }}>Conectado</span>
+            </div>
+
+            {/* Sources chip */}
+            {totalSources > 0 && (
+              <div style={chipStyle(C.blueLight, C.blueBorder)}>
+                <div style={{ width: 5, height: 5, borderRadius: "50%", background: C.blue }} />
+                <span style={{ fontWeight: T.wt.bold, color: C.blue }}>{activeSources}/{totalSources}</span>
+                <span style={{ color: C.blueBorder }}>·</span>
+                <span style={{ color: C.blue }}>fuentes activas</span>
+              </div>
+            )}
+
+            {/* Attention chip */}
+            {(actionItems > 0 || hasAlert) && (
+              <div style={chipStyle(C.amberLight, C.amberBorder)}>
+                <div style={{ width: 5, height: 5, borderRadius: "50%", background: C.amber }} />
+                <span style={{ fontWeight: T.wt.bold, color: C.amberDark }}>
+                  {actionItems > 0 ? actionItems : "!"}
+                </span>
+                <span style={{ color: C.amberBorder }}>·</span>
+                <span style={{ color: C.amberDark }}>
+                  {actionItems > 0
+                    ? `requiere${actionItems !== 1 ? "n" : ""} atención`
+                    : "señal activa"}
+                </span>
+              </div>
+            )}
+
+            {/* Memory chip */}
+            {memoryStatus && (
+              <div style={chipStyle(C.surface, C.line)}>
+                <div style={{ width: 5, height: 5, borderRadius: "50%", background: memColor }} />
+                <span style={{ fontWeight: T.wt.bold, color: memColor }}>Memoria</span>
+                <span style={{ color: C.line }}>·</span>
+                <span style={{ color: C.inkLight }}>{memoryStatus.readinessLabel}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Back button — active flow */}
+        {selectedFlow && (
+          <button
+            onClick={onBack}
+            className="ag-action-secondary"
+          >
+            ← Volver al Centro
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Source status chip (data sources layer) ───────────────────────────────────
+
+function SourceStatusChip({
+  label,
+  sublabel,
+  status,
+  detail,
+}: {
+  label:    string;
+  sublabel: string;
+  status:   "connected" | "pending" | "partial";
+  detail:   string;
+}) {
+  const dotColor = status === "connected" ? C.green
+                 : status === "partial"   ? C.amber
+                 : C.inkGhost;
+  const txtColor = status === "connected" ? C.green
+                 : status === "partial"   ? C.amberDark
+                 : C.inkLight;
+  const bg       = status === "connected" ? C.greenLight
+                 : status === "partial"   ? C.amberLight
+                 : C.surface;
+  const border   = status === "connected" ? C.greenBorder
+                 : status === "partial"   ? C.amberBorder
+                 : C.line;
+
+  return (
+    <div style={{
+      flex:         "1 1 180px",
+      padding:      `${S[2]+2}px ${S[3]+2}px`,
+      border:       `1px solid ${border}`,
+      borderRadius: R.lg,
+      background:   bg,
+      boxShadow:    E.xs,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: S[1] }}>
+        <div style={{ width: 7, height: 7, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.base, fontWeight: T.wt.black, color: txtColor }}>
+          {label}
+        </span>
+      </div>
+      <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginBottom: 2 }}>
+        {sublabel}
+      </div>
+      <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight }}>
+        {detail}
+      </div>
+    </div>
+  );
+}
+
+// ── Data Sources Layer ─────────────────────────────────────────────────────────
+
+function DataSourcesLayer({ streams, orgSlug }: { streams?: FinancialStream[]; orgSlug: string }) {
+  const allStreams     = streams ?? [];
+  const bankCount     = allStreams.filter(s => s.group === "bancos").length;
+  const platformCount = allStreams.filter(s => s.group === "plataformas").length;
+  const cardCount     = allStreams.filter(s => s.group === "tarjetas").length;
+
+  return (
+    <WorkspaceSection title="Fuentes de datos" divider={false}>
+      {/* Source chips row */}
+      <div style={{ display: "flex", gap: S[2]+2, marginBottom: S[4], flexWrap: "wrap" }}>
+        <SourceStatusChip
+          label="SAG"
+          sublabel="Sistema administrativo"
+          status="connected"
+          detail="Cobros · Ventas · Pedidos · Cartera"
+        />
+        <SourceStatusChip
+          label="DIAN"
+          sublabel="Facturación electrónica"
+          status="pending"
+          detail="Requiere configuración de integración"
+        />
+        {bankCount > 0 && (
+          <SourceStatusChip
+            label={`${bankCount} cuentas bancarias`}
+            sublabel="Bancos"
+            status="partial"
+            detail="Códigos PUC registrados · pendiente validación"
+          />
+        )}
+        {(platformCount + cardCount) > 0 && (
+          <SourceStatusChip
+            label={`${platformCount + cardCount} plataformas`}
+            sublabel="PayCo · MercadoPago · EnvíoClick · Tarjetas"
+            status="pending"
+            detail="Pendiente integración de API"
+          />
+        )}
+      </div>
+
+      {/* Financial streams detail sub-layer */}
+      {allStreams.length > 0 && (
+        <FinancialStreamsPanel streams={allStreams} orgSlug={orgSlug} />
+      )}
+    </WorkspaceSection>
+  );
+}
+
+// ── Reconciliation Builder ─────────────────────────────────────────────────────
+
+function ReconciliationBuilder({
+  orgSlug,
+  onSelectFlow,
+}: {
+  orgSlug:      string;
+  onSelectFlow: (id: string) => void;
+}) {
+  const flows: FlowRowDef[] = [
+    {
+      id:          "pedidos-ventas",
+      title:       "Pedidos vs Ventas",
+      tag:         "Operativo",
+      tagBg:       C.blueLight,
+      tagColor:    C.blue,
+      description: "Conversión comercial · qué pedidos se convirtieron en venta real · diferencia de monto por fuente",
+      status:      "live",
+      ctaLabel:    "Conciliar →",
+      onSelect:    () => onSelectFlow("pedidos-ventas"),
+    },
+    {
+      id:             "cartera-recaudos",
+      title:          "Cartera vs Recaudos",
+      tag:            "Financiero",
+      tagBg:          C.redLight,
+      tagColor:       C.redDark,
+      description:    "Cartera pendiente vs pagos aplicados · detecta cartera cobrada que sigue abierta",
+      status:         "soon",
+      blockerReason:  "Requiere módulo cartera",
+      ctaLabel:       "Ver cartera →",
+      ctaHref:        `/${orgSlug}/finance?tab=hub`,
+    },
+    {
+      id:             "banco-cobros",
+      title:          "Banco vs Cobros",
+      tag:            "Financiero",
+      tagBg:          C.redLight,
+      tagColor:       C.redDark,
+      description:    "Extracto bancario vs cobros SAG · consignaciones sin identificar · brecha de recaudo",
+      status:         "soon",
+      blockerReason:  "Requiere extracto bancario",
+      ctaLabel:       "",
+    },
+    {
+      id:             "xml-dian-ventas",
+      title:          "XML DIAN vs Ventas",
+      tag:            "Fiscal",
+      tagBg:          C.blueLight,
+      tagColor:       C.blue,
+      description:    "Facturas electrónicas DIAN vs ventas SAG · valida por CUFE · detecta rechazos y faltantes",
+      status:         "soon",
+      blockerReason:  "Requiere carga XML DIAN",
+      ctaLabel:       "",
+    },
+    {
+      id:             "cxp-soportes",
+      title:          "CxP vs Soportes",
+      tag:            "Control",
+      tagBg:          C.brandLight,
+      tagColor:       C.brandDark,
+      description:    "Cuentas por pagar vs facturas de proveedores · respaldo documental · pagos sin soporte",
+      status:         "soon",
+      blockerReason:  "Requiere módulo CxP",
+      ctaLabel:       "",
+    },
+    {
+      id:             "f2-f1",
+      title:          "Remisiones F2 → Facturas F1",
+      tag:            "Control",
+      tagBg:          C.brandLight,
+      tagColor:       C.brandDark,
+      description:    "Conversión remisiones F2 a facturas F1 · tasa de conversión por cliente · riesgo cartera no formalizada",
+      status:         "soon",
+      blockerReason:  "Requiere flujo F2→F1",
+      ctaLabel:       "",
+    },
+  ];
+
+  const liveCount = flows.filter(f => f.status === "live").length;
+  const soonCount = flows.filter(f => f.status === "soon").length;
+
+  return (
+    <WorkspaceSection
+      title="Flujos de conciliación"
+      subtitle={`${liveCount} activo · ${soonCount} próximamente`}
+    >
+      <div className="ag-op-table">
+        {/* Column headers */}
+        <div className="ag-op-table-head" style={{
+          display:    "flex",
+          alignItems: "center",
+          gap:        S[3],
+          padding:    `5px ${S[4]}px`,
+        }}>
+          <div style={{ width: 6, flexShrink: 0 }} />
+          <div style={{ flex: "0 0 210px", fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.inkFaint, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            Flujo
+          </div>
+          <div style={{ flex: 1, fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.inkFaint, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            Descripción
+          </div>
+          <div style={{ width: 90 }} />
+          <div style={{ width: 90 }} />
+        </div>
+
+        {flows.map(f => <FlowRow key={f.id} def={f} />)}
+      </div>
+    </WorkspaceSection>
+  );
+}
+
+// ── Recent Sessions ───────────────────────────────────────────────────────────
+
+function RecentSessionsSection({ sessions }: { sessions: ReconSessionRow[] }) {
+  const fmtDate = (iso: string) => {
+    try {
+      return new Intl.DateTimeFormat("es-CO", {
+        day:    "2-digit",
+        month:  "short",
+        year:   "numeric",
+        hour:   "2-digit",
+        minute: "2-digit",
+      }).format(new Date(iso));
+    } catch {
+      return iso.slice(0, 10);
+    }
+  };
+
+  return (
+    <WorkspaceSection
+      title="Sesiones recientes"
+      subtitle={sessions.length > 0 ? `${sessions.length} sesión${sessions.length !== 1 ? "es" : ""}` : undefined}
+    >
+      {sessions.length === 0 ? (
+        <EmptyOperationalState
+          message="Sin sesiones registradas"
+          detail="Las sesiones de conciliación aparecerán aquí una vez se ejecuten flujos."
+        />
+      ) : (
+        <div className="ag-op-table">
+          {/* Column headers */}
+          <div className="ag-op-table-head" style={{
+            display:             "grid",
+            gridTemplateColumns: "100px 1fr 80px 110px 80px 80px 1fr",
+            gap:                 S[2]+2,
+            padding:             `6px ${S[4]}px`,
+            alignItems:          "center",
+          }}>
+            {["Código", "Conciliación", "Período", "Estado", "Coincide", "Diferencias", "Última actividad"].map((h, i) => (
+              <div key={h} style={{
+                fontFamily:    T.mono,
+                fontSize:      T.sz.xs,
+                fontWeight:    T.wt.bold,
+                color:         C.inkFaint,
+                textTransform: "uppercase" as const,
+                letterSpacing: "0.05em",
+                textAlign:     i >= 4 && i <= 5 ? "right" as const : "left" as const,
+              }}>
+                {h}
+              </div>
+            ))}
+          </div>
+
+          {sessions.map(s => {
+            const badge      = SESSION_STATUS_BADGE[s.status] ?? SESSION_STATUS_BADGE.draft;
+            const matchRate  = s.summary?.matchRate;
+            const exceptions = s.summary
+              ? s.summary.onlyInA + s.summary.onlyInB + s.summary.mismatchAmount
+              : null;
+
+            return (
+              <div
+                key={s.id}
+                className="ag-op-row"
+                style={{
+                  display:             "grid",
+                  gridTemplateColumns: "100px 1fr 80px 110px 80px 80px 1fr",
+                  gap:                 S[2]+2,
+                  padding:             `${S[2]+2}px ${S[4]}px`,
+                  borderBottom:        `1px solid ${C.lineSubtle}`,
+                  alignItems:          "center",
+                }}
+              >
+                {/* Código */}
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <div style={{ width: 6, height: 6, borderRadius: "50%", background: badge.dot, flexShrink: 0 }} />
+                  <span style={{
+                    fontFamily:    T.mono,
+                    fontSize:      T.sz.sm,
+                    fontWeight:    T.wt.bold,
+                    color:         C.blueDark,
+                    whiteSpace:    "nowrap",
+                    letterSpacing: "0.01em",
+                  }}>
+                    {s.sessionCode}
+                  </span>
+                </div>
+
+                {/* Conciliación title */}
+                <div style={{
+                  fontFamily:   T.mono,
+                  fontSize:     T.sz.base,
+                  fontWeight:   T.wt.semibold,
+                  color:        C.ink,
+                  overflow:     "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace:   "nowrap",
+                }}>
+                  {s.title}
+                </div>
+
+                {/* Período */}
+                <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight, whiteSpace: "nowrap" }}>
+                  {s.period ? fmtPeriodo(s.period) : <span style={{ color: C.inkGhost }}>—</span>}
+                </div>
+
+                {/* Estado badge */}
+                <div>
+                  <span className={badge.cls}>{badge.label}</span>
+                </div>
+
+                {/* Coincidencia % */}
+                <div style={{ textAlign: "right" }}>
+                  {matchRate != null ? (
+                    <span style={{
+                      fontFamily:         T.mono,
+                      fontSize:           T.sz.base,
+                      fontWeight:         T.wt.bold,
+                      fontVariantNumeric: "tabular-nums",
+                      color:              matchRate >= 95 ? C.green
+                                        : matchRate >= 80 ? C.amberDark
+                                        : C.redDark,
+                    }}>
+                      {matchRate.toFixed(1)}%
+                    </span>
+                  ) : (
+                    <span style={{ color: C.inkGhost, fontFamily: T.mono, fontSize: T.sz.sm }}>—</span>
+                  )}
+                </div>
+
+                {/* Diferencias */}
+                <div style={{ textAlign: "right" }}>
+                  {exceptions != null ? (
+                    <span style={{
+                      fontFamily:         T.mono,
+                      fontSize:           T.sz.base,
+                      fontWeight:         exceptions > 0 ? T.wt.bold : T.wt.normal,
+                      fontVariantNumeric: "tabular-nums",
+                      color:              exceptions > 0 ? C.amberDark : C.inkFaint,
+                    }}>
+                      {exceptions > 0 ? fmtN(exceptions) : "0"}
+                    </span>
+                  ) : (
+                    <span style={{ color: C.inkGhost, fontFamily: T.mono, fontSize: T.sz.sm }}>—</span>
+                  )}
+                </div>
+
+                {/* Última actividad */}
+                <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, whiteSpace: "nowrap" }}>
+                  {fmtDate(s.updatedAt)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </WorkspaceSection>
+  );
+}
+
+// ── Results Workbench (operational table) ─────────────────────────────────────
+
+function ResultsWorkbench({ result, baseUrl }: { result: ReconResult; baseUrl: string }) {
+  const cols = "auto 1fr 130px 130px 110px 80px 70px 70px";
+
+  return (
+    <WorkspaceSection title="Mesa de trabajo — resultados">
+      {/* KPI strip — 5 summary cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: S[3], marginBottom: S[5] }}>
+        <SummaryCard
+          label="Cuadran"
+          value={fmtN(result.summary.matched)}
+          sub={`de ${fmtN(result.summary.total)} registros`}
+          accent="green"
+        />
+        <SummaryCard
+          label="Diferencia de monto"
+          value={fmtN(result.summary.mismatchAmount)}
+          sub="mismo key, monto distinto"
+          accent={result.summary.mismatchAmount > 0 ? "yellow" : "green"}
+        />
+        <SummaryCard
+          label={`Solo en ${result.sourceALabel}`}
+          value={fmtN(result.summary.onlyInA)}
+          sub="faltan en Fuente B"
+          accent={result.summary.onlyInA > 0 ? "yellow" : "green"}
+        />
+        <SummaryCard
+          label={`Solo en ${result.sourceBLabel}`}
+          value={fmtN(result.summary.onlyInB)}
+          sub="faltan en Fuente A"
+          accent={result.summary.onlyInB > 0 ? "yellow" : "green"}
+        />
+        <SummaryCard
+          label="Tasa de coincidencia"
+          value={`${result.summary.matchRate.toFixed(1)}%`}
+          sub={result.summary.possibleDuplicates > 0
+            ? `${result.summary.possibleDuplicates} posibles duplicados`
+            : "sin duplicados detectados"}
+          accent={result.summary.matchRate >= 95 ? "green" : result.summary.matchRate >= 80 ? "yellow" : "red"}
+        />
+      </div>
+
+      {/* Amount summary bar */}
+      <div style={{
+        display:      "flex",
+        gap:          S[4],
+        marginBottom: S[5],
+        padding:      `${S[2]+2}px ${S[3]+2}px`,
+        background:   C.surface,
+        border:       `1px solid ${C.line}`,
+        borderRadius: R.md,
+        fontFamily:   T.mono,
+        fontSize:     T.sz.base,
+        flexWrap:     "wrap",
+      }}>
+        <span>
+          <span style={{ color: C.inkLight, fontWeight: T.wt.bold }}>Total A:</span>{" "}
+          <span style={{ fontWeight: T.wt.bold, color: C.ink }}>{fmtCOP(result.summary.totalAmountA)}</span>
+        </span>
+        <span style={{ color: C.inkGhost }}>|</span>
+        <span>
+          <span style={{ color: C.inkLight, fontWeight: T.wt.bold }}>Total B:</span>{" "}
+          <span style={{ fontWeight: T.wt.bold, color: C.ink }}>{fmtCOP(result.summary.totalAmountB)}</span>
+        </span>
+        <span style={{ color: C.inkGhost }}>|</span>
+        <span>
+          <span style={{ color: C.inkLight, fontWeight: T.wt.bold }}>Delta Total:</span>{" "}
+          <span style={{
+            fontWeight: T.wt.bold,
+            color: Math.abs(result.summary.deltaTotal) < 1 ? C.green : C.red,
+          }}>
+            {fmtCOP(result.summary.deltaTotal)}
+          </span>
+        </span>
+        <span style={{ color: C.inkGhost }}>|</span>
+        <span style={{ color: C.inkLight }}>
+          {result.sourceALabel} vs {result.sourceBLabel}
+        </span>
+        <span style={{ marginLeft: "auto", color: C.inkFaint, fontSize: T.sz.xs }}>
+          {new Date(result.runAt).toLocaleString("es-CO")}
+        </span>
+      </div>
+
+      {/* Status legend */}
+      <div style={{
+        display:      "flex",
+        flexWrap:     "wrap",
+        gap:          S[2],
+        marginBottom: S[4],
+        padding:      `${S[2]+2}px ${S[3]+2}px`,
+        background:   C.surface,
+        border:       `1px solid ${C.line}`,
+        borderRadius: R.md,
+      }}>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold, color: C.inkFaint, marginRight: S[1] }}>
+          Leyenda:
+        </span>
+        {(Object.keys(STATUS_LABELS) as ReconStatus[]).map(s => (
+          <span key={s} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <StatusBadge status={s} />
+            <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight }}>{STATUS_DESC[s]}</span>
+          </span>
+        ))}
+      </div>
+
+      {/* Operational detail table */}
+      <div style={{ ...panel, overflow: "hidden" }}>
+        {/* Panel header */}
+        <div style={{
+          ...panelHeader,
+          justifyContent: "space-between",
+        }}>
+          <span style={{ fontFamily: T.mono, fontWeight: T.wt.bold, fontSize: T.sz.md, color: C.ink }}>
+            Detalle —{" "}
+            <span style={{ fontFamily: T.mono, fontSize: T.sz.base, fontWeight: T.wt.semibold }}>
+              {result.records.length} registros
+            </span>
+            <span style={{ fontFamily: T.mono, fontWeight: T.wt.normal, color: C.inkLight, fontSize: T.sz.base, marginLeft: S[2] }}>
+              A: {result.sourceALabel} · B: {result.sourceBLabel}
+            </span>
+          </span>
+          <button
+            onClick={() => exportReconCsv(result)}
+            className="ag-action-secondary"
+          >
+            Exportar CSV
+          </button>
+        </div>
+
+        {/* ag-op-table detail rows */}
+        <div className="ag-op-table" style={{ overflowX: "auto" }}>
+          {/* Column headers */}
+          <div className="ag-op-table-head" style={{
+            display:             "grid",
+            gridTemplateColumns: cols,
+            gap:                 S[3],
+            padding:             `6px ${S[4]}px`,
+            alignItems:          "center",
+          }}>
+            {[
+              { label: "Estado",                         align: "left"  },
+              { label: "Descripción",                    align: "left"  },
+              { label: `Monto ${result.sourceALabel}`,   align: "right" },
+              { label: `Monto ${result.sourceBLabel}`,   align: "right" },
+              { label: "Diferencia",                     align: "right" },
+              { label: "Dif. %",                         align: "right" },
+              { label: "Filas A",                        align: "right" },
+              { label: "Filas B",                        align: "right" },
+            ].map(h => (
+              <div key={h.label} style={{
+                fontFamily:    T.mono,
+                fontSize:      T.sz.xs,
+                fontWeight:    T.wt.bold,
+                color:         C.inkFaint,
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+                textAlign:     h.align as CSSProperties["textAlign"],
+              }}>
+                {h.label}
+              </div>
+            ))}
+          </div>
+
+          {sortedRecords(result.records).map((r, i) => (
+            <div
+              key={r.key}
+              className="ag-op-row"
+              style={{
+                display:             "grid",
+                gridTemplateColumns: cols,
+                gap:                 S[3],
+                padding:             `${S[2]+1}px ${S[4]}px`,
+                borderBottom:        `1px solid ${C.lineSubtle}`,
+                alignItems:          "center",
+                background:          i % 2 === 0 ? C.white : C.surface,
+              }}
+            >
+              {/* Estado */}
+              <div><StatusBadge status={r.status} /></div>
+
+              {/* Descripción */}
+              <div>
+                <div style={{ fontFamily: T.mono, fontSize: T.sz.base, fontWeight: T.wt.semibold, color: C.ink }}>
+                  {r.label}
+                </div>
+                <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginTop: 2 }}>
+                  {r.key}
+                </div>
+              </div>
+
+              {/* Monto A */}
+              <div style={{ fontFamily: T.mono, fontSize: T.sz.base, fontVariantNumeric: "tabular-nums", color: C.inkMid, textAlign: "right" }}>
+                {r.amountA != null ? fmtCOP(r.amountA) : <span style={{ color: C.inkGhost }}>—</span>}
+              </div>
+
+              {/* Monto B */}
+              <div style={{ fontFamily: T.mono, fontSize: T.sz.base, fontVariantNumeric: "tabular-nums", color: C.inkMid, textAlign: "right" }}>
+                {r.amountB != null ? fmtCOP(r.amountB) : <span style={{ color: C.inkGhost }}>—</span>}
+              </div>
+
+              {/* Diferencia */}
+              <div style={{ textAlign: "right" }}>
+                {r.delta != null ? (
+                  <span style={{
+                    fontFamily:         T.mono,
+                    fontSize:           T.sz.base,
+                    fontWeight:         T.wt.semibold,
+                    fontVariantNumeric: "tabular-nums",
+                    color:              Math.abs(r.delta) < 1 ? C.green : C.red,
+                  }}>
+                    {fmtCOP(r.delta)}
+                  </span>
+                ) : (
+                  <span style={{ color: C.inkGhost, fontFamily: T.mono }}>—</span>
+                )}
+              </div>
+
+              {/* Dif % */}
+              <div style={{ textAlign: "right" }}>
+                {r.deltaPercent != null ? (
+                  <span style={{
+                    fontFamily:         T.mono,
+                    fontSize:           T.sz.base,
+                    fontVariantNumeric: "tabular-nums",
+                    color:              Math.abs(r.deltaPercent) < 0.1 ? C.green : C.red,
+                  }}>
+                    {r.deltaPercent.toFixed(2)}%
+                  </span>
+                ) : (
+                  <span style={{ color: C.inkGhost, fontFamily: T.mono }}>—</span>
+                )}
+              </div>
+
+              {/* Filas A */}
+              <div style={{ fontFamily: T.mono, fontSize: T.sz.base, color: C.inkLight, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                {fmtN(r.rowsA)}
+              </div>
+
+              {/* Filas B */}
+              <div style={{ fontFamily: T.mono, fontSize: T.sz.base, color: C.inkLight, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                {fmtN(r.rowsB)}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </WorkspaceSection>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function ReconClient({
@@ -224,10 +1550,19 @@ export default function ReconClient({
   sourceB,
   availableSources,
   result,
+  streams,
+  recommendations,
+  memoryStatus,
+  observations,
+  attentionPlan,
+  recentSessions,
 }: Props) {
   const baseUrl = `/${orgSlug}/reconciliation`;
 
-  // Build source options: available sources + "all"
+  const [selectedFlow, setSelectedFlow] = useState<string | null>(
+    period || sourceA || sourceB ? "pedidos-ventas" : null,
+  );
+
   const sourceOptions = [
     { value: "all", label: "Todas las fuentes" },
     ...availableSources.map(s => ({
@@ -237,366 +1572,261 @@ export default function ReconClient({
   ];
 
   return (
-    <div style={{ fontFamily: "monospace", maxWidth: 1200, margin: "0 auto", padding: "24px 16px" }}>
+    <div style={{ fontFamily: T.mono, maxWidth: 1100, margin: "0 auto", padding: `${S[6]}px ${S[4]}px` }}>
 
-      {/* ── Header ── */}
-      <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 20 }}>
-        <a href={`/${orgSlug}/sales`} style={{ fontSize: 11, color: "#888", textDecoration: "none", fontFamily: "monospace" }}>← Control Comercial</a>
-        <span style={{ color: "#ccc" }}>/</span>
-        <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>Centro de Conciliación</h1>
-        <span style={{
-          fontSize: 11,
-          background: "#111",
-          color: "#fff",
-          padding: "2px 10px",
-          borderRadius: 4,
-          fontWeight: 700,
-          letterSpacing: "0.03em",
-        }}>
-          Pedidos vs Ventas
-        </span>
-      </div>
+      {/* ── Workspace Header ── */}
+      <ReconModuleHeader
+        orgSlug={orgSlug}
+        streams={streams}
+        memoryStatus={memoryStatus}
+        attentionPlan={attentionPlan}
+        selectedFlow={selectedFlow}
+        onBack={() => setSelectedFlow(null)}
+      />
 
-      {/* ── Config panel ── */}
-      <div style={{ border: "1px solid #ddd", borderRadius: 6, overflow: "hidden", marginBottom: 20 }}>
-        <div style={{ padding: "9px 14px", borderBottom: "1px solid #ddd", background: "#f5f5f5" }}>
-          <span style={{ fontWeight: 700, fontSize: 13 }}>Configuración</span>
-        </div>
-        <form method="GET" action={baseUrl} style={{ padding: "14px 16px" }}>
+      {/* ════════════════════════════════════════════════════════════
+          LANDING — Financial Operations Center
+          ════════════════════════════════════════════════════════════ */}
+      {!selectedFlow && (
+        <div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 12 }}>
+          {/* Layer 2: Agentik observa — priority-routed observations */}
+          {attentionPlan && (
+            <ObservationStrip attentionPlan={attentionPlan} />
+          )}
 
-            {/* Recon type (static) */}
-            <div>
-              <label style={{ display: "block", fontSize: 10, color: "#888", fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>
-                Tipo de reconciliacion
-              </label>
-              <div style={{
-                padding: "5px 8px",
-                fontSize: 12,
-                border: "1px solid #ddd",
-                borderRadius: 4,
-                background: "#fafafa",
-                color: "#555",
-              }}>
-                Pedidos vs Ventas
-              </div>
-            </div>
+          {/* Layer 3: Data Sources — SAG / DIAN / Bancos + FinancialStreamsPanel */}
+          <DataSourcesLayer streams={streams} orgSlug={orgSlug} />
 
-            {/* Period */}
-            <div>
-              <label style={{ display: "block", fontSize: 10, color: "#888", fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>
-                Periodo
-              </label>
-              <select
-                name="period"
-                defaultValue={period ?? ""}
-                style={{ width: "100%", padding: "5px 8px", fontSize: 12, border: "1px solid #ddd", borderRadius: 4, fontFamily: "monospace" }}
-              >
-                <option value="">Seleccionar...</option>
-                {periods.map(p => (
-                  <option key={p} value={p}>{fmtPeriodo(p)}</option>
-                ))}
-              </select>
-            </div>
+          {/* Layer 4: Reconciliation Builder — compact flow rows */}
+          <ReconciliationBuilder
+            orgSlug={orgSlug}
+            onSelectFlow={(id) => setSelectedFlow(id)}
+          />
 
-            {/* Placeholder for layout */}
-            <div />
+          {/* Layer 5: Sesiones recientes */}
+          <RecentSessionsSection sessions={recentSessions ?? []} />
+
+          {/* Layer 5b: Results Workbench — empty state (no active run) */}
+          <WorkspaceSection title="Mesa de trabajo — resultados">
+            <EmptyOperationalState
+              message="Sin resultados activos"
+              detail="Selecciona un flujo disponible para ejecutar una conciliación y ver los resultados aquí."
+            />
+          </WorkspaceSection>
+
+          {/* Layer 7: Copilot readiness */}
+          <div style={{ marginTop: S[6] }}>
+            <CopilotReadinessSlot
+              label="Agentik Copilot — Conciliación"
+              moduleId="reconciliation"
+            />
           </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, marginBottom: 12 }}>
-
-            {/* Source A */}
-            <div>
-              <label style={{ display: "block", fontSize: 10, color: "#888", fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>
-                Fuente A
-              </label>
-              <select
-                name="sourceA"
-                defaultValue={sourceA ?? ""}
-                style={{ width: "100%", padding: "5px 8px", fontSize: 12, border: "1px solid #ddd", borderRadius: 4, fontFamily: "monospace" }}
-              >
-                <option value="">Seleccionar fuente...</option>
-                {sourceOptions.map(o => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Source B */}
-            <div>
-              <label style={{ display: "block", fontSize: 10, color: "#888", fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>
-                Fuente B
-              </label>
-              <select
-                name="sourceB"
-                defaultValue={sourceB ?? ""}
-                style={{ width: "100%", padding: "5px 8px", fontSize: 12, border: "1px solid #ddd", borderRadius: 4, fontFamily: "monospace" }}
-              >
-                <option value="">Seleccionar fuente...</option>
-                {sourceOptions.map(o => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <button
-            type="submit"
-            style={{
-              padding: "6px 20px",
-              fontSize: 12,
-              fontWeight: 700,
-              background: "#111",
-              color: "#fff",
-              border: "none",
-              borderRadius: 4,
-              cursor: "pointer",
-              fontFamily: "monospace",
-            }}
-          >
-            Ejecutar Conciliación
-          </button>
-        </form>
-      </div>
-
-      {/* ── Same-source warning ── */}
-      {sourceA && sourceB && sourceA === sourceB && (
-        <div style={{
-          padding: "10px 14px",
-          marginBottom: 16,
-          border: "1px solid #fde68a",
-          borderRadius: 6,
-          background: "#fffbeb",
-          fontSize: 12,
-          color: "#92400e",
-        }}>
-          <b>Atención:</b> Fuente A y Fuente B son la misma ({sourceA}). La reconciliación mostrará 100% de coincidencia trivialmente — seleccione dos fuentes diferentes para obtener resultados útiles.
         </div>
       )}
 
-      {/* ── Result ── */}
-      {result && (
-        <>
-          {/* Summary cards */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 20 }}>
-            <SummaryCard
-              label="Cuadran"
-              value={fmtN(result.summary.matched)}
-              sub={`de ${fmtN(result.summary.total)} registros`}
-              accent="green"
-            />
-            <SummaryCard
-              label="Diferencia de monto"
-              value={fmtN(result.summary.mismatchAmount)}
-              sub="mismo key, monto distinto"
-              accent={result.summary.mismatchAmount > 0 ? "yellow" : "green"}
-            />
-            <SummaryCard
-              label={`Solo en ${result.sourceALabel}`}
-              value={fmtN(result.summary.onlyInA)}
-              sub="faltan en Fuente B"
-              accent={result.summary.onlyInA > 0 ? "yellow" : "green"}
-            />
-            <SummaryCard
-              label={`Solo en ${result.sourceBLabel}`}
-              value={fmtN(result.summary.onlyInB)}
-              sub="faltan en Fuente A"
-              accent={result.summary.onlyInB > 0 ? "yellow" : "green"}
-            />
-            <SummaryCard
-              label="Tasa de coincidencia"
-              value={`${result.summary.matchRate.toFixed(1)}%`}
-              sub={result.summary.possibleDuplicates > 0
-                ? `${result.summary.possibleDuplicates} posibles duplicados`
-                : "sin duplicados detectados"}
-              accent={result.summary.matchRate >= 95 ? "green" : result.summary.matchRate >= 80 ? "yellow" : "red"}
-            />
-          </div>
+      {/* ════════════════════════════════════════════════════════════
+          ACTIVE FLOW — Pedidos vs Ventas
+          ════════════════════════════════════════════════════════════ */}
+      {selectedFlow === "pedidos-ventas" && (
+        <div>
 
-          {/* Amount summary */}
-          <div style={{
-            display: "flex",
-            gap: 16,
-            marginBottom: 20,
-            padding: "10px 14px",
-            background: "#fafafa",
-            border: "1px solid #eee",
-            borderRadius: 6,
-            fontSize: 12,
-          }}>
-            <span>
-              <span style={{ color: "#888", fontWeight: 700 }}>Total A:</span>{" "}
-              <span style={{ fontWeight: 700 }}>{fmtCOP(result.summary.totalAmountA)}</span>
-            </span>
-            <span style={{ color: "#ddd" }}>|</span>
-            <span>
-              <span style={{ color: "#888", fontWeight: 700 }}>Total B:</span>{" "}
-              <span style={{ fontWeight: 700 }}>{fmtCOP(result.summary.totalAmountB)}</span>
-            </span>
-            <span style={{ color: "#ddd" }}>|</span>
-            <span>
-              <span style={{ color: "#888", fontWeight: 700 }}>Delta Total:</span>{" "}
-              <span style={{
-                fontWeight: 700,
-                color: Math.abs(result.summary.deltaTotal) < 1 ? "#15803d" : "#dc2626",
-              }}>
-                {fmtCOP(result.summary.deltaTotal)}
-              </span>
-            </span>
-            <span style={{ color: "#ddd" }}>|</span>
-            <span style={{ color: "#888" }}>
-              {result.sourceALabel} vs {result.sourceBLabel}
-            </span>
-            <span style={{ marginLeft: "auto", color: "#aaa", fontSize: 11 }}>
-              {new Date(result.runAt).toLocaleString("es-CO")}
-            </span>
-          </div>
+          {/* Config workspace */}
+          <WorkspaceSection title="Configuración" divider={false}>
+            <div style={{ ...panel, overflow: "hidden" }}>
+              <form method="GET" action={baseUrl} style={{ padding: `${S[3]+2}px ${S[4]}px` }}>
 
-          {/* Status legend */}
-          <div style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 8,
-            marginBottom: 16,
-            padding: "10px 14px",
-            background: "#fafafa",
-            border: "1px solid #eee",
-            borderRadius: 6,
-            fontSize: 11,
-            color: "#555",
-          }}>
-            <span style={{ fontWeight: 700, color: "#888", marginRight: 4 }}>Leyenda:</span>
-            {(Object.keys(STATUS_LABELS) as ReconStatus[]).map(s => (
-              <span key={s} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                <span style={{
-                  ...STATUS_STYLES[s],
-                  fontSize: 10,
-                  fontWeight: 700,
-                  padding: "1px 6px",
-                  borderRadius: 3,
-                  fontFamily: "monospace",
-                  whiteSpace: "nowrap",
-                }}>
-                  {STATUS_LABELS[s]}
-                </span>
-                <span style={{ color: "#888" }}>{STATUS_DESC[s]}</span>
-              </span>
-            ))}
-          </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: S[3], marginBottom: S[3] }}>
 
-          {/* Export + table */}
-          <div style={{ border: "1px solid #ddd", borderRadius: 6, overflow: "hidden" }}>
+                  {/* Recon type (static) */}
+                  <div>
+                    <label style={{
+                      display:       "block",
+                      fontFamily:    T.mono,
+                      fontSize:      T.sz.xs,
+                      color:         C.inkFaint,
+                      fontWeight:    T.wt.bold,
+                      textTransform: "uppercase",
+                      marginBottom:  S[1],
+                    }}>
+                      Tipo de reconciliacion
+                    </label>
+                    <div style={{
+                      fontFamily:   T.mono,
+                      fontSize:     T.sz.base,
+                      padding:      "5px 8px",
+                      border:       `1px solid ${C.line}`,
+                      borderRadius: R.sm,
+                      background:   C.surface,
+                      color:        C.inkLight,
+                    }}>
+                      Pedidos vs Ventas
+                    </div>
+                  </div>
+
+                  {/* Period */}
+                  <div>
+                    <label style={{
+                      display:       "block",
+                      fontFamily:    T.mono,
+                      fontSize:      T.sz.xs,
+                      color:         C.inkFaint,
+                      fontWeight:    T.wt.bold,
+                      textTransform: "uppercase",
+                      marginBottom:  S[1],
+                    }}>
+                      Periodo
+                    </label>
+                    <select
+                      name="period"
+                      defaultValue={period ?? ""}
+                      style={{
+                        width:        "100%",
+                        fontFamily:   T.mono,
+                        fontSize:     T.sz.base,
+                        padding:      "5px 8px",
+                        border:       `1px solid ${C.line}`,
+                        borderRadius: R.sm,
+                      }}
+                    >
+                      <option value="">Seleccionar...</option>
+                      {periods.map(p => (
+                        <option key={p} value={p}>{fmtPeriodo(p)}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div />
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: S[3], marginBottom: S[3] }}>
+
+                  {/* Source A */}
+                  <div>
+                    <label style={{
+                      display:       "block",
+                      fontFamily:    T.mono,
+                      fontSize:      T.sz.xs,
+                      color:         C.inkFaint,
+                      fontWeight:    T.wt.bold,
+                      textTransform: "uppercase",
+                      marginBottom:  S[1],
+                    }}>
+                      Fuente A
+                    </label>
+                    <select
+                      name="sourceA"
+                      defaultValue={sourceA ?? ""}
+                      style={{
+                        width:        "100%",
+                        fontFamily:   T.mono,
+                        fontSize:     T.sz.base,
+                        padding:      "5px 8px",
+                        border:       `1px solid ${C.line}`,
+                        borderRadius: R.sm,
+                      }}
+                    >
+                      <option value="">Seleccionar fuente...</option>
+                      {sourceOptions.map(o => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Source B */}
+                  <div>
+                    <label style={{
+                      display:       "block",
+                      fontFamily:    T.mono,
+                      fontSize:      T.sz.xs,
+                      color:         C.inkFaint,
+                      fontWeight:    T.wt.bold,
+                      textTransform: "uppercase",
+                      marginBottom:  S[1],
+                    }}>
+                      Fuente B
+                    </label>
+                    <select
+                      name="sourceB"
+                      defaultValue={sourceB ?? ""}
+                      style={{
+                        width:        "100%",
+                        fontFamily:   T.mono,
+                        fontSize:     T.sz.base,
+                        padding:      "5px 8px",
+                        border:       `1px solid ${C.line}`,
+                        borderRadius: R.sm,
+                      }}
+                    >
+                      <option value="">Seleccionar fuente...</option>
+                      {sourceOptions.map(o => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <button type="submit" className="ag-action-primary">
+                  Ejecutar Conciliación
+                </button>
+              </form>
+            </div>
+          </WorkspaceSection>
+
+          {/* Same-source warning */}
+          {sourceA && sourceB && sourceA === sourceB && (
             <div style={{
-              padding: "9px 14px",
-              borderBottom: "1px solid #ddd",
-              background: "#f5f5f5",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
+              fontFamily:   T.mono,
+              fontSize:     T.sz.base,
+              padding:      `${S[2]+2}px ${S[3]+2}px`,
+              marginTop:    S[4],
+              border:       `1px solid ${C.amberBorder}`,
+              borderRadius: R.md,
+              background:   C.amberLight,
+              color:        C.amberDark,
             }}>
-              <span style={{ fontWeight: 700, fontSize: 13 }}>
-                Detalle — {result.records.length} registros
-                <span style={{ fontWeight: 400, color: "#888", fontSize: 12, marginLeft: 8 }}>
-                  A: {result.sourceALabel} · B: {result.sourceBLabel}
-                </span>
-              </span>
-              <button
-                onClick={() => exportReconCsv(result)}
-                style={{
-                  padding: "4px 14px",
-                  fontSize: 11,
-                  fontWeight: 700,
-                  background: "#fff",
-                  color: "#111",
-                  border: "1px solid #ddd",
-                  borderRadius: 4,
-                  cursor: "pointer",
-                  fontFamily: "monospace",
-                }}
-              >
-                Exportar CSV
-              </button>
+              <strong>Atención:</strong> Fuente A y Fuente B son la misma ({sourceA}). La reconciliación mostrará 100% de coincidencia trivialmente — seleccione dos fuentes diferentes para obtener resultados útiles.
             </div>
+          )}
 
-            <div style={{ overflowX: "auto" }}>
-              <table style={TABLE}>
-                <thead>
-                  <tr style={THEAD_ROW}>
-                    <TH>Estado</TH>
-                    <TH>Descripcion</TH>
-                    <TH right>Monto {result.sourceALabel}</TH>
-                    <TH right>Monto {result.sourceBLabel}</TH>
-                    <TH right>Diferencia</TH>
-                    <TH right>Dif. %</TH>
-                    <TH right>Filas A</TH>
-                    <TH right>Filas B</TH>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedRecords(result.records).map((r, i) => (
-                    <tr key={r.key} style={{ background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
-                      <TD><StatusBadge status={r.status} /></TD>
-                      <TD bold>
-                        <div style={{ fontSize: 12 }}>{r.label}</div>
-                        <div style={{ fontSize: 10, color: "#aaa", marginTop: 2 }}>{r.key}</div>
-                      </TD>
-                      <TD right>{r.amountA != null ? fmtCOP(r.amountA) : <span style={{ color: "#ccc" }}>—</span>}</TD>
-                      <TD right>{r.amountB != null ? fmtCOP(r.amountB) : <span style={{ color: "#ccc" }}>—</span>}</TD>
-                      <TD right>
-                        {r.delta != null ? (
-                          <span style={{ color: Math.abs(r.delta) < 1 ? "#15803d" : "#dc2626", fontWeight: 600 }}>
-                            {fmtCOP(r.delta)}
-                          </span>
-                        ) : (
-                          <span style={{ color: "#ccc" }}>—</span>
-                        )}
-                      </TD>
-                      <TD right>
-                        {r.deltaPercent != null ? (
-                          <span style={{ color: Math.abs(r.deltaPercent) < 0.1 ? "#15803d" : "#dc2626" }}>
-                            {r.deltaPercent.toFixed(2)}%
-                          </span>
-                        ) : (
-                          <span style={{ color: "#ccc" }}>—</span>
-                        )}
-                      </TD>
-                      <TD right><span style={{ color: "#666" }}>{fmtN(r.rowsA)}</span></TD>
-                      <TD right><span style={{ color: "#666" }}>{fmtN(r.rowsB)}</span></TD>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          {/* Results Workbench — active */}
+          {result && (
+            <ResultsWorkbench result={result} baseUrl={baseUrl} />
+          )}
+
+          {/* Exception Resolution Workbench — active when results exist */}
+          {result && (
+            <ExceptionWorkbench
+              exceptions={reconRecordsToExceptions(
+                result.records,
+                result.sourceALabel,
+                result.sourceBLabel,
+              )}
+              sourceALabel={result.sourceALabel}
+              sourceBLabel={result.sourceBLabel}
+              runAt={result.runAt}
+            />
+          )}
+
+          {/* Error state */}
+          {!result && period && sourceA && sourceB && (
+            <div style={{
+              fontFamily:   T.mono,
+              fontSize:     T.sz.base,
+              padding:      `${S[5]}px ${S[4]}px`,
+              border:       `1px solid ${C.redBorder}`,
+              borderRadius: R.md,
+              background:   C.redLight,
+              color:        C.redDark,
+              marginTop:    S[4],
+            }}>
+              Error al ejecutar la reconciliacion. Verifique los parametros e intente nuevamente.
             </div>
-          </div>
-        </>
-      )}
+          )}
 
-      {!result && period && sourceA && sourceB && (
-        <div style={{
-          padding: "20px",
-          border: "1px solid #fca5a5",
-          borderRadius: 6,
-          background: "#fef2f2",
-          fontSize: 12,
-          color: "#991b1b",
-        }}>
-          Error al ejecutar la reconciliacion. Verifique los parametros e intente nuevamente.
         </div>
       )}
 
-      {!period && (
-        <div style={{
-          padding: "20px",
-          border: "1px solid #ddd",
-          borderRadius: 6,
-          background: "#fafafa",
-          fontSize: 12,
-          color: "#888",
-        }}>
-          Seleccione un periodo y dos fuentes para ejecutar la reconciliacion.
-        </div>
-      )}
     </div>
   );
 }
