@@ -169,6 +169,10 @@ export async function POST(req: Request) {
     const prompt_mode = String(formData.get("prompt_mode") || "coach").trim() // coach | direct
     const debug = asBool(formData.get("debug"), false)
 
+    // Luca-generated creative fields (from /api/luca/generate step)
+    const luca_replicate_prompt = String(formData.get("luca_replicate_prompt") || "").trim()
+    const luca_caption = String(formData.get("luca_caption") || "").trim()
+
     // hard rules (no promesas falsas)
     const duration_seconds = Number(duration_seconds_raw)
     const ALLOWED_DURATIONS = new Set([8, 12])
@@ -255,7 +259,7 @@ export async function POST(req: Request) {
       )
     }
 
-    // 5) Payload CANÓNICO (para Luca-intake)
+    // 5) Payload CANÓNICO (para Luca Replicate Video Generator)
     const payload = {
       meta: {
         request_id,
@@ -341,9 +345,13 @@ export async function POST(req: Request) {
       video: {
         format: "mp4",
         vertical,
+        aspect_ratio,
         duration_seconds,
         resolution,
         fps: 30,
+        provider: "replicate",
+        model_t2v: "wan-video/wan2.1-t2v-480p",
+        model_i2v: "wan-video/wan2.1-i2v-480p",
       },
 
       publishing: {
@@ -359,11 +367,22 @@ export async function POST(req: Request) {
 
       callbacks: {
         return_result_to_caller: true,
+        result_callback_url: `${process.env.NEXT_PUBLIC_APP_URL || "https://www.agentickers.com"}/api/luca/result`,
       },
+
+      // Luca-generated creative output (from /api/luca/generate, passed through from frontend)
+      luca_replicate_prompt: luca_replicate_prompt || null,
+      luca_caption: luca_caption || null,
     }
 
-    // 6) Enviar a n8n (Luca-intake)
-    const n8nRes = await fetch("https://iagentscolombia.app.n8n.cloud/webhook/luca-intake", {
+    // 6) Enviar a n8n — Luca Replicate Video Generator
+    // Uses LUCA_REPLICATE_WEBHOOK_URL env var; falls back to the canonical production URL.
+    // DO NOT use N8N_LUCA_INTAKE_URL or any other legacy webhook here.
+    const lucaWebhookUrl =
+      (process.env.LUCA_REPLICATE_WEBHOOK_URL || "").trim() ||
+      "https://iagentscolombia.app.n8n.cloud/webhook/luca-replicate-video"
+    console.log("[LUCA_SUBMIT_WEBHOOK]", lucaWebhookUrl, "request_id:", request_id)
+    const n8nRes = await fetch(lucaWebhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -378,6 +397,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok: true,
       message: "Luca recibió la orden correctamente",
+      request_id,
       connected_tiktok: true,
       reference_uploaded: Boolean(reference?.has_reference && reference?.file_url),
       reference_url: reference?.file_url || null,
