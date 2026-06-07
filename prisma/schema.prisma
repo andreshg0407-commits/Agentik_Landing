@@ -7078,3 +7078,184 @@ model ReasoningRecommendationRecord {
   @@index([orgSlug, executionId])
   @@index([orgSlug, priority])
 }
+
+// ── AGENTIK-INTELLIGENCE-AGENT-LEARNING-FRAMEWORK-01 ─────────────────────────
+
+model LearningEventRecord {
+  id            String @id
+
+  orgSlug       String
+
+  /// LearningEventType: HYPOTHESIS_CONFIRMED | HYPOTHESIS_REJECTED | RECOMMENDATION_ACCEPTED | RECOMMENDATION_REJECTED | ACTION_SUCCEEDED | ACTION_FAILED | USER_FEEDBACK_POSITIVE | USER_FEEDBACK_NEGATIVE | PATTERN_REINFORCED | PATTERN_WEAKENED
+  type          String
+
+  /// LearningSource: COPILOT | EXECUTIVE_BRAIN | CROSS_MODULE_REASONING | MEMORY_GRAPH | PLAYBOOK | AGENT | USER | SYSTEM
+  source        String
+
+  /// LearningDomain: FINANCE | COMMERCIAL | MARKETING | OPERATIONS | EXECUTIVE | COMPLIANCE | MEMORY | CROSS_MODULE
+  domain        String
+
+  referenceId   String
+  referenceType String
+
+  /// LearningConfidence: LOW | MEDIUM | HIGH | VERY_HIGH
+  confidence    String
+
+  /// 0–1
+  confidenceScore Float @default(0)
+
+  agentId       String?
+  userId        String?
+
+  metadata      Json     @default("{}")
+  occurredAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, type])
+  @@index([orgSlug, domain])
+  @@index([orgSlug, occurredAt])
+}
+
+model LearningPatternRecord {
+  id                  String @id
+
+  orgSlug             String
+
+  /// LearningDomain: FINANCE | COMMERCIAL | MARKETING | OPERATIONS | EXECUTIVE | COMPLIANCE | MEMORY | CROSS_MODULE
+  domain              String
+
+  name                String
+  description         String
+
+  /// LearningPatternStatus: EMERGING | ACTIVE | REINFORCED | WEAKENED | DEPRECATED
+  status              String
+
+  reinforcementCount  Int      @default(0)
+  weakeningCount      Int      @default(0)
+  netScore            Int      @default(0)
+
+  /// 0–1
+  confidenceScore     Float    @default(0)
+
+  evidenceEventIds    String[]
+
+  agentId             String?
+
+  metadata            Json     @default("{}")
+  firstSeenAt         DateTime @default(now())
+  lastUpdatedAt       DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, domain])
+  @@index([orgSlug, status])
+}
+
+model LearningOutcomeRecord {
+  id          String @id
+
+  orgSlug     String
+  eventId     String
+  patternId   String?
+
+  /// LearningOutcomeResult: POSITIVE | NEGATIVE | NEUTRAL | UNKNOWN
+  result      String
+
+  /// LearningDomain
+  domain      String
+
+  description String
+
+  /// 0–1
+  impactScore Float    @default(0)
+
+  metadata    Json     @default("{}")
+  evaluatedAt DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, eventId])
+  @@index([orgSlug, result])
+}
+
+model LearningAdjustmentRecord {
+  id        String @id
+
+  orgSlug   String
+  patternId String
+
+  /// LearningDomain
+  domain    String
+
+  /// LearningAdjustmentDirection: INCREASE | DECREASE | HOLD
+  direction String
+
+  /// 0–1
+  magnitude Float  @default(0)
+
+  rationale String
+  applied   Boolean @default(false)
+  appliedAt DateTime?
+
+  metadata    Json     @default("{}")
+  suggestedAt DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, patternId])
+  @@index([orgSlug, applied])
+}
+
+model AgentLearningProfileRecord {
+  id               String @id @default(cuid())
+
+  agentId          String
+  orgSlug          String
+
+  displayName      String
+  domains          String[]
+
+  totalEvents      Int     @default(0)
+  positiveOutcomes Int     @default(0)
+  negativeOutcomes Int     @default(0)
+  activePatterns   Int     @default(0)
+
+  /// 0–1
+  confidenceScore  Float   @default(0.5)
+
+  lastLearningAt   DateTime?
+
+  metadata         Json     @default("{}")
+  updatedAt        DateTime @default(now())
+
+  @@unique([agentId, orgSlug])
+  @@index([orgSlug])
+  @@index([orgSlug, agentId])
+}
+
+model TenantLearningProfileRecord {
+  id              String @id @default(cuid())
+
+  orgSlug         String @unique
+
+  /// LOW | MEDIUM | HIGH
+  riskTolerance   String @default("MEDIUM")
+
+  /// CONSERVATIVE | BALANCED | AGGRESSIVE
+  decisionStyle   String @default("BALANCED")
+
+  /// EARLY | DEVELOPING | MATURE | ADVANCED
+  learningMaturity String @default("EARLY")
+
+  totalEvents     Int     @default(0)
+  totalPatterns   Int     @default(0)
+  activeDomains   String[]
+
+  /// 0–1
+  confidenceScore Float   @default(0.5)
+
+  lastLearningAt  DateTime?
+
+  metadata        Json     @default("{}")
+  updatedAt       DateTime @default(now())
+
+  @@index([orgSlug])
+}
