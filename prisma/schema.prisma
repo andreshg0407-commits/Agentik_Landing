@@ -7259,3 +7259,115 @@ model TenantLearningProfileRecord {
 
   @@index([orgSlug])
 }
+
+// ── Strategic Memory (AGENTIK-INTELLIGENCE-STRATEGIC-MEMORY-01) ───────────────
+
+model StrategicMemoryRecord {
+  id          String @id @default(cuid())
+  orgSlug     String
+
+  /// StrategicMemoryType: GOAL|OBJECTIVE|PRIORITY|RISK|OPPORTUNITY|DECISION|COMMITMENT|ASSUMPTION|CONSTRAINT|POLICY|PLAYBOOK|LESSON|INSIGHT|RELATIONSHIP|CUSTOM
+  type        String
+
+  /// StrategicMemoryPriority: LOW|MEDIUM|HIGH|CRITICAL
+  priority    String @default("MEDIUM")
+
+  /// StrategicMemoryStatus: ACTIVE|COMPLETED|SUPERSEDED|ARCHIVED|INVALIDATED
+  status      String @default("ACTIVE")
+
+  /// StrategicMemoryConfidence: LOW|MEDIUM|HIGH|VERY_HIGH
+  confidence  String @default("MEDIUM")
+
+  /// 0–1
+  confidenceScore Float @default(0.5)
+
+  /// StrategicMemoryDomain: FINANCE|COMMERCIAL|MARKETING|OPERATIONS|EXECUTIVE|COMPLIANCE|TECHNOLOGY|PEOPLE|CROSS_DOMAIN
+  domain      String @default("CROSS_DOMAIN")
+
+  title       String
+  description String
+  rationale   String
+
+  evidenceIds String[]
+  relatedIds  String[]
+
+  /// StrategicMemorySource: AGENT_INFERENCE|USER_INPUT|SYSTEM_ANALYSIS|DOCUMENT_EXTRACTION|MEETING_NOTES|EXECUTIVE_REVIEW|COMPLIANCE_AUDIT|EXTERNAL_ANALYSIS|HISTORICAL_PATTERN|PLAYBOOK_DERIVED
+  source      String @default("USER_INPUT")
+
+  agentId     String?
+  userId      String?
+
+  /// 0–1
+  relevanceScore Float @default(1.0)
+
+  /// 0–1
+  strategicScore Float @default(0.5)
+
+  validUntil  DateTime?
+
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, type])
+  @@index([orgSlug, status])
+  @@index([orgSlug, priority])
+  @@index([orgSlug, domain])
+  @@index([orgSlug, status, priority])
+}
+
+model StrategicRelationRecord {
+  id        String @id @default(cuid())
+  orgSlug   String
+
+  sourceId  String
+  targetId  String
+
+  /// StrategicRelationType: SUPPORTS|BLOCKS|DEPENDS_ON|CONFLICTS_WITH|DERIVED_FROM|SUPERSEDES|VALIDATES|INVALIDATES|RELATED_TO
+  type      String
+
+  rationale String?
+
+  /// 0–1
+  strength  Float @default(0.5)
+
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now())
+
+  @@unique([orgSlug, sourceId, targetId, type])
+  @@index([orgSlug])
+  @@index([orgSlug, sourceId])
+  @@index([orgSlug, targetId])
+}
+
+model StrategicSnapshotRecord {
+  id        String @id @default(cuid())
+  orgSlug   String
+
+  /// DAILY|WEEKLY|MONTHLY|QUARTERLY|YEARLY|ADHOC
+  period    String @default("ADHOC")
+
+  /// 0–1
+  strategicScore Float @default(0.5)
+
+  activeItems   Int @default(0)
+  criticalItems Int @default(0)
+  totalItems    Int @default(0)
+
+  narrative   String
+  insights    String[]
+  topItems    Json @default("[]")
+
+  goalIds       String[]
+  riskIds       String[]
+  decisionIds   String[]
+  commitmentIds String[]
+
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, period])
+  @@index([orgSlug, createdAt])
+}
