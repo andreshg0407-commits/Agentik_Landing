@@ -41,6 +41,7 @@ import type {
   ShopifyCatalogStatusChip,
 }                                         from "@/lib/marketing-studio/commerce/shopify-catalog-ui-selectors";
 import { PublicationDetailDrawer }       from "./publication-detail-drawer";
+import { CollectionsPanel }             from "./collections-panel";
 
 // ── Domain ──────────────────────────────────────────────────────────────────
 
@@ -331,6 +332,339 @@ function BulkOpDialog({
             >
               Cerrar
             </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── AddToCollectionDialog ─────────────────────────────────────────────────────
+// dryRun → confirm → execute flow for adding selected/filtered products to a
+// Shopify collection. Separate from BulkOpDialog because it requires a
+// collection title input before the dryRun.
+
+type CollDlgStep =
+  | { step: "input" }
+  | { step: "previewing" }
+  | { step: "confirming"; preview: { candidatesCount: number; willAddCount: number; willPublishCount: number; blockedCount: number } }
+  | { step: "executing" }
+  | { step: "done"; added: number; published: number; blocked: number }
+  | { step: "error"; message: string };
+
+function AddToCollectionDialog({
+  productIds, orgSlug, categories, onClose,
+}: {
+  productIds: string[];
+  orgSlug:    string;
+  categories: string[];
+  onClose:    (msg?: string) => void;
+}) {
+  const [dlgStep,        setDlgStep]        = useState<CollDlgStep>({ step: "input" });
+  const [collTitle,      setCollTitle]      = useState("");
+  const [collCategory,   setCollCategory]   = useState("");
+  const [inputMode,      setInputMode]      = useState<"name" | "category">("name");
+
+  const baseUrl = `/api/orgs/${orgSlug}/marketing-studio/shopify/catalog/collections/sync`;
+
+  const resolvedTitle = inputMode === "category" && collCategory
+    ? collCategory
+    : collTitle.trim();
+
+  async function handleDryRun() {
+    if (!resolvedTitle) return;
+    setDlgStep({ step: "previewing" });
+    try {
+      const res  = await fetch(baseUrl, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title:      resolvedTitle,
+          dryRun:     true,
+          productIds: productIds.length > 0 ? productIds : undefined,
+          category:   inputMode === "category" ? collCategory : undefined,
+        }),
+      });
+      const data = await res.json() as Record<string, unknown>;
+      if (!data.ok) {
+        setDlgStep({ step: "error", message: String(data.error ?? "Error al analizar") });
+        return;
+      }
+      setDlgStep({
+        step: "confirming",
+        preview: {
+          candidatesCount:  Number(data.candidatesCount  ?? 0),
+          willAddCount:     Number(data.willAddCount     ?? 0),
+          willPublishCount: Number(data.willPublishCount ?? 0),
+          blockedCount:     Number(data.blockedCount     ?? 0),
+        },
+      });
+    } catch {
+      setDlgStep({ step: "error", message: "Error de red al analizar" });
+    }
+  }
+
+  async function handleExecute() {
+    setDlgStep({ step: "executing" });
+    try {
+      const res  = await fetch(baseUrl, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title:      resolvedTitle,
+          dryRun:     false,
+          productIds: productIds.length > 0 ? productIds : undefined,
+          category:   inputMode === "category" ? collCategory : undefined,
+        }),
+      });
+      const data = await res.json() as Record<string, unknown>;
+      if (!res.ok || !data.ok) {
+        setDlgStep({ step: "error", message: String(data.error ?? "Error al agregar a colección") });
+      } else {
+        setDlgStep({
+          step:      "done",
+          added:     Number(data.productsAdded     ?? 0),
+          published: Number(data.productsPublished ?? 0),
+          blocked:   Number(data.productsBlocked   ?? 0),
+        });
+      }
+    } catch {
+      setDlgStep({ step: "error", message: "Error de red" });
+    }
+  }
+
+  return (
+    <div
+      onClick={() => onClose()}
+      style={{
+        position: "fixed", inset: 0, zIndex: 300,
+        background: "rgba(0,0,0,0.35)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: C.white, borderRadius: R.lg,
+          border: `1px solid ${C.line}`,
+          boxShadow: "0 8px 32px rgba(0,0,0,0.16)",
+          padding: `${S[5]}px`, width: 420, maxWidth: "90vw",
+        }}
+      >
+        <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold, color: C.ink, marginBottom: S[4] }}>
+          Agregar a colección
+        </div>
+
+        {/* INPUT */}
+        {dlgStep.step === "input" && (
+          <>
+            <div style={{ display: "flex", gap: S[2], marginBottom: S[3] }}>
+              {(["name", "category"] as const).map(m => (
+                <button
+                  key={m}
+                  onClick={() => setInputMode(m)}
+                  style={{
+                    fontFamily: T.mono, fontSize: T.sz.xs,
+                    padding: `${S[1]}px ${S[3]}px`, borderRadius: R.md,
+                    border:     `1px solid ${inputMode === m ? C.blueDark : C.line}`,
+                    background: inputMode === m ? C.blueLight : C.white,
+                    color:      inputMode === m ? C.blueDark : C.inkMid,
+                    cursor: "pointer",
+                  }}
+                >
+                  {m === "name" ? "Por nombre" : "Por categoría"}
+                </button>
+              ))}
+            </div>
+
+            {inputMode === "name" ? (
+              <div style={{ marginBottom: S[3] }}>
+                <label style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, display: "block", marginBottom: S[1] }}>
+                  Nombre de la colección
+                </label>
+                <input
+                  style={{
+                    width: "100%", boxSizing: "border-box" as const,
+                    fontFamily: T.mono, fontSize: T.sz.sm, color: C.ink,
+                    border: `1px solid ${C.line}`, borderRadius: R.md,
+                    padding: `${S[2]}px ${S[3]}px`, background: C.white, outline: "none",
+                  }}
+                  placeholder="Ej. Navidad, Bebé, Ofertas…"
+                  value={collTitle}
+                  onChange={e => setCollTitle(e.target.value)}
+                  autoFocus
+                />
+              </div>
+            ) : (
+              <div style={{ marginBottom: S[3] }}>
+                <label style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, display: "block", marginBottom: S[1] }}>
+                  Categoría Agentik
+                </label>
+                <select
+                  style={{
+                    width: "100%", boxSizing: "border-box" as const,
+                    fontFamily: T.mono, fontSize: T.sz.sm, color: C.ink,
+                    border: `1px solid ${C.line}`, borderRadius: R.md,
+                    padding: `${S[2]}px ${S[3]}px`, background: C.white, outline: "none", cursor: "pointer",
+                  }}
+                  value={collCategory}
+                  onChange={e => setCollCategory(e.target.value)}
+                >
+                  <option value="">Seleccionar categoría…</option>
+                  {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+            )}
+
+            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginBottom: S[3] }}>
+              {productIds.length > 0
+                ? `Se operará sobre ${productIds.length} producto${productIds.length !== 1 ? "s" : ""} seleccionado${productIds.length !== 1 ? "s" : ""}.`
+                : "Se operará sobre todos los productos filtrados."
+              }
+            </div>
+
+            <div style={{ display: "flex", gap: S[2] }}>
+              <button
+                onClick={handleDryRun}
+                disabled={!resolvedTitle}
+                style={{
+                  fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
+                  padding: `${S[2]}px ${S[4]}px`, borderRadius: R.md,
+                  border: "none",
+                  background: resolvedTitle ? C.blueDark : C.line,
+                  color:      resolvedTitle ? C.white : C.inkFaint,
+                  cursor:     resolvedTitle ? "pointer" : "default",
+                }}
+              >
+                Ver resumen
+              </button>
+              <button
+                onClick={() => onClose()}
+                style={{
+                  fontFamily: T.mono, fontSize: T.sz.xs,
+                  padding: `${S[2]}px ${S[3]}px`, borderRadius: R.md,
+                  border: `1px solid ${C.line}`, background: C.white, color: C.inkMid, cursor: "pointer",
+                }}
+              >
+                Cancelar
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* PREVIEWING */}
+        {dlgStep.step === "previewing" && (
+          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint }}>
+            Analizando productos…
+          </div>
+        )}
+
+        {/* CONFIRMING */}
+        {dlgStep.step === "confirming" && (
+          <>
+            <div style={{
+              background: C.surfaceAlt, border: `1px solid ${C.line}`,
+              borderRadius: R.md, padding: S[3], marginBottom: S[4],
+            }}>
+              <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink, marginBottom: S[2] }}>
+                Colección: <strong>{resolvedTitle}</strong>
+              </div>
+              {[
+                { label: "Candidatos totales",       value: dlgStep.preview.candidatesCount,  color: C.ink   },
+                { label: "Se agregarán",              value: dlgStep.preview.willAddCount,     color: C.green },
+                { label: "Se publicarán primero",     value: dlgStep.preview.willPublishCount, color: C.blueDark, hide: dlgStep.preview.willPublishCount === 0 },
+                { label: "Requieren completar info",  value: dlgStep.preview.blockedCount,     color: C.amber, hide: dlgStep.preview.blockedCount === 0 },
+              ].filter(r => !r.hide).map(r => (
+                <div key={r.label} style={{ display: "flex", justifyContent: "space-between", marginBottom: S[1] }}>
+                  <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>{r.label}</span>
+                  <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: r.color }}>{r.value}</span>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: "flex", gap: S[2] }}>
+              <button
+                onClick={handleExecute}
+                style={{
+                  fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
+                  padding: `${S[2]}px ${S[4]}px`, borderRadius: R.md,
+                  border: "none", background: C.blueDark, color: C.white, cursor: "pointer",
+                }}
+              >
+                Confirmar
+              </button>
+              <button
+                onClick={() => setDlgStep({ step: "input" })}
+                style={{
+                  fontFamily: T.mono, fontSize: T.sz.xs,
+                  padding: `${S[2]}px ${S[3]}px`, borderRadius: R.md,
+                  border: `1px solid ${C.line}`, background: C.white, color: C.inkMid, cursor: "pointer",
+                }}
+              >
+                Volver
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* EXECUTING */}
+        {dlgStep.step === "executing" && (
+          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint }}>
+            Agregando a colección…
+          </div>
+        )}
+
+        {/* DONE */}
+        {dlgStep.step === "done" && (
+          <>
+            <div style={{
+              background: C.greenLight, border: `1px solid ${C.greenBorder}`,
+              borderRadius: R.md, padding: S[3], marginBottom: S[4],
+            }}>
+              <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.green, marginBottom: S[1] }}>
+                Productos agregados a "{resolvedTitle}"
+              </div>
+              <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink }}>{dlgStep.added} agregados · {dlgStep.published} publicados · {dlgStep.blocked} sin completar</div>
+            </div>
+            <button
+              onClick={() => onClose(`${dlgStep.added} productos agregados a "${resolvedTitle}"`)}
+              style={{
+                fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
+                padding: `${S[2]}px ${S[4]}px`, borderRadius: R.md,
+                border: "none", background: C.blueDark, color: C.white, cursor: "pointer",
+              }}
+            >
+              Cerrar
+            </button>
+          </>
+        )}
+
+        {/* ERROR */}
+        {dlgStep.step === "error" && (
+          <>
+            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.red, marginBottom: S[3] }}>
+              {dlgStep.message}
+            </div>
+            <div style={{ display: "flex", gap: S[2] }}>
+              <button
+                onClick={() => setDlgStep({ step: "input" })}
+                style={{
+                  fontFamily: T.mono, fontSize: T.sz.xs,
+                  padding: `${S[2]}px ${S[3]}px`, borderRadius: R.md,
+                  border: `1px solid ${C.line}`, background: C.white, color: C.inkMid, cursor: "pointer",
+                }}
+              >
+                Reintentar
+              </button>
+              <button
+                onClick={() => onClose()}
+                style={{
+                  fontFamily: T.mono, fontSize: T.sz.xs,
+                  padding: `${S[2]}px ${S[3]}px`, borderRadius: R.md,
+                  border: `1px solid ${C.line}`, background: C.white, color: C.inkMid, cursor: "pointer",
+                }}
+              >
+                Cancelar
+              </button>
+            </div>
           </>
         )}
       </div>
@@ -679,21 +1013,24 @@ function ShopifyProductCard({
 // ── PublicationQueue ──────────────────────────────────────────────────────────
 
 interface PublicationQueueProps {
-  queue:      PublicationQueueItem[];
-  orgSlug:    string;
-  categories: string[];
+  queue:        PublicationQueueItem[];
+  orgSlug:      string;
+  categories:   string[];
+  isConnected?: boolean;
 }
 
 interface ActiveBulkOp { operation: BulkOperation; productIds: string[] }
 
-export function PublicationQueue({ queue, orgSlug, categories }: PublicationQueueProps) {
-  const [activeFilter,   setActiveFilter]   = useState<ShopifyCatalogFilterId>("all");
-  const [activeCategory, setActiveCategory] = useState<string | null>(null);
-  const [search,         setSearch]         = useState("");
-  const [selectedIds,    setSelectedIds]    = useState<Set<string>>(new Set());
-  const [drawerItem,     setDrawerItem]     = useState<PublicationQueueItem | null>(null);
-  const [activeBulkOp,   setActiveBulkOp]  = useState<ActiveBulkOp | null>(null);
-  const [lastResult,     setLastResult]     = useState<{ op: BulkOperation; done: BulkDone } | null>(null);
+export function PublicationQueue({ queue, orgSlug, categories, isConnected = false }: PublicationQueueProps) {
+  const [activeFilter,        setActiveFilter]        = useState<ShopifyCatalogFilterId>("all");
+  const [activeCategory,      setActiveCategory]      = useState<string | null>(null);
+  const [search,              setSearch]              = useState("");
+  const [selectedIds,         setSelectedIds]         = useState<Set<string>>(new Set());
+  const [drawerItem,          setDrawerItem]          = useState<PublicationQueueItem | null>(null);
+  const [activeBulkOp,        setActiveBulkOp]        = useState<ActiveBulkOp | null>(null);
+  const [lastResult,          setLastResult]          = useState<{ op: BulkOperation; done: BulkDone } | null>(null);
+  const [showCollectionDlg,   setShowCollectionDlg]   = useState(false);
+  const [collectionNotif,     setCollectionNotif]     = useState<string | null>(null);
 
   // Domain selector — single source of truth for what "filtered" means
   const filtered = useMemo(
@@ -891,6 +1228,27 @@ export function PublicationQueue({ queue, orgSlug, categories }: PublicationQueu
               </button>
             );
           })}
+          {/* Agregar a colección */}
+          {(() => {
+            const count = hasSelection ? selectedList.length : filtered.length;
+            return (
+              <button
+                onClick={() => { setShowCollectionDlg(true); setCollectionNotif(null); }}
+                disabled={count === 0}
+                style={{
+                  fontFamily: T.mono, fontSize: "10px", fontWeight: T.wt.semibold,
+                  padding: `${S[1]}px ${S[3]}px`, borderRadius: R.md,
+                  border:     `1px solid ${count === 0 ? C.line : C.line}`,
+                  background: count === 0 ? C.surface : C.surfaceAlt,
+                  color:      count === 0 ? C.inkFaint : C.inkMid,
+                  cursor:     count === 0 ? "default" : "pointer",
+                  transition: "all 0.15s", whiteSpace: "nowrap" as const,
+                }}
+              >
+                Agregar a colección
+              </button>
+            );
+          })()}
         </div>
       </div>
 
@@ -918,10 +1276,32 @@ export function PublicationQueue({ queue, orgSlug, categories }: PublicationQueu
       )}
 
       {/* ── Count ── */}
-      <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginTop: S[3] }}>
+      <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginTop: S[3], marginBottom: S[4] }}>
         {filtered.length} de {queue.length} productos
         {hasSelection && ` · ${selectedList.length} seleccionados`}
       </div>
+
+      {/* ── Collections panel ── */}
+      {collectionNotif && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: S[2],
+          padding: `${S[2]}px ${S[3]}px`,
+          background: C.greenLight, border: `1px solid ${C.greenBorder}`,
+          borderRadius: R.md, marginBottom: S[3],
+        }}>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.green }}>{collectionNotif}</span>
+          <button
+            onClick={() => setCollectionNotif(null)}
+            style={{ background: "none", border: "none", cursor: "pointer", color: C.inkFaint, fontFamily: T.mono, fontSize: T.sz.xs, marginLeft: "auto" }}
+          >×</button>
+        </div>
+      )}
+      <CollectionsPanel
+        orgSlug={orgSlug}
+        categories={categories}
+        selectedIds={selectedList}
+        isConnected={isConnected}
+      />
 
       {/* ── Detail drawer ── */}
       {drawerItem && (
@@ -939,6 +1319,19 @@ export function PublicationQueue({ queue, orgSlug, categories }: PublicationQueu
           productIds={activeBulkOp.productIds}
           orgSlug={orgSlug}
           onClose={handleBulkClose}
+        />
+      )}
+
+      {/* ── Add to collection dialog ── */}
+      {showCollectionDlg && (
+        <AddToCollectionDialog
+          productIds={hasSelection ? selectedList : []}
+          orgSlug={orgSlug}
+          categories={categories}
+          onClose={msg => {
+            setShowCollectionDlg(false);
+            if (msg) setCollectionNotif(msg);
+          }}
         />
       )}
     </>

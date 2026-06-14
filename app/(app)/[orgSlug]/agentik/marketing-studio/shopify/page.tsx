@@ -323,7 +323,7 @@ export default async function ShopifyCommercePage({
                 · {queue.length} productos
               </span>
             </div>
-            <PublicationQueue queue={queue} orgSlug={orgSlug} categories={categories} />
+            <PublicationQueue queue={queue} orgSlug={orgSlug} categories={categories} isConnected={isConnected} />
           </div>
 
           {/* ── Agent Signals ── */}
