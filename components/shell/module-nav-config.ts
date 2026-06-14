@@ -39,6 +39,7 @@ export type NavItem = {
   disabled?:       boolean;
   isSectionHeader?: boolean;    // renders as a non-clickable section group label
   pathMatches?:    string[];    // additional pathname substrings that trigger active state
+  visibility?:     "platform" | "all";  // "platform" = SUPER_ADMIN/AGENTIK_ADMIN only; default = "all"
 };
 
 export type DomainDef = {
@@ -70,6 +71,37 @@ export interface NavBuildOptions {
   showPlatformAdmin: boolean;
 }
 
+// ── Visibility filter ─────────────────────────────────────────────────────────
+
+/**
+ * Strips items that require platform-admin visibility when the user is not
+ * a platform admin. Section headers are also removed if all their children
+ * are stripped (avoids orphaned headers).
+ */
+function filterItemsByVisibility(items: NavItem[], isPlatformAdmin: boolean): NavItem[] {
+  if (isPlatformAdmin) return items;
+
+  const filtered: NavItem[] = [];
+  let pendingHeader: NavItem | null = null;
+
+  for (const item of items) {
+    if (item.isSectionHeader) {
+      // Hold the header — emit only if a visible child follows
+      pendingHeader = item;
+      continue;
+    }
+    if (item.visibility === "platform") continue;
+    // Visible item — flush pending header first
+    if (pendingHeader) {
+      filtered.push(pendingHeader);
+      pendingHeader = null;
+    }
+    filtered.push(item);
+  }
+
+  return filtered;
+}
+
 // ── Builder ───────────────────────────────────────────────────────────────────
 
 export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
@@ -86,16 +118,19 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
       items.push({ label: "Informes Inteligentes", href: `/${s}/reports`, indent: 1, badge: "✨", accent: "#7c3aed" });
     if (opts.hasAlerts)
       items.push({ label: "Alertas y Tareas", href: `/${s}/alerts`, indent: 1 });
+    items.push({ label: "Productividad", href: "#", isSectionHeader: true });
+    items.push({ label: "Tareas",        href: `/${s}/tareas`,       indent: 1, accent: "#004AAD", pathMatches: ["tareas"]       });
+    items.push({ label: "Aprobaciones",  href: `/${s}/aprobaciones`, indent: 1, accent: "#004AAD", pathMatches: ["aprobaciones"] });
+    items.push({ label: "Ejecuciones",   href: `/${s}/ejecuciones`,  indent: 1, accent: "#004AAD", pathMatches: ["ejecuciones"]  });
     items.push({ label: "IA & Decisiones", href: "#", isSectionHeader: true });
     items.push({ label: "Decisiones IA",      href: "#", indent: 1, disabled: true });
-    items.push({ label: "Tareas Gerenciales", href: "#", indent: 1, disabled: true });
     domains.push({
       id:        "gestion",
       label:     "Gestión",
       shortIcon: "G",
       iconKey:   "gestion",
       accent:    "#1e1e2e",
-      pathKeys:  ["dashboard", "reports", "alerts"],
+      pathKeys:  ["dashboard", "reports", "alerts", "tareas", "aprobaciones", "ejecuciones"],
       items,
     });
   }
@@ -113,21 +148,26 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
       });
     items.push({ label: "Operaciones", href: "#", isSectionHeader: true });
     if (opts.hasFinance) {
-      items.push({ label: "Tesorería",               href: `/${s}/finance`,         indent: 1 });
-      items.push({ label: "Conciliación Inteligente", href: `/${s}/reconciliation`,  indent: 1 });
+      items.push({ label: "Tesorería Operativa",     href: `/${s}/finanzas/tesoreria`,   indent: 1 });
+      items.push({ label: "Conciliación Inteligente", href: `/${s}/finanzas/conciliacion`, indent: 1 });
+      items.push({ label: "Centro Documental",        href: `/${s}/finanzas/documentos`,  indent: 1 });
+      items.push({ label: "Cierre Financiero",        href: `/${s}/finanzas/cierre`,      indent: 1 });
     }
-    items.push({ label: "Próximamente", href: "#", isSectionHeader: true });
-    items.push({ label: "Flujo de Caja",    href: "#", indent: 1, disabled: true });
-    items.push({ label: "Presupuestos",     href: "#", indent: 1, disabled: true });
-    items.push({ label: "Bancos y Créditos", href: "#", indent: 1, disabled: true });
-    items.push({ label: "Forecast",         href: "#", indent: 1, disabled: true });
+    items.push({ label: "Estrategia", href: "#", isSectionHeader: true });
+    if (opts.hasFinance)
+      items.push({ label: "Planeación Financiera", href: `/${s}/finanzas/planeacion`, indent: 1 });
+    else
+      items.push({ label: "Planeación Financiera", href: "#", indent: 1, disabled: true });
     domains.push({
       id:        "finanzas",
       label:     "Finanzas",
       shortIcon: "Fn",
       iconKey:   "finanzas",
       accent:    "#1e40af",
-      pathKeys:  ["executive", "finance", "reconciliation", "finanzas/torre-control"],
+      pathKeys:  [
+        "executive", "finance", "reconciliation", "finanzas/torre-control",
+        "finanzas/tesoreria", "finanzas/conciliacion", "finanzas/documentos", "finanzas/cierre", "finanzas/planeacion",
+      ],
       items,
     });
   }
@@ -162,16 +202,23 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
       shortIcon: "Cm",
       iconKey:   "comercial",
       accent:    "#0369a1",
-      pathKeys:  ["sales", "customer-360", "pipeline"],
+      pathKeys:  ["sales", "customer-360", "pipeline", "comercial/maletas"],
       items: [
-        { label: "Cliente 360",      href: `/${s}/customer-360`,   badge: "↗", accent: "#0369a1" },
-        { label: "Análisis",         href: "#", isSectionHeader: true },
-        { label: "Pedidos",          href: `/${s}/pipeline`,        indent: 1 },
-        { label: "Vendedores",       href: `/${s}/sales/vendors`,   indent: 1 },
-        { label: "Canales",          href: `/${s}/sales/channels`,  indent: 1 },
-        { label: "Sucursales",       href: `/${s}/sales/branches`,  indent: 1 },
-        { label: "Líneas",           href: `/${s}/sales/lines`,     indent: 1 },
-        { label: "Control Comercial", href: `/${s}/sales`,           indent: 1, accent: "#9ca3af" },
+        // ── OPERACIÓN — lo que está ocurriendo ───────────────────────────────
+        { label: "Operación",            href: "#", isSectionHeader: true },
+        { label: "Maletas",              href: `/${s}/comercial/maletas`, indent: 1, accent: "#0369a1", pathMatches: ["comercial/maletas"] },
+        { label: "Pedidos",              href: `/${s}/pipeline`,          indent: 1 },
+        { label: "Vendedores",           href: `/${s}/sales/vendors`,     indent: 1 },
+        // ── ESTRUCTURA COMERCIAL — cómo está organizado el negocio ───────────
+        { label: "Estructura Comercial", href: "#", isSectionHeader: true },
+        { label: "Clientes",             href: `/${s}/customer-360`,      indent: 1, pathMatches: ["customer-360"] },
+        { label: "Canales",              href: `/${s}/sales/channels`,    indent: 1 },
+        { label: "Sucursales",           href: `/${s}/sales/branches`,    indent: 1 },
+        { label: "Líneas",               href: `/${s}/sales/lines`,       indent: 1 },
+        // ── INTELIGENCIA — interpreta el sistema comercial ────────────────────
+        { label: "Inteligencia",                  href: "#", isSectionHeader: true },
+        { label: "Inteligencia Operacional",      href: `/${s}/comercial/inteligencia`, indent: 1, accent: "#0369a1", pathMatches: ["comercial/inteligencia"] },
+        { label: "Control Comercial",             href: `/${s}/sales`,                  indent: 1, accent: "#0369a1" },
       ],
     });
   }
@@ -179,22 +226,43 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
   // ── Marketing Studio — creative + content + commerce ──────────────────────
   if (opts.hasMarketing) {
     const mItems: NavItem[] = [
-      { label: "Hub",               href: `/${s}/agentik/marketing-studio`,                   badge: "↗", accent: "#7c2d92" },
-      { label: "Creación",          href: "#", isSectionHeader: true },
-      { label: "Foto Estudio",      href: `/${s}/agentik/marketing-studio/foto-estudio/new`,  indent: 1, badge: "✨", accent: "#7c2d92" },
-      { label: "Biblioteca",        href: `/${s}/agentik/marketing-studio/biblioteca`,         indent: 1 },
-      { label: "Distribución",      href: "#", isSectionHeader: true },
-      { label: "Redes Sociales",    href: `/${s}/agentik/marketing-studio/redes`,              indent: 1 },
-      { label: "WhatsApp",          href: "#",                                                  indent: 1, disabled: true },
-      { label: "Shopify",           href: `/${s}/agentik/marketing-studio/shopify`,            indent: 1 },
-      { label: "IA & Pauta",        href: "#", isSectionHeader: true },
-      { label: "AI Ads",            href: "#", indent: 1, disabled: true },
-      { label: "IA Marketing",      href: "#", indent: 1, disabled: true },
+      { label: "Hub",          href: `/${s}/agentik/marketing-studio`, badge: "↗", accent: "#7c2d92" },
+
+      // ── CREACIÓN — tenant-visible ──────────────────────────────────────────
+      { label: "Crear",        href: "#", isSectionHeader: true },
+      { label: "Foto Estudio", href: `/${s}/agentik/marketing-studio/foto-estudio/new`, indent: 1, badge: "✨", accent: "#7c2d92" },
+      { label: "Biblioteca",   href: `/${s}/agentik/marketing-studio/biblioteca`,       indent: 1 },
+      { label: "Atributos",    href: `/${s}/agentik/marketing-studio/biblioteca/atributos`, indent: 2, accent: "#7c2d92" },
+
+      // ── PUBLICAR — tenant-visible ──────────────────────────────────────────
+      { label: "Publicar",     href: "#", isSectionHeader: true },
+      { label: "Publicaciones", href: `/${s}/agentik/marketing-studio/redes`,     indent: 1 },
+      { label: "Catálogos",    href: `/${s}/agentik/marketing-studio/catalogos`,  indent: 1 },
+      { label: "Shopify",      href: `/${s}/agentik/marketing-studio/shopify`,               indent: 1 },
+      { label: "Promociones",  href: `/${s}/agentik/marketing-studio/shopify/promociones`,   indent: 2 },
+      { label: "Operaciones",  href: `/${s}/agentik/marketing-studio/shopify/operaciones`,   indent: 2 },
+      { label: "WhatsApp",     href: "#",                                                      indent: 1, disabled: true },
+
+      // ── CRECER — tenant-visible ────────────────────────────────────────────
+      { label: "Crecer",       href: "#", isSectionHeader: true },
+      { label: "Campañas",     href: `/${s}/agentik/marketing-studio/campaigns`,  indent: 1 },
+      { label: "Pauta con IA", href: `/${s}/agentik/marketing-studio/pauta`,      indent: 1, badge: "IA", accent: "#7c3aed" },
+      { label: "Analítica",    href: `/${s}/agentik/marketing-studio/analytics`,  indent: 1 },
+      { label: "Conexiones",   href: `/${s}/agentik/marketing-studio/connections`, indent: 1 },
+
+      // ── PLATAFORMA — platform-admin only ──────────────────────────────────
+      { label: "Plataforma",            href: "#", isSectionHeader: true, visibility: "platform" },
+      { label: "Orchestrator Runtime",  href: `/${s}/agentik/marketing-studio/orchestrator`,  indent: 1, badge: "⚡", accent: "#004AAD", visibility: "platform" },
+      { label: "Automatizaciones",      href: `/${s}/agentik/marketing-studio/orchestration`, indent: 1, badge: "⚡", accent: "#004AAD", visibility: "platform" },
+      { label: "Distribución Runtime",  href: `/${s}/agentik/marketing-studio/distribution`,  indent: 1, badge: "⚡", accent: "#004AAD", visibility: "platform" },
+      { label: "Publishing Runtime",    href: `/${s}/agentik/marketing-studio/publishing`,    indent: 1, badge: "⚡", accent: "#004AAD", visibility: "platform" },
+      { label: "Social Runtime",        href: `/${s}/agentik/marketing-studio/social`,         indent: 1, badge: "⚡", accent: "#E1306C", visibility: "platform" },
+      { label: "Validación Operativa",  href: `/${s}/agentik/marketing-studio/review`,         indent: 1, badge: "↗", accent: "#004AAD", visibility: "platform" },
     ];
     if (opts.showInternal) {
-      mItems.push({ label: "Administración",  href: "#", isSectionHeader: true });
-      mItems.push({ label: "Presets (admin)", href: `/${s}/agentik/marketing-studio/presets`, indent: 1, accent: "#9ca3af" });
-      mItems.push({ label: "Tenants (admin)", href: `/${s}/agentik/marketing-studio/tenants`, indent: 1, accent: "#9ca3af" });
+      mItems.push({ label: "Administración",  href: "#", isSectionHeader: true, visibility: "platform" });
+      mItems.push({ label: "Presets (admin)", href: `/${s}/agentik/marketing-studio/presets`, indent: 1, accent: "#9ca3af", visibility: "platform" });
+      mItems.push({ label: "Tenants (admin)", href: `/${s}/agentik/marketing-studio/tenants`, indent: 1, accent: "#9ca3af", visibility: "platform" });
     }
     domains.push({
       id:        "marketing",
@@ -203,17 +271,40 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
       iconKey:   "marketing",
       accent:    "#7c2d92",
       pathKeys:  ["agentik/marketing-studio"],
-      items:     mItems,
+      items:     filterItemsByVisibility(mItems, opts.showInternal),
     });
   }
 
-  // ── Consola Interna — SUPER_ADMIN / AGENTIK_ADMIN only ───────────────────
+  // ── Agentik — AI OS hub (SUPER_ADMIN / AGENTIK_ADMIN only) ──────────────
+  if (opts.showInternal && opts.hasAgentik) {
+    domains.push({
+      id:        "agentik",
+      label:     "Agentik",
+      shortIcon: "Ag",
+      iconKey:   "agentik",
+      accent:    "#4f46e5",
+      pathKeys:  ["agentik/agentes", "agentik/configuracion", "agentik", "copilot/approval-center", "agentik/runtime-admin"],
+      items: [
+        { label: "Hub",              href: `/${s}/agentik`,                          badge: "↗", accent: "#4f46e5" },
+        { label: "Sistema",          href: "#", isSectionHeader: true },
+        { label: "Agentes",          href: `/${s}/agentik/agentes`,             indent: 1, accent: "#4f46e5",  pathMatches: ["agentik/agentes"]             },
+        { label: "Configuración",    href: `/${s}/agentik/configuracion`,       indent: 1, accent: "#4f46e5",  pathMatches: ["agentik/configuracion"]       },
+        { label: "Gobernanza",         href: "#", isSectionHeader: true, visibility: "platform" },
+        { label: "Mapa Operacional",  href: `/${s}/agentik/operational-map`,     indent: 1, accent: "#004AAD", badge: "SAG",       visibility: "platform", pathMatches: ["agentik/operational-map"]       },
+        { label: "SAG Contrato",      href: `/${s}/agentik/sag-contract-review`, indent: 1, accent: "#004AAD", badge: "CONTRATO", visibility: "platform", pathMatches: ["agentik/sag-contract-review"] },
+        { label: "Auditoría Conex.",  href: `/${s}/agentik/connection-audit`,    indent: 1, accent: "#004AAD", badge: "AUDIT", visibility: "platform", pathMatches: ["agentik/connection-audit"] },
+        { label: "Runtime",          href: "#", isSectionHeader: true, visibility: "platform" },
+        { label: "Approval Center",  href: `/${s}/copilot/approval-center`,     indent: 1, accent: "#004AAD", badge: "⚡", visibility: "platform", pathMatches: ["copilot/approval-center"] },
+        { label: "Runtime Admin",    href: `/${s}/agentik/runtime-admin`,        indent: 1, accent: "#004AAD", badge: "⚙",  visibility: "platform", pathMatches: ["agentik/runtime-admin"] },
+      ],
+    });
+  }
+
+  // ── Consola — advanced internal tooling (SUPER_ADMIN / AGENTIK_ADMIN only) ─
   if (opts.showInternal) {
     const intItems: NavItem[] = [];
-    if (opts.hasAgentik)
-      intItems.push({ label: "Agentik",         href: `/${s}/agentik`, badge: "↗", accent: "#4f46e5" });
     if (opts.hasRuns)
-      intItems.push({ label: "Ejecuciones",     href: `/${s}/runs`, indent: 1 });
+      intItems.push({ label: "Ejecuciones",     href: `/${s}/runs` });
     if (opts.hasIntegrations) {
       intItems.push({ label: "Integraciones",    href: "#", isSectionHeader: true });
       intItems.push({ label: "Conectores",       href: `/${s}/integrations` });
@@ -231,8 +322,8 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
       label:     "Consola",
       shortIcon: "∷",
       iconKey:   "internal",
-      accent:    "#4f46e5",
-      pathKeys:  ["agentik", "runs", "integrations", "settings", "sag"],
+      accent:    "#374151",
+      pathKeys:  ["runs", "integrations", "settings", "sag"],
       items:     intItems,
     });
   }

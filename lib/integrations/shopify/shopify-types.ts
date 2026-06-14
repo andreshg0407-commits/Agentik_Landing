@@ -18,6 +18,9 @@ export const SHOPIFY_SCOPES_REQUIRED = [
   "write_inventory",
   "read_collections",
   "write_collections",
+  "read_price_rules",
+  "write_price_rules",
+  "read_orders",           // SHOPIFY-OPERATIONS-01
 ] as const;
 
 export type ShopifyScope = typeof SHOPIFY_SCOPES_REQUIRED[number];
@@ -192,6 +195,68 @@ export interface ShopifyAdminProductCreatePayload {
   };
 }
 
+// ── Price Rules + Discount Codes (SHOPIFY-PROMOTIONS-04) ─────────────────────
+// Shopify Admin REST API: /admin/api/{version}/price_rules.json
+//
+// A PriceRule defines the discount mechanics (value, scope, dates).
+// A DiscountCode is an optional redemption code attached to a price rule.
+// "Automatic" discounts are applied without a code (target_selection = "all",
+// no code created). Future: Shopify native automatic discounts use GraphQL only.
+
+export interface ShopifyPriceRule {
+  id:                       number;
+  title:                    string;
+  target_type:              "line_item" | "shipping_line";
+  target_selection:         "all" | "entitled";
+  allocation_method:        "each" | "across";
+  value_type:               "fixed_amount" | "percentage";
+  /** Negative string: "-20.0" means 20% off or $20 off */
+  value:                    string;
+  once_per_customer:        boolean;
+  usage_limit:              number | null;
+  customer_selection:       "all" | "prerequisite";
+  starts_at:                string;         // ISO8601
+  ends_at:                  string | null;  // ISO8601, null = no expiry
+  created_at:               string;
+  updated_at:               string;
+  entitled_product_ids:     number[];
+  entitled_variant_ids:     number[];
+  entitled_collection_ids:  number[];
+  entitled_country_ids:     number[];
+}
+
+export interface ShopifyDiscountCode {
+  id:            number;
+  price_rule_id: number;
+  code:          string;
+  usage_count:   number;
+  created_at:    string;
+  updated_at:    string;
+  errors:        Record<string, string[]>;
+}
+
+export interface ShopifyPriceRuleCreateInput {
+  title:                    string;
+  target_type:              "line_item" | "shipping_line";
+  target_selection:         "all" | "entitled";
+  allocation_method:        "each" | "across";
+  value_type:               "fixed_amount" | "percentage";
+  /** Negative: "-20.0" for 20% off or $20 off */
+  value:                    string;
+  customer_selection:       "all" | "prerequisite";
+  starts_at:                string;
+  ends_at?:                 string | null;
+  usage_limit?:             number | null;
+  once_per_customer?:       boolean;
+  entitled_product_ids?:    number[];
+  entitled_variant_ids?:    number[];
+  entitled_collection_ids?: number[];
+}
+
+export interface ShopifyDiscountCodeCreateInput {
+  code: string;
+}
+
 // ── Custom Collections (SHOPIFY-COLLECTIONS-03) ───────────────────────────────
 // Shopify Admin REST API: /admin/api/{version}/custom_collections.json
 
@@ -220,6 +285,147 @@ export interface ShopifyCustomCollectionCreateInput {
   handle?:    string;
   body_html?: string;
   published?: boolean;
+}
+
+// ── Orders (SHOPIFY-OPERATIONS-01) ────────────────────────────────────────────
+// Shopify Admin REST API: /admin/api/{version}/orders.json
+//
+// Orders include inline fulfillments and refunds when fetched with the
+// default field set. No extra API calls needed for the operations domain.
+// Requires: read_orders scope.
+
+export interface ShopifyOrder {
+  id:                  number;
+  /** Display name shown to customer: "#1001" */
+  name:                string;
+  order_number:        number;
+  email:               string | null;
+  phone:               string | null;
+  created_at:          string;   // ISO8601
+  updated_at:          string;
+  cancelled_at:        string | null;
+  cancel_reason:       string | null;
+  /**
+   * Payment state of the order.
+   * "voided" = payment was cancelled/reversed.
+   */
+  financial_status:
+    | "pending"
+    | "authorized"
+    | "partially_paid"
+    | "paid"
+    | "partially_refunded"
+    | "refunded"
+    | "voided";
+  /**
+   * Fulfilment state of the order.
+   * null = not yet fulfilled, "partial" = some items, "fulfilled" = all items.
+   */
+  fulfillment_status:  "fulfilled" | "partial" | "restocked" | null;
+  total_price:         string;   // e.g. "120.00"
+  subtotal_price:      string;
+  currency:            string;   // e.g. "COP"
+  tags:                string;   // comma-separated
+  note:                string | null;
+  customer:            ShopifyOrderCustomer | null;
+  line_items:          ShopifyOrderLineItem[];
+  fulfillments:        ShopifyFulfillment[];
+  refunds:             ShopifyRefund[];
+  shipping_address:    ShopifyOrderAddress | null;
+}
+
+export interface ShopifyOrderCustomer {
+  id:          number;
+  first_name:  string | null;
+  last_name:   string | null;
+  email:       string | null;
+  phone:       string | null;
+}
+
+export interface ShopifyOrderLineItem {
+  id:                   number;
+  title:                string;
+  quantity:             number;
+  price:                string;
+  sku:                  string | null;
+  fulfillable_quantity: number;
+  fulfillment_status:   string | null;
+  variant_id:           number | null;
+  product_id:           number | null;
+}
+
+export interface ShopifyOrderAddress {
+  first_name: string | null;
+  last_name:  string | null;
+  address1:   string | null;
+  city:       string | null;
+  province:   string | null;
+  country:    string | null;
+  zip:        string | null;
+}
+
+export interface ShopifyFulfillment {
+  id:               number;
+  order_id:         number;
+  /** Operational state of the fulfillment process. */
+  status:           "pending" | "open" | "success" | "cancelled" | "error" | "failure";
+  created_at:       string;
+  updated_at:       string;
+  tracking_company: string | null;   // "Servientrega", "FedEx", etc.
+  tracking_number:  string | null;
+  tracking_url:     string | null;
+  /**
+   * Carrier-reported delivery state.
+   * null = not yet reported by carrier.
+   */
+  shipment_status:
+    | "label_printed"
+    | "label_purchased"
+    | "attempted_delivery"
+    | "ready_for_pickup"
+    | "confirmed"
+    | "in_transit"
+    | "out_for_delivery"
+    | "delivered"
+    | "failure"
+    | null;
+  destination:      ShopifyFulfillmentDestination | null;
+  line_items:       Array<{ id: number; quantity: number; title: string }>;
+}
+
+export interface ShopifyFulfillmentDestination {
+  first_name: string | null;
+  last_name:  string | null;
+  address1:   string | null;
+  city:       string | null;
+  country:    string | null;
+}
+
+export interface ShopifyRefund {
+  id:                 number;
+  order_id:           number;
+  created_at:         string;
+  processed_at:       string | null;
+  note:               string | null;
+  refund_line_items:  ShopifyRefundLineItem[];
+  transactions:       ShopifyRefundTransaction[];
+}
+
+export interface ShopifyRefundLineItem {
+  id:           number;
+  quantity:     number;
+  line_item_id: number;
+  line_item:    ShopifyOrderLineItem;
+}
+
+export interface ShopifyRefundTransaction {
+  id:         number;
+  kind:       "refund" | "void";
+  status:     "pending" | "failure" | "success" | "error";
+  amount:     string;
+  currency:   string;
+  gateway:    string;
+  created_at: string;
 }
 
 // ── Health check result ───────────────────────────────────────────────────────

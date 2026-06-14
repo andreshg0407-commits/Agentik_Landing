@@ -25,6 +25,11 @@ import type {
   ShopifyCustomCollection,
   ShopifyCustomCollectionCreateInput,
   ShopifyCollect,
+  ShopifyPriceRule,
+  ShopifyPriceRuleCreateInput,
+  ShopifyDiscountCode,
+  ShopifyDiscountCodeCreateInput,
+  ShopifyOrder,
 } from "./shopify-types";
 import { ShopifyApiError, ShopifyConfigError, ShopifyProductCreateError } from "./shopify-errors";
 
@@ -423,6 +428,157 @@ export class ShopifyAdminClient {
       accessToken,
     );
     return data.products;
+  }
+
+  // ── Price Rules (SHOPIFY-PROMOTIONS-04) ───────────────────────────────────
+
+  /**
+   * Lists all price rules in the store (up to 250).
+   * ⚠ SERVER ONLY — accessToken never logged.
+   */
+  async listPriceRules(accessToken: string): Promise<ShopifyPriceRule[]> {
+    const data = await this.request<{ price_rules: ShopifyPriceRule[] }>(
+      "/price_rules.json?limit=250",
+      accessToken,
+    );
+    return data.price_rules;
+  }
+
+  /**
+   * Creates a new price rule (discount mechanics).
+   * ⚠ SERVER ONLY — accessToken never logged.
+   */
+  async createPriceRule(
+    accessToken: string,
+    input:       ShopifyPriceRuleCreateInput,
+  ): Promise<ShopifyPriceRule> {
+    const data = await this.request<{ price_rule: ShopifyPriceRule }>(
+      "/price_rules.json",
+      accessToken,
+      { method: "POST", body: JSON.stringify({ price_rule: input }) },
+    );
+    return data.price_rule;
+  }
+
+  /**
+   * Updates an existing price rule.
+   * ⚠ SERVER ONLY — accessToken never logged.
+   */
+  async updatePriceRule(
+    accessToken:  string,
+    priceRuleId:  number | string,
+    patch:        Partial<ShopifyPriceRuleCreateInput>,
+  ): Promise<ShopifyPriceRule> {
+    const data = await this.request<{ price_rule: ShopifyPriceRule }>(
+      `/price_rules/${priceRuleId}.json`,
+      accessToken,
+      { method: "PUT", body: JSON.stringify({ price_rule: { id: priceRuleId, ...patch } }) },
+    );
+    return data.price_rule;
+  }
+
+  /**
+   * Deletes a price rule (and all its discount codes).
+   * ⚠ SERVER ONLY — accessToken never logged.
+   */
+  async deletePriceRule(accessToken: string, priceRuleId: number | string): Promise<void> {
+    await this.request(`/price_rules/${priceRuleId}.json`, accessToken, { method: "DELETE" });
+  }
+
+  // ── Discount Codes ─────────────────────────────────────────────────────────
+
+  /**
+   * Lists all discount codes for a given price rule.
+   * ⚠ SERVER ONLY — accessToken never logged.
+   */
+  async listDiscountCodes(
+    accessToken:  string,
+    priceRuleId:  number | string,
+  ): Promise<ShopifyDiscountCode[]> {
+    const data = await this.request<{ discount_codes: ShopifyDiscountCode[] }>(
+      `/price_rules/${priceRuleId}/discount_codes.json`,
+      accessToken,
+    );
+    return data.discount_codes;
+  }
+
+  /**
+   * Creates a discount code for an existing price rule.
+   * ⚠ SERVER ONLY — accessToken never logged.
+   */
+  async createDiscountCode(
+    accessToken:  string,
+    priceRuleId:  number | string,
+    input:        ShopifyDiscountCodeCreateInput,
+  ): Promise<ShopifyDiscountCode> {
+    const data = await this.request<{ discount_code: ShopifyDiscountCode }>(
+      `/price_rules/${priceRuleId}/discount_codes.json`,
+      accessToken,
+      { method: "POST", body: JSON.stringify({ discount_code: input }) },
+    );
+    return data.discount_code;
+  }
+
+  /**
+   * Deletes a specific discount code.
+   * ⚠ SERVER ONLY — accessToken never logged.
+   */
+  async deleteDiscountCode(
+    accessToken:  string,
+    priceRuleId:  number | string,
+    codeId:       number | string,
+  ): Promise<void> {
+    await this.request(
+      `/price_rules/${priceRuleId}/discount_codes/${codeId}.json`,
+      accessToken,
+      { method: "DELETE" },
+    );
+  }
+
+  // ── Orders (SHOPIFY-OPERATIONS-01) ─────────────────────────────────────────
+
+  /**
+   * Lists orders from the store.
+   * Includes inline fulfillments and refunds (no extra calls needed).
+   * Default: returns up to 250 most recent orders across all statuses.
+   * ⚠ SERVER ONLY — accessToken never logged.
+   * Requires: read_orders scope.
+   */
+  async listOrders(
+    accessToken: string,   // ⚠ server-only
+    options?: {
+      status?:             "open" | "closed" | "cancelled" | "any";
+      financial_status?:   string;
+      fulfillment_status?: string;
+      limit?:              number;
+    },
+  ): Promise<ShopifyOrder[]> {
+    const p = new URLSearchParams();
+    p.set("limit", String(options?.limit ?? 250));
+    p.set("status", options?.status ?? "any");
+    if (options?.financial_status)   p.set("financial_status",   options.financial_status);
+    if (options?.fulfillment_status) p.set("fulfillment_status", options.fulfillment_status);
+
+    const data = await this.request<{ orders: ShopifyOrder[] }>(
+      `/orders.json?${p.toString()}`,
+      accessToken,
+    );
+    return data.orders;
+  }
+
+  /**
+   * Fetches a single order by ID, with full fulfillment and refund detail.
+   * ⚠ SERVER ONLY — accessToken never logged.
+   */
+  async getOrder(
+    accessToken: string,   // ⚠ server-only
+    orderId:     number | string,
+  ): Promise<ShopifyOrder> {
+    const data = await this.request<{ order: ShopifyOrder }>(
+      `/orders/${orderId}.json`,
+      accessToken,
+    );
+    return data.order;
   }
 }
 
