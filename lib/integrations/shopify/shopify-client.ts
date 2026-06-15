@@ -551,6 +551,10 @@ export class ShopifyAdminClient {
       financial_status?:   string;
       fulfillment_status?: string;
       limit?:              number;
+      /** ISO8601 lower bound for order.created_at (inclusive). Used by statistics. */
+      createdAtMin?:       string;
+      /** ISO8601 upper bound for order.created_at (inclusive). Used by statistics. */
+      createdAtMax?:       string;
     },
   ): Promise<ShopifyOrder[]> {
     const p = new URLSearchParams();
@@ -558,6 +562,8 @@ export class ShopifyAdminClient {
     p.set("status", options?.status ?? "any");
     if (options?.financial_status)   p.set("financial_status",   options.financial_status);
     if (options?.fulfillment_status) p.set("fulfillment_status", options.fulfillment_status);
+    if (options?.createdAtMin)       p.set("created_at_min",     options.createdAtMin);
+    if (options?.createdAtMax)       p.set("created_at_max",     options.createdAtMax);
 
     const data = await this.request<{ orders: ShopifyOrder[] }>(
       `/orders.json?${p.toString()}`,
