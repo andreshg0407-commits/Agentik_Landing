@@ -1,7 +1,7 @@
 /**
  * lib/copilot/intent-resolver/index.ts
  *
- * AGENTIK-INTENT-RESOLVER-01 — Public facade.
+ * AGENTIK-INTENT-RESOLVER-02 — Public facade (v2).
  * SERVER ONLY — no React imports, no AI, no LLM calls.
  * @server-only
  *
@@ -22,24 +22,23 @@
  *   Agentik Copilot
  *     │
  *     ▼
- *   Intent Resolver          ← THIS MODULE
+ *   Intent Resolver              ← THIS MODULE
  *     │
- *     ├──────► Shopify Actions (SHOPIFY-COPILOT-ACTIONS-01C)
- *     ├──────► Finance Actions (future: AGENTIK-INTENT-FINANCE-01)
- *     ├──────► Commercial Actions (future: AGENTIK-INTENT-COMMERCIAL-01)
- *     ├──────► Marketing Actions (future: AGENTIK-INTENT-MARKETING-01)
- *     └──────► Cobranza / Inventario / Others
+ *     ├────► Synonym & Alias Layer   (intent-aliases.ts)
+ *     ├────► Entity Extractor        (intent-entities.ts)
+ *     ├────► Keyword Scorer          (intent-parser.ts)
+ *     ├────► Domain Metadata Lookup  (SHOPIFY_ACTION_REGISTRY, ...)
+ *     ├────► Validator               (intent-validator.ts)
+ *     │
+ *     ├──────► Shopify Actions  (SHOPIFY-COPILOT-ACTIONS-01C)
+ *     ├──────► Finance Actions  (future: AGENTIK-INTENT-FINANCE-01)
+ *     ├──────► Commercial       (future: AGENTIK-INTENT-COMMERCIAL-01)
+ *     └──────► Others
  *
- * The resolver:
- *   ✓ Interprets intent
- *   ✓ Identifies domain + action
- *   ✓ Extracts parameters
- *   ✓ Validates
- *   ✓ Generates plan
- *   ✓ Verifies approval policy
- *   ✗ Never executes business logic
- *   ✗ Never calls AI/LLM
- *   ✗ Never calls Prisma directly
+ * This engine is PERMANENTLY deterministic. A future hybrid layer
+ * (AGENTIK-INTENT-HYBRID-01) may use LLM embeddings to propose candidate
+ * intents, but this engine will remain the authoritative validator and
+ * execution planner — never replaced, only augmented.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * USAGE
@@ -47,19 +46,15 @@
  *
  *   import { intentResolver } from "@/lib/copilot/intent-resolver";
  *
- *   // Resolve a user utterance
- *   const result = intentResolver.resolve("Publica los productos pendientes");
+ *   const result = intentResolver.resolve("Haz una rebaja del 20% en juguetes");
  *   if (result.matched && result.resolvedIntent) {
+ *     // resolvedIntent.parameters → { discountPercent: 20, collection: "juguetes" }
  *     const plan = intentResolver.buildExecutionPlan(result.resolvedIntent);
- *     // plan.requiresApproval, plan.domain, plan.actionId, plan.parameters, ...
  *   }
  *
- *   // List all supported intents
- *   const actions = intentResolver.listSupportedActions();
- *
- *   // Validate the registry at startup
- *   const report = intentResolver.validateRegistry();
- *   if (!report.ok) console.error(report.errors);
+ *   // For development / observability:
+ *   const debug = intentResolver.explain("Sube los productos faltantes");
+ *   // debug.synonymsApplied, debug.aliasMatches, debug.finalScores, ...
  *
  * ─────────────────────────────────────────────────────────────────────────────
  */
@@ -75,9 +70,11 @@ export type {
   IntentParseResult,
   IntentValidationReport,
   IntentExecutionPlan,
+  IntentResolutionExplanation,
 } from "./intent-types";
 
-export type { IntentRegistryReport } from "./intent-validator";
+export type { IntentRegistryReport }   from "./intent-validator";
+export type { ExtractedEntities, EntitySignal } from "./intent-entities";
 
 // ── Registry exports ───────────────────────────────────────────────────────────
 
@@ -91,86 +88,104 @@ export {
   INVENTORY_INTENT_REGISTRY,
 } from "./intent-registry";
 
+// ── Alias / synonym exports ────────────────────────────────────────────────────
+
+export {
+  SYNONYM_MAP,
+  INTENT_PHRASE_ALIASES,
+  normalizeWithSynonyms,
+  normalizeWithSynonymsTracked,
+  getMatchingAliases,
+} from "./intent-aliases";
+
+// ── Entity exports ─────────────────────────────────────────────────────────────
+
+export { extractEntities, getEntitySignals } from "./intent-entities";
+
 // ── Validation exports ─────────────────────────────────────────────────────────
 
 export { validateResolvedIntent, validateIntentRegistry } from "./intent-validator";
 
-// ── Parser exports (for testing / observability) ──────────────────────────────
+// ── Parser exports ────────────────────────────────────────────────────────────
 
 export { normalizeText, tokenize } from "./intent-parser";
 
 // ── Core resolver exports ──────────────────────────────────────────────────────
 
-export { resolveIntent, buildExecutionPlan } from "./intent-resolver";
+export {
+  resolveIntent,
+  buildExecutionPlan,
+  explainIntentResolution,
+} from "./intent-resolver";
 
 // ── Internal imports for facade ────────────────────────────────────────────────
 
-import { INTENT_REGISTRY }                  from "./intent-registry";
-import { resolveIntent, buildExecutionPlan } from "./intent-resolver";
+import { INTENT_REGISTRY }                             from "./intent-registry";
+import { resolveIntent, buildExecutionPlan,
+         explainIntentResolution }                     from "./intent-resolver";
 import { validateResolvedIntent, validateIntentRegistry } from "./intent-validator";
-import type { ResolvedIntent, IntentCandidate } from "./intent-types";
+import { extractEntities }                             from "./intent-entities";
+import type { ResolvedIntent, IntentCandidate }        from "./intent-types";
 
 // ── Public facade ──────────────────────────────────────────────────────────────
 
 /**
  * `intentResolver` — stable public API for the Agentik Intent Resolver.
  *
- * This object provides a clean, discoverable surface for Copilot agents
- * and orchestration layers to interact with the resolver.
+ * All methods are backward-compatible with AGENTIK-INTENT-RESOLVER-01.
+ * v2 additions: `explain()`, `extractEntities()`.
  */
 export const intentResolver = {
   /**
    * Resolve a raw user utterance to a structured intent.
-   *
-   * @param input  - The raw user text, e.g. "Publica los productos pendientes"
-   * @returns IntentResolutionResult with matched intent, confidence, and parameters.
-   *
-   * @example
-   *   const result = intentResolver.resolve("Muéstrame pagos fallidos");
-   *   // result.matched === true
-   *   // result.resolvedIntent.actionId === "operations.findFailedPayments"
+   * v2: uses synonym normalization, phrase aliases, entity signals, ambiguity detection.
    */
   resolve: (input: string) => resolveIntent(input, INTENT_REGISTRY),
 
   /**
-   * Validate a previously resolved intent for structural and semantic correctness.
-   *
-   * @param resolved - A ResolvedIntent returned by `resolve()`
-   * @returns IntentValidationReport with ok, errors, warnings.
+   * Validate a previously resolved intent for structural correctness.
    */
   validate: (resolved: ResolvedIntent) => validateResolvedIntent(resolved),
 
   /**
-   * Build a human-readable, structured execution plan from a resolved intent.
-   * The plan is read-only — it DOES NOT execute the action.
-   *
-   * @param resolved - A valid ResolvedIntent (success=true, matched=true)
-   * @returns IntentExecutionPlan with title, summary, approval gate, and parameters.
+   * Build a human-readable execution plan from a resolved intent.
+   * Does NOT execute the action.
    */
   buildExecutionPlan: (resolved: ResolvedIntent) => buildExecutionPlan(resolved),
 
   /**
-   * Validate the structural integrity of the entire INTENT_REGISTRY.
-   * Run at startup or in CI to catch registration mistakes.
+   * Return a full debug explanation of the resolution process.
+   * FOR DEVELOPMENT / OBSERVABILITY ONLY.
    *
-   * @returns IntentRegistryReport with ok, errors, warnings, totalIntents, domainsPresent.
+   * Shows: synonymsApplied, aliasMatches, keywordsMatched, entitySignals,
+   *        allScores, ambiguity status, alternativeCandidates.
+   */
+  explain: (input: string) => explainIntentResolution(input, INTENT_REGISTRY),
+
+  /**
+   * Extract structured entities from a raw utterance.
+   * Standalone — does not require intent resolution.
+   *
+   * @example
+   *   const { discountPercent, collection } = intentResolver.extractEntities(
+   *     "Haz una rebaja del 20% en juguetes"
+   *   );
+   *   // { discountPercent: 20, collection: "juguetes", statusKeywords: [] }
+   */
+  extractEntities: (input: string) => extractEntities(input),
+
+  /**
+   * Validate the structural integrity of the entire INTENT_REGISTRY.
    */
   validateRegistry: () => validateIntentRegistry(),
 
   /**
    * The full unified intent registry — all domains, all intents.
-   * Read-only. Useful for observability and UI listing.
    */
   registry: INTENT_REGISTRY as Readonly<Record<string, IntentCandidate>>,
 
   /**
    * List all supported intents grouped by domain.
-   *
-   * @returns A map of domain → array of intent candidates.
-   *
-   * @example
-   *   const byDomain = intentResolver.listSupportedActions();
-   *   byDomain.shopify.forEach(intent => console.log(intent.displayName));
    */
   listSupportedActions(): Record<string, IntentCandidate[]> {
     const result: Record<string, IntentCandidate[]> = {};

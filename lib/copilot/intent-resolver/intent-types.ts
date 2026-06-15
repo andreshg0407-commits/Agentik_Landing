@@ -130,6 +130,9 @@ export interface IntentResolutionResult {
 /**
  * Internal result from the keyword-based parser.
  * Not exported in the public facade — internal to intent-resolver.ts.
+ *
+ * v2 optional fields are populated by the enhanced parser (AGENTIK-INTENT-RESOLVER-02)
+ * and are safe to ignore by consumers that only depend on v1 fields.
  */
 export interface IntentParseResult {
   normalizedInput: string;
@@ -138,8 +141,55 @@ export interface IntentParseResult {
   candidateId: string | null;
   /** Score of the best candidate [0–1] */
   confidence: number;
-  /** All candidate scores for debugging / observability */
+  /** All candidate final scores for debugging / observability */
   allScores: Record<string, number>;
+
+  // ── v2 fields (optional, populated by enhanced parser) ─────────────────────
+
+  /** Which synonym replacements were applied to the input text */
+  synonymsApplied?: Record<string, string>;
+  /** Matched phrase aliases per candidate: candidateId → list of matched aliases */
+  aliasMatches?: Record<string, string[]>;
+  /** Matched keywords per candidate: candidateId → list of matched keywords */
+  keywordsMatched?: Record<string, string[]>;
+  /** Keyword sub-scores per candidate (0–1) before composite calculation */
+  keywordScores?: Record<string, number>;
+  /** Phrase alias sub-scores per candidate (0 or 1) */
+  phraseAliasScores?: Record<string, number>;
+  /** Whether two top candidates scored within the ambiguity gap */
+  ambiguous?: boolean;
+  /** Other candidate ids that scored above the minimum threshold */
+  alternativeCandidates?: string[];
+}
+
+// ── Explanation (v2) ──────────────────────────────────────────────────────────
+
+/**
+ * Full debug explanation of an intent resolution attempt.
+ * Returned by `explainIntentResolution()` — for development / observability only.
+ *
+ * This type is kept here so consumers can import it without depending
+ * on the resolver internals.
+ */
+export interface IntentResolutionExplanation {
+  // Input processing
+  rawInput:          string;
+  normalizedInput:   string;
+  synonymsApplied:   Record<string, string>;
+  tokens:            string[];
+  // Matching details per candidate
+  keywordScores:     Record<string, number>;
+  phraseAliasScores: Record<string, number>;
+  aliasMatches:      Record<string, string[]>;
+  keywordsMatched:   Record<string, string[]>;
+  finalScores:       Record<string, number>;
+  // Entity extraction
+  entitySignals:     string[];
+  // Resolution result
+  selectedCandidate: string | null;
+  confidence:        number;
+  ambiguous:         boolean;
+  alternativeCandidates: string[];
 }
 
 // ── Validation ────────────────────────────────────────────────────────────────

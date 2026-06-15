@@ -1,20 +1,20 @@
 /**
  * lib/copilot/intent-resolver/intent-resolver.ts
  *
- * AGENTIK-INTENT-RESOLVER-01 — Core resolution engine.
+ * AGENTIK-INTENT-RESOLVER-02 — Core resolution engine (v2).
  * SERVER ONLY — no React imports, no AI, no LLM calls.
  * @server-only
  *
- * Responsibilities:
- *   1. Parse user utterance → identify best IntentCandidate
- *   2. Extract structured parameters via deterministic regex rules
- *   3. Enrich with domain action metadata (requiresApproval, automationEligible)
- *   4. Validate the resolved intent
- *   5. Build an IntentExecutionPlan (read-only — never executes)
+ * v2 enhancements:
+ *   - Parameter extraction delegates to `extractEntities()` (intent-entities.ts)
+ *   - Ambiguity warnings surfaced in IntentResolutionResult
+ *   - New `explainIntentResolution()` for development / observability
+ *   - All backward-compatible: existing resolve/validate/buildExecutionPlan API unchanged
  *
- * The resolver is DOMAIN-AGNOSTIC. It dispatches metadata lookups by domain.
- * To add a new domain: implement a metadata lookup function and add a case
- * to `lookupActionMeta()`.
+ * NOTE: This engine is permanently deterministic.
+ * Future hybrid layer (AGENTIK-INTENT-HYBRID-01) will be able to propose
+ * additional candidates via LLM embeddings, but this engine will remain the
+ * authoritative validator and execution planner — never replaced.
  */
 import "server-only";
 
@@ -23,18 +23,16 @@ import type {
   IntentResolutionResult,
   IntentExecutionPlan,
   IntentCandidate,
+  IntentResolutionExplanation,
 } from "./intent-types";
 
-import { INTENT_REGISTRY }             from "./intent-registry";
-import { parseIntent, isLowConfidence } from "./intent-parser";
-import { validateResolvedIntent }      from "./intent-validator";
+import { INTENT_REGISTRY }                from "./intent-registry";
+import { parseIntent, isLowConfidence }   from "./intent-parser";
+import { validateResolvedIntent }         from "./intent-validator";
+import { extractEntities, getEntitySignals } from "./intent-entities";
 
 // ── Shopify metadata lookup ────────────────────────────────────────────────────
 
-// Lazy import pattern: we import SHOPIFY_ACTION_REGISTRY only when needed
-// and cast it to a plain Record to allow dynamic key lookup.
-// This avoids importing the full shopify bundle into every module that
-// uses the resolver.
 import {
   SHOPIFY_ACTION_REGISTRY,
 } from "@/lib/marketing-studio/commerce/shopify-actions";
@@ -53,10 +51,9 @@ interface ActionMetaSlim {
 
 /**
  * Look up action metadata from the appropriate domain registry.
- * Returns undefined if the action is not registered in any known domain.
+ * `actionId` format: "{namespace}.{functionName}" — we use the last segment.
  *
- * `actionId` format: "{namespace}.{functionName}"
- * We use the last segment as the registry key.
+ * To add a new domain: add a case here.
  */
 function lookupActionMeta(
   domain:   string,
@@ -75,11 +72,8 @@ function lookupActionMeta(
         description:        meta.description,
       };
     }
-
-    // Future domains — add cases as sprints complete:
-    // case "finance":   return lookupFinanceMeta(key);
-    // case "commercial": return lookupCommercialMeta(key);
-
+    // Future: case "finance":     return lookupFinanceMeta(key);
+    // Future: case "commercial":  return lookupCommercialMeta(key);
     default:
       return undefined;
   }
@@ -88,78 +82,27 @@ function lookupActionMeta(
 // ── Parameter extraction ───────────────────────────────────────────────────────
 
 /**
- * Extract structured parameters from the raw input using deterministic regex rules.
+ * Convert extracted entities to a flat parameters map for the ResolvedIntent.
  *
- * Rules are ordered from most-specific to least-specific.
- * No NLP, no AI. Pure pattern matching.
- *
- * Examples:
- *   "Haz una promoción del 20%"        → { discountPercent: 20 }
- *   "Genera 50 códigos"                → { count: 50 }
- *   "Haz una promoción hasta junio 30" → { endDate: "junio 30" }
- *   "Publica categoría juguetes"       → { collection: "juguetes" }
- *   "Envíos retrasados más de 7 días"  → { minDays: 7 }
- *   "Productos con calidad menor de 60"→ { threshold: 60 }
+ * This function is the adapter between the entity extractor (rich typed object)
+ * and the generic parameters contract (Record<string, unknown>).
+ * Only non-empty/non-undefined fields are included.
  */
-function extractParameters(rawInput: string): Record<string, unknown> {
+function buildParametersFromEntities(rawInput: string): Record<string, unknown> {
+  const entities = extractEntities(rawInput);
   const params: Record<string, unknown> = {};
 
-  // ── Discount percentage ────────────────────────────────────────────────────
-  // "20%", "del 20 %", "un 15%"
-  const pctMatch = rawInput.match(/(\d+(?:\.\d+)?)\s*%/);
-  if (pctMatch) {
-    params.discountPercent = parseFloat(pctMatch[1]);
-  }
-
-  // ── Bulk count ─────────────────────────────────────────────────────────────
-  // "genera 50 códigos", "crea 20 cupones", "100 discount codes"
-  const countMatch = rawInput.match(/(\d+)\s+(?:códigos?|cupones?|codes?|discount\s+codes?)/i);
-  if (countMatch) {
-    params.count = parseInt(countMatch[1], 10);
-  } else {
-    // Fallback: bare number before a relevant keyword
-    const countFallback = rawInput.match(/(?:genera|crea|generar)\s+(\d+)/i);
-    if (countFallback) {
-      params.count = parseInt(countFallback[1], 10);
-    }
-  }
-
-  // ── End date ───────────────────────────────────────────────────────────────
-  // "hasta junio 30", "al 30 de junio", "until June 30"
-  const dateMatch = rawInput.match(/(?:hasta|al|until|before)\s+(.{3,40}?)(?:\s+y\s|\s+o\s|$)/i);
-  if (dateMatch) {
-    params.endDate = dateMatch[1].trim();
-  }
-
-  // ── Collection / category name ─────────────────────────────────────────────
-  // "categoría juguetes", "colección verano", "la colección de ropa"
-  const colMatch = rawInput.match(/(?:categor[íi]a|colecci[oó]n)\s+(?:de\s+)?([a-záéíóúñüa-z\w\s]{2,30})/i);
-  if (colMatch) {
-    params.collection = colMatch[1].trim();
-  }
-
-  // ── Minimum days (for delayed shipments) ──────────────────────────────────
-  // "retrasados más de 7 días", "con más de 10 días sin movimiento"
-  const daysMatch = rawInput.match(/(?:m[aá]s\s+de\s+)?(\d+)\s+d[íi]as?/i);
-  if (daysMatch) {
-    params.minDays = parseInt(daysMatch[1], 10);
-  }
-
-  // ── Quality threshold ──────────────────────────────────────────────────────
-  // "calidad menor de 60", "menos del 70%", "con score menor a 50"
-  const thresholdMatch = rawInput.match(
-    /(?:menor\s+(?:de|a)|por\s+debajo\s+(?:de|del))\s+(\d+)/i,
-  );
-  if (thresholdMatch && !params.discountPercent) {
-    params.threshold = parseInt(thresholdMatch[1], 10);
-  }
-
-  // ── Discount code prefix ───────────────────────────────────────────────────
-  // "códigos con prefijo VERANO", "prefix PROMO"
-  const prefixMatch = rawInput.match(/(?:prefijo|prefix)\s+([A-Z0-9\-_]{2,20})/i);
-  if (prefixMatch) {
-    params.prefix = prefixMatch[1].toUpperCase();
-  }
+  if (entities.discountPercent !== undefined) params.discountPercent = entities.discountPercent;
+  if (entities.count           !== undefined) params.count           = entities.count;
+  if (entities.collection)                    params.collection      = entities.collection;
+  if (entities.endDate)                       params.endDate         = entities.endDate;
+  if (entities.prefix)                        params.prefix          = entities.prefix;
+  if (entities.minDays         !== undefined) params.minDays         = entities.minDays;
+  if (entities.threshold       !== undefined) params.threshold       = entities.threshold;
+  if (entities.productName)                   params.productName     = entities.productName;
+  if (entities.sku)                           params.sku             = entities.sku;
+  if (entities.statusKeywords.length > 0)     params.statusKeywords  = entities.statusKeywords;
+  if (entities.targetScope)                   params.targetScope     = entities.targetScope;
 
   return params;
 }
@@ -170,12 +113,12 @@ function extractParameters(rawInput: string): Record<string, unknown> {
  * Resolve a raw user utterance to a concrete Agentik action.
  *
  * Steps:
- *   1. Parse input against INTENT_REGISTRY
- *   2. If no match (confidence below threshold) → return matched=false
- *   3. Extract parameters from raw input
+ *   1. Parse input against INTENT_REGISTRY (enhanced v2 scorer)
+ *   2. If no match → return matched=false
+ *   3. Build parameters from entity extractor
  *   4. Look up action metadata from domain registry
  *   5. Validate the resolved intent
- *   6. Return structured IntentResolutionResult
+ *   6. Return IntentResolutionResult
  *
  * This function NEVER executes the action.
  */
@@ -194,7 +137,7 @@ export function resolveIntent(
       rawInput:     rawInput ?? "",
       parsedTokens: [],
       warnings,
-      errors:       ["Input is empty"],
+      errors: ["Input is empty"],
     };
   }
 
@@ -214,6 +157,15 @@ export function resolveIntent(
     };
   }
 
+  // Ambiguity warning
+  if (parsed.ambiguous) {
+    const alts = parsed.alternativeCandidates?.slice(0, 2).join(", ") ?? "";
+    warnings.push(
+      `Ambiguous intent (confidence gap < 8%) — also matched: ${alts}. ` +
+      `Confidence reduced. Consider asking the user to clarify.`,
+    );
+  }
+
   if (isLowConfidence(parsed.confidence)) {
     warnings.push(
       `Low confidence match (${(parsed.confidence * 100).toFixed(0)}%) — the intent may be ambiguous`,
@@ -226,7 +178,7 @@ export function resolveIntent(
 
   // ── Step 3: Parameters ────────────────────────────────────────────────────
 
-  const parameters = extractParameters(rawInput);
+  const parameters = buildParametersFromEntities(rawInput);
 
   // ── Step 4: Domain metadata ───────────────────────────────────────────────
 
@@ -241,7 +193,7 @@ export function resolveIntent(
       parsedTokens: parsed.tokens,
       warnings,
       errors: [
-        `Action "${candidate.actionId}" not found in domain registry "${candidate.domain}" — is the registry wired correctly?`,
+        `Action "${candidate.actionId}" not found in domain registry "${candidate.domain}"`,
       ],
     };
   }
@@ -265,14 +217,14 @@ export function resolveIntent(
   const validation = validateResolvedIntent(resolved);
   if (!validation.ok) {
     return {
-      success:       false,
-      matched:       true,
-      confidence:    parsed.confidence,
+      success:        false,
+      matched:        true,
+      confidence:     parsed.confidence,
       resolvedIntent: resolved,
       rawInput,
-      parsedTokens:  parsed.tokens,
-      warnings:      [...warnings, ...validation.warnings],
-      errors:        validation.errors,
+      parsedTokens:   parsed.tokens,
+      warnings:       [...warnings, ...validation.warnings],
+      errors:         validation.errors,
     };
   }
 
@@ -294,17 +246,12 @@ export function resolveIntent(
 
 /**
  * Build a human-readable, structured execution plan from a ResolvedIntent.
- *
- * The plan describes WHAT would happen — it does NOT execute anything.
- * Execution is the responsibility of the domain action layer.
- *
- * @param resolved - A valid ResolvedIntent (success=true, matched=true)
- * @returns IntentExecutionPlan ready for display or approval gating
+ * Read-only — does NOT execute anything.
  */
 export function buildExecutionPlan(resolved: ResolvedIntent): IntentExecutionPlan {
   const paramSummary = Object.keys(resolved.parameters).length > 0
     ? Object.entries(resolved.parameters)
-        .map(([k, v]) => `${k}: ${String(v)}`)
+        .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
         .join(", ")
     : "Ninguno";
 
@@ -313,6 +260,8 @@ export function buildExecutionPlan(resolved: ResolvedIntent): IntentExecutionPla
   const confirmationMessage = resolved.requiresApproval
     ? `Esta acción requiere tu aprobación antes de ejecutarse. ¿Confirmas ejecutar "${resolved.displayName}"?`
     : `Esta acción se ejecutará automáticamente: "${resolved.displayName}".`;
+
+  void paramSummary; // included in plan for future use
 
   return {
     title:              resolved.displayName,
@@ -324,5 +273,46 @@ export function buildExecutionPlan(resolved: ResolvedIntent): IntentExecutionPla
     parameters:         resolved.parameters,
     confidence:         resolved.confidence,
     confirmationMessage,
+  };
+}
+
+// ── Explanation (observability) ───────────────────────────────────────────────
+
+/**
+ * Returns a full debug explanation of the resolution process.
+ *
+ * FOR DEVELOPMENT / OBSERVABILITY ONLY — not intended for production display.
+ * Shows which aliases matched, which keywords matched, entity signals detected,
+ * and how the final confidence was calculated for each candidate.
+ *
+ * @param rawInput  - The raw user utterance
+ * @param registry  - Optional override (defaults to INTENT_REGISTRY)
+ */
+export function explainIntentResolution(
+  rawInput:  string,
+  registry:  Record<string, IntentCandidate> = INTENT_REGISTRY,
+): IntentResolutionExplanation {
+  // Re-run parser with debug info (v2 returns debug fields always)
+  const parsed = parseIntent(rawInput, registry);
+
+  // Extract entities independently for the explanation
+  const entities     = extractEntities(rawInput);
+  const signalsList  = getEntitySignals(entities).map(String);
+
+  return {
+    rawInput,
+    normalizedInput:   parsed.normalizedInput,
+    synonymsApplied:   parsed.synonymsApplied  ?? {},
+    tokens:            parsed.tokens,
+    keywordScores:     parsed.keywordScores    ?? {},
+    phraseAliasScores: parsed.phraseAliasScores ?? {},
+    aliasMatches:      parsed.aliasMatches     ?? {},
+    keywordsMatched:   parsed.keywordsMatched  ?? {},
+    finalScores:       parsed.allScores,
+    entitySignals:     signalsList,
+    selectedCandidate: parsed.candidateId,
+    confidence:        parsed.confidence,
+    ambiguous:         parsed.ambiguous        ?? false,
+    alternativeCandidates: parsed.alternativeCandidates ?? [],
   };
 }
