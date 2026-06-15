@@ -3,11 +3,13 @@
  *
  * SHOPIFY-COPILOT-ACTIONS-01B — Enrichment action stubs.
  * SERVER ONLY — no React imports.
+ * @server-only
  *
  * All functions in this file are stubs — extension points for future AI enrichment.
  * They preserve the Copilot contract without implementing AI generation.
  * Implementation: SHOPIFY-ENRICHMENT-01 (future sprint).
  */
+import "server-only";
 
 import type { ShopifyActionMeta }   from "./action-types";
 import {
@@ -18,7 +20,7 @@ import {
 
 // ── Registry entries ───────────────────────────────────────────────────────────
 
-export const ENRICHMENT_ACTION_META: Record<string, ShopifyActionMeta> = {
+export const enrichmentActionRegistry: Record<string, ShopifyActionMeta> = {
   completeSeo: {
     id: "completeSeo", category: "enrichment",
     displayName: "Completar SEO",

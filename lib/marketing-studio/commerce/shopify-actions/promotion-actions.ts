@@ -4,6 +4,7 @@
  * SHOPIFY-COPILOT-ACTIONS-01B — Promotions domain actions.
  * SERVER ONLY — no React imports.
  */
+import "server-only";
 
 import {
   listPromotions,
@@ -26,7 +27,7 @@ import {
 
 // ── Registry entries ───────────────────────────────────────────────────────────
 
-export const PROMOTION_ACTION_META: Record<string, ShopifyActionMeta> = {
+export const promotionActionRegistry: Record<string, ShopifyActionMeta> = {
   createPromotion: {
     id: "createPromotion", category: "promotions",
     displayName: "Crear promoción",

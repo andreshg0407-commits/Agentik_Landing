@@ -7,7 +7,23 @@
  *
  * This file has no Shopify service imports. It is a pure type + utility module
  * shared by every domain action file in this directory.
+ *
+ * ── Intent Resolver contract (AGENTIK-INTENT-RESOLVER-01) ─────────────────────
+ *
+ * The future Intent Resolver will:
+ *   1. Receive a natural-language intent from Copilot.
+ *   2. Query SHOPIFY_ACTION_REGISTRY to find a matching actionId.
+ *   3. Validate required inputs are present in the resolved context.
+ *   4. Build a ShopifyExecutionPlan with estimated changes and affected resources.
+ *   5. If requiresApproval=true → surface ShopifyExecutionPlan to the user and
+ *      await confirmation before proceeding.
+ *   6. Execute via shopifyActions[category][actionName](ctx, ...inputs).
+ *   7. Record the ShopifyActionResult for audit, Copilot memory, and rail signals.
+ *
+ * The Intent Resolver MUST NOT call Shopify REST/GraphQL directly.
+ * It MUST route exclusively through shopifyActions.{category}.{action}(ctx).
  */
+import "server-only";
 
 // ── Domain taxonomy ────────────────────────────────────────────────────────────
 

@@ -4,6 +4,7 @@
  * SHOPIFY-COPILOT-ACTIONS-01B — Operations domain actions.
  * SERVER ONLY — no React imports.
  */
+import "server-only";
 
 import {
   listDelayedShipments,
@@ -23,7 +24,7 @@ import {
 
 // ── Registry entries ───────────────────────────────────────────────────────────
 
-export const OPERATION_ACTION_META: Record<string, ShopifyActionMeta> = {
+export const operationActionRegistry: Record<string, ShopifyActionMeta> = {
   findDelayedOrders: {
     id: "findDelayedOrders", category: "operations",
     displayName: "Buscar envíos retrasados",

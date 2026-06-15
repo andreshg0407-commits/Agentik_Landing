@@ -4,6 +4,7 @@
  * SHOPIFY-COPILOT-ACTIONS-01B — Catalog domain actions.
  * SERVER ONLY — no React imports.
  */
+import "server-only";
 
 import { listProductConsoleItems }  from "@/lib/marketing-studio/products/product-query-service";
 import type { ProductConsoleItem }  from "@/lib/marketing-studio/products/product-display";
@@ -18,7 +19,7 @@ import {
 
 // ── Registry entries ───────────────────────────────────────────────────────────
 
-export const CATALOG_ACTION_META: Record<string, ShopifyActionMeta> = {
+export const catalogActionRegistry: Record<string, ShopifyActionMeta> = {
   publishPendingProducts: {
     id: "publishPendingProducts", category: "catalog",
     displayName: "Publicar productos pendientes",

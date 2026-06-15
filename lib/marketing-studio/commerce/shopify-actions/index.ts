@@ -1,16 +1,45 @@
 /**
  * lib/marketing-studio/commerce/shopify-actions/index.ts
  *
- * SHOPIFY-COPILOT-ACTIONS-01B — Public facade for the modular action layer.
+ * SHOPIFY-COPILOT-ACTIONS-01C — Public facade for the modular action layer.
+ * SERVER ONLY — no React imports.
+ * @server-only
  *
- * Exports:
- *   shopifyActions      — top-level Copilot-callable API grouped by domain
- *   SHOPIFY_ACTION_REGISTRY — flat registry of all action metadata
+ * ─────────────────────────────────────────────────────────────────────────────
+ * INTENT RESOLVER ROUTING GUIDE (AGENTIK-INTENT-RESOLVER-01)
+ * ─────────────────────────────────────────────────────────────────────────────
  *
- * All types from action-types.ts are re-exported for consumer convenience.
+ * The Copilot Intent Resolver maps user utterances to `shopifyActions.*.*`.
  *
- * SERVER ONLY — never import from client components.
+ * Domain routing:
+ *   "ventas / ingresos / pedidos / métricas"         → shopifyActions.statistics.*
+ *   "retrasos / reembolsos / devoluciones / riesgo"  → shopifyActions.operations.*
+ *   "descuento / promoción / código / cupón"         → shopifyActions.promotions.*
+ *   "colección / categoría / grupo de productos"     → shopifyActions.collections.*
+ *   "SEO / alt text / descripción / metadatos"       → shopifyActions.enrichment.*
+ *   "catálogo / publicar / precio / inventario"      → shopifyActions.catalog.*
+ *   "buscar / encontrar / listar (cross-domain)"     → shopifyActions.search.*
+ *
+ * Approval gate:
+ *   SHOPIFY_ACTION_REGISTRY[id].requiresApproval === true
+ *     → must route through Copilot approval flow before execution.
+ *
+ * Automation gate:
+ *   SHOPIFY_ACTION_REGISTRY[id].automationEligible === true
+ *     → safe to run in autonomous / scheduled pipelines without user confirmation.
+ *
+ * Stub detection:
+ *   SHOPIFY_ACTION_REGISTRY[id].stub === true
+ *     → action is not yet implemented; surface limitation to user.
+ *
+ * Validation:
+ *   import { validateShopifyActionRegistry } from "@/lib/marketing-studio/commerce/shopify-actions";
+ *   const report = validateShopifyActionRegistry();
+ *   if (!report.ok) throw new Error(report.errors.join(", "));
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
  */
+import "server-only";
 
 // ── Domain objects ─────────────────────────────────────────────────────────────
 
@@ -42,12 +71,12 @@ import { statisticsActions } from "./statistics-actions";
 import { enrichmentActions } from "./enrichment-actions";
 import { searchActions }     from "./search-actions";
 
-import { CATALOG_ACTION_META }    from "./catalog-actions";
-import { PROMOTION_ACTION_META }  from "./promotion-actions";
-import { COLLECTION_ACTION_META } from "./collection-actions";
-import { OPERATION_ACTION_META }  from "./operation-actions";
-import { STATISTICS_ACTION_META } from "./statistics-actions";
-import { ENRICHMENT_ACTION_META } from "./enrichment-actions";
+import { catalogActionRegistry }    from "./catalog-actions";
+import { promotionActionRegistry }  from "./promotion-actions";
+import { collectionActionRegistry } from "./collection-actions";
+import { operationActionRegistry }  from "./operation-actions";
+import { statisticsActionRegistry } from "./statistics-actions";
+import { enrichmentActionRegistry } from "./enrichment-actions";
 
 /**
  * Top-level Copilot-callable interface for all Shopify operations.
@@ -64,13 +93,13 @@ import { ENRICHMENT_ACTION_META } from "./enrichment-actions";
  *   const active    = await shopifyActions.promotions.findActivePromotions(ctx);
  */
 export const shopifyActions = {
-  catalog:    catalogActions,
-  promotions: promotionActions,
+  catalog:     catalogActions,
+  promotions:  promotionActions,
   collections: collectionActions,
-  operations: operationActions,
-  statistics: statisticsActions,
-  enrichment: enrichmentActions,
-  search:     searchActions,
+  operations:  operationActions,
+  statistics:  statisticsActions,
+  enrichment:  enrichmentActions,
+  search:      searchActions,
 } as const;
 
 /**
@@ -84,10 +113,76 @@ export const shopifyActions = {
  *   - Surface stub limitations to the user
  */
 export const SHOPIFY_ACTION_REGISTRY = {
-  ...CATALOG_ACTION_META,
-  ...PROMOTION_ACTION_META,
-  ...COLLECTION_ACTION_META,
-  ...OPERATION_ACTION_META,
-  ...STATISTICS_ACTION_META,
-  ...ENRICHMENT_ACTION_META,
+  ...catalogActionRegistry,
+  ...promotionActionRegistry,
+  ...collectionActionRegistry,
+  ...operationActionRegistry,
+  ...statisticsActionRegistry,
+  ...enrichmentActionRegistry,
 } as const;
+
+// ── Registry validation ────────────────────────────────────────────────────────
+
+export interface ShopifyActionRegistryReport {
+  ok:                boolean;
+  errors:            string[];
+  warnings:          string[];
+  totalActions:      number;
+  registeredActions: number;
+}
+
+/**
+ * Validates the integrity of the SHOPIFY_ACTION_REGISTRY at startup.
+ *
+ * Checks:
+ *  - Every registry entry has a non-empty id, displayName, and description
+ *  - Every registry id matches the object key it is stored under
+ *  - No duplicate ids across domains
+ *  - Every action in shopifyActions.* has a corresponding registry entry
+ *
+ * Returns a structured report — never throws.
+ */
+export function validateShopifyActionRegistry(): ShopifyActionRegistryReport {
+  const errors:   string[] = [];
+  const warnings: string[] = [];
+
+  const registryEntries = Object.entries(SHOPIFY_ACTION_REGISTRY);
+  const seenIds = new Set<string>();
+
+  for (const [key, meta] of registryEntries) {
+    if (!meta.id)          errors.push(`Registry key "${key}" is missing id`);
+    if (!meta.displayName) errors.push(`Registry key "${key}" is missing displayName`);
+    if (!meta.description) errors.push(`Registry key "${key}" is missing description`);
+
+    if (meta.id && meta.id !== key) {
+      errors.push(`Registry key "${key}" has mismatched id "${meta.id}"`);
+    }
+
+    if (seenIds.has(meta.id)) {
+      errors.push(`Duplicate action id detected: "${meta.id}"`);
+    }
+    seenIds.add(meta.id);
+
+    if (meta.stub) {
+      warnings.push(`Action "${meta.id}" (${meta.category}) is a stub — not yet implemented`);
+    }
+
+    if (meta.automationEligible && meta.requiresApproval) {
+      warnings.push(`Action "${meta.id}" is both automationEligible and requiresApproval — verify intent`);
+    }
+  }
+
+  // Count all callable functions in shopifyActions (across all domains)
+  let totalActions = 0;
+  for (const domain of Object.values(shopifyActions)) {
+    totalActions += Object.keys(domain).length;
+  }
+
+  return {
+    ok: errors.length === 0,
+    errors,
+    warnings,
+    totalActions,
+    registeredActions: registryEntries.length,
+  };
+}

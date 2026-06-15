@@ -4,6 +4,7 @@
  * SHOPIFY-COPILOT-ACTIONS-01B — Statistics domain actions.
  * SERVER ONLY — no React imports.
  */
+import "server-only";
 
 import {
   getOverview          as _getOverview,
@@ -24,7 +25,7 @@ import {
 
 // ── Registry entries ───────────────────────────────────────────────────────────
 
-export const STATISTICS_ACTION_META: Record<string, ShopifyActionMeta> = {
+export const statisticsActionRegistry: Record<string, ShopifyActionMeta> = {
   getOverview: {
     id: "getOverview", category: "statistics",
     displayName: "Resumen ejecutivo",

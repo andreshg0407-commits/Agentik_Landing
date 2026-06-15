@@ -3,10 +3,12 @@
  *
  * SHOPIFY-COPILOT-ACTIONS-01B — Semantic search actions.
  * SERVER ONLY — no React imports.
+ * @server-only
  *
  * Cross-cutting search functions for Copilot intent resolution.
  * Re-uses promotionActions and collectionActions to avoid duplicating logic.
  */
+import "server-only";
 
 import { listProductConsoleItems }  from "@/lib/marketing-studio/products/product-query-service";
 import { findOperation }            from "../shopify-operations-service";

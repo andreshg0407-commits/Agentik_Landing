@@ -4,6 +4,7 @@
  * SHOPIFY-COPILOT-ACTIONS-01B — Collections domain actions.
  * SERVER ONLY — no React imports.
  */
+import "server-only";
 
 import {
   findShopifyCollections,
@@ -21,7 +22,7 @@ import {
 
 // ── Registry entries ───────────────────────────────────────────────────────────
 
-export const COLLECTION_ACTION_META: Record<string, ShopifyActionMeta> = {
+export const collectionActionRegistry: Record<string, ShopifyActionMeta> = {
   createCollection: {
     id: "createCollection", category: "collections",
     displayName: "Crear colección",
