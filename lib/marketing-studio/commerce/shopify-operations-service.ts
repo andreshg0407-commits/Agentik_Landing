@@ -591,7 +591,7 @@ function buildAlertSummary(
       severity:         "warning",
       riskLevel:        "high",
       detectedAt:       new Date().toISOString(),
-      recommendedAction: mkAction("contact_customer", "Contactar cliente", prompt, 0.90, true, true),
+      recommendedAction: mkAction("contact_customer", "Contactar cliente", prompt, 0.90, true, false),
       copilotAction:    prompt,
     });
   }

@@ -250,7 +250,10 @@ export type OperationRecommendedActionKey =
  * The following actions MAY be automated when automationEligible=true
  * and confidenceScore >= 0.85 (threshold: SHOPIFY-OPERATIONS-07):
  *
- *   review_carrier    — API call to carrier for status inquiry
+ *   review_carrier    — API call to carrier for status inquiry (no customer contact)
+ *
+ * contact_customer is NEVER automatable in this phase — any outbound communication
+ * (WhatsApp, email, SMS) must have explicit human approval regardless of confidence.
  *
  * All other actions require human review before execution.
  * ────────────────────────────────────────────────────────────────────────────
