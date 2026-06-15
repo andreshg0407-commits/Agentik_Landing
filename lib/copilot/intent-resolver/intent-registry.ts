@@ -222,7 +222,7 @@ export const SHOPIFY_INTENT_REGISTRY: Record<string, IntentCandidate> = {
     displayName: "Buscar envíos retrasados",
     description: "Devuelve envíos sin actividad de transportadora por 5 o más días.",
     domain:      "shopify",
-    actionId:    "operations.findShipmentDelays",
+    actionId:    "operations.findDelayedOrders",
     keywords: [
       "envíos retrasados",
       "pedidos demorados",

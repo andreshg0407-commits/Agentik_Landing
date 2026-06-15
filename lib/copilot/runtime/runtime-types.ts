@@ -46,6 +46,12 @@ export interface ExecutionContext {
   requestedAt:    Date;
   /** Arbitrary metadata (intent text, plan title, confidence, etc.) */
   metadata?:      Record<string, unknown>;
+  /**
+   * Optional idempotency key — prevents double-execution of the same plan.
+   * Phase 1: interface only. Phase 2: persisted and checked before execution.
+   * Callers should set this to a stable hash of (tenantId + planId + requestedAt.date).
+   */
+  idempotencyKey?: string;
 }
 
 // ── Plan input ────────────────────────────────────────────────────────────────
