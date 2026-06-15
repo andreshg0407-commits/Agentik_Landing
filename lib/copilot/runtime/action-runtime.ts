@@ -45,13 +45,18 @@ import type {
 } from "./runtime-types";
 import { DEFAULT_EXECUTION_POLICY } from "./runtime-types";
 
-import type { ActionDispatcher }          from "./action-dispatcher";
-import type { ApprovalGateConfig }        from "./approval-gate";
-import { checkApprovalGate, DEFAULT_APPROVAL_GATE_CONFIG } from "./approval-gate";
-import { createRuntimeLogger }            from "./runtime-logger";
-import type { RuntimeLogger }             from "./runtime-logger";
-import { buildRollbackDescriptor }        from "./rollback-descriptor";
-import type { RollbackDescriptor }        from "./rollback-descriptor";
+import type { ActionDispatcher }               from "./action-dispatcher";
+import type { ApprovalGateConfig }             from "./approval-gate";
+import { gateFromPolicyDecision, DEFAULT_APPROVAL_GATE_CONFIG } from "./approval-gate";
+import { createRuntimeLogger }                 from "./runtime-logger";
+import type { RuntimeLogger }                  from "./runtime-logger";
+import { buildRollbackDescriptor }             from "./rollback-descriptor";
+import type { RollbackDescriptor }             from "./rollback-descriptor";
+
+import type { PolicyEngine }                   from "@/lib/copilot/policy/policy-engine";
+import { createDefaultPolicyEngine }           from "@/lib/copilot/policy/policy-engine";
+import { buildPolicyContext }                  from "@/lib/copilot/policy/policy-context";
+import type { ExecutionMode, PolicyViolation } from "@/lib/copilot/policy/policy-types";
 
 // ── Execution options ──────────────────────────────────────────────────────────
 
@@ -64,6 +69,16 @@ export interface ExecuteOptions {
   policy?:          ExecutionPolicy;
   /** Approval gate configuration (default: auto_block) */
   approvalConfig?:  ApprovalGateConfig;
+  /**
+   * Pre-built PolicyEngine instance to use for authorization decisions.
+   * If omitted, `createDefaultPolicyEngine(approvalConfig)` is used.
+   */
+  policyEngine?:    PolicyEngine;
+  /**
+   * Execution mode — passed to buildPolicyContext() for each step.
+   * Default: "copilot"
+   */
+  executionMode?:   ExecutionMode;
   /** Suppress console logging (for test environments) */
   silent?:          boolean;
 }
@@ -93,23 +108,32 @@ function makeStepResult(
     error?:          string;
     warnings?:       string[];
     auditNote?:      string;
+    // Policy fields
+    policyDecision?: RuntimeStepResult["policyDecision"];
+    policyReasons?:  RuntimeStepResult["policyReasons"];
+    evaluatedRules?: RuntimeStepResult["evaluatedRules"];
+    deniedByPolicy?: boolean;
   } = {},
 ): RuntimeStepResult {
   const finishedAt = new Date();
   return {
-    stepId:         spec.stepId,
-    actionId:       spec.actionId,
-    domain:         spec.domain,
-    displayName:    spec.displayName,
+    stepId:          spec.stepId,
+    actionId:        spec.actionId,
+    domain:          spec.domain,
+    displayName:     spec.displayName,
     status,
-    approvalStatus: opts.approvalStatus ?? "not_required",
+    approvalStatus:  opts.approvalStatus ?? "not_required",
     startedAt,
     finishedAt,
-    durationMs:     finishedAt.getTime() - startedAt.getTime(),
-    data:           opts.data,
-    error:          opts.error,
-    warnings:       opts.warnings ?? [],
-    auditNote:      opts.auditNote,
+    durationMs:      finishedAt.getTime() - startedAt.getTime(),
+    data:            opts.data,
+    error:           opts.error,
+    warnings:        opts.warnings ?? [],
+    auditNote:       opts.auditNote,
+    policyDecision:  opts.policyDecision,
+    policyReasons:   opts.policyReasons,
+    evaluatedRules:  opts.evaluatedRules,
+    deniedByPolicy:  opts.deniedByPolicy,
   };
 }
 
@@ -148,6 +172,20 @@ function buildReport(
   const approvalRequired = results.some(r => r.approvalStatus !== "not_required");
   const approvalGated    = results.some(r => r.approvalStatus === "pending");
 
+  // Policy aggregates
+  const deniedByPolicy   = results.filter(r => r.deniedByPolicy === true).length;
+  const policyViolations: PolicyViolation[] = results.flatMap(r => {
+    if (!r.policyReasons) return [];
+    return r.policyReasons
+      .filter(reason => reason.effect === "deny" || reason.effect === "require_approval")
+      .map(reason => ({
+        ruleId:      reason.ruleId,
+        ruleName:    reason.ruleName,
+        explanation: reason.explanation,
+        severity:    reason.effect === "deny" ? ("high" as const) : ("medium" as const),
+      }));
+  });
+
   const audit: ExecutionAudit = {
     initiatedBy:      ctx.userId,
     requestedAt:      ctx.requestedAt,
@@ -178,6 +216,8 @@ function buildReport(
     errors,
     warnings,
     audit,
+    deniedByPolicy,
+    policyViolations,
   };
 }
 
@@ -205,6 +245,8 @@ export async function executeExecutionPlan(
 
   const policy         = options.policy         ?? DEFAULT_EXECUTION_POLICY;
   const approvalConfig = options.approvalConfig  ?? DEFAULT_APPROVAL_GATE_CONFIG;
+  const policyEngine   = options.policyEngine   ?? createDefaultPolicyEngine(approvalConfig);
+  const executionMode  = options.executionMode  ?? "copilot";
   const logger         = createRuntimeLogger(ctx, { silent: options.silent ?? false });
 
   const startedAt = new Date();
@@ -264,31 +306,49 @@ export async function executeExecutionPlan(
       message:   `Starting step "${spec.displayName}"`,
     });
 
-    // ── Approval gate ──────────────────────────────────────────────────────
-    const gate = checkApprovalGate(spec, ctx, approvalConfig);
+    // ── Policy Engine evaluation ────────────────────────────────────────────
+    const policyCtx    = buildPolicyContext(spec, ctx, executionMode);
+    const policyResult = policyEngine.evaluate(policyCtx);
+    const gate         = gateFromPolicyDecision(policyResult);
 
+    // Common policy fields for any step result produced below
+    const policyFields = {
+      policyDecision: policyResult.decision,
+      policyReasons:  policyResult.reasons,
+      evaluatedRules: policyResult.evaluatedRuleIds,
+      deniedByPolicy: policyResult.decision === "deny",
+    };
+
+    // ── Approval gate / deny ────────────────────────────────────────────────
     if (gate.shouldBlock) {
-      const blocked = makeStepResult(spec, "awaiting_approval", stepStart, {
-        approvalStatus: "pending",
+      // "deny" → blocked status; "require_approval" → awaiting_approval
+      const stepStatus = policyResult.decision === "deny" ? "blocked" : "awaiting_approval";
+      const approvalSt = policyResult.decision === "deny" ? "denied"  : "pending";
+
+      const blocked = makeStepResult(spec, stepStatus, stepStart, {
+        approvalStatus: approvalSt,
         auditNote:      gate.reason,
         warnings:       [gate.reason],
+        ...policyFields,
       });
       execution.results.push(blocked);
 
       logger.log({
-        eventType:     "step_approval_pending",
-        stepId:        spec.stepId,
-        actionId:      spec.actionId,
-        domain:        spec.domain,
-        status:        "awaiting_approval",
-        message:       gate.reason,
+        eventType: stepStatus === "blocked" ? "step_blocked" : "step_approval_pending",
+        stepId:    spec.stepId,
+        actionId:  spec.actionId,
+        domain:    spec.domain,
+        status:    stepStatus,
+        message:   gate.reason,
       });
 
-      if (policy.stopOnFirstBlock) {
+      if (policy.stopOnFirstBlock || policyResult.decision === "deny") {
         logger.log({
           eventType: "policy_stop_on_block",
           stepId:    spec.stepId,
-          message:   "Stopping execution — stopOnFirstBlock policy triggered.",
+          message:   policyResult.decision === "deny"
+            ? "Stopping execution — step denied by Policy Engine."
+            : "Stopping execution — stopOnFirstBlock policy triggered.",
         });
         shouldStop = true;
       }
@@ -304,6 +364,7 @@ export async function executeExecutionPlan(
           error:          `Action "${outcome.actionId}" not found in dispatcher registry (domain: ${outcome.domain}).`,
           approvalStatus: gate.status,
           auditNote:      "Action not registered in any domain provider.",
+          ...policyFields,
         });
         execution.results.push(blocked);
         logger.log({
@@ -329,6 +390,7 @@ export async function executeExecutionPlan(
           error:          `Domain context error for "${outcome.domain}": ${outcome.reason}`,
           approvalStatus: gate.status,
           auditNote:      "Domain context could not be resolved.",
+          ...policyFields,
         });
         execution.results.push(failed);
         logger.log({
@@ -354,6 +416,7 @@ export async function executeExecutionPlan(
           error:          outcome.error,
           approvalStatus: gate.status,
           auditNote:      "Handler threw an unhandled exception.",
+          ...policyFields,
         });
         execution.results.push(failed);
         logger.log({
@@ -384,6 +447,7 @@ export async function executeExecutionPlan(
             warnings:       result.warnings,
             approvalStatus: gate.status,
             auditNote:      result.auditNote,
+            ...policyFields,
           });
           execution.results.push(failed);
           logger.log({
@@ -407,6 +471,7 @@ export async function executeExecutionPlan(
             warnings:       result.warnings,
             approvalStatus: gate.status,
             auditNote:      result.auditNote,
+            ...policyFields,
           });
           execution.results.push(completed);
           logger.log({

@@ -1,5 +1,6 @@
 /**
  * lib/copilot/runtime/runtime-types.ts
+ * (extended in AGENTIK-POLICY-ENGINE-01 — see policy fields below)
  *
  * AGENTIK-ACTION-RUNTIME-01 — Canonical type contracts for the execution runtime.
  * SERVER ONLY — no React imports, no domain-specific dependencies.
@@ -20,6 +21,11 @@
  *                 ← domain adapters (Shopify, Finance, etc.) [OUTSIDE this module]
  */
 import "server-only";
+
+import type { PolicyDecision, PolicyReason, PolicyViolation } from "@/lib/copilot/policy/policy-types";
+
+// Re-export for consumers that import from runtime-types
+export type { PolicyDecision, PolicyReason, PolicyViolation };
 
 // ── Identity ──────────────────────────────────────────────────────────────────
 
@@ -165,6 +171,16 @@ export interface RuntimeStepResult {
   warnings:       string[];
   /** Human-readable note for audit trail */
   auditNote?:     string;
+
+  // ── Policy layer (AGENTIK-POLICY-ENGINE-01) ───────────────────────────────
+  /** Decision produced by the Policy Engine for this step */
+  policyDecision?:  PolicyDecision;
+  /** Reasons from non-abstain policy rules that fired */
+  policyReasons?:   PolicyReason[];
+  /** IDs of all evaluated policy rules */
+  evaluatedRules?:  string[];
+  /** True when the step was blocked because PolicyEngine returned "deny" */
+  deniedByPolicy?:  boolean;
 }
 
 // ── In-flight execution ───────────────────────────────────────────────────────
@@ -226,6 +242,12 @@ export interface ExecutionReport {
 
   // ── Audit ─────────────────────────────────────────────────────────────────
   audit:            ExecutionAudit;
+
+  // ── Policy layer (AGENTIK-POLICY-ENGINE-01) ───────────────────────────────
+  /** Number of steps blocked by Policy Engine (deny decision) */
+  deniedByPolicy:   number;
+  /** All policy violations detected across all steps */
+  policyViolations: PolicyViolation[];
 }
 
 /**

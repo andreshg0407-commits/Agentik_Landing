@@ -2,22 +2,26 @@
  * lib/copilot/runtime/approval-gate.ts
  *
  * AGENTIK-ACTION-RUNTIME-01 — Human-in-the-loop approval gate.
+ * AGENTIK-POLICY-ENGINE-01  — Refactored: primary path consumes PolicyEvaluationResult.
  * SERVER ONLY — no React imports, no domain-specific dependencies.
  * @server-only
  *
- * Design principles:
- *   - Fail-closed: when in doubt, block and require approval.
- *   - Three strategies: auto_block (never auto-approve), auto_approve (skip gate),
- *     token_based (future — bearer token or callback signal grants approval).
- *   - The gate never executes actions; it only decides whether to allow execution.
- *   - Fully synchronous in Phase 1; async token resolution reserved for Phase 2.
+ * After AGENTIK-POLICY-ENGINE-01:
+ *   The primary entry point is `gateFromPolicyDecision(policyResult)`.
+ *   The gate is now a thin adapter: it maps PolicyDecision → ApprovalGateDecision.
+ *   No authorization logic lives here — that belongs exclusively to PolicyEngine.
+ *
+ *   Legacy `checkApprovalGate(spec, ctx, config)` is preserved for backward compat.
+ *   It will be removed once all callers migrate to the policy-based path.
  *
  * Dependency direction (must never be violated):
  *   runtime-types ← approval-gate ← action-runtime
+ *   policy-types  ← approval-gate ← action-runtime
  */
 import "server-only";
 
 import type { ExecutionContext, RuntimeStepSpec, ApprovalStatus } from "./runtime-types";
+import type { PolicyEvaluationResult } from "@/lib/copilot/policy/policy-types";
 
 // ── Gate strategy ──────────────────────────────────────────────────────────────
 
@@ -174,6 +178,8 @@ export function checkApprovalGate(
 /**
  * Convenience helper — returns true if the step should be blocked.
  * Equivalent to `checkApprovalGate(...).shouldBlock`.
+ *
+ * @deprecated Use `gateFromPolicyDecision(policyResult).shouldBlock` instead.
  */
 export function isApprovalRequired(
   spec:   RuntimeStepSpec,
@@ -183,4 +189,55 @@ export function isApprovalRequired(
   if (!spec.requiresApproval) return false;
   if (spec.automationEligible && !config.gateAutomationEligible) return false;
   return config.strategy !== "auto_approve";
+}
+
+// ── Policy-based gate (AGENTIK-POLICY-ENGINE-01) ──────────────────────────────
+
+/**
+ * Convert a PolicyEvaluationResult into an ApprovalGateDecision.
+ *
+ * This is the PRIMARY gate function after AGENTIK-POLICY-ENGINE-01.
+ * The gate contains ZERO authorization logic — it only translates.
+ *
+ * Mapping:
+ *   allow            → status="granted",   shouldBlock=false
+ *   require_approval → status="pending",   shouldBlock=true
+ *   deny             → status="denied",    shouldBlock=true
+ */
+export function gateFromPolicyDecision(
+  policyResult: PolicyEvaluationResult,
+): ApprovalGateDecision {
+  const topReason = policyResult.reasons[0]?.explanation ?? "";
+
+  switch (policyResult.decision) {
+    case "allow":
+      return {
+        status:      "granted",
+        gateApplied: true,
+        reason:      topReason || `Policy engine allowed action "${policyResult.actionId}".`,
+        shouldBlock: false,
+      };
+
+    case "require_approval":
+      return {
+        status:      "pending",
+        gateApplied: true,
+        reason:
+          topReason ||
+          `Action "${policyResult.actionId}" requires human approval. ` +
+          `Rules triggered: [${policyResult.triggeredRuleIds.join(", ")}].`,
+        shouldBlock: true,
+      };
+
+    case "deny":
+      return {
+        status:      "denied",
+        gateApplied: true,
+        reason:
+          topReason ||
+          `Action "${policyResult.actionId}" was denied by policy. ` +
+          `Rules triggered: [${policyResult.triggeredRuleIds.join(", ")}].`,
+        shouldBlock: true,
+      };
+  }
 }

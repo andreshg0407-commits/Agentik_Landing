@@ -125,6 +125,33 @@ export { buildRollbackDescriptor } from "./rollback-descriptor";
 export type { ExecuteOptions, ExtendedExecutionReport } from "./action-runtime";
 export { executeExecutionPlan }                         from "./action-runtime";
 
+// ── Policy Engine re-exports (AGENTIK-POLICY-ENGINE-01) ───────────────────────
+
+export type {
+  ExecutionMode,
+  PolicyEffect,
+  PolicyDecision,
+  PolicyContext,
+  PolicyReason,
+  PolicyViolation,
+  PolicyEvaluationResult,
+  TenantPolicyConfig,
+} from "@/lib/copilot/policy/policy-types";
+
+export { DEFAULT_TENANT_POLICY_CONFIG } from "@/lib/copilot/policy/policy-types";
+
+export type { PolicyRule, PolicyRuleResult } from "@/lib/copilot/policy/policy-rules";
+
+export {
+  PolicyEngine,
+  createProductionPolicyEngine,
+  createPermissivePolicyEngine,
+  createDefaultPolicyEngine,
+} from "@/lib/copilot/policy/policy-engine";
+
+export { buildPolicyContext }          from "@/lib/copilot/policy/policy-context";
+export { gateFromPolicyDecision }      from "./approval-gate";
+
 // ── Internal imports for helpers ───────────────────────────────────────────────
 
 import type { IntentExecutionPlan } from "@/lib/copilot/intent-resolver/intent-types";
