@@ -409,6 +409,13 @@ model Organization {
   aiCreditLedger                     AiCreditLedger[]
   aiCreditBalance                    AiCreditBalance?
 
+  // ── Product Attribute Definitions ─────────────────────────────────────────
+  productAttributeDefinitions        ProductAttributeDefinition[]
+
+  // ── Catalog Definitions ────────────────────────────────────────────────────
+  catalogDefinitions                 CatalogDefinition[]
+  catalogPublicLinks                 CatalogPublicLink[]
+
   @@index([status])
 }
 
@@ -1525,6 +1532,11 @@ model ProductSnapshot {
   payloadJson Json?
   syncedAt    DateTime @default(now())
 
+  /// Traceability: ProductEntity.id created from this snapshot.
+  /// Null = snapshot not yet promoted to Agentik product.
+  /// No FK constraint — snapshot layer must not depend on product layer.
+  linkedProductId String?
+
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   workspace    Workspace?   @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
 
@@ -1535,6 +1547,7 @@ model ProductSnapshot {
   @@index([organizationId, sourceSystem])
   @@index([workspaceId])
   @@index([status])
+  @@index([organizationId, linkedProductId])
 }
 
 model OrderSnapshot {
@@ -3776,6 +3789,13 @@ model ProductEntity {
   blockedDestinations     Json?     // String[] — channel names that are blocked
   lastReadinessComputedAt DateTime?
 
+  /// ── External import identity (SAG / ERP / Shopify) ──
+  /// Enables idempotent upsert: find product by its source system + source ID.
+  /// Both fields must be set together or left null.
+  /// domain values for externalSource: "sag" | "shopify" | "erp_generic"
+  externalSource String?
+  externalId     String?
+
   /// ── Audit ──
   approvedAt DateTime?
   approvedBy String?   // userId of the approver
@@ -3791,12 +3811,94 @@ model ProductEntity {
   publicationStates ProductPublicationState[]
   propagationJobs   PropagationJob[]
   activity          ProductActivity[]
+  content           ProductContent?
+  channelContent    ProductChannelContent[]
+  inventoryLevels   ProductInventoryLevel[]
 
   @@index([organizationId, status])
   @@index([organizationId, sku])
   @@index([organizationId, category])
   @@index([organizationId, readinessLevel])
   @@index([organizationId, createdAt])
+  @@index([organizationId, externalSource, externalId])
+}
+
+/// Commercial master content for a ProductEntity — created lazily, 1:1.
+/// All fields are optional — filled progressively by operators.
+/// status values: draft | complete | approved  (governed at domain layer).
+model ProductContent {
+  id             String @id @default(cuid())
+  productId      String @unique
+  organizationId String
+
+  /// ── Commercial titles ──
+  commercialTitle  String?
+  subtitle         String?
+  shortDescription String?
+  longDescription  String?
+
+  /// ── Commercial value layer ──
+  /// JSON: string[]
+  keyBenefits String?
+  /// JSON: string[]
+  keyFeatures String?
+
+  /// ── Physical / technical specs ──
+  materials   String?
+  dimensions  String?
+  weight      String?
+
+  /// ── Usage / care ──
+  careInstructions  String?
+  usageInstructions String?
+  recommendedAge    String?
+
+  /// ── FAQ ──
+  /// JSON: { q: string; a: string }[]
+  faq String?
+
+  /// ── SEO layer ──
+  seoTitle       String?
+  seoDescription String?
+  /// JSON: string[]
+  searchKeywords String?
+
+  /// draft | complete | approved
+  status String @default("draft")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  product ProductEntity @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([organizationId, status])
+}
+
+/// Omnichannel content adaptation — one record per (product, channel).
+/// content is a JSON payload whose shape is governed per-channel at the domain layer.
+/// Never the source of truth — always adapts from ProductContent (master).
+/// channel values: shopify | whatsapp | instagram | facebook | tiktok | marketplace | pdf
+/// status values:  draft | ready | approved
+model ProductChannelContent {
+  id             String @id @default(cuid())
+  productId      String
+  organizationId String
+  channel        String
+  /// JSON payload — channel-specific fields. Null = no override, inherit from master.
+  content        String?
+  /// draft | ready | approved
+  status         String @default("draft")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  product ProductEntity @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, channel])
+  @@index([organizationId])
+  @@index([organizationId, channel])
+  @@index([productId])
 }
 
 /// A size / color / format variant of a ProductEntity.
@@ -3808,15 +3910,109 @@ model ProductVariant {
   name           String
   /// domain values: active | inactive | discontinued
   status         String   @default("active")
-  /// Discriminating attribute key-value snapshot for this variant
+  /// Discriminating attribute key-value snapshot (display cache — kept for backwards compat).
+  /// Typed attributes live in ProductVariantAttribute[].
   attributes     Json?
+
+  /// ── External import identity (SAG / ERP / Shopify) ──
+  /// Enables idempotent upsert of variants from source systems.
+  /// domain values for externalSource: "sag" | "shopify" | "erp_generic"
+  externalSource String?
+  externalId     String?
+
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  product        ProductEntity @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product           ProductEntity            @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variantAttributes ProductVariantAttribute[]
+  inventoryLevels   ProductInventoryLevel[]
 
   @@index([productId])
   @@index([organizationId, productId])
+  @@index([organizationId, externalSource, externalId])
+}
+
+/// ── AGENTIK-PRODUCT-IMPORT-01 ───────────────────────────────────────────────
+/// Typed attribute assignment for a single ProductVariant.
+/// Replaces the opaque ProductVariant.attributes Json? for operational queries.
+///
+/// ── Design ───────────────────────────────────────────────────────────────────
+///   key   → semantic FK to ProductAttributeDefinition.key (not enforced in DB)
+///   value → canonical display value (title-cased, normalised)
+///   source / externalRef → full import provenance
+///
+/// ── Query patterns ───────────────────────────────────────────────────────────
+///   All blue talla=4 variants:  WHERE key="talla" AND value="4"
+///   All variants of a product:  WHERE variantId IN [product.variantIds]
+model ProductVariantAttribute {
+  id             String   @id @default(cuid())
+  variantId      String
+  organizationId String
+  /// Semantic key — matches ProductAttributeDefinition.key (e.g. "talla", "color")
+  key            String
+  /// Display label (Spanish)
+  label          String
+  /// Canonical value after normalization (e.g. "Azul Marino", "4", "Niño")
+  value          String
+  /// Import provenance: manual | sag | shopify | erp_generic
+  source         String   @default("manual")
+  /// Raw external value before normalization (e.g. "AZUL MARINO")
+  externalRef    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([variantId, key])
+  @@index([organizationId, key, value])
+  @@index([variantId])
+}
+
+/// ── AGENTIK-PRODUCT-IMPORT-01 ───────────────────────────────────────────────
+/// Stock level for a ProductEntity, optionally scoped to a variant and/or warehouse.
+///
+/// ── Scope rules ──────────────────────────────────────────────────────────────
+///   variantId  = null  → product-level aggregate (no variant breakdown)
+///   variantId  ≠ null  → per-variant stock
+///   warehouseId = "_default" → single-warehouse org (sentinel, not real)
+///   warehouseId ≠ "_default" → named warehouse (future multi-bodega)
+///
+/// ── Unique key ───────────────────────────────────────────────────────────────
+///   (productId, variantId, warehouseId) enforced at service layer.
+///   DB index supports efficient lookups; uniqueness via application upsert.
+///
+/// ── SAG integration ──────────────────────────────────────────────────────────
+///   source = "sag"    → quantity comes from SAG INVENTARIO query
+///   externalRef       → SAG bodega code or line reference
+///   syncedAt          → timestamp of the SAG response that produced this row
+model ProductInventoryLevel {
+  id             String    @id @default(cuid())
+  organizationId String
+  productId      String
+  /// Variant scope — null means product-level aggregate
+  variantId      String?
+  /// Warehouse identifier — "_default" for single-warehouse orgs
+  warehouseId    String    @default("_default")
+  /// Current available stock
+  quantity       Int       @default(0)
+  /// Reserved (pending orders, in-transit) — available = quantity - reservedQty
+  reservedQty    Int       @default(0)
+  /// Import provenance: manual | sag | shopify | erp_generic
+  source         String    @default("manual")
+  /// Raw SAG bodega code, Shopify location ID, or external reference
+  externalRef    String?
+  /// Timestamp of the source-system response that produced this row
+  syncedAt       DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  product ProductEntity  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@index([productId, variantId, warehouseId])
+  @@index([organizationId, source])
+  @@index([productId])
+  @@index([variantId])
 }
 
 /// A typed dynamic attribute attached to a ProductEntity.
@@ -3835,6 +4031,10 @@ model ProductAttribute {
   type           String   @default("text")
   /// Target channel for this attribute (null = applies to all channels)
   destination    String?
+  /// Import provenance: manual | sag | shopify | erp_generic | pending_review
+  source         String   @default("manual")
+  /// External field name when imported from SAG/ERP (e.g. "color")
+  externalRef    String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -3843,6 +4043,7 @@ model ProductAttribute {
   @@unique([productId, key])
   @@index([productId])
   @@index([organizationId, key])
+  @@index([organizationId, source])
 }
 
 /// Junction: links a GeneratedAsset to a ProductEntity with a semantic role.
@@ -4024,6 +4225,175 @@ model ProductActivity {
 
   @@index([productId, occurredAt])
   @@index([organizationId, eventType])
+}
+
+/// ──────────────────────────────────────────────────────────────────────
+/// MS-PRODUCT-ATTRIBUTES-01 — Attribute Definition Catalog
+/// ──────────────────────────────────────────────────────────────────────
+///
+/// Org-level catalog of attribute definitions.
+/// Governs which attributes are available, their types, order, and
+/// valid options for select/multiselect types.
+///
+/// ProductAttribute rows store the *values* per product.
+/// This model stores the *schema* — what attributes exist for this org.
+
+/// Tenant-level attribute definition: one row per attribute type per org.
+/// key is machine-readable (snake_case). label is display label.
+model ProductAttributeDefinition {
+  id             String   @id @default(cuid())
+  organizationId String
+
+  /// Machine key — unique per org, used as ProductAttribute.key
+  key            String
+  /// Display label shown in UI (Spanish)
+  label          String
+  /// AttributeValueType — text | number | boolean | select | multiselect | dimension | color
+  type           String   @default("text")
+  /// Whether this attribute is required for readiness scoring
+  required       Boolean  @default(false)
+  /// Display order in attribute panels (lower = first)
+  sortOrder      Int      @default(0)
+  /// Optional tooltip / hint for operators
+  helpText       String?
+  /// Target channel (null = applies to all); mirrors ProductAttribute.destination
+  destination    String?
+  /// Import provenance: manual | sag | shopify | erp_generic | pending_review
+  source         String   @default("manual")
+  /// External field name when imported from SAG/ERP (e.g. "color", "talla")
+  externalRef    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization                       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  options      ProductAttributeDefinitionOption[]
+
+  @@unique([organizationId, key])
+  @@index([organizationId, sortOrder])
+  @@index([organizationId, source])
+}
+
+/// Valid options for select / multiselect attribute definitions.
+/// Each row is one option in the picklist.
+model ProductAttributeDefinitionOption {
+  id           String @id @default(cuid())
+  definitionId String
+
+  /// Value stored in ProductAttribute.valueText or in valueJson array
+  value        String
+  /// Display label (may differ from value for i18n)
+  label        String
+  /// Display order within the option list
+  sortOrder    Int    @default(0)
+  /// Import provenance: manual | sag | shopify | erp_generic
+  source       String @default("manual")
+  /// Raw external value before normalization (e.g. "AZUL")
+  externalRef  String?
+
+  definition   ProductAttributeDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+
+  @@index([definitionId, sortOrder])
+}
+
+/// ──────────────────────────────────────────────────────────────────────
+/// MS-CB-01 — Catalog Definition Engine
+/// ──────────────────────────────────────────────────────────────────────
+
+/// Persistent catalog definition — stores the definition (filters, sort,
+/// groupBy, commercial mode) but NEVER stores products directly.
+/// Products are resolved dynamically at query time.
+model CatalogDefinition {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+
+  /// "active" | "draft" | "archived"
+  status         String   @default("draft")
+
+  /// Serialized CatalogFilterRule[] — filter predicates applied at query time
+  filters        Json?
+
+  /// Field to sort by: "name" | "price" | "sortOrder" | "createdAt" | "updatedAt"
+  sortField      String   @default("sortOrder")
+  /// "asc" | "desc"
+  sortDirection  String   @default("asc")
+
+  /// Grouping key: "category" | "productLine" | "commercialStatus" | null
+  /// or "attribute:{key}" for attribute-based grouping
+  groupBy        String?
+
+  /// "with_prices" | "without_prices"
+  pricingMode    String   @default("with_prices")
+  /// "none" | "whatsapp_order"
+  ctaMode        String   @default("none")
+  /// Customer-facing WhatsApp phone number (E.164, e.g. "+573001234567")
+  /// Override for catalog-level WhatsApp CTA. Fallback to org-level config.
+  whatsAppPhone  String?
+
+  /// ── Layout & Presentation ─────────────────────────────────────────────────
+  /// "GRID_STANDARD" | "LIST_STANDARD"
+  layout           String  @default("GRID_STANDARD")
+  /// Whether to group products by category (true = category sections)
+  groupByCategory  Boolean @default(true)
+  /// "manual" | "alphabetical" — how to order category sections
+  categorySort     String  @default("alphabetical")
+  /// Ordered list of category names for manual categorySort.
+  /// Categories not listed here appear after in alphabetical order.
+  categoryOrder    Json?
+
+  /// ── Commercial Template ───────────────────────────────────────────────────
+  /// "wholesale" | "retail" | "institutional" | "campaign"
+  /// Controls visual density, image priority, and metadata display.
+  templateKey      String  @default("retail")
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  createdBy      String?
+
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  publicLinks    CatalogPublicLink[]
+
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
+}
+
+/// ──────────────────────────────────────────────────────────────────────
+/// MS-CPL-01 — Catalog Public Links
+/// ──────────────────────────────────────────────────────────────────────
+
+/// Shareable public link for a CatalogDefinition.
+/// Does NOT store products — products are resolved at view time from the
+/// live CatalogDefinition. A slug identifies the link publicly without
+/// exposing internal IDs.
+model CatalogPublicLink {
+  id             String    @id @default(cuid())
+  catalogId      String
+  organizationId String
+
+  /// URL-safe slug — the only public identifier (e.g. "cpl_x8h29f1a")
+  slug           String    @unique
+
+  /// false = link shows "not available" page; catalog itself is unchanged
+  isActive       Boolean   @default(true)
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  createdBy      String?
+
+  /// Null = no expiration; non-null = link invalid after this date
+  expiresAt      DateTime?
+
+  /// Access telemetry (no PII stored)
+  accessCount    Int       @default(0)
+  lastAccessAt   DateTime?
+
+  catalog        CatalogDefinition @relation(fields: [catalogId], references: [id], onDelete: Cascade)
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([slug])
+  @@index([organizationId, catalogId])
 }
 
 /// ──────────────────────────────────────────────────────────────────────
@@ -7370,4 +7740,1184 @@ model StrategicSnapshotRecord {
   @@index([orgSlug])
   @@index([orgSlug, period])
   @@index([orgSlug, createdAt])
+}
+
+// ── AGENTIK-EXECUTIVE-BRAIN-02 ─────────────────────────────────────────────────
+
+model ExecutiveBriefingRecord {
+  id             String   @id @default(cuid())
+  orgSlug        String
+  /// CEO|FINANCE|COMMERCIAL|OPERATIONS|CUSTOM
+  type           String
+  title          String
+  summary        String
+  executiveScore Float    @default(0)
+  /// LOW|MEDIUM|HIGH|VERY_HIGH
+  confidence     String   @default("LOW")
+  metadata       Json     @default("{}")
+  generatedAt    DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, type])
+  @@index([orgSlug, generatedAt])
+}
+
+model ExecutiveDigestRecord {
+  id             String   @id @default(cuid())
+  orgSlug        String
+  /// DAILY|WEEKLY|MONTHLY|QUARTERLY
+  period         String
+  title          String
+  headline       String
+  executiveScore Float    @default(0)
+  /// LOW|MEDIUM|HIGH|VERY_HIGH
+  confidence     String   @default("LOW")
+  metadata       Json     @default("{}")
+  generatedAt    DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, period])
+  @@index([orgSlug, generatedAt])
+}
+
+model ExecutivePriorityRecord {
+  id                     String   @id @default(cuid())
+  orgSlug                String
+  rank                   Int
+  title                  String
+  description            String
+  /// FINANCE|COMMERCIAL|MARKETING|OPERATIONS|EXECUTIVE|COMPLIANCE|TECHNOLOGY|PEOPLE|CROSS_DOMAIN
+  domain                 String
+  /// LOW|MEDIUM|HIGH|CRITICAL
+  level                  String
+  /// LOW|MEDIUM|HIGH|VERY_HIGH
+  confidence             String
+  confidenceScore        Float    @default(0)
+  impactScore            Float    @default(0)
+  urgencyScore           Float    @default(0)
+  strategicAlignmentScore Float   @default(0)
+  historicalRiskScore    Float    @default(0)
+  priorityScore          Float    @default(0)
+  rationale              String
+  evidenceIds            String[]
+  metadata               Json     @default("{}")
+  computedAt             DateTime @default(now())
+  createdAt              DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, level])
+  @@index([orgSlug, domain])
+  @@index([orgSlug, priorityScore])
+}
+
+model ExecutiveFocusAreaRecord {
+  id             String   @id @default(cuid())
+  orgSlug        String
+  rank           Int
+  title          String
+  rationale      String
+  /// FINANCE|COMMERCIAL|MARKETING|OPERATIONS|EXECUTIVE|COMPLIANCE|TECHNOLOGY|PEOPLE|CROSS_DOMAIN
+  domain         String
+  /// LOW|MEDIUM|HIGH|CRITICAL
+  priority       String
+  /// LOW|MEDIUM|HIGH|VERY_HIGH
+  confidence     String
+  urgencyScore   Float    @default(0)
+  impactScore    Float    @default(0)
+  compositeScore Float    @default(0)
+  evidenceIds    String[]
+  metadata       Json     @default("{}")
+  createdAt      DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, compositeScore])
+}
+
+model ExecutiveConflictRecord {
+  id            String   @id @default(cuid())
+  orgSlug       String
+  /// OBJECTIVE_CONFLICT|PRIORITY_CONFLICT|RESOURCE_CONFLICT|RISK_OPPORTUNITY_TENSION|CONSTRAINT_GOAL_CONFLICT|POLICY_ACTION_CONFLICT|TEMPORAL_CONFLICT
+  type          String
+  title         String
+  description   String
+  /// FINANCE|COMMERCIAL|MARKETING|OPERATIONS|EXECUTIVE|COMPLIANCE|TECHNOLOGY|PEOPLE|CROSS_DOMAIN
+  domain        String
+  /// LOW|MEDIUM|HIGH|CRITICAL
+  severity      String
+  /// LOW|MEDIUM|HIGH|VERY_HIGH
+  confidence    String
+  elementAId    String
+  elementATitle String
+  elementBId    String
+  elementBTitle String
+  rationale     String
+  metadata      Json     @default("{}")
+  resolved      Boolean  @default(false)
+  detectedAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, resolved])
+  @@index([orgSlug, severity])
+}
+
+model ExecutiveSnapshotRecord {
+  id             String   @id @default(cuid())
+  orgSlug        String
+  executiveScore Float    @default(0)
+  priorityCount  Int      @default(0)
+  riskCount      Int      @default(0)
+  conflictCount  Int      @default(0)
+  metadata       Json     @default("{}")
+  createdAt      DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, createdAt])
+}
+
+// ── Strategic Advisor Models ───────────────────────────────────────────────────
+
+model StrategicAdviceRecord {
+  id              String   @id
+  orgSlug         String
+  title           String
+  body            String
+  summary         String
+  domain          String
+  priority        String
+  confidence      String
+  confidenceScore Float    @default(0)
+  traceable       Boolean  @default(true)
+  evidenceIds     Json     @default("[]")
+  metadata        Json     @default("{}")
+  generatedAt     DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, generatedAt])
+  @@index([orgSlug, domain])
+}
+
+model StrategicConcernRecord {
+  id              String   @id
+  orgSlug         String
+  title           String
+  description     String
+  domain          String
+  severity        String
+  confidence      String
+  confidenceScore Float    @default(0)
+  isEmergent      Boolean  @default(false)
+  isLatent        Boolean  @default(false)
+  rationale       String
+  evidenceIds     Json     @default("[]")
+  metadata        Json     @default("{}")
+  detectedAt      DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, detectedAt])
+  @@index([orgSlug, severity])
+}
+
+model StrategicOpportunityRecord {
+  id              String   @id
+  orgSlug         String
+  title           String
+  description     String
+  domain          String
+  magnitude       String
+  confidence      String
+  confidenceScore Float    @default(0)
+  captureScore    Float    @default(0)
+  timeHorizon     String
+  isIgnored       Boolean  @default(false)
+  rationale       String
+  evidenceIds     Json     @default("[]")
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, createdAt])
+  @@index([orgSlug, domain])
+}
+
+model StrategicQuestionRecord {
+  id          String   @id
+  orgSlug     String
+  question    String
+  rationale   String
+  domain      String
+  priority    String
+  confidence  String
+  category    String
+  evidenceIds Json     @default("[]")
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, createdAt])
+  @@index([orgSlug, domain])
+}
+
+model StrategicRecommendationRecord {
+  id              String   @id
+  orgSlug         String
+  title           String
+  description     String
+  rationale       String
+  domain          String
+  priority        String
+  confidence      String
+  confidenceScore Float    @default(0)
+  expectedImpact  String
+  associatedRisks Json     @default("[]")
+  evidenceIds     Json     @default("[]")
+  playbookIds     Json     @default("[]")
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, createdAt])
+  @@index([orgSlug, priority])
+}
+
+model StrategicAdvisorBriefingRecord {
+  id           String   @id
+  orgSlug      String
+  type         String
+  title        String
+  summary      String
+  headline     String
+  advisorScore Float    @default(0)
+  confidence   String
+  metadata     Json     @default("{}")
+  generatedAt  DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, type])
+  @@index([orgSlug, generatedAt])
+}
+
+model StrategicAdvisorDigestRecord {
+  id           String   @id
+  orgSlug      String
+  period       String
+  title        String
+  headline     String
+  advisorScore Float    @default(0)
+  confidence   String
+  metadata     Json     @default("{}")
+  generatedAt  DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, period])
+  @@index([orgSlug, generatedAt])
+}
+
+
+// ── Strategic Simulations (AGENTIK-STRATEGIC-SIMULATIONS-01) ─────────────────
+
+model StrategicSimulationRecord {
+  id              String   @id
+  orgSlug         String
+  category        String
+  domain          String
+  title           String
+  summary         String
+  confidence      String
+  confidenceScore Float    @default(0)
+  status          String   @default("COMPLETED")
+  metadata        Json     @default("{}")
+  simulatedAt     DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, category])
+  @@index([orgSlug, domain])
+  @@index([orgSlug, simulatedAt])
+}
+
+model SimulationScenarioRecord {
+  id               String   @id
+  orgSlug          String
+  simulationId     String
+  name             String
+  variant          String
+  category         String
+  domain           String
+  confidence       String
+  confidenceScore  Float    @default(0)
+  overallRisk      String
+  overallImpact    String
+  scenarioData     Json     @default("{}")
+  metadata         Json     @default("{}")
+  simulatedAt      DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, simulationId])
+  @@index([orgSlug, variant])
+  @@index([orgSlug, simulatedAt])
+}
+
+model SimulationComparisonRecord {
+  id               String   @id
+  orgSlug          String
+  title            String
+  scenarioIds      Json     @default("[]")
+  winnerScenarioId String?
+  winnerRationale  String
+  confidence       String
+  tradeoffs        Json     @default("[]")
+  metadata         Json     @default("{}")
+  comparedAt       DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, comparedAt])
+}
+
+model SimulationRecommendationRecord {
+  id               String   @id
+  orgSlug          String
+  scenarioId       String
+  title            String
+  description      String
+  rationale        String
+  domain           String
+  priority         String
+  confidence       String
+  confidenceScore  Float    @default(0)
+  suggestedOnly    Boolean  @default(true)
+  evidenceIds      Json     @default("[]")
+  metadata         Json     @default("{}")
+  createdAt        DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, scenarioId])
+  @@index([orgSlug, priority])
+}
+
+model SimulationAuditRecord {
+  id          String   @id
+  orgSlug     String
+  runId       String
+  eventType   String
+  occurredAt  DateTime @default(now())
+  metadata    Json     @default("{}")
+
+  @@index([orgSlug])
+  @@index([orgSlug, runId])
+  @@index([orgSlug, occurredAt])
+}
+
+// ── Strategic Planning ────────────────────────────────────────────────────────
+
+model StrategicPlanRecord {
+  id            String   @id
+  orgSlug       String
+  title         String
+  description   String
+  status        String
+  priority      String
+  planScore     Float    @default(0)
+  suggestedOnly Boolean  @default(true)
+  objectiveIds  Json     @default("[]")
+  initiativeIds Json     @default("[]")
+  milestoneIds  Json     @default("[]")
+  roadmapId     String?
+  evidenceIds   Json     @default("[]")
+  limitations   Json     @default("[]")
+  metadata      Json     @default("{}")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([orgSlug])
+  @@index([orgSlug, status])
+  @@index([orgSlug, priority])
+  @@index([orgSlug, createdAt])
+}
+
+model StrategicObjectiveRecord {
+  id              String   @id
+  orgSlug         String
+  title           String
+  description     String
+  domain          String
+  priority        String
+  status          String
+  confidenceScore Float    @default(0)
+  impactScore     Float    @default(0)
+  alignmentScore  Float    @default(0)
+  evidenceIds     Json     @default("[]")
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([orgSlug])
+  @@index([orgSlug, domain])
+  @@index([orgSlug, priority])
+  @@index([orgSlug, status])
+}
+
+model StrategicInitiativeRecord {
+  id              String   @id
+  orgSlug         String
+  objectiveId     String
+  title           String
+  description     String
+  domain          String
+  type            String
+  priority        String
+  status          String
+  confidenceScore Float    @default(0)
+  impactScore     Float    @default(0)
+  effortScore     Float    @default(0)
+  suggestedOnly   Boolean  @default(true)
+  evidenceIds     Json     @default("[]")
+  playbookIds     Json     @default("[]")
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([orgSlug])
+  @@index([orgSlug, objectiveId])
+  @@index([orgSlug, priority])
+  @@index([orgSlug, status])
+}
+
+model StrategicMilestoneRecord {
+  id               String   @id
+  orgSlug          String
+  initiativeId     String
+  title            String
+  description      String
+  status           String
+  priority         String
+  estimatedDate    String
+  successCriteria  Json     @default("[]")
+  dependencyIds    Json     @default("[]")
+  metadata         Json     @default("{}")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([orgSlug])
+  @@index([orgSlug, initiativeId])
+  @@index([orgSlug, status])
+}
+
+model StrategicRoadmapRecord {
+  id            String   @id
+  orgSlug       String
+  title         String
+  description   String
+  priority      String
+  status        String
+  roadmapScore  Float    @default(0)
+  objectiveIds  Json     @default("[]")
+  initiativeIds Json     @default("[]")
+  milestoneIds  Json     @default("[]")
+  horizon       String
+  evidenceIds   Json     @default("[]")
+  metadata      Json     @default("{}")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([orgSlug])
+  @@index([orgSlug, priority])
+  @@index([orgSlug, status])
+  @@index([orgSlug, createdAt])
+}
+
+// ── AGENTIK-EXECUTIVE-COUNCIL-01 ─────────────────────────────────────────────
+
+model ExecutiveCouncilSessionRecord {
+  id               String   @id
+  orgSlug          String
+  title            String
+  topic            String
+  perspectives     String[]
+  opinionIds       Json     @default("[]")
+  recommendationIds Json    @default("[]")
+  disagreementIds  Json     @default("[]")
+  consensusId      String?
+  resolutionId     String?
+  sessionScore     Float    @default(0)
+  outcome          String
+  limitations      Json     @default("[]")
+  metadata         Json     @default("{}")
+  conductedAt      String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([orgSlug])
+  @@index([orgSlug, outcome])
+  @@index([orgSlug, sessionScore])
+  @@index([orgSlug, conductedAt])
+}
+
+model ExecutiveCouncilOpinionRecord {
+  id              String   @id
+  orgSlug         String
+  sessionId       String
+  perspective     String
+  title           String
+  stance          String
+  rationale       String
+  confidence      String
+  confidenceScore Float    @default(0)
+  priority        String
+  arguments       Json     @default("[]")
+  findings        Json     @default("[]")
+  evidenceIds     Json     @default("[]")
+  metadata        Json     @default("{}")
+  generatedAt     String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([orgSlug])
+  @@index([orgSlug, sessionId])
+  @@index([orgSlug, perspective])
+}
+
+model ExecutiveCouncilConsensusRecord {
+  id                     String   @id
+  orgSlug                String
+  sessionId              String
+  outcome                String
+  title                  String
+  summary                String
+  votes                  Json     @default("[]")
+  agreementScore         Float    @default(0)
+  confidence             String
+  dominantPerspective    String
+  supportingPerspectives Json     @default("[]")
+  opposingPerspectives   Json     @default("[]")
+  limitations            Json     @default("[]")
+  metadata               Json     @default("{}")
+  reachedAt              String
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  @@index([orgSlug])
+  @@index([orgSlug, sessionId])
+  @@index([orgSlug, outcome])
+}
+
+model ExecutiveCouncilResolutionRecord {
+  id               String   @id
+  orgSlug          String
+  sessionId        String
+  title            String
+  description      String
+  outcome          String
+  recommendationIds Json    @default("[]")
+  consensusId      String?
+  disagreementIds  Json     @default("[]")
+  confidenceScore  Float    @default(0)
+  confidence       String
+  limitations      Json     @default("[]")
+  metadata         Json     @default("{}")
+  resolvedAt       String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([orgSlug])
+  @@index([orgSlug, sessionId])
+  @@index([orgSlug, outcome])
+}
+
+model ExecutiveCouncilRecommendationRecord {
+  id              String   @id
+  orgSlug         String
+  sessionId       String
+  title           String
+  description     String
+  rationale       String
+  perspective     String
+  priority        String
+  confidence      String
+  confidenceScore Float    @default(0)
+  impactScore     Float    @default(0)
+  suggestedOnly   Boolean  @default(true)
+  evidenceIds     Json     @default("[]")
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([orgSlug])
+  @@index([orgSlug, sessionId])
+  @@index([orgSlug, priority])
+  @@index([orgSlug, perspective])
+}
+
+/// ── Board Intelligence ─────────────────────────────────────────────────────
+
+model BoardSessionRecord {
+  id              String   @id
+  orgSlug         String
+  title           String
+  topic           String
+  outcome         String   @default("REVIEW_REQUIRED")
+  boardScore      Float    @default(0)
+  governanceScore Float    @default(0)
+  strategicScore  Float    @default(0)
+  confidence      String   @default("LOW")
+  riskCount       Int      @default(0)
+  findingCount    Int      @default(0)
+  archived        Boolean  @default(false)
+  payload         Json     @default("{}")
+  conductedAt     DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([orgSlug])
+  @@index([orgSlug, outcome])
+  @@index([orgSlug, conductedAt])
+}
+
+model BoardRiskRecord {
+  id              String   @id
+  orgSlug         String
+  sessionId       String
+  title           String
+  domain          String
+  severity        String
+  compositeRisk   Float    @default(0)
+  likelihood      Float    @default(0)
+  impact          Float    @default(0)
+  isSystemic      Boolean  @default(false)
+  confidence      String   @default("LOW")
+  evidenceIds     Json     @default("[]")
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([orgSlug])
+  @@index([orgSlug, sessionId])
+  @@index([orgSlug, severity])
+}
+
+model BoardFindingRecord {
+  id              String   @id
+  orgSlug         String
+  sessionId       String
+  title           String
+  domain          String
+  priority        String
+  isBlocker       Boolean  @default(false)
+  confidence      String   @default("LOW")
+  sourceModule    String
+  evidenceIds     Json     @default("[]")
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([orgSlug])
+  @@index([orgSlug, sessionId])
+  @@index([orgSlug, priority])
+}
+
+model BoardRecommendationRecord {
+  id              String   @id
+  orgSlug         String
+  sessionId       String
+  title           String
+  domain          String
+  priority        String
+  confidence      String   @default("LOW")
+  impactScore     Float    @default(0)
+  suggestedOnly   Boolean  @default(true)
+  evidenceIds     Json     @default("[]")
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([orgSlug])
+  @@index([orgSlug, sessionId])
+  @@index([orgSlug, priority])
+}
+
+model BoardResolutionRecord {
+  id              String   @id
+  orgSlug         String
+  sessionId       String
+  title           String
+  outcome         String
+  confidence      String   @default("LOW")
+  confidenceScore Float    @default(0)
+  suggestedOnly   Boolean  @default(true)
+  conditions      Json     @default("[]")
+  limitations     Json     @default("[]")
+  evidenceIds     Json     @default("[]")
+  metadata        Json     @default("{}")
+  resolvedAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([orgSlug])
+  @@index([orgSlug, sessionId])
+  @@index([orgSlug, outcome])
+}
+
+// ─── Strategic Forecasting ────────────────────────────────────────────────────
+
+model StrategicForecastRecord {
+  id              String   @id
+  orgSlug         String
+  status          String   @default("ACTIVE")
+  horizon         String
+  domain          String   @default("CROSS_DOMAIN")
+  forecastScore   Float    @default(0)
+  confidenceLevel String   @default("INSUFFICIENT")
+  confidenceScore Float    @default(0)
+  reportJson      Json     @default("{}")
+  limitations     Json     @default("[]")
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([orgSlug])
+  @@index([orgSlug, status])
+  @@index([orgSlug, horizon])
+}
+
+model ForecastScenarioRecord {
+  id              String   @id
+  orgSlug         String
+  sessionId       String
+  forecastId      String
+  type            String
+  title           String
+  probability     Float    @default(0)
+  outcome         String   @default("UNCERTAIN")
+  horizon         String
+  domain          String   @default("CROSS_DOMAIN")
+  confidenceScore Float    @default(0)
+  limitations     Json     @default("[]")
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, forecastId])
+  @@index([orgSlug, type])
+}
+
+model ForecastSignalRecord {
+  id          String   @id
+  orgSlug     String
+  sessionId   String
+  forecastId  String
+  title       String
+  type        String
+  intensity   Float    @default(0)
+  horizon     String
+  domain      String   @default("CROSS_DOMAIN")
+  isWeak      Boolean  @default(false)
+  isConfirmed Boolean  @default(false)
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, forecastId])
+  @@index([orgSlug, type])
+}
+
+model ForecastTrajectoryRecord {
+  id              String   @id
+  orgSlug         String
+  sessionId       String
+  forecastId      String
+  title           String
+  direction       String
+  startingScore   Float    @default(0)
+  projectedScore  Float    @default(0)
+  confidenceScore Float    @default(0)
+  horizon         String
+  domain          String   @default("CROSS_DOMAIN")
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, forecastId])
+}
+
+model ForecastReportRecord {
+  id               String   @id
+  orgSlug          String
+  sessionId        String
+  forecastId       String
+  title            String
+  forecastScore    Float    @default(0)
+  confidenceScore  Float    @default(0)
+  scenarioCount    Int      @default(0)
+  riskCount        Int      @default(0)
+  opportunityCount Int      @default(0)
+  limitations      Json     @default("[]")
+  metadata         Json     @default("{}")
+  createdAt        DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, forecastId])
+}
+
+// ─── Enterprise Direction Models ──────────────────────────────────────────────
+
+model EnterpriseDirectionRecord {
+  id             String   @id
+  orgSlug        String
+  sessionId      String
+  status         String   @default("UNDER_REVIEW")
+  overallScore   Float    @default(0)
+  northStarScore Float    @default(0)
+  alignmentScore Float    @default(0)
+  confidence     String   @default("LOW")
+  limitations    Json     @default("[]")
+  errors         Json     @default("[]")
+  payload        String   @db.Text
+  createdAt      DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, status])
+  @@index([orgSlug, sessionId])
+}
+
+model NorthStarRecord {
+  id           String   @id
+  orgSlug      String
+  sessionId    String
+  statement    String
+  horizon      String
+  domain       String   @default("CROSS_DOMAIN")
+  confidence   String   @default("LOW")
+  score        Float    @default(0)
+  evidenceIds  Json     @default("[]")
+  assumptions  Json     @default("[]")
+  limitations  Json     @default("[]")
+  createdAt    DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, sessionId])
+}
+
+model DirectionObjectiveRecord {
+  id          String   @id
+  orgSlug     String
+  sessionId   String
+  title       String
+  domain      String   @default("CROSS_DOMAIN")
+  horizon     String
+  priority    String   @default("MEDIUM")
+  score       Float    @default(0)
+  northStarId String
+  evidenceIds Json     @default("[]")
+  createdAt   DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, sessionId])
+  @@index([orgSlug, priority])
+}
+
+model DirectionDeviationRecord {
+  id             String   @id
+  orgSlug        String
+  sessionId      String
+  title          String
+  type           String
+  domain         String   @default("CROSS_DOMAIN")
+  severity       String   @default("LOW")
+  deviationScore Float    @default(0)
+  isSystemic     Boolean  @default(false)
+  evidenceIds    Json     @default("[]")
+  createdAt      DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, sessionId])
+  @@index([orgSlug, severity])
+}
+
+model DirectionConflictRecord {
+  id            String   @id
+  orgSlug       String
+  sessionId     String
+  title         String
+  type          String
+  domain        String   @default("CROSS_DOMAIN")
+  severity      String   @default("LOW")
+  conflictScore Float    @default(0)
+  isBlocking    Boolean  @default(false)
+  affectedIds   Json     @default("[]")
+  createdAt     DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, sessionId])
+  @@index([orgSlug, isBlocking])
+}
+
+model DirectionReportRecord {
+  id             String   @id
+  orgSlug        String
+  sessionId      String
+  title          String
+  overallScore   Float    @default(0)
+  alignmentScore Float    @default(0)
+  objectiveCount Int      @default(0)
+  priorityCount  Int      @default(0)
+  deviationCount Int      @default(0)
+  conflictCount  Int      @default(0)
+  confidence     String   @default("LOW")
+  limitations    Json     @default("[]")
+  createdAt      DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, sessionId])
+}
+
+// ─── Executive Governance Models ─────────────────────────────────────────────
+
+model GovernanceReportRecord {
+  id              String   @id
+  orgSlug         String
+  sessionId       String
+  overallScore    Float    @default(0)
+  complianceScore Float    @default(0)
+  riskScore       Float    @default(0)
+  status          String   @default("UNDER_REVIEW")
+  violationCount  Int      @default(0)
+  escalationCount Int      @default(0)
+  findingCount    Int      @default(0)
+  exceptionCount  Int      @default(0)
+  payload         Json     @default("{}")
+  createdAt       DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, sessionId])
+  @@index([orgSlug, status])
+}
+
+model GovernancePolicyRecord {
+  id             String   @id
+  orgSlug        String
+  title          String
+  domain         String   @default("CROSS_DOMAIN")
+  type           String   @default("APPROVAL_GATE")
+  priority       String   @default("LOW")
+  isMandatory    Boolean  @default(false)
+  isActive       Boolean  @default(true)
+  authorityLevel String   @default("MANAGER")
+  threshold      Float?
+  createdAt      DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, isActive])
+}
+
+model GovernanceViolationRecord {
+  id             String   @id
+  orgSlug        String
+  sessionId      String
+  title          String
+  type           String   @default("POLICY_VIOLATION")
+  domain         String   @default("CROSS_DOMAIN")
+  severity       String   @default("LOW")
+  violationScore Float    @default(0)
+  isSystemic     Boolean  @default(false)
+  policyId       String?
+  createdAt      DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, sessionId])
+  @@index([orgSlug, severity])
+}
+
+model GovernanceEscalationRecord {
+  id              String   @id
+  orgSlug         String
+  sessionId       String
+  title           String
+  type            String   @default("AUTHORITY_INSUFFICIENT")
+  domain          String   @default("CROSS_DOMAIN")
+  severity        String   @default("LOW")
+  targetAuthority String   @default("MANAGER")
+  escalationScore Float    @default(0)
+  isBlocking      Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, sessionId])
+  @@index([orgSlug, isBlocking])
+}
+
+model GovernanceRiskRecord {
+  id         String   @id
+  orgSlug    String
+  sessionId  String
+  title      String
+  type       String   @default("COMPLIANCE_RISK")
+  domain     String   @default("CROSS_DOMAIN")
+  severity   String   @default("LOW")
+  riskScore  Float    @default(0)
+  likelihood Float    @default(0)
+  impact     Float    @default(0)
+  isSystemic Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, sessionId])
+  @@index([orgSlug, severity])
+}
+
+model GovernanceAssessmentRecord {
+  id              String   @id
+  orgSlug         String
+  sessionId       String
+  status          String   @default("UNDER_REVIEW")
+  complianceScore Float    @default(0)
+  governanceScore Float    @default(0)
+  riskScore       Float    @default(0)
+  findingCount    Int      @default(0)
+  violationCount  Int      @default(0)
+  exceptionCount  Int      @default(0)
+  escalationCount Int      @default(0)
+  confidence      String   @default("LOW")
+  createdAt       DateTime @default(now())
+
+  @@index([orgSlug])
+  @@index([orgSlug, sessionId])
+}
+
+// ── AGENTIK-EXECUTION-PERSISTENCE-01 ─────────────────────────────────────────
+
+enum CopilotApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+  CANCELLED
+}
+
+/// Persistent record of a full Copilot / Action Runtime execution.
+model CopilotExecution {
+  id               String    @id @default(cuid())
+  executionId      String    @unique
+  correlationId    String
+  tenantId         String
+  userId           String
+  status           String    @default("running")
+  source           String    @default("copilot")
+  executionMode    String    @default("copilot")
+  planId           String
+  planTitle        String
+  planSummary      String?
+  idempotencyKey   String?
+  startedAt        DateTime
+  finishedAt       DateTime?
+  durationMs       Int?
+  totalSteps       Int       @default(0)
+  completedSteps   Int       @default(0)
+  failedSteps      Int       @default(0)
+  skippedSteps     Int       @default(0)
+  blockedSteps     Int       @default(0)
+  approvalRequired Boolean   @default(false)
+  deniedByPolicy   Int       @default(0)
+  inputSnapshot    Json?
+  planSnapshot     Json?
+  reportSnapshot   Json?
+  metadata         Json?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([tenantId])
+  @@index([correlationId])
+  @@index([idempotencyKey])
+  @@index([status])
+  @@index([startedAt])
+  @@index([tenantId, status])
+  @@index([tenantId, startedAt])
+}
+
+/// Individual step result within a CopilotExecution.
+model CopilotExecutionStep {
+  id             String    @id @default(cuid())
+  executionId    String
+  tenantId       String
+  stepId         String
+  actionId       String
+  domain         String
+  displayName    String
+  status         String
+  approvalStatus String    @default("not_required")
+  policyDecision String?
+  deniedByPolicy Boolean   @default(false)
+  startedAt      DateTime
+  finishedAt     DateTime?
+  durationMs     Int?
+  inputSnapshot  Json?
+  outputSnapshot Json?
+  error          String?
+  warnings       Json?
+  policyReasons  Json?
+  evaluatedRules Json?
+  auditNote      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([tenantId])
+  @@index([executionId])
+  @@index([stepId])
+  @@index([actionId])
+  @@index([domain])
+  @@index([status])
+  @@index([approvalStatus])
+  @@index([policyDecision])
+  @@index([tenantId, executionId])
+}
+
+/// Structured event log for a CopilotExecution (timeline / audit replay).
+model CopilotExecutionEvent {
+  id          String   @id @default(cuid())
+  executionId String
+  tenantId    String
+  eventType   String
+  stepId      String?
+  actionId    String?
+  domain      String?
+  status      String?
+  message     String?
+  payload     Json?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([executionId])
+  @@index([eventType])
+  @@index([createdAt])
+  @@index([tenantId, executionId])
+}
+
+/// Human-in-the-loop approval request created when PolicyEngine returns require_approval.
+model CopilotApprovalRequest {
+  id             String                @id @default(cuid())
+  executionId    String
+  tenantId       String
+  stepId         String
+  actionId       String
+  domain         String
+  requestedBy    String
+  approvalStatus CopilotApprovalStatus @default(PENDING)
+  policyDecision String?
+  policyReasons  Json?
+  reason         String
+  requestedAt    DateTime
+  resolvedAt     DateTime?
+  resolvedBy     String?
+  resolutionNote String?
+  metadata       Json?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  @@index([tenantId])
+  @@index([executionId])
+  @@index([approvalStatus])
+  @@index([requestedAt])
+  @@index([resolvedAt])
+  @@index([tenantId, approvalStatus])
+  @@index([tenantId, executionId])
 }

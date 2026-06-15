@@ -58,6 +58,10 @@ import { createDefaultPolicyEngine }           from "@/lib/copilot/policy/policy
 import { buildPolicyContext }                  from "@/lib/copilot/policy/policy-context";
 import type { ExecutionMode, PolicyViolation } from "@/lib/copilot/policy/policy-types";
 
+import type { ExecutionStore, ExecutionSource, ExecutionStoreStepInput } from "@/lib/copilot/execution-store/execution-store-types";
+import { noopExecutionStore }                   from "@/lib/copilot/execution-store/noop-execution-store";
+import { sanitizeSnapshot }                     from "@/lib/copilot/execution-store/execution-store-sanitizer";
+
 // ── Execution options ──────────────────────────────────────────────────────────
 
 /**
@@ -79,6 +83,17 @@ export interface ExecuteOptions {
    * Default: "copilot"
    */
   executionMode?:   ExecutionMode;
+  /**
+   * ExecutionStore instance for persisting execution records.
+   * If omitted, NoopExecutionStore is used — no behaviour change.
+   * Pass `createPrismaExecutionStore()` for production persistence.
+   */
+  executionStore?:  ExecutionStore;
+  /**
+   * Source of the execution — recorded on the CopilotExecution row for audit.
+   * Default: "copilot"
+   */
+  executionSource?: ExecutionSource;
   /** Suppress console logging (for test environments) */
   silent?:          boolean;
 }
@@ -221,6 +236,89 @@ function buildReport(
   };
 }
 
+// ── Persistence helpers ────────────────────────────────────────────────────────
+
+/**
+ * Build an ExecutionStoreStepInput from a completed RuntimeStepResult.
+ * Centralises the mapping so each dispatch case stays a one-liner.
+ */
+function stepInputFrom(
+  spec:        RuntimeStepSpec,
+  executionId: string,
+  tenantId:    string,
+  result:      RuntimeStepResult,
+  inputData?:  unknown,
+  outputData?: unknown,
+): ExecutionStoreStepInput {
+  return {
+    executionId,
+    tenantId,
+    stepId:         spec.stepId,
+    actionId:       spec.actionId,
+    domain:         spec.domain,
+    displayName:    spec.displayName,
+    status:         result.status,
+    approvalStatus: result.approvalStatus,
+    policyDecision: result.policyDecision,
+    deniedByPolicy: result.deniedByPolicy ?? false,
+    startedAt:      result.startedAt,
+    finishedAt:     result.finishedAt,
+    durationMs:     result.durationMs,
+    inputSnapshot:  sanitizeSnapshot(inputData),
+    outputSnapshot: sanitizeSnapshot(outputData),
+    error:          result.error,
+    warnings:       result.warnings,
+    policyReasons:  result.policyReasons,
+    evaluatedRules: result.evaluatedRules,
+    auditNote:      result.auditNote,
+  };
+}
+
+/**
+ * Build a synthetic ExtendedExecutionReport for idempotency-blocked executions.
+ * The execution is cancelled immediately without running any steps.
+ */
+function buildIdempotencyReport(
+  ctx:      ExecutionContext,
+  plan:     RuntimeExecutionPlan,
+  outcome:  "existing_completed" | "already_running" | "awaiting_approval" | "failed_retry_ok",
+  startedAt: Date,
+): ExecutionReport {
+  const finishedAt = new Date();
+  const message    = `Idempotency block: outcome="${outcome}" for key="${ctx.idempotencyKey}" tenant="${ctx.tenantId}"`;
+
+  return {
+    executionId:      ctx.executionId,
+    correlationId:    ctx.correlationId,
+    tenantId:         ctx.tenantId,
+    startedAt,
+    finishedAt,
+    durationMs:       finishedAt.getTime() - startedAt.getTime(),
+    overallStatus:    "cancelled",
+    totalSteps:       plan.steps.length,
+    completedSteps:   0,
+    failedSteps:      0,
+    skippedSteps:     plan.steps.length,
+    blockedSteps:     0,
+    awaitingApproval: 0,
+    cancelledSteps:   plan.steps.length,
+    stepResults:      [],
+    errors:           [],
+    warnings:         [message],
+    audit: {
+      initiatedBy:     ctx.userId,
+      requestedAt:     ctx.requestedAt,
+      completedAt:     finishedAt,
+      domainsCalled:   [],
+      approvalRequired: false,
+      approvalGated:   false,
+      planTitle:       plan.title,
+    },
+    deniedByPolicy:   0,
+    policyViolations: [],
+  };
+}
+
 // ── Main engine ────────────────────────────────────────────────────────────────
 
 /**
@@ -247,9 +345,35 @@ export async function executeExecutionPlan(
   const approvalConfig = options.approvalConfig  ?? DEFAULT_APPROVAL_GATE_CONFIG;
   const policyEngine   = options.policyEngine   ?? createDefaultPolicyEngine(approvalConfig);
   const executionMode  = options.executionMode  ?? "copilot";
+  const store          = options.executionStore ?? noopExecutionStore;
+  const source         = options.executionSource ?? "copilot";
   const logger         = createRuntimeLogger(ctx, { silent: options.silent ?? false });
 
+  // Accumulate persistence errors — never thrown, merged into report warnings.
+  const persistErrors: string[] = [];
+
+  /** Fire-and-forget persistence helper — captures errors into persistErrors. */
+  async function persist(label: string, fn: () => Promise<unknown>): Promise<void> {
+    try { await fn(); }
+    catch (err) { persistErrors.push(`[store:${label}] ${String(err)}`); }
+  }
+
   const startedAt = new Date();
+
+  // ── Idempotency check ─────────────────────────────────────────────────────
+  if (ctx.idempotencyKey) {
+    try {
+      const idem = await store.checkIdempotency(ctx.tenantId, ctx.idempotencyKey);
+      if (idem.outcome !== "proceed") {
+        const cancelledReport = buildIdempotencyReport(ctx, plan, idem.outcome, startedAt);
+        const rollback = buildRollbackDescriptor(ctx, []);
+        return { ...cancelledReport, rollback };
+      }
+    } catch (_err) {
+      // Persistence unavailable — proceed with execution
+      persistErrors.push(`[store:checkIdempotency] ${String(_err)}`);
+    }
+  }
 
   // Clear dispatcher context cache for this execution
   dispatcher.clearContextCache();
@@ -272,6 +396,32 @@ export async function executeExecutionPlan(
     eventType:   "execution_started",
     message:     `Starting execution of plan "${plan.title}" (${sortedSteps.length} steps)`,
   });
+
+  // ── Persist execution start ───────────────────────────────────────────────
+  await persist("createExecution", () => store.createExecution({
+    executionId:   ctx.executionId,
+    correlationId: ctx.correlationId,
+    tenantId:      ctx.tenantId,
+    userId:        ctx.userId,
+    status:        "running",
+    source,
+    executionMode,
+    planId:        plan.planId,
+    planTitle:     plan.title,
+    planSummary:   plan.summary,
+    idempotencyKey: ctx.idempotencyKey,
+    startedAt,
+    totalSteps:    sortedSteps.length,
+    planSnapshot:  sanitizeSnapshot(plan),
+    metadata:      ctx.metadata,
+  }));
+
+  await persist("event:execution_started", () => store.recordEvent({
+    executionId: ctx.executionId,
+    tenantId:    ctx.tenantId,
+    eventType:   "execution_started",
+    message:     `Starting execution of plan "${plan.title}" (${sortedSteps.length} steps)`,
+  }));
 
   let shouldStop = false;
 
@@ -306,6 +456,17 @@ export async function executeExecutionPlan(
       message:   `Starting step "${spec.displayName}"`,
     });
 
+    await persist(`event:step_started:${spec.stepId}`, () => store.recordEvent({
+      executionId: ctx.executionId,
+      tenantId:    ctx.tenantId,
+      eventType:   "step_started",
+      stepId:      spec.stepId,
+      actionId:    spec.actionId,
+      domain:      spec.domain,
+      status:      "running",
+      message:     `Starting step "${spec.displayName}"`,
+    }));
+
     // ── Policy Engine evaluation ────────────────────────────────────────────
     const policyCtx    = buildPolicyContext(spec, ctx, executionMode);
     const policyResult = policyEngine.evaluate(policyCtx);
@@ -333,14 +494,64 @@ export async function executeExecutionPlan(
       });
       execution.results.push(blocked);
 
+      const gateEventType = stepStatus === "blocked" ? "step_blocked" : "step_approval_pending";
       logger.log({
-        eventType: stepStatus === "blocked" ? "step_blocked" : "step_approval_pending",
+        eventType: gateEventType,
         stepId:    spec.stepId,
         actionId:  spec.actionId,
         domain:    spec.domain,
         status:    stepStatus,
         message:   gate.reason,
       });
+
+      // Persist the blocked/awaiting_approval step
+      await persist(`step:${spec.stepId}`, () => store.recordStep({
+        executionId:    ctx.executionId,
+        tenantId:       ctx.tenantId,
+        stepId:         spec.stepId,
+        actionId:       spec.actionId,
+        domain:         spec.domain,
+        displayName:    spec.displayName,
+        status:         stepStatus,
+        approvalStatus: approvalSt,
+        policyDecision: policyResult.decision,
+        deniedByPolicy: policyResult.decision === "deny",
+        startedAt:      stepStart,
+        finishedAt:     new Date(),
+        durationMs:     Date.now() - stepStart.getTime(),
+        inputSnapshot:  sanitizeSnapshot(spec.parameters),
+        warnings:       [gate.reason],
+        policyReasons:  policyResult.reasons,
+        evaluatedRules: policyResult.evaluatedRuleIds,
+        auditNote:      gate.reason,
+      }));
+
+      await persist(`event:${gateEventType}:${spec.stepId}`, () => store.recordEvent({
+        executionId: ctx.executionId,
+        tenantId:    ctx.tenantId,
+        eventType:   gateEventType,
+        stepId:      spec.stepId,
+        actionId:    spec.actionId,
+        domain:      spec.domain,
+        status:      stepStatus,
+        message:     gate.reason,
+      }));
+
+      // Create approval request when require_approval (not deny)
+      if (policyResult.decision === "require_approval") {
+        await persist(`approval:${spec.stepId}`, () => store.createApprovalRequest({
+          executionId:    ctx.executionId,
+          tenantId:       ctx.tenantId,
+          stepId:         spec.stepId,
+          actionId:       spec.actionId,
+          domain:         spec.domain,
+          requestedBy:    ctx.userId,
+          policyDecision: policyResult.decision,
+          policyReasons:  policyResult.reasons,
+          reason:         gate.reason,
+          requestedAt:    new Date(),
+        }));
+      }
 
       if (policy.stopOnFirstBlock || policyResult.decision === "deny") {
         logger.log({
@@ -375,6 +586,8 @@ export async function executeExecutionPlan(
           status:    "blocked",
           message:   blocked.error,
         });
+        await persist(`step:${spec.stepId}`, () => store.recordStep(stepInputFrom(spec, ctx.executionId, ctx.tenantId, blocked, spec.parameters)));
+        await persist(`event:step_blocked:${spec.stepId}`, () => store.recordEvent({ executionId: ctx.executionId, tenantId: ctx.tenantId, eventType: "step_blocked", stepId: spec.stepId, actionId: spec.actionId, domain: spec.domain, status: "blocked", message: blocked.error }));
         if (policy.stopOnFirstFailure) {
           logger.log({
             eventType: "policy_stop_on_failure",
@@ -401,6 +614,8 @@ export async function executeExecutionPlan(
           status:    "failed",
           message:   failed.error,
         });
+        await persist(`step:${spec.stepId}`, () => store.recordStep(stepInputFrom(spec, ctx.executionId, ctx.tenantId, failed, spec.parameters)));
+        await persist(`event:step_failed:${spec.stepId}`, () => store.recordEvent({ executionId: ctx.executionId, tenantId: ctx.tenantId, eventType: "step_failed", stepId: spec.stepId, actionId: spec.actionId, domain: spec.domain, status: "failed", message: failed.error }));
         if (policy.stopOnFirstFailure) {
           logger.log({
             eventType: "policy_stop_on_failure",
@@ -427,6 +642,8 @@ export async function executeExecutionPlan(
           status:    "failed",
           message:   outcome.error,
         });
+        await persist(`step:${spec.stepId}`, () => store.recordStep(stepInputFrom(spec, ctx.executionId, ctx.tenantId, failed, spec.parameters)));
+        await persist(`event:step_failed:${spec.stepId}`, () => store.recordEvent({ executionId: ctx.executionId, tenantId: ctx.tenantId, eventType: "step_failed", stepId: spec.stepId, actionId: spec.actionId, domain: spec.domain, status: "failed", message: outcome.error }));
         if (policy.stopOnFirstFailure) {
           logger.log({
             eventType: "policy_stop_on_failure",
@@ -458,6 +675,8 @@ export async function executeExecutionPlan(
             status:    "failed",
             message:   failed.error,
           });
+          await persist(`step:${spec.stepId}`, () => store.recordStep(stepInputFrom(spec, ctx.executionId, ctx.tenantId, failed, spec.parameters, result.data)));
+          await persist(`event:step_failed:${spec.stepId}`, () => store.recordEvent({ executionId: ctx.executionId, tenantId: ctx.tenantId, eventType: "step_failed", stepId: spec.stepId, actionId: spec.actionId, domain: spec.domain, status: "failed", message: failed.error }));
           if (policy.stopOnFirstFailure) {
             logger.log({
               eventType: "policy_stop_on_failure",
@@ -483,6 +702,8 @@ export async function executeExecutionPlan(
             durationMs: completed.durationMs,
             message:    `Step "${spec.displayName}" completed successfully.`,
           });
+          await persist(`step:${spec.stepId}`, () => store.recordStep(stepInputFrom(spec, ctx.executionId, ctx.tenantId, completed, spec.parameters, result.data)));
+          await persist(`event:step_completed:${spec.stepId}`, () => store.recordEvent({ executionId: ctx.executionId, tenantId: ctx.tenantId, eventType: "step_completed", stepId: spec.stepId, actionId: spec.actionId, domain: spec.domain, status: "completed", message: `Step "${spec.displayName}" completed successfully.` }));
         }
         break;
       }
@@ -495,6 +716,9 @@ export async function executeExecutionPlan(
 
   const report = buildReport(ctx, plan, execution, logger);
 
+  // Merge persistence errors into warnings
+  const finalWarnings = [...report.warnings, ...persistErrors];
+
   logger.log({
     eventType:  "execution_completed",
     status:     report.overallStatus,
@@ -505,9 +729,34 @@ export async function executeExecutionPlan(
       `| ${report.awaitingApproval} awaiting approval`,
   });
 
+  // ── Persist execution completion ──────────────────────────────────────────
+  await persist("updateExecution", () => store.updateExecution(ctx.executionId, ctx.tenantId, {
+    status:          report.overallStatus,
+    finishedAt:      execution.finishedAt,
+    durationMs:      report.durationMs,
+    completedSteps:  report.completedSteps,
+    failedSteps:     report.failedSteps,
+    skippedSteps:    report.skippedSteps,
+    blockedSteps:    report.blockedSteps,
+    approvalRequired: report.audit.approvalRequired,
+    deniedByPolicy:  report.deniedByPolicy,
+    reportSnapshot:  sanitizeSnapshot(report),
+  }));
+
+  await persist("event:execution_completed", () => store.recordEvent({
+    executionId: ctx.executionId,
+    tenantId:    ctx.tenantId,
+    eventType:   "execution_completed",
+    status:      report.overallStatus,
+    message:
+      `Execution complete: ${report.completedSteps}/${report.totalSteps} steps completed ` +
+      `| ${report.failedSteps} failed | ${report.skippedSteps} skipped ` +
+      `| ${report.awaitingApproval} awaiting approval`,
+  }));
+
   // ── Phase 1: build rollback descriptor (descriptive only) ─────────────────
 
   const rollback = buildRollbackDescriptor(ctx, execution.results);
 
-  return { ...report, rollback };
+  return { ...report, warnings: finalWarnings, rollback };
 }

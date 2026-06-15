@@ -152,6 +152,36 @@ export {
 export { buildPolicyContext }          from "@/lib/copilot/policy/policy-context";
 export { gateFromPolicyDecision }      from "./approval-gate";
 
+// ── Execution Store re-exports (AGENTIK-EXECUTION-PERSISTENCE-01) ─────────────
+
+export type {
+  ExecutionSource,
+  ApprovalRequestStatus,
+  ExecutionRecord,
+  ExecutionStepRecord,
+  ExecutionEventRecord,
+  ApprovalRequestRecord,
+  ExecutionStoreCreateInput,
+  ExecutionStoreUpdateInput,
+  ExecutionStoreStepInput,
+  ExecutionStoreEventInput,
+  ApprovalRequestCreateInput,
+  ExecutionStoreQuery,
+  IdempotencyCheckResult,
+  ExecutionPersistenceSnapshot,
+  ExecutionStore,
+} from "@/lib/copilot/execution-store/execution-store-types";
+
+export { NoopExecutionStore, noopExecutionStore }                from "@/lib/copilot/execution-store/noop-execution-store";
+export { createPrismaExecutionStore }                            from "@/lib/copilot/execution-store/prisma-execution-store";
+export { sanitizeExecutionPayload, sanitizeSnapshot }            from "@/lib/copilot/execution-store/execution-store-sanitizer";
+export {
+  getRecentExecutions,
+  getPendingExecutionApprovals,
+  getExecutionDetail,
+  getExecutionTimeline,
+}                                                                from "@/lib/copilot/execution-store/execution-store-queries";
+
 // ── Internal imports for helpers ───────────────────────────────────────────────
 
 import type { IntentExecutionPlan } from "@/lib/copilot/intent-resolver/intent-types";
