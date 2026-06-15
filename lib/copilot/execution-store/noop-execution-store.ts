@@ -19,6 +19,7 @@ import type {
   ExecutionStore,
   ExecutionRecord,
   ExecutionStepRecord,
+  ExecutionEventRecord,
   ApprovalRequestRecord,
   ExecutionStoreCreateInput,
   ExecutionStoreUpdateInput,
@@ -26,6 +27,7 @@ import type {
   ExecutionStoreEventInput,
   ApprovalRequestCreateInput,
   ApprovalRequestUpdateInput,
+  ResolveApprovalRequestInput,
   ExecutionStoreQuery,
   IdempotencyCheckResult,
 } from "./execution-store-types";
@@ -177,6 +179,40 @@ export class NoopExecutionStore implements ExecutionStore {
     _idempotencyKey: string,
   ): Promise<IdempotencyCheckResult> {
     return { outcome: "proceed" };
+  }
+
+  // ── Approval workflow extensions ───────────────────────────────────────────
+
+  async getApprovalRequestById(
+    _tenantId:   string,
+    _approvalId: string,
+  ): Promise<ApprovalRequestRecord | null> {
+    return null;
+  }
+
+  async resolveApprovalRequest(_input: ResolveApprovalRequestInput): Promise<void> {
+    // no-op
+  }
+
+  async getExecutionSteps(
+    _tenantId:    string,
+    _executionId: string,
+  ): Promise<ExecutionStepRecord[]> {
+    return [];
+  }
+
+  async getExecutionEvents(
+    _tenantId:    string,
+    _executionId: string,
+  ): Promise<ExecutionEventRecord[]> {
+    return [];
+  }
+
+  async getExecutionSnapshot(
+    _tenantId:    string,
+    _executionId: string,
+  ): Promise<ExecutionRecord | null> {
+    return null;
   }
 }
 

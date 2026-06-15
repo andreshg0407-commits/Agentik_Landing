@@ -240,6 +240,32 @@ export interface ApprovalRequestUpdateInput {
   resolutionNote?: string;
 }
 
+/**
+ * Combined input for resolveApprovalRequest() — atomically updates the approval
+ * record AND records an audit event in a single store operation.
+ *
+ * Used by ApprovalWorkflowService to ensure event and state are always in sync.
+ */
+export interface ResolveApprovalRequestInput {
+  /** CopilotApprovalRequest.id (primary key) */
+  approvalId:      string;
+  tenantId:        string;
+  /** For event recording — must match the approval's executionId */
+  executionId:     string;
+  stepId:          string;
+  actionId:        string;
+  domain:          string;
+  /** Current status before the transition */
+  previousStatus:  string;
+  /** Status to transition to */
+  nextStatus:      ApprovalRequestStatus;
+  resolvedBy:      string;
+  resolvedAt:      Date;
+  resolutionNote?: string;
+  /** Event type to record: "approval_approved" | "approval_rejected" | etc. */
+  eventType:       string;
+}
+
 // ── Query types ────────────────────────────────────────────────────────────────
 
 export interface ExecutionStoreQuery {
@@ -328,4 +354,39 @@ export interface ExecutionStore {
    * Returns `{ outcome: "proceed" }` if no prior record is found.
    */
   checkIdempotency(tenantId: string, idempotencyKey: string): Promise<IdempotencyCheckResult>;
+
+  // ── Approval workflow extensions (AGENTIK-APPROVAL-WORKFLOW-01) ────────────
+
+  /**
+   * Load a single approval request by its record ID (tenant-scoped).
+   * Returns null if not found or belongs to a different tenant.
+   */
+  getApprovalRequestById(tenantId: string, approvalId: string): Promise<ApprovalRequestRecord | null>;
+
+  /**
+   * Atomically resolve an approval request: update its status AND record
+   * an audit event in the same operation.
+   *
+   * This is the only method that should be used to transition an approval's status.
+   * Callers must validate that the approval is pending before calling this.
+   */
+  resolveApprovalRequest(input: ResolveApprovalRequestInput): Promise<void>;
+
+  /**
+   * Load all persisted step records for an execution (tenant-scoped).
+   * Ordered by startedAt ascending.
+   */
+  getExecutionSteps(tenantId: string, executionId: string): Promise<ExecutionStepRecord[]>;
+
+  /**
+   * Load all persisted event records for an execution (tenant-scoped).
+   * Ordered by createdAt ascending — enables full audit replay.
+   */
+  getExecutionEvents(tenantId: string, executionId: string): Promise<ExecutionEventRecord[]>;
+
+  /**
+   * Load the execution record with its planSnapshot.
+   * Alias of getExecutionById — provided as a named concept for the approval workflow.
+   */
+  getExecutionSnapshot(tenantId: string, executionId: string): Promise<ExecutionRecord | null>;
 }

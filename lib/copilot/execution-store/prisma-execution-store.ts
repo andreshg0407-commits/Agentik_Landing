@@ -31,6 +31,7 @@ import type {
   ExecutionStoreEventInput,
   ApprovalRequestCreateInput,
   ApprovalRequestUpdateInput,
+  ResolveApprovalRequestInput,
   ExecutionStoreQuery,
   IdempotencyCheckResult,
 } from "./execution-store-types";
@@ -325,6 +326,108 @@ export class PrismaExecutionStore implements ExecutionStore {
   }
 
   // ── Idempotency ────────────────────────────────────────────────────────────
+
+  // ── Approval workflow extensions ───────────────────────────────────────────
+
+  async getApprovalRequestById(
+    tenantId:   string,
+    approvalId: string,
+  ): Promise<ApprovalRequestRecord | null> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db  = prisma as any;
+    const row = await db.copilotApprovalRequest.findFirst({
+      where: { id: approvalId, tenantId },
+    });
+    return row ? rowToApprovalRecord(row) : null;
+  }
+
+  async resolveApprovalRequest(input: ResolveApprovalRequestInput): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = prisma as any;
+
+    // Run update + event insert atomically
+    await db.$transaction([
+      db.copilotApprovalRequest.updateMany({
+        where: { id: input.approvalId, tenantId: input.tenantId },
+        data: {
+          approvalStatus: input.nextStatus.toUpperCase(),
+          resolvedBy:     input.resolvedBy,
+          resolvedAt:     input.resolvedAt,
+          resolutionNote: input.resolutionNote ?? null,
+          updatedAt:      new Date(),
+        },
+      }),
+      db.copilotExecutionEvent.create({
+        data: {
+          executionId: input.executionId,
+          tenantId:    input.tenantId,
+          eventType:   input.eventType,
+          stepId:      input.stepId,
+          actionId:    input.actionId,
+          domain:      input.domain,
+          status:      input.nextStatus,
+          message:     input.resolutionNote ?? `${input.eventType} by ${input.resolvedBy}`,
+          payload: {
+            approvalId:      input.approvalId,
+            executionId:     input.executionId,
+            stepId:          input.stepId,
+            actionId:        input.actionId,
+            domain:          input.domain,
+            resolvedBy:      input.resolvedBy,
+            resolutionNote:  input.resolutionNote,
+            previousStatus:  input.previousStatus,
+            nextStatus:      input.nextStatus,
+          },
+        },
+      }),
+    ]);
+  }
+
+  async getExecutionSteps(
+    tenantId:    string,
+    executionId: string,
+  ): Promise<ExecutionStepRecord[]> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db   = prisma as any;
+    const rows = await db.copilotExecutionStep.findMany({
+      where:   { executionId, tenantId },
+      orderBy: { startedAt: "asc" },
+    });
+    return rows.map(rowToStepRecord);
+  }
+
+  async getExecutionEvents(
+    tenantId:    string,
+    executionId: string,
+  ): Promise<ExecutionEventRecord[]> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db   = prisma as any;
+    const rows = await db.copilotExecutionEvent.findMany({
+      where:   { executionId, tenantId },
+      orderBy: { createdAt: "asc" },
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return rows.map((r: any): ExecutionEventRecord => ({
+      id:          r.id,
+      executionId: r.executionId,
+      tenantId:    r.tenantId,
+      eventType:   r.eventType,
+      stepId:      r.stepId   ?? undefined,
+      actionId:    r.actionId ?? undefined,
+      domain:      r.domain   ?? undefined,
+      status:      r.status   ?? undefined,
+      message:     r.message  ?? undefined,
+      payload:     r.payload  ?? undefined,
+      createdAt:   r.createdAt,
+    }));
+  }
+
+  async getExecutionSnapshot(
+    tenantId:    string,
+    executionId: string,
+  ): Promise<ExecutionRecord | null> {
+    return this.getExecutionById(executionId, tenantId);
+  }
 
   async checkIdempotency(tenantId: string, idempotencyKey: string): Promise<IdempotencyCheckResult> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

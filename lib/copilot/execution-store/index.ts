@@ -58,6 +58,7 @@ export type {
   ExecutionStoreEventInput,
   ApprovalRequestCreateInput,
   ApprovalRequestUpdateInput,
+  ResolveApprovalRequestInput,
   ExecutionStoreQuery,
   IdempotencyCheckResult,
   ExecutionPersistenceSnapshot,
