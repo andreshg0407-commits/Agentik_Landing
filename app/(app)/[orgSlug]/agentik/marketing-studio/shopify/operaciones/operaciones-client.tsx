@@ -4,29 +4,34 @@
  * app/(app)/[orgSlug]/agentik/marketing-studio/shopify/operaciones/operaciones-client.tsx
  *
  * SHOPIFY-MODULE-MATURITY-01 — Operaciones Intelligence Console — Client Component
+ * AGENTIK-COPILOT-BOUNDARIES-01 — Copilot/Sofía belongs in the right rail, not in the canvas
  *
  * Architecture:
  *   - Unified structure regardless of connection/data state
  *   - Placeholders replace all metrics when ops is null
- *   - All actions route through Copilot → Intent Resolver → Policy → Runtime
- *   - OperationalSideDrawer for all detail panels (4 sections each)
- *   - Sofía supervises the full commercial cycle — Shopify is the data source
+ *   - All actions route through /execution pipeline
+ *   - OperationalSideDrawer for all detail panels (5 sections each)
+ *   - Canvas shows module data only; Sofía intelligence lives in right rail
  *   - Language: natural business Spanish for Latin America
  *
  * Blocks:
- *   1. SofíaBanner      — contextual intelligence message (always visible)
- *   2. Timeline         — compact strip when connected, steps when onboarding
- *   3. ProtagonistBlock — order flow (pending → in transit → delivered)
- *   4. KpiGrid          — 8 indicator tiles, each with drawer
- *   5. ShipmentsBlock   — in-transit orders (secondary protagonist)
- *   6. SignalsSection   — Sofía's operational signals
+ *   1. Timeline         — compact strip when connected, steps when onboarding
+ *   2. ProtagonistBlock — order flow (pending → in transit → delivered)
+ *   3. KpiGrid          — 8 indicator tiles, each with drawer
+ *   4. ShipmentsBlock   — in-transit orders (secondary protagonist)
  */
 
 import { useState, useCallback }       from "react";
 import { C, T, S, R, E }              from "@/lib/ui/tokens";
 import { OperationalSideDrawer }       from "@/components/workspace/operational-side-drawer";
 import type { DrawerSeverity }         from "@/components/workspace/operational-side-drawer";
-import { MSAgentSignal }               from "@/components/marketing-studio/shared/ms-agent-signal";
+import {
+  ShopifyKpiCard,
+  ShopifyDrawerSection,
+  ShopifyDrawerAction,
+  ShopifyPlaceholderRow,
+  ShopifyActivationTimeline,
+}                                      from "@/components/marketing-studio/shopify/shopify-module-primitives";
 
 import type {
   OperationListResult,
@@ -114,11 +119,11 @@ const SHIPMENT_STATUS_LABEL: Record<string, string> = {
 
 // ── Activation steps ───────────────────────────────────────────────────────────
 
-const STEPS = [
-  { label: "Conectar tienda Shopify" },
-  { label: "Sincronizar pedidos y envíos" },
-  { label: "Sofía analiza el ciclo operativo" },
-  { label: "Activar alertas y seguimiento" },
+const ACTIVATION_STEPS = [
+  "Conectar tienda Shopify",
+  "Sincronizar pedidos y envíos",
+  "Configurar alertas operativas",
+  "Activar seguimiento de transportadoras",
 ];
 
 // ── Order row ──────────────────────────────────────────────────────────────────
@@ -172,8 +177,8 @@ function OrderRow({ order }: { order: OperationOrderSummary }) {
 function ShipmentRow({ shipment }: { shipment: OperationShipmentSummary }) {
   const isStalled = (shipment.daysSinceLastUpdate ?? 0) >= 5;
   const shipColor =
-    shipment.status === "delivered"      ? C.green :
-    shipment.status === "failed_delivery"? C.red   : C.blueDark;
+    shipment.status === "delivered"       ? C.green :
+    shipment.status === "failed_delivery" ? C.red   : C.blueDark;
 
   return (
     <div className="ag-op-row" style={{ alignItems: "center", gap: S[3] }}>
@@ -214,158 +219,14 @@ function ShipmentRow({ shipment }: { shipment: OperationShipmentSummary }) {
   );
 }
 
-// ── Placeholder row ────────────────────────────────────────────────────────────
-
-function PlaceholderRow() {
-  return (
-    <div className="ag-op-row" style={{ alignItems: "center", gap: S[3] }}>
-      <div style={{ flex: 1 }}>
-        <div style={{ width: "45%", height: 10, borderRadius: R.sm, background: C.surfaceAlt }} />
-        <div style={{ width: "60%", height: 8,  borderRadius: R.sm, background: C.surfaceAlt, marginTop: 5 }} />
-      </div>
-      <div style={{ width: 56, height: 10, borderRadius: R.sm, background: C.surfaceAlt }} />
-      <div style={{ width: 44, height: 8,  borderRadius: R.pill, background: C.surfaceAlt }} />
-    </div>
-  );
-}
-
-// ── KPI card ───────────────────────────────────────────────────────────────────
-
-function KpiCard({
-  icon, label, value, sub, noDataHint, variant, onClick,
-}: {
-  icon:       string;
-  label:      string;
-  value:      string | null;
-  sub:        string | null;
-  noDataHint: string;
-  variant:    "ok" | "warning" | "critical" | "neutral";
-  onClick:    () => void;
-}) {
-  const variantColor =
-    variant === "ok"       ? C.green   :
-    variant === "warning"  ? C.amber   :
-    variant === "critical" ? C.red     : C.inkFaint;
-
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        flex:          "1 1 200px",
-        minWidth:      0,
-        border:        `1px solid ${C.line}`,
-        borderRadius:  R.xl,
-        padding:       `${S[4]}px`,
-        background:    C.white,
-        boxShadow:     E.xs,
-        textAlign:     "left" as const,
-        cursor:        "pointer",
-        display:       "flex",
-        flexDirection: "column" as const,
-        gap:           S[1],
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ fontSize: 16 }}>{icon}</span>
-        <span style={{
-          width: 8, height: 8, borderRadius: "50%",
-          background: variantColor, flexShrink: 0,
-        }} />
-      </div>
-      {value !== null ? (
-        <>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xl"], fontWeight: T.wt.bold, color: C.titleDeep, lineHeight: 1.15 }}>
-            {value}
-          </div>
-          {sub && (
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>
-              {sub}
-            </div>
-          )}
-        </>
-      ) : (
-        <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, lineHeight: 1.55, marginTop: S[1] }}>
-          {noDataHint}
-        </div>
-      )}
-      <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginTop: "auto", paddingTop: S[2] }}>
-        {label}
-      </div>
-    </button>
-  );
-}
-
-// ── Drawer section wrapper ─────────────────────────────────────────────────────
-
-function DrawerSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div style={{ marginBottom: S[5] }}>
-      <div style={{
-        fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
-        color: C.inkFaint, textTransform: "uppercase" as const,
-        letterSpacing: "0.09em", marginBottom: S[3],
-      }}>
-        {title}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-// ── Action button (drawer) ─────────────────────────────────────────────────────
-
-function DrawerAction({
-  label, intent, executing, result, onExecute,
-}: {
-  label:     string;
-  intent:    string;
-  executing: string | null;
-  result?:   { status: string; message: string };
-  onExecute: (intent: string) => void;
-}) {
-  const isRunning = executing === intent;
-  return (
-    <div style={{ marginBottom: S[2] }}>
-      <button
-        onClick={() => onExecute(intent)}
-        disabled={!!executing}
-        style={{
-          display:      "block",
-          width:        "100%",
-          textAlign:    "left" as const,
-          fontFamily:   T.mono,
-          fontSize:     T.sz.sm,
-          color:        isRunning ? C.inkFaint : C.blueDark,
-          background:   C.blueLight,
-          border:       `1px solid ${C.blueBorder}`,
-          borderRadius: R.lg,
-          padding:      `${S[2]}px ${S[3]}px`,
-          cursor:       executing ? "default" : "pointer",
-          opacity:      executing && !isRunning ? 0.5 : 1,
-        }}
-      >
-        {isRunning ? "Enviando a Sofía…" : `→ ${label}`}
-      </button>
-      {result && (
-        <div style={{
-          fontFamily: T.mono, fontSize: T.sz.xs, marginTop: S[1],
-          color: result.status === "ok" ? C.green : C.red,
-        }}>
-          {result.message}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ── Flow step indicator (protagonist block) ────────────────────────────────────
 
 function FlowStep({
   label, count, color, isLast,
 }: {
-  label:  string;
-  count:  number | null;
-  color:  string;
+  label:   string;
+  count:   number | null;
+  color:   string;
   isLast?: boolean;
 }) {
   return (
@@ -401,19 +262,18 @@ export function OperacionesClient({
   const [executingId, setExecutingId] = useState<string | null>(null);
   const [results,     setResults]     = useState<Record<string, { status: string; message: string }>>({});
 
-  const hasData   = ops !== null;
-  const isCompact = connected && hasData;
+  const hasData = ops !== null;
 
   // ── Computed indicators ──────────────────────────────────────────────────
-  const pendingCount    = ops?.pendingPayment.length ?? 0;
-  const preparingCount  = ops?.preparing.length      ?? 0;
-  const inTransitCount  = ops?.inTransit.length      ?? 0;
-  const deliveredCount  = ops?.delivered.length       ?? 0;
-  const cancelledCount  = ops?.cancelled.length       ?? 0;
-  const totalOrders     = ops?.total                  ?? 0;
-  const criticalCount   = ops?.alerts.critical        ?? 0;
-  const stalledCount    = ops?.alerts.stalledShipments ?? 0;
-  const atRiskCount     = ops?.alerts.ordersAtRisk    ?? 0;
+  const pendingCount   = ops?.pendingPayment.length   ?? 0;
+  const preparingCount = ops?.preparing.length        ?? 0;
+  const inTransitCount = ops?.inTransit.length        ?? 0;
+  const deliveredCount = ops?.delivered.length        ?? 0;
+  const cancelledCount = ops?.cancelled.length        ?? 0;
+  const totalOrders    = ops?.total                   ?? 0;
+  const criticalCount  = ops?.alerts.critical         ?? 0;
+  const stalledCount   = ops?.alerts.stalledShipments ?? 0;
+  const atRiskCount    = ops?.alerts.ordersAtRisk     ?? 0;
 
   const alertCount = criticalCount + stalledCount;
 
@@ -430,7 +290,7 @@ export function OperacionesClient({
       setResults(prev => ({
         ...prev,
         [intent]: data.ok
-          ? { status: "ok",    message: data.message ?? "Solicitud enviada a Sofía" }
+          ? { status: "ok",    message: data.message ?? "Solicitud enviada" }
           : { status: "error", message: data.error   ?? "Error al procesar" },
       }));
     } catch {
@@ -500,107 +360,19 @@ export function OperacionesClient({
 
   const cfg = drawerConfig(openDrawer);
 
-  // ── Sofía messages ───────────────────────────────────────────────────────
-  const sofiaText = !connected
-    ? "Supervisaré pedidos, incidencias, envíos y devoluciones cuando la tienda esté conectada. Te avisaré ante cualquier situación que requiera tu atención."
-    : !hasData
-    ? "Estoy sincronizando el ciclo operativo de tu tienda. En breve mostraré el estado de tus pedidos y envíos."
-    : criticalCount > 0
-    ? `Detecté ${criticalCount} alerta${criticalCount !== 1 ? "s" : ""} crítica${criticalCount !== 1 ? "s" : ""} que requieren revisión inmediata. ${stalledCount > 0 ? `Además hay ${stalledCount} envío${stalledCount !== 1 ? "s" : ""} detenido${stalledCount !== 1 ? "s" : ""}.` : ""}`
-    : stalledCount > 0
-    ? `${stalledCount} envío${stalledCount !== 1 ? "s" : ""} lleva${stalledCount !== 1 ? "n" : ""} más de 5 días sin movimiento. Recomiendo verificar con la transportadora.`
-    : totalOrders === 0
-    ? "No hay pedidos registrados en este período. Aquí veré el flujo completo cuando comiencen a llegar."
-    : `Ciclo operativo activo: ${pendingCount} pendiente${pendingCount !== 1 ? "s" : ""}, ${preparingCount} preparando, ${inTransitCount} en tránsito y ${deliveredCount} entregado${deliveredCount !== 1 ? "s" : ""}.`;
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[4], paddingTop: S[4] }}>
 
-      {/* ── 1. Sofía banner ─────────────────────────────────────────────── */}
-      <MSAgentSignal
-        text={sofiaText}
-        agentLabel="Sofía · Comercio"
-        variant={connected && criticalCount === 0 && totalOrders > 0 ? "positive" : "dark"}
+      {/* ── 1. Activation timeline ───────────────────────────────────────── */}
+      <ShopifyActivationTimeline
+        steps={ACTIVATION_STEPS}
+        connected={connected}
+        orgSlug={orgSlug}
+        compactText={`Tienda activa · ${shopDomain || "Shopify"} · Pedidos sincronizados`}
+        criticalCount={alertCount}
       />
 
-      {/* ── 2. Activation timeline ──────────────────────────────────────── */}
-      {isCompact ? (
-        <div style={{
-          background: criticalCount > 0 ? C.redLight : C.greenLight,
-          border: `1px solid ${criticalCount > 0 ? C.redBorder : C.greenBorder}`,
-          borderRadius: R.xl, padding: `${S[2]}px ${S[4]}px`,
-          fontFamily: T.mono, fontSize: T.sz.xs,
-          color: criticalCount > 0 ? C.red : C.green,
-          display: "flex", alignItems: "center", gap: S[2],
-        }}>
-          <span>{criticalCount > 0 ? "⚠" : "✓"}</span>
-          <span>
-            {criticalCount > 0
-              ? `${criticalCount} alerta${criticalCount !== 1 ? "s" : ""} crítica${criticalCount !== 1 ? "s" : ""} · Sofía monitoreando el ciclo operativo`
-              : "Tienda activa · Pedidos sincronizados · Sofía supervisando operaciones"}
-          </span>
-        </div>
-      ) : (
-        <div style={{
-          border: `1px solid ${C.line}`, borderRadius: R.xl,
-          padding: `${S[4]}px ${S[5]}px`, background: C.white, boxShadow: E.xs,
-        }}>
-          <div style={{
-            fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
-            color: C.inkFaint, textTransform: "uppercase" as const,
-            letterSpacing: "0.09em", marginBottom: S[3],
-          }}>
-            Pasos de activación
-          </div>
-          <div style={{ display: "flex", gap: S[2], alignItems: "center", flexWrap: "wrap" as const }}>
-            {STEPS.map((step, i) => {
-              const done = connected && i === 0;
-              return (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: S[2] }}>
-                  <div style={{
-                    width: 22, height: 22, borderRadius: "50%",
-                    background: done ? C.blueDark : C.surfaceAlt,
-                    border: `1px solid ${done ? C.blueDark : C.line}`,
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    flexShrink: 0,
-                  }}>
-                    {done
-                      ? <span style={{ color: C.white, fontSize: 9, fontWeight: T.wt.bold }}>✓</span>
-                      : <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>{i + 1}</span>
-                    }
-                  </div>
-                  <span style={{
-                    fontFamily: T.mono, fontSize: T.sz.xs,
-                    color: done ? C.ink : i === 0 && !connected ? C.blueDark : C.inkFaint,
-                    fontWeight: i === 0 && !connected ? T.wt.semibold : T.wt.normal,
-                  }}>
-                    {step.label}
-                  </span>
-                  {i < STEPS.length - 1 && (
-                    <span style={{ color: C.lineSubtle, fontFamily: T.mono, fontSize: T.sz.xs }}>→</span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          {!connected && (
-            <a
-              href={`/${orgSlug}/agentik/marketing-studio/shopify`}
-              style={{
-                display: "inline-block", marginTop: S[3],
-                fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold,
-                color: C.white, background: C.blueDark,
-                border: `1px solid ${C.blueDark}`, borderRadius: R.lg,
-                padding: `${S[2]}px ${S[4]}px`, textDecoration: "none",
-              }}
-            >
-              Conectar tienda Shopify
-            </a>
-          )}
-        </div>
-      )}
-
-      {/* ── 3. Protagonist: order flow ───────────────────────────────────── */}
+      {/* ── 2. Protagonist: order flow ───────────────────────────────────── */}
       <div style={{
         border:       `1px solid ${C.line}`,
         borderTop:    `3px solid ${C.blueDark}`,
@@ -635,10 +407,10 @@ export function OperacionesClient({
 
         {/* Flow steps */}
         <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[4] }}>
-          <FlowStep label="Pendientes pago" count={hasData ? pendingCount  : null} color={C.amber}   />
-          <FlowStep label="Preparando"      count={hasData ? preparingCount: null} color={C.blueDark}/>
-          <FlowStep label="En tránsito"     count={hasData ? inTransitCount: null} color={C.blueDark}/>
-          <FlowStep label="Entregados"      count={hasData ? deliveredCount : null} color={C.green}  isLast />
+          <FlowStep label="Pendientes pago" count={hasData ? pendingCount   : null} color={C.amber}    />
+          <FlowStep label="Preparando"      count={hasData ? preparingCount : null} color={C.blueDark} />
+          <FlowStep label="En tránsito"     count={hasData ? inTransitCount : null} color={C.blueDark} />
+          <FlowStep label="Entregados"      count={hasData ? deliveredCount : null} color={C.green} isLast />
         </div>
 
         {/* Alert strips */}
@@ -672,28 +444,28 @@ export function OperacionesClient({
             padding: `${S[5]}px ${S[4]}px`, textAlign: "center",
             fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid,
           }}>
-            Sin pedidos registrados. Sofía supervisará el flujo en cuanto lleguen.
+            Sin pedidos registrados en este período.
           </div>
         )}
-        {!hasData && [1, 2, 3].map(i => <PlaceholderRow key={i} />)}
+        {!hasData && [1, 2, 3].map(i => <ShopifyPlaceholderRow key={i} />)}
       </div>
 
-      {/* ── 4. KPI grid ─────────────────────────────────────────────────── */}
+      {/* ── 3. KPI grid ─────────────────────────────────────────────────── */}
       <div style={{
         display: "grid",
         gridTemplateColumns: "repeat(4, 1fr)",
         gap: S[3],
       }}>
-        <KpiCard
+        <ShopifyKpiCard
           icon="⏳"
           label="Pendientes de pago"
           value={hasData ? String(pendingCount) : null}
           sub={hasData ? "esperando confirmación" : null}
-          noDataHint="Pedidos con pago aún no confirmado."
+          noDataHint="Pedidos recibidos con pago aún no confirmado."
           variant={hasData ? (pendingCount > 3 ? "warning" : pendingCount > 0 ? "ok" : "neutral") : "neutral"}
           onClick={() => setOpenDrawer("pendientes")}
         />
-        <KpiCard
+        <ShopifyKpiCard
           icon="📦"
           label="En preparación"
           value={hasData ? String(preparingCount) : null}
@@ -702,7 +474,7 @@ export function OperacionesClient({
           variant={hasData ? (preparingCount > 0 ? "ok" : "neutral") : "neutral"}
           onClick={() => setOpenDrawer("preparando")}
         />
-        <KpiCard
+        <ShopifyKpiCard
           icon="🚚"
           label="En tránsito"
           value={hasData ? String(inTransitCount) : null}
@@ -711,7 +483,7 @@ export function OperacionesClient({
           variant={hasData ? (stalledCount > 0 ? "warning" : inTransitCount > 0 ? "ok" : "neutral") : "neutral"}
           onClick={() => setOpenDrawer("en_transito")}
         />
-        <KpiCard
+        <ShopifyKpiCard
           icon="✅"
           label="Entregados"
           value={hasData ? String(deliveredCount) : null}
@@ -720,16 +492,16 @@ export function OperacionesClient({
           variant={hasData ? (deliveredCount > 0 ? "ok" : "neutral") : "neutral"}
           onClick={() => setOpenDrawer("entregados")}
         />
-        <KpiCard
+        <ShopifyKpiCard
           icon="⚠️"
           label="Requieren atención"
           value={hasData ? String(atRiskCount) : null}
           sub={hasData ? "con riesgo operativo" : null}
-          noDataHint="Sofía marcará pedidos con señales de riesgo operativo."
+          noDataHint="Pedidos con señales de riesgo: pausados, con pago fallido o con retraso."
           variant={hasData ? (atRiskCount > 0 ? "critical" : "neutral") : "neutral"}
           onClick={() => setOpenDrawer("incidencias")}
         />
-        <KpiCard
+        <ShopifyKpiCard
           icon="↩️"
           label="Cancelados"
           value={hasData ? String(cancelledCount) : null}
@@ -738,7 +510,7 @@ export function OperacionesClient({
           variant={hasData ? (cancelledCount > 0 ? "warning" : "neutral") : "neutral"}
           onClick={() => setOpenDrawer("devoluciones")}
         />
-        <KpiCard
+        <ShopifyKpiCard
           icon="⏱️"
           label="Tiempo de entrega"
           value={null}
@@ -747,18 +519,18 @@ export function OperacionesClient({
           variant="neutral"
           onClick={() => setOpenDrawer("tiempo_prom")}
         />
-        <KpiCard
+        <ShopifyKpiCard
           icon="🔔"
           label="Alertas operativas"
           value={hasData ? String(alertCount) : null}
           sub={hasData ? "requieren revisión" : null}
-          noDataHint="Sofía alertará sobre situaciones que afecten la operación."
+          noDataHint="Situaciones críticas o envíos detenidos que afectan el ciclo operativo."
           variant={hasData ? (criticalCount > 0 ? "critical" : stalledCount > 0 ? "warning" : "neutral") : "neutral"}
           onClick={() => setOpenDrawer("alertas")}
         />
       </div>
 
-      {/* ── 5. In-transit block ──────────────────────────────────────────── */}
+      {/* ── 4. In-transit block ──────────────────────────────────────────── */}
       <div style={{
         border: `1px solid ${C.line}`, borderRadius: R.xl,
         padding: `${S[5]}px`, background: C.white, boxShadow: E.xs,
@@ -790,67 +562,8 @@ export function OperacionesClient({
                 Sin envíos activos en tránsito.
               </div>
             )
-            : [1, 2, 3].map(i => <PlaceholderRow key={i} />)
+            : [1, 2, 3].map(i => <ShopifyPlaceholderRow key={i} />)
           }
-        </div>
-      </div>
-
-      {/* ── 6. Sofía signals ────────────────────────────────────────────── */}
-      <div style={{
-        border: `1px solid ${C.line}`, borderRadius: R.xl,
-        padding: `${S[5]}px`, background: C.white, boxShadow: E.xs,
-      }}>
-        <div style={{
-          fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
-          color: C.inkFaint, textTransform: "uppercase" as const,
-          letterSpacing: "0.09em", marginBottom: S[4],
-        }}>
-          Señales del negocio
-        </div>
-        <div style={{ display: "flex", flexDirection: "column" as const, gap: S[3] }}>
-          {!connected && (
-            <MSAgentSignal
-              text="Conecta la tienda y supervisaré pedidos, envíos y devoluciones en tiempo real. Te notificaré ante cualquier retraso o incidencia."
-              agentLabel="Sofía · Comercio"
-              variant="dark"
-            />
-          )}
-          {connected && !hasData && (
-            <MSAgentSignal
-              text="Cargando el estado operativo de tu tienda. En breve mostraré el análisis del ciclo de pedidos."
-              agentLabel="Sofía · Comercio"
-              variant="dark"
-            />
-          )}
-          {connected && hasData && criticalCount > 0 && (
-            <MSAgentSignal
-              text={`Detecto ${criticalCount} situación${criticalCount !== 1 ? "es" : ""} crítica${criticalCount !== 1 ? "s" : ""} que requieren atención inmediata. Revisa los pedidos marcados antes de que afecten la experiencia del cliente.`}
-              agentLabel="Sofía · Comercio"
-              variant="dark"
-              action={{ label: "Ver alertas", href: "#" }}
-            />
-          )}
-          {connected && hasData && stalledCount > 0 && criticalCount === 0 && (
-            <MSAgentSignal
-              text={`${stalledCount} envío${stalledCount !== 1 ? "s" : ""} lleva${stalledCount !== 1 ? "n" : ""} más de 5 días sin actualizaciones. Te recomiendo contactar con la transportadora para obtener estado actualizado.`}
-              agentLabel="Sofía · Comercio"
-              variant="positive"
-            />
-          )}
-          {connected && hasData && criticalCount === 0 && stalledCount === 0 && totalOrders > 0 && (
-            <MSAgentSignal
-              text={`El ciclo operativo está funcionando bien. ${deliveredCount > 0 ? `${deliveredCount} pedido${deliveredCount !== 1 ? "s" : ""} entregado${deliveredCount !== 1 ? "s" : ""} correctamente.` : "Seguiré monitoreando el flujo de pedidos."}`}
-              agentLabel="Sofía · Comercio"
-              variant="positive"
-            />
-          )}
-          {connected && hasData && totalOrders === 0 && (
-            <MSAgentSignal
-              text="No hay pedidos activos en este período. Cuando comiencen a llegar, mostraré el análisis del ciclo completo."
-              agentLabel="Sofía · Comercio"
-              variant="dark"
-            />
-          )}
         </div>
       </div>
 
@@ -863,7 +576,7 @@ export function OperacionesClient({
         severity={cfg.severity}
       >
         {/* Section 1: Resumen */}
-        <DrawerSection title="Resumen">
+        <ShopifyDrawerSection title="Resumen">
           {openDrawer === "pendientes" && (
             <div className="ag-op-table">
               {hasData && ops!.pendingPayment.length > 0
@@ -909,7 +622,7 @@ export function OperacionesClient({
               {!hasData
                 ? "Disponible al conectar la tienda Shopify."
                 : atRiskCount > 0
-                ? `${atRiskCount} pedido${atRiskCount !== 1 ? "s" : ""} ha${atRiskCount !== 1 ? "n" : ""} sido marcado${atRiskCount !== 1 ? "s" : ""} con señales de riesgo operativo. Sofía detecta pedidos en pausa, pagos fallidos y retrasos prolongados.`
+                ? `${atRiskCount} pedido${atRiskCount !== 1 ? "s" : ""} ha${atRiskCount !== 1 ? "n" : ""} sido marcado${atRiskCount !== 1 ? "s" : ""} con señales de riesgo operativo: pedidos en pausa, pagos fallidos y retrasos prolongados.`
                 : "No hay incidencias activas en este momento. El ciclo operativo está funcionando con normalidad."
               }
             </p>
@@ -939,22 +652,39 @@ export function OperacionesClient({
               }
             </p>
           )}
-        </DrawerSection>
+        </ShopifyDrawerSection>
 
         {/* Section 2: Evolución */}
-        <DrawerSection title="Evolución">
+        <ShopifyDrawerSection title="Evolución">
           <p style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid, lineHeight: 1.7, margin: 0 }}>
             {!hasData
               ? "El análisis de evolución estará disponible al conectar la tienda."
-              : "Sofía comparará el estado actual con el período anterior para identificar tendencias en el volumen de pedidos, tiempos de entrega y tasa de incidencias."}
+              : "La comparación período a período estará disponible una vez que la tienda acumule datos históricos de pedidos y entregas."}
           </p>
-        </DrawerSection>
+        </ShopifyDrawerSection>
 
-        {/* Section 3: Análisis de Sofía */}
-        <DrawerSection title="Análisis de Sofía">
+        {/* Section 3: Datos relevantes */}
+        <ShopifyDrawerSection title="Datos relevantes">
+          <div style={{ display: "flex", flexDirection: "column" as const, gap: S[2] }}>
+            {[
+              { label: "Total pedidos",    value: hasData ? fmtNum(totalOrders)    : "–" },
+              { label: "En tránsito",      value: hasData ? String(inTransitCount) : "–" },
+              { label: "Entregados",       value: hasData ? String(deliveredCount)  : "–" },
+              { label: "Alertas activas",  value: hasData ? String(alertCount)     : "–" },
+            ].map(({ label, value }) => (
+              <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>{label}</span>
+                <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.ink, fontWeight: T.wt.medium }}>{value}</span>
+              </div>
+            ))}
+          </div>
+        </ShopifyDrawerSection>
+
+        {/* Section 4: Análisis de Sofía */}
+        <ShopifyDrawerSection title="Análisis de Sofía">
           <p style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.ink, lineHeight: 1.7, margin: 0 }}>
             {!connected
-              ? "Conecta la tienda y supervisaré el ciclo operativo completo, desde el pedido hasta la entrega."
+              ? "Conecta la tienda y Sofía supervisará el ciclo operativo completo, desde el pedido hasta la entrega."
               : !hasData
               ? "Cargando análisis operativo…"
               : openDrawer === "pendientes" && pendingCount > 3
@@ -963,49 +693,49 @@ export function OperacionesClient({
               ? `${stalledCount} envío${stalledCount !== 1 ? "s" : ""} lleva${stalledCount !== 1 ? "n" : ""} más de 5 días sin actualizaciones de la transportadora. Esto puede afectar la satisfacción del cliente si no se comunica proactivamente.`
               : openDrawer === "alertas" && alertCount > 0
               ? "Hay situaciones que requieren intervención. Te recomiendo revisar cada alerta y tomar acción antes de que escalen."
-              : "El indicador está dentro de los parámetros normales. Continuaré monitoreando y te avisaré ante cualquier cambio significativo."
+              : "El indicador está dentro de los parámetros normales. Sofía continuará monitoreando y te avisará ante cualquier cambio significativo."
             }
           </p>
-        </DrawerSection>
+        </ShopifyDrawerSection>
 
-        {/* Section 4: Acciones sugeridas */}
-        <DrawerSection title="Acciones sugeridas">
-          <DrawerAction
+        {/* Section 5: Acciones sugeridas */}
+        <ShopifyDrawerSection title="Acciones sugeridas">
+          <ShopifyDrawerAction
             label="Revisar pedidos pendientes"
             intent="operations.review_pending"
             executing={executingId}
             result={results["operations.review_pending"]}
             onExecute={executeAction}
           />
-          <DrawerAction
+          <ShopifyDrawerAction
             label="Analizar retrasos de envío"
             intent="operations.analyze_delays"
             executing={executingId}
             result={results["operations.analyze_delays"]}
             onExecute={executeAction}
           />
-          <DrawerAction
+          <ShopifyDrawerAction
             label="Inspeccionar devoluciones"
             intent="operations.inspect_returns"
             executing={executingId}
             result={results["operations.inspect_returns"]}
             onExecute={executeAction}
           />
-          <DrawerAction
+          <ShopifyDrawerAction
             label="Preparar plan de seguimiento"
             intent="operations.followup_plan"
             executing={executingId}
             result={results["operations.followup_plan"]}
             onExecute={executeAction}
           />
-          <DrawerAction
+          <ShopifyDrawerAction
             label="Explorar oportunidades operativas"
             intent="operations.explore_opportunities"
             executing={executingId}
             result={results["operations.explore_opportunities"]}
             onExecute={executeAction}
           />
-        </DrawerSection>
+        </ShopifyDrawerSection>
       </OperationalSideDrawer>
     </div>
   );

@@ -4,29 +4,34 @@
  * app/(app)/[orgSlug]/agentik/marketing-studio/shopify/promociones/promociones-client.tsx
  *
  * SHOPIFY-MODULE-MATURITY-01 — Promociones Intelligence Console — Client Component
+ * AGENTIK-COPILOT-BOUNDARIES-01 — Copilot/Sofía belongs in the right rail, not in the canvas
  *
  * Architecture:
  *   - Unified structure regardless of connection/data state
  *   - Placeholders replace all metrics when promotions is null
- *   - All actions route through Copilot → Intent Resolver → Policy → Runtime
- *   - OperationalSideDrawer for all detail panels (4 sections each)
- *   - Sofía guides every interaction — Shopify is only the data source
+ *   - All actions route through /execution pipeline
+ *   - OperationalSideDrawer for all detail panels (5 sections each)
+ *   - Canvas shows module data only; Sofía intelligence lives in right rail
  *   - Language: natural business Spanish for Latin America
  *
  * Blocks:
- *   1. SofíaBanner    — contextual intelligence message (always visible)
- *   2. Timeline       — compact strip when connected, steps when onboarding
- *   3. ProtagonistBlock — active promotions (blue accent card)
- *   4. KpiGrid        — 8 indicator tiles, each with drawer
- *   5. ScheduledBlock — programmed campaigns (secondary protagonist)
- *   6. SignalsSection — Sofía's business signals
+ *   1. Timeline       — compact strip when connected, steps when onboarding
+ *   2. ProtagonistBlock — active promotions (blue accent card)
+ *   3. KpiGrid        — 8 indicator tiles, each with drawer
+ *   4. ScheduledBlock — programmed campaigns (secondary protagonist)
  */
 
 import { useState, useCallback }       from "react";
 import { C, T, S, R, E }              from "@/lib/ui/tokens";
 import { OperationalSideDrawer }       from "@/components/workspace/operational-side-drawer";
 import type { DrawerSeverity }         from "@/components/workspace/operational-side-drawer";
-import { MSAgentSignal }               from "@/components/marketing-studio/shared/ms-agent-signal";
+import {
+  ShopifyKpiCard,
+  ShopifyDrawerSection,
+  ShopifyDrawerAction,
+  ShopifyPlaceholderRow,
+  ShopifyActivationTimeline,
+}                                      from "@/components/marketing-studio/shopify/shopify-module-primitives";
 
 import type {
   PromotionListResult,
@@ -75,11 +80,11 @@ function daysUntil(iso: string): number {
 
 // ── Activation steps ───────────────────────────────────────────────────────────
 
-const STEPS = [
-  { label: "Conectar tienda Shopify" },
-  { label: "Sincronizar promociones activas" },
-  { label: "Sofía analiza tu estrategia de descuentos" },
-  { label: "Activar recomendaciones y alertas" },
+const ACTIVATION_STEPS = [
+  "Conectar tienda Shopify",
+  "Sincronizar promociones activas",
+  "Revisar estrategia de descuentos",
+  "Activar alertas y automatizaciones",
 ];
 
 // ── Pill badge ─────────────────────────────────────────────────────────────────
@@ -143,149 +148,6 @@ function PromoRow({ promo }: { promo: ShopifyPromotionSummary }) {
   );
 }
 
-// ── Placeholder row ────────────────────────────────────────────────────────────
-
-function PlaceholderRow() {
-  return (
-    <div className="ag-op-row" style={{ alignItems: "center", gap: S[3] }}>
-      <div style={{ flex: 1 }}>
-        <div style={{ width: "55%", height: 10, borderRadius: R.sm, background: C.surfaceAlt }} />
-        <div style={{ width: "35%", height: 8, borderRadius: R.sm, background: C.surfaceAlt, marginTop: 5 }} />
-      </div>
-      <div style={{ width: 48, height: 8, borderRadius: R.pill, background: C.surfaceAlt }} />
-    </div>
-  );
-}
-
-// ── KPI card ───────────────────────────────────────────────────────────────────
-
-function KpiCard({
-  icon, label, value, sub, noDataHint, variant, onClick,
-}: {
-  icon:       string;
-  label:      string;
-  value:      string | null;
-  sub:        string | null;
-  noDataHint: string;
-  variant:    "ok" | "warning" | "critical" | "neutral";
-  onClick:    () => void;
-}) {
-  const variantColor =
-    variant === "ok"       ? C.green   :
-    variant === "warning"  ? C.amber   :
-    variant === "critical" ? C.red     : C.inkFaint;
-
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        flex:          "1 1 200px",
-        minWidth:      0,
-        border:        `1px solid ${C.line}`,
-        borderRadius:  R.xl,
-        padding:       `${S[4]}px`,
-        background:    C.white,
-        boxShadow:     E.xs,
-        textAlign:     "left" as const,
-        cursor:        "pointer",
-        display:       "flex",
-        flexDirection: "column" as const,
-        gap:           S[1],
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ fontSize: 16 }}>{icon}</span>
-        <span style={{
-          width: 8, height: 8, borderRadius: "50%",
-          background: variantColor, flexShrink: 0,
-        }} />
-      </div>
-      {value !== null ? (
-        <>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xl"], fontWeight: T.wt.bold, color: C.titleDeep, lineHeight: 1.15 }}>
-            {value}
-          </div>
-          {sub && (
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>
-              {sub}
-            </div>
-          )}
-        </>
-      ) : (
-        <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, lineHeight: 1.55, marginTop: S[1] }}>
-          {noDataHint}
-        </div>
-      )}
-      <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginTop: "auto", paddingTop: S[2] }}>
-        {label}
-      </div>
-    </button>
-  );
-}
-
-// ── Drawer section wrapper ─────────────────────────────────────────────────────
-
-function DrawerSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div style={{ marginBottom: S[5] }}>
-      <div style={{
-        fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
-        color: C.inkFaint, textTransform: "uppercase" as const,
-        letterSpacing: "0.09em", marginBottom: S[3],
-      }}>
-        {title}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-// ── Action button (drawer) ─────────────────────────────────────────────────────
-
-function DrawerAction({
-  label, intent, executing, result, onExecute,
-}: {
-  label:     string;
-  intent:    string;
-  executing: string | null;
-  result?:   { status: string; message: string };
-  onExecute: (intent: string) => void;
-}) {
-  const isRunning = executing === intent;
-  return (
-    <div style={{ marginBottom: S[2] }}>
-      <button
-        onClick={() => onExecute(intent)}
-        disabled={!!executing}
-        style={{
-          display:      "block",
-          width:        "100%",
-          textAlign:    "left" as const,
-          fontFamily:   T.mono,
-          fontSize:     T.sz.sm,
-          color:        isRunning ? C.inkFaint : C.blueDark,
-          background:   C.blueLight,
-          border:       `1px solid ${C.blueBorder}`,
-          borderRadius: R.lg,
-          padding:      `${S[2]}px ${S[3]}px`,
-          cursor:       executing ? "default" : "pointer",
-          opacity:      executing && !isRunning ? 0.5 : 1,
-        }}
-      >
-        {isRunning ? "Enviando a Sofía…" : `→ ${label}`}
-      </button>
-      {result && (
-        <div style={{
-          fontFamily: T.mono, fontSize: T.sz.xs, marginTop: S[1],
-          color: result.status === "ok" ? C.green : C.red,
-        }}>
-          {result.message}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export function PromocionesClient({
@@ -296,8 +158,7 @@ export function PromocionesClient({
   const [executingId, setExecutingId] = useState<string | null>(null);
   const [results,     setResults]     = useState<Record<string, { status: string; message: string }>>({});
 
-  const hasData    = promotions !== null;
-  const isCompact  = connected && hasData;
+  const hasData = promotions !== null;
 
   // ── Computed indicators ──────────────────────────────────────────────────
   const activeList    = promotions?.active    ?? [];
@@ -315,7 +176,7 @@ export function PromocionesClient({
   const codesActivos = activeList.filter(p => p.code !== null);
   const codesCount   = codesActivos.length;
 
-  const pctPromos   = activeList.filter(p => p.valueType === "percentage");
+  const pctPromos    = activeList.filter(p => p.valueType === "percentage");
   const avgDescuento = pctPromos.length > 0
     ? pctPromos.reduce((acc, p) => acc + p.value, 0) / pctPromos.length
     : null;
@@ -337,7 +198,7 @@ export function PromocionesClient({
       setResults(prev => ({
         ...prev,
         [intent]: data.ok
-          ? { status: "ok",    message: data.message ?? "Solicitud enviada a Sofía" }
+          ? { status: "ok",    message: data.message ?? "Solicitud enviada" }
           : { status: "error", message: data.error   ?? "Error al procesar" },
       }));
     } catch {
@@ -391,7 +252,7 @@ export function PromocionesClient({
       case "agentik":
         return {
           title:    "Promociones de Agentik",
-          subtitle: `${agentikCount} gestionada${agentikCount !== 1 ? "s" : ""} por Sofía`,
+          subtitle: `${agentikCount} gestionada${agentikCount !== 1 ? "s" : ""} por Agentik`,
           severity: "info",
         };
       case "alertas":
@@ -407,97 +268,19 @@ export function PromocionesClient({
 
   const cfg = drawerConfig(openDrawer);
 
-  // ── Sofía messages ───────────────────────────────────────────────────────
-  const sofiaText = !connected
-    ? "Analizaré el comportamiento de tus promociones cuando la tienda esté conectada. Detectaré oportunidades para aumentar las ventas y te avisaré cuando una campaña necesite atención."
-    : !hasData
-    ? "Estoy sincronizando los datos de tus promociones. En breve mostraré el estado de tus descuentos activos y campañas."
-    : activeCount === 0
-    ? "No hay promociones activas en este momento. Si deseas impulsar las ventas, puedo ayudarte a crear una campaña de descuentos."
-    : `Tienes ${activeCount} promoción${activeCount !== 1 ? "es" : ""} activa${activeCount !== 1 ? "s" : ""}${porVencer.length > 0 ? ` y ${porVencer.length} próxima${porVencer.length !== 1 ? "s" : ""} a vencer.` : "."} ${avgDescuento !== null ? `El descuento promedio es del ${fmtPct(avgDescuento)}.` : ""}`;
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[4], paddingTop: S[4] }}>
 
-      {/* ── 1. Sofía banner ─────────────────────────────────────────────── */}
-      <MSAgentSignal
-        text={sofiaText}
-        agentLabel="Sofía · Comercio"
-        variant={connected && activeCount > 0 ? "positive" : "dark"}
+      {/* ── 1. Activation timeline ───────────────────────────────────────── */}
+      <ShopifyActivationTimeline
+        steps={ACTIVATION_STEPS}
+        connected={connected}
+        orgSlug={orgSlug}
+        compactText={`Tienda activa · ${shopDomain || "Shopify"} · Promociones sincronizadas`}
+        criticalCount={alertCount}
       />
 
-      {/* ── 2. Activation timeline ──────────────────────────────────────── */}
-      {isCompact ? (
-        <div style={{
-          background: C.greenLight, border: `1px solid ${C.greenBorder}`,
-          borderRadius: R.xl, padding: `${S[2]}px ${S[4]}px`,
-          fontFamily: T.mono, fontSize: T.sz.xs, color: C.green,
-          display: "flex", alignItems: "center", gap: S[2],
-        }}>
-          <span>✓</span>
-          <span>Tienda activa · Promociones sincronizadas · Sofía monitoreando campañas</span>
-        </div>
-      ) : (
-        <div style={{
-          border: `1px solid ${C.line}`, borderRadius: R.xl,
-          padding: `${S[4]}px ${S[5]}px`, background: C.white, boxShadow: E.xs,
-        }}>
-          <div style={{
-            fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
-            color: C.inkFaint, textTransform: "uppercase" as const,
-            letterSpacing: "0.09em", marginBottom: S[3],
-          }}>
-            Pasos de activación
-          </div>
-          <div style={{ display: "flex", gap: S[2], alignItems: "center", flexWrap: "wrap" as const }}>
-            {STEPS.map((step, i) => {
-              const done = connected && i === 0;
-              return (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: S[2] }}>
-                  <div style={{
-                    width: 22, height: 22, borderRadius: "50%",
-                    background: done ? C.blueDark : C.surfaceAlt,
-                    border: `1px solid ${done ? C.blueDark : C.line}`,
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    flexShrink: 0,
-                  }}>
-                    {done
-                      ? <span style={{ color: C.white, fontSize: 9, fontWeight: T.wt.bold }}>✓</span>
-                      : <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>{i + 1}</span>
-                    }
-                  </div>
-                  <span style={{
-                    fontFamily: T.mono, fontSize: T.sz.xs,
-                    color: done ? C.ink : i === 1 && !connected ? C.inkFaint : i === 0 && !connected ? C.blueDark : C.inkFaint,
-                    fontWeight: i === 0 && !connected ? T.wt.semibold : T.wt.normal,
-                  }}>
-                    {step.label}
-                  </span>
-                  {i < STEPS.length - 1 && (
-                    <span style={{ color: C.lineSubtle, fontFamily: T.mono, fontSize: T.sz.xs }}>→</span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          {!connected && (
-            <a
-              href={`/${orgSlug}/agentik/marketing-studio/shopify`}
-              style={{
-                display: "inline-block", marginTop: S[3],
-                fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold,
-                color: C.white, background: C.blueDark,
-                border: `1px solid ${C.blueDark}`, borderRadius: R.lg,
-                padding: `${S[2]}px ${S[4]}px`, textDecoration: "none",
-              }}
-            >
-              Conectar tienda Shopify
-            </a>
-          )}
-        </div>
-      )}
-
-      {/* ── 3. Protagonist: active promotions ───────────────────────────── */}
+      {/* ── 2. Protagonist: active promotions ───────────────────────────── */}
       <div style={{
         border:       `1px solid ${C.line}`,
         borderTop:    `3px solid ${C.blueDark}`,
@@ -540,30 +323,30 @@ export function PromocionesClient({
                 padding: `${S[6]}px ${S[4]}px`, textAlign: "center",
                 fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid,
               }}>
-                Sin promociones activas. Sofía puede ayudarte a crear una campaña.
+                Sin promociones activas. Puedes crear una campaña desde el módulo de descuentos.
               </div>
             )
-            : [1, 2, 3].map(i => <PlaceholderRow key={i} />)
+            : [1, 2, 3].map(i => <ShopifyPlaceholderRow key={i} />)
           }
         </div>
       </div>
 
-      {/* ── 4. KPI grid ─────────────────────────────────────────────────── */}
+      {/* ── 3. KPI grid ─────────────────────────────────────────────────── */}
       <div style={{
         display: "grid",
         gridTemplateColumns: "repeat(4, 1fr)",
         gap: S[3],
       }}>
-        <KpiCard
+        <ShopifyKpiCard
           icon="🏷️"
           label="Promociones activas"
           value={hasData ? String(activeCount) : null}
           sub={hasData ? `${scheduledCount} programada${scheduledCount !== 1 ? "s" : ""}` : null}
-          noDataHint="Mostrará cuántas promociones están vigentes ahora mismo."
+          noDataHint="Promociones con descuentos vigentes en la tienda ahora mismo."
           variant={hasData ? (activeCount > 0 ? "ok" : "neutral") : "neutral"}
           onClick={() => setOpenDrawer("activas")}
         />
-        <KpiCard
+        <ShopifyKpiCard
           icon="📅"
           label="Campañas programadas"
           value={hasData ? String(scheduledCount) : null}
@@ -572,16 +355,16 @@ export function PromocionesClient({
           variant={hasData ? (scheduledCount > 0 ? "ok" : "neutral") : "neutral"}
           onClick={() => setOpenDrawer("programadas")}
         />
-        <KpiCard
+        <ShopifyKpiCard
           icon="⏰"
           label="Próximas a vencer"
           value={hasData ? String(porVencer.length) : null}
           sub={hasData ? "vencen en 7 días" : null}
-          noDataHint="Sofía te alertará cuando una promoción esté por terminar."
+          noDataHint="Promociones activas que expirarán en los próximos 7 días."
           variant={hasData ? (porVencer.length > 0 ? "warning" : "neutral") : "neutral"}
           onClick={() => setOpenDrawer("por_vencer")}
         />
-        <KpiCard
+        <ShopifyKpiCard
           icon="🔑"
           label="Códigos activos"
           value={hasData ? String(codesCount) : null}
@@ -590,45 +373,45 @@ export function PromocionesClient({
           variant={hasData ? (codesCount > 0 ? "ok" : "neutral") : "neutral"}
           onClick={() => setOpenDrawer("codigos")}
         />
-        <KpiCard
+        <ShopifyKpiCard
           icon="📉"
           label="Descuento promedio"
           value={hasData && avgDescuento !== null ? fmtPct(avgDescuento) : hasData ? "—" : null}
           sub={hasData ? "en promociones porcentuales" : null}
-          noDataHint="Promedio de descuento aplicado en tus promociones activas."
+          noDataHint="Promedio de descuento aplicado en las promociones porcentuales activas."
           variant={hasData && avgDescuento !== null ? (avgDescuento > 40 ? "warning" : "ok") : "neutral"}
           onClick={() => setOpenDrawer("descuento_prom")}
         />
-        <KpiCard
+        <ShopifyKpiCard
           icon="🎯"
           label="Usos totales"
           value={hasData ? fmtNum(totalUsos) : null}
           sub={hasData ? "usos acumulados" : null}
-          noDataHint="Total de veces que se han utilizado tus descuentos."
+          noDataHint="Total de veces que se han utilizado descuentos en la tienda."
           variant={hasData ? (totalUsos > 0 ? "ok" : "neutral") : "neutral"}
           onClick={() => setOpenDrawer("uso_total")}
         />
-        <KpiCard
+        <ShopifyKpiCard
           icon="🤖"
-          label="Gestionadas por Sofía"
+          label="Gestionadas por Agentik"
           value={hasData ? String(agentikCount) : null}
           sub={hasData ? "creadas por Agentik" : null}
-          noDataHint="Promociones que Sofía gestiona automáticamente por ti."
+          noDataHint="Promociones creadas y gestionadas automáticamente por Agentik."
           variant={hasData ? (agentikCount > 0 ? "ok" : "neutral") : "neutral"}
           onClick={() => setOpenDrawer("agentik")}
         />
-        <KpiCard
+        <ShopifyKpiCard
           icon="🔔"
           label="Alertas importantes"
           value={hasData ? String(alertCount) : null}
           sub={hasData ? "requieren revisión" : null}
-          noDataHint="Sofía te alertará sobre promociones desactivadas o vencidas."
+          noDataHint="Promociones desactivadas o próximas a vencer que requieren atención."
           variant={hasData ? (alertCount > 0 ? "warning" : "neutral") : "neutral"}
           onClick={() => setOpenDrawer("alertas")}
         />
       </div>
 
-      {/* ── 5. Scheduled block ──────────────────────────────────────────── */}
+      {/* ── 4. Scheduled block ──────────────────────────────────────────── */}
       {(scheduledList.length > 0 || !hasData) && (
         <div style={{
           border: `1px solid ${C.line}`, borderRadius: R.xl,
@@ -658,73 +441,14 @@ export function PromocionesClient({
                   padding: `${S[4]}px`, textAlign: "center",
                   fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid,
                 }}>
-                  Sin campañas programadas. Puedes planificar descuentos futuros con Sofía.
+                  Sin campañas programadas. Puedes planificar descuentos futuros desde esta sección.
                 </div>
               )
-              : [1, 2].map(i => <PlaceholderRow key={i} />)
+              : [1, 2].map(i => <ShopifyPlaceholderRow key={i} />)
             }
           </div>
         </div>
       )}
-
-      {/* ── 6. Sofía signals ────────────────────────────────────────────── */}
-      <div style={{
-        border: `1px solid ${C.line}`, borderRadius: R.xl,
-        padding: `${S[5]}px`, background: C.white, boxShadow: E.xs,
-      }}>
-        <div style={{
-          fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
-          color: C.inkFaint, textTransform: "uppercase" as const,
-          letterSpacing: "0.09em", marginBottom: S[4],
-        }}>
-          Recomendaciones de Sofía
-        </div>
-        <div style={{ display: "flex", flexDirection: "column" as const, gap: S[3] }}>
-          {!connected && (
-            <MSAgentSignal
-              text="Conecta tu tienda y analizaré tu historial de descuentos para recomendarte la estrategia óptima."
-              agentLabel="Sofía · Comercio"
-              variant="dark"
-            />
-          )}
-          {connected && !hasData && (
-            <MSAgentSignal
-              text="Estoy cargando los datos de tus promociones. En breve tendré recomendaciones personalizadas."
-              agentLabel="Sofía · Comercio"
-              variant="dark"
-            />
-          )}
-          {connected && hasData && porVencer.length > 0 && (
-            <MSAgentSignal
-              text={`Tienes ${porVencer.length} promoción${porVencer.length !== 1 ? "es" : ""} que vence${porVencer.length !== 1 ? "n" : ""} en los próximos 7 días. Considera renovarlas o programar una campaña de continuidad.`}
-              agentLabel="Sofía · Comercio"
-              variant="positive"
-              action={{ label: "Revisar vencimientos", href: "#" }}
-            />
-          )}
-          {connected && hasData && activeCount === 0 && (
-            <MSAgentSignal
-              text="No hay promociones activas. Impulsar ventas con un descuento del 10-15% puede aumentar la conversión en un período sin pico estacional."
-              agentLabel="Sofía · Comercio"
-              variant="dark"
-            />
-          )}
-          {connected && hasData && activeCount > 0 && avgDescuento !== null && avgDescuento > 40 && (
-            <MSAgentSignal
-              text={`El descuento promedio de ${fmtPct(avgDescuento)} es elevado. Descuentos frecuentes por encima del 40% pueden erosionar el margen percibido.`}
-              agentLabel="Sofía · Comercio"
-              variant="positive"
-            />
-          )}
-          {connected && hasData && agentikCount === 0 && (
-            <MSAgentSignal
-              text="Ninguna promoción está siendo gestionada por Sofía. Puedo ayudarte a automatizar campañas recurrentes."
-              agentLabel="Sofía · Comercio"
-              variant="dark"
-            />
-          )}
-        </div>
-      </div>
 
       {/* ── Drawer ──────────────────────────────────────────────────────── */}
       <OperationalSideDrawer
@@ -735,7 +459,7 @@ export function PromocionesClient({
         severity={cfg.severity}
       >
         {/* Section 1: Resumen */}
-        <DrawerSection title="Resumen">
+        <ShopifyDrawerSection title="Resumen">
           {openDrawer === "activas" && (
             <p style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.ink, lineHeight: 1.7, margin: 0 }}>
               {hasData
@@ -804,27 +528,44 @@ export function PromocionesClient({
                 : openDrawer === "uso_total"
                 ? `${fmtNum(totalUsos)} usos registrados entre promociones activas y finalizadas.`
                 : openDrawer === "agentik"
-                ? `${agentikCount} promoción${agentikCount !== 1 ? "es" : ""} gestionada${agentikCount !== 1 ? "s" : ""} por Sofía. El resto fueron creadas manualmente.`
+                ? `${agentikCount} promoción${agentikCount !== 1 ? "es" : ""} gestionada${agentikCount !== 1 ? "s" : ""} por Agentik. El resto fueron creadas manualmente.`
                 : `${alertCount} elemento${alertCount !== 1 ? "s" : ""} requieren revisión: ${disabledList.length} desactivada${disabledList.length !== 1 ? "s" : ""} y ${porVencer.length} próxima${porVencer.length !== 1 ? "s" : ""} a vencer.`
               }
             </p>
           )}
-        </DrawerSection>
+        </ShopifyDrawerSection>
 
         {/* Section 2: Evolución */}
-        <DrawerSection title="Evolución">
+        <ShopifyDrawerSection title="Evolución">
           <p style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid, lineHeight: 1.7, margin: 0 }}>
             {!hasData
               ? "El historial de evolución estará disponible al conectar la tienda."
               : "El análisis de evolución comparará el período actual con las últimas 4 semanas para detectar tendencias en el uso de descuentos."}
           </p>
-        </DrawerSection>
+        </ShopifyDrawerSection>
 
-        {/* Section 3: Análisis de Sofía */}
-        <DrawerSection title="Análisis de Sofía">
+        {/* Section 3: Datos relevantes */}
+        <ShopifyDrawerSection title="Datos relevantes">
+          <div style={{ display: "flex", flexDirection: "column" as const, gap: S[2] }}>
+            {[
+              { label: "Activas",      value: hasData ? String(activeCount)    : "–" },
+              { label: "Programadas",  value: hasData ? String(scheduledCount) : "–" },
+              { label: "Por vencer",   value: hasData ? String(porVencer.length) : "–" },
+              { label: "Usos totales", value: hasData ? fmtNum(totalUsos)      : "–" },
+            ].map(({ label, value }) => (
+              <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>{label}</span>
+                <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.ink, fontWeight: T.wt.medium }}>{value}</span>
+              </div>
+            ))}
+          </div>
+        </ShopifyDrawerSection>
+
+        {/* Section 4: Análisis de Sofía */}
+        <ShopifyDrawerSection title="Análisis de Sofía">
           <p style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.ink, lineHeight: 1.7, margin: 0 }}>
             {!connected
-              ? "Conecta la tienda y analizaré el comportamiento de tus descuentos para identificar oportunidades de optimización."
+              ? "Conecta la tienda y Sofía analizará el comportamiento de tus descuentos para identificar oportunidades de optimización."
               : !hasData
               ? "Cargando análisis…"
               : openDrawer === "activas" && activeCount === 0
@@ -835,49 +576,49 @@ export function PromocionesClient({
               ? "Un descuento promedio superior al 40% puede afectar la percepción de valor de tu marca. Te recomiendo segmentar los descuentos elevados a clientes específicos."
               : openDrawer === "alertas" && alertCount > 0
               ? "Hay elementos que requieren atención. Revisa las promociones desactivadas y considera si alguna debería estar activa actualmente."
-              : "Todo está en orden en este indicador. Seguiré monitoreando y te avisaré si hay cambios relevantes."
+              : "Todo está en orden en este indicador. Sofía seguirá monitoreando y te avisará si hay cambios relevantes."
             }
           </p>
-        </DrawerSection>
+        </ShopifyDrawerSection>
 
-        {/* Section 4: Acciones sugeridas */}
-        <DrawerSection title="Acciones sugeridas">
-          <DrawerAction
+        {/* Section 5: Acciones sugeridas */}
+        <ShopifyDrawerSection title="Acciones sugeridas">
+          <ShopifyDrawerAction
             label="Crear nuevo descuento"
             intent="promotion.create"
             executing={executingId}
             result={results["promotion.create"]}
             onExecute={executeAction}
           />
-          <DrawerAction
+          <ShopifyDrawerAction
             label="Generar códigos de descuento"
             intent="promotion.generate_codes"
             executing={executingId}
             result={results["promotion.generate_codes"]}
             onExecute={executeAction}
           />
-          <DrawerAction
+          <ShopifyDrawerAction
             label="Duplicar campaña activa"
             intent="promotion.duplicate"
             executing={executingId}
             result={results["promotion.duplicate"]}
             onExecute={executeAction}
           />
-          <DrawerAction
+          <ShopifyDrawerAction
             label="Programar campaña futura"
             intent="promotion.schedule"
             executing={executingId}
             result={results["promotion.schedule"]}
             onExecute={executeAction}
           />
-          <DrawerAction
+          <ShopifyDrawerAction
             label="Analizar impacto de descuentos"
             intent="promotion.analyze_impact"
             executing={executingId}
             result={results["promotion.analyze_impact"]}
             onExecute={executeAction}
           />
-        </DrawerSection>
+        </ShopifyDrawerSection>
       </OperationalSideDrawer>
     </div>
   );

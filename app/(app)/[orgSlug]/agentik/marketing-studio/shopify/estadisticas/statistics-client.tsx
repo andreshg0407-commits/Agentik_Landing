@@ -514,7 +514,6 @@ function ProtagonistCard({
   chartId,
   noData,
   onOpenDrawer,
-  copilotHint,
 }: {
   icon:         string;
   title:        string;
@@ -525,7 +524,6 @@ function ProtagonistCard({
   chartId:      string;
   noData:       boolean;
   onOpenDrawer: () => void;
-  copilotHint:  string;
 }) {
   return (
     <div style={{
@@ -597,22 +595,6 @@ function ProtagonistCard({
         )}
       </div>
 
-      {/* Sofía hint */}
-      <div style={{
-        display:      "flex",
-        alignItems:   "flex-start",
-        gap:          S[2],
-        padding:      `${S[2]}px ${S[3]}px`,
-        background:   C.blueLight,
-        border:       `1px solid ${C.blueBorder}`,
-        borderRadius: R.lg,
-      }}>
-        <span style={{ fontSize: 10, color: C.blue, marginTop: 1, flexShrink: 0 }}>◉</span>
-        <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight, lineHeight: 1.6 }}>
-          {copilotHint}
-        </span>
-      </div>
-
       {/* Open drawer */}
       <button
         onClick={onOpenDrawer}
@@ -658,13 +640,6 @@ function SalesBlock({
       chartId="sales"
       noData={noData}
       onOpenDrawer={onOpenDrawer}
-      copilotHint={
-        noData
-          ? "Sofía analizará las ventas diarias, detectará caídas y te avisará cuando las tendencias cambien."
-          : rev!.direction === "down"
-          ? "Las ventas están cayendo respecto al período anterior. Sofía puede analizar las causas y proponer acciones."
-          : "Las ventas muestran un comportamiento positivo. Sofía puede identificar qué está impulsando el crecimiento."
-      }
     />
   );
 }
@@ -692,13 +667,6 @@ function OrdersBlock({
       chartId="orders"
       noData={noData}
       onOpenDrawer={onOpenDrawer}
-      copilotHint={
-        noData
-          ? "Sofía monitoreará el volumen de pedidos, detectará incidencias y sugerirá mejoras en el proceso."
-          : overview!.operations.openIncidents > 0
-          ? `${overview!.operations.openIncidents} incidencia${overview!.operations.openIncidents !== 1 ? "s" : ""} abierta${overview!.operations.openIncidents !== 1 ? "s" : ""}. Sofía puede analizar y proponer resolución.`
-          : "Sin incidencias activas. El flujo de pedidos opera con normalidad."
-      }
     />
   );
 }
@@ -720,7 +688,7 @@ const KPI_DEFS: KpiCardDef[] = [
     id:         "aov",
     icon:       "🎯",
     label:      "Promedio por pedido",
-    noDataHint: "Sofía calculará cuánto gasta en promedio cada cliente por compra.",
+    noDataHint: "Gasto promedio por pedido completado en la tienda.",
     value:      o => fmtCurrency(o.sales.averageOrderValue, o.sales.currency || "COP"),
     sub:        o => trendSub(o.trends.aov.pct, o.trends.aov.direction),
     variant:    o => o.trends.aov.direction === "up" ? "ok" : "neutral",
@@ -729,7 +697,7 @@ const KPI_DEFS: KpiCardDef[] = [
     id:         "conversion",
     icon:       "🔄",
     label:      "Conversión de ventas",
-    noDataHint: "Sofía identificará cuántos visitantes terminan comprando.",
+    noDataHint: "Porcentaje de visitantes que realizan una compra.",
     value:      o => o.funnel?.overallConversion != null ? `${(o.funnel.overallConversion * 100).toFixed(1)}%` : "—",
     sub:        o => o.funnel?.addToCart != null ? `${fmtNumber(o.funnel.addToCart)} agregaron al carrito` : "Sin datos de embudo",
     variant:    () => "neutral",
@@ -738,7 +706,7 @@ const KPI_DEFS: KpiCardDef[] = [
     id:         "customers_new",
     icon:       "👤",
     label:      "Clientes nuevos",
-    noDataHint: "Sofía medirá cuántos compradores nuevos llegan cada período.",
+    noDataHint: "Compradores que realizan su primera compra en la tienda.",
     value:      o => fmtNumber(o.sales.newCustomers),
     sub:        o => `${fmtNumber(o.sales.returningCustomers)} regresaron a comprar`,
     variant:    o => o.sales.newCustomers > 0 ? "ok" : "neutral",
@@ -747,7 +715,7 @@ const KPI_DEFS: KpiCardDef[] = [
     id:         "customers_returning",
     icon:       "🔁",
     label:      "Clientes recurrentes",
-    noDataHint: "Sofía te dirá qué tan seguido regresan a comprar tus clientes.",
+    noDataHint: "Proporción de clientes que regresan a comprar más de una vez.",
     value:      o => o.sales.newCustomers > 0
       ? `${((o.sales.returningCustomers / (o.sales.newCustomers + o.sales.returningCustomers)) * 100).toFixed(0)}%`
       : "—",
@@ -758,7 +726,7 @@ const KPI_DEFS: KpiCardDef[] = [
     id:         "promotions",
     icon:       "🏷",
     label:      "Descuentos activos",
-    noDataHint: "Sofía mostrará qué descuentos están vigentes y cómo impactan las ventas.",
+    noDataHint: "Descuentos y campañas vigentes en la tienda.",
     value:      o => fmtNumber(o.promotions.active),
     sub:        o => `${fmtNumber(o.promotions.scheduled)} programados`,
     variant:    o => o.promotions.active > 0 ? "ok" : "neutral",
@@ -767,7 +735,7 @@ const KPI_DEFS: KpiCardDef[] = [
     id:         "catalog",
     icon:       "📋",
     label:      "Pendientes de publicar",
-    noDataHint: "Sofía identificará los productos listos para publicar en Shopify.",
+    noDataHint: "Productos aprobados en catálogo pendientes de publicar.",
     value:      o => fmtNumber(o.catalog.pending),
     sub:        o => `de ${fmtNumber(o.catalog.totalProducts)} en catálogo`,
     variant:    o => o.catalog.pending > 0 ? "warning" : "ok",
@@ -776,7 +744,7 @@ const KPI_DEFS: KpiCardDef[] = [
     id:         "seo",
     icon:       "✍",
     label:      "Productos sin ventas",
-    noDataHint: "Sofía detectará productos publicados que no han tenido ninguna venta.",
+    noDataHint: "Productos publicados en Shopify sin ventas registradas.",
     value:      o => fmtNumber(o.catalog.neverSold),
     sub:        () => "publicados sin ninguna venta",
     variant:    o => o.catalog.neverSold > 0 ? "warning" : "ok",
@@ -785,7 +753,7 @@ const KPI_DEFS: KpiCardDef[] = [
     id:         "alerts",
     icon:       "⚡",
     label:      "Alertas importantes",
-    noDataHint: "Sofía te avisará cuando algo en tu tienda requiera atención inmediata.",
+    noDataHint: "Alertas activas sobre el estado operativo de la tienda.",
     value:      o => fmtNumber(o.operations.criticalAlerts),
     sub:        o => `${fmtNumber(o.insights.length)} señales detectadas`,
     variant:    o => o.operations.criticalAlerts > 0 ? "critical" : o.insights.length > 0 ? "warning" : "ok",
@@ -1343,69 +1311,39 @@ function BusinessSignals({
 
       {!overview ? (
         <div style={{
-          padding:      `${S[5]}px`,
-          background:   "linear-gradient(135deg, #001E4A 0%, #003A8A 100%)",
-          borderRadius: R.xl,
-          display:      "flex",
-          gap:          S[3],
+          border: `1px dashed ${C.line}`, borderRadius: R.xl,
+          padding: `${S[4]}px`, opacity: 0.55,
+          fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkFaint,
+          textAlign: "center" as const,
         }}>
-          <div style={{
-            width: 8, height: 8, borderRadius: "50%",
-            background: "rgba(191,219,254,.5)", flexShrink: 0, marginTop: 4,
-          }} />
-          <div>
-            <div style={{
-              fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold,
-              color: "rgba(255,255,255,.85)", marginBottom: S[2],
-            }}>
-              Sofía está esperando los datos de tu tienda
-            </div>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: "rgba(255,255,255,.50)", lineHeight: 1.8 }}>
-              Cuando conectes Shopify, voy a monitorear tus ventas en tiempo real. Detectaré si
-              están cayendo, qué productos no tienen movimiento, qué descuentos están funcionando
-              y qué oportunidades puedes aprovechar ahora mismo. Cada señal que encuentre
-              vendrá con una recomendación accionable lista para ejecutar.
-            </div>
-          </div>
+          Las señales del negocio aparecerán al conectar la tienda.
         </div>
       ) : insights.length === 0 ? (
-        <MSAgentSignal
-          variant="positive"
-          text="No hay señales de alerta para este período."
-          sub="Todos los indicadores están dentro de rangos normales. Puedo buscar oportunidades de optimización si lo necesitas."
-          agentLabel="Sofía · Comercio"
-        />
+        <div style={{
+          border: `1px solid ${C.greenBorder}`, borderRadius: R.xl,
+          padding: `${S[3]}px ${S[4]}px`, background: C.greenLight,
+          fontFamily: T.mono, fontSize: T.sz.sm, color: C.green,
+        }}>
+          Sin señales activas para este período. Todos los indicadores dentro de rangos normales.
+        </div>
       ) : (
-        <>
-          <MSAgentSignal
-            variant="dark"
-            text={
-              insights.some(i => i.severity === "critical")
-                ? `${insights.filter(i => i.severity === "critical").length} señal(es) crítica(s) que requieren atención inmediata.`
-                : `${insights.length} oportunidad(es) detectada(s) en este período.`
-            }
-            sub="Análisis basado en reglas de negocio · Sin IA generativa"
-            agentLabel="Sofía · Comercio"
-            style={{ marginBottom: S[4] }}
-          />
-          <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
-            {insights.map(insight => (
-              <InsightCard
-                key={insight.id}
-                insight={insight}
-                isOpen={openId === insight.id}
-                onToggle={() => {
-                  const next = openId === insight.id ? null : insight.id;
-                  if (next) trackEvent("senal_abierta", { id: insight.id, severidad: insight.severity });
-                  setOpenId(next);
-                }}
-                executing={executingId === insight.id}
-                result={results[insight.id] ?? null}
-                onExecute={onExecute}
-              />
-            ))}
-          </div>
-        </>
+        <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
+          {insights.map(insight => (
+            <InsightCard
+              key={insight.id}
+              insight={insight}
+              isOpen={openId === insight.id}
+              onToggle={() => {
+                const next = openId === insight.id ? null : insight.id;
+                if (next) trackEvent("senal_abierta", { id: insight.id, severidad: insight.severity });
+                setOpenId(next);
+              }}
+              executing={executingId === insight.id}
+              result={results[insight.id] ?? null}
+              onExecute={onExecute}
+            />
+          ))}
+        </div>
       )}
     </div>
   );
