@@ -3,7 +3,7 @@
 /**
  * statistics-client.tsx
  *
- * SHOPIFY-STATISTICS-UI-01 + SHOPIFY-STATISTICS-UX-02
+ * SHOPIFY-STATISTICS-UI-01 + SHOPIFY-STATISTICS-UX-02 + SHOPIFY-STATISTICS-UX-POLISH-01
  * Shopify Commercial Intelligence Console — Client Component
  *
  * Architecture:
@@ -11,16 +11,17 @@
  *   - Placeholders replace metrics when overview is null — never blank screens
  *   - All actions route through Copilot → Intent Resolver → Policy → Runtime
  *   - Zero business logic: computation done server-side
- *   - OperationalSideDrawer used for all detail panels (4 sections each)
+ *   - OperationalSideDrawer for all detail panels (4 sections each)
  *   - No accessToken in props or state
+ *   - Language: natural business Spanish for Latin America
  *
  * Blocks:
  *   1. HeroBand        — period selector + connection CTA (if not connected)
- *   2. ActivationTimeline — 5-step horizontal progress
- *   3. SalesBlock      — protagonist: revenue KPI + sparkline + drawer
- *   4. OrdersBlock     — protagonist: orders KPI + sparkline + drawer
- *   5. KpiGrid         — 8 compact cards (each with drawer)
- *   6. CopilotInsights — deterministic signal cards + recommendations
+ *   2. ActivationTimeline — compact when connected, expanded when onboarding
+ *   3. SalesBlock      — protagonist: revenue, sparkline, Sofía hint, drawer
+ *   4. OrdersBlock     — protagonist: orders, sparkline, Sofía hint, drawer
+ *   5. KpiGrid         — 8 complementary indicator tiles (each with drawer)
+ *   6. BusinessSignals — Sofía's contextual analysis and recommendations
  *   7. ExecutionHistory— recent Copilot executions
  */
 
@@ -80,8 +81,8 @@ function fmtNumber(n: number): string {
 }
 
 function trendSub(pct: number, dir: TrendDirection): string {
-  if (dir === "up")   return `↑ ${Math.abs(pct).toFixed(1)}% vs anterior`;
-  if (dir === "down") return `↓ ${Math.abs(pct).toFixed(1)}% vs anterior`;
+  if (dir === "up")   return `↑ ${Math.abs(pct).toFixed(1)}% vs período anterior`;
+  if (dir === "down") return `↓ ${Math.abs(pct).toFixed(1)}% vs período anterior`;
   return "→ sin variación";
 }
 
@@ -102,7 +103,7 @@ function severityColors(s: InsightSeverity) {
 }
 
 function severityLabel(s: InsightSeverity): string {
-  return s === "critical" ? "CRÍTICO" : s === "warning" ? "AVISO" : "INFO";
+  return s === "critical" ? "CRÍTICO" : s === "warning" ? "ATENCIÓN" : "INFORMACIÓN";
 }
 
 function executionStatusColor(status: string): string {
@@ -115,9 +116,12 @@ function executionStatusColor(status: string): string {
 
 function executionStatusLabel(status: string): string {
   const m: Record<string, string> = {
-    completed: "Completado", failed: "Fallido",
-    awaiting_approval: "Pendiente aprobación", running: "En ejecución",
-    blocked: "Bloqueado", cancelled: "Cancelado",
+    completed:          "Completado",
+    failed:             "Fallido",
+    awaiting_approval:  "Pendiente de aprobación",
+    running:            "En ejecución",
+    blocked:            "Bloqueado",
+    cancelled:          "Cancelado",
   };
   return m[status] ?? status;
 }
@@ -129,7 +133,7 @@ function fmtDate(iso: string): string {
 }
 
 function trackEvent(name: string, data?: Record<string, unknown>) {
-  if (process.env.NODE_ENV !== "production") console.log(`[stats:${name}]`, data ?? "");
+  if (process.env.NODE_ENV !== "production") console.log(`[comercio:${name}]`, data ?? "");
 }
 
 // ── Placeholder primitive ─────────────────────────────────────────────────────
@@ -209,7 +213,7 @@ function ActionButton({
       }}
     >
       <span style={{ fontSize: 12, opacity: 0.7 }}>→</span>
-      {executing ? "Enviando a Copilot…" : label}
+      {executing ? "Enviando a Sofía…" : label}
     </button>
   );
 }
@@ -244,7 +248,7 @@ function TrendSparkline({
   const x = (i: number) => (pad + (i / (pts.length - 1)) * W).toFixed(1);
   const y = (v: number) => (pad + (1 - v) * H).toFixed(1);
 
-  const d = pts.map((v, i) => `${i === 0 ? "M" : "L"} ${x(i)} ${y(v)}`).join(" ");
+  const d     = pts.map((v, i) => `${i === 0 ? "M" : "L"} ${x(i)} ${y(v)}`).join(" ");
   const areaD = `${d} L ${x(pts.length - 1)} ${(height - pad).toFixed(1)} L ${x(0)} ${(height - pad).toFixed(1)} Z`;
 
   return (
@@ -264,10 +268,10 @@ function TrendSparkline({
 // ── Block 1: HeroBand ─────────────────────────────────────────────────────────
 
 const PERIODS: { id: ActivePeriod; label: string }[] = [
-  { id: "today", label: "Hoy"        },
-  { id: "7d",    label: "7 días"     },
-  { id: "30d",   label: "30 días"    },
-  { id: "custom",label: "Personalizado" },
+  { id: "today",  label: "Hoy"           },
+  { id: "7d",     label: "7 días"        },
+  { id: "30d",    label: "30 días"       },
+  { id: "custom", label: "Personalizado" },
 ];
 
 function HeroBand({
@@ -312,7 +316,6 @@ function HeroBand({
               borderRadius: R.md,
               padding:      `${S[1]}px ${S[3]}px`,
               cursor:       "pointer",
-              transition:   "background 0.15s, color 0.15s",
               whiteSpace:   "nowrap",
             }}
           >
@@ -323,7 +326,7 @@ function HeroBand({
 
       <div style={{ flex: 1 }} />
 
-      {/* Connection CTA */}
+      {/* Connection CTA — only when not connected */}
       {!connected && (
         <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
           <a
@@ -378,43 +381,70 @@ function ActivationTimeline({
   overview:   StatisticsOverview | null;
   executions: RecentExecution[];
 }) {
-  const hasData      = overview !== null;
-  const hasInsights  = (overview?.insights.length ?? 0) > 0;
-  const hasExec      = executions.length > 0;
+  const hasData     = overview !== null;
+  const hasInsights = (overview?.insights.length ?? 0) > 0;
+  const hasExec     = executions.length > 0;
 
   const steps = [
-    { label: "Conectar tienda",         done: connected                     },
-    { label: "Sincronizar catálogo",    done: connected && hasData           },
-    { label: "Recibir datos",           done: connected && hasData           },
-    { label: "Copilot activo",          done: connected && hasData && hasInsights },
-    { label: "Ejecutar mejoras",        done: hasExec                        },
+    { label: "Conectar tienda",      done: connected                          },
+    { label: "Sincronizar catálogo", done: connected && hasData               },
+    { label: "Recibir datos",        done: connected && hasData               },
+    { label: "Sofía activa",         done: connected && hasData && hasInsights },
+    { label: "Ejecutar mejoras",     done: hasExec                            },
   ];
 
+  const doneCnt    = steps.filter(s => s.done).length;
   const currentIdx = steps.findIndex(s => !s.done);
 
+  // Compact mode: connected with data — show progress strip instead of full list
+  const isCompact = connected && hasData;
+
+  if (isCompact) {
+    return (
+      <div style={{
+        display:      "flex",
+        alignItems:   "center",
+        gap:          S[3],
+        padding:      `${S[2]}px ${S[4]}px`,
+        border:       `1px solid ${C.greenBorder}`,
+        background:   C.greenLight,
+        borderRadius: R.xl,
+        marginBottom: S[4],
+      }}>
+        <span style={{ color: C.green, fontSize: 12, fontWeight: T.wt.bold }}>✓</span>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.green, fontWeight: T.wt.semibold }}>
+          {doneCnt} de {steps.length} pasos completados
+        </span>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint }}>
+          · Tienda activa · Catálogo sincronizado · Sofía monitoreando señales
+        </span>
+        {hasExec && (
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.green }}>
+            · Ejecuciones en historial
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  // Expanded mode: not connected or no data yet
   return (
     <div style={{
-      border:        `1px solid ${C.line}`,
-      borderRadius:  R.xl,
-      padding:       `${S[4]}px ${S[5]}px`,
-      background:    C.white,
-      boxShadow:     E.xs,
-      marginBottom:  S[4],
-      overflowX:     "auto",
+      border:       `1px solid ${C.line}`,
+      borderRadius: R.xl,
+      padding:      `${S[4]}px ${S[5]}px`,
+      background:   C.white,
+      boxShadow:    E.xs,
+      marginBottom: S[4],
+      overflowX:    "auto",
     }}>
-      <div style={{
-        display:   "flex",
-        alignItems: "center",
-        gap:        0,
-        minWidth:   480,
-      }}>
+      <div style={{ display: "flex", alignItems: "center", minWidth: 480 }}>
         {steps.map((step, i) => {
           const isCurrent = i === currentIdx;
           const isDone    = step.done;
 
           return (
             <div key={i} style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0 }}>
-              {/* Step */}
               <div style={{
                 display:       "flex",
                 flexDirection: "column",
@@ -423,10 +453,9 @@ function ActivationTimeline({
                 flex:          "0 0 auto",
                 minWidth:      80,
               }}>
-                {/* Circle */}
                 <div style={{
-                  width:          28,
-                  height:         28,
+                  width:          26,
+                  height:         26,
                   borderRadius:   "50%",
                   background:     isDone    ? C.blueDark  : isCurrent ? C.blueLight : C.surfaceAlt,
                   border:         `2px solid ${isDone ? C.blueDark : isCurrent ? C.blueBorder : C.line}`,
@@ -434,44 +463,35 @@ function ActivationTimeline({
                   alignItems:     "center",
                   justifyContent: "center",
                   flexShrink:     0,
-                  transition:     "background 0.2s, border-color 0.2s",
                 }}>
                   {isDone ? (
-                    <span style={{ color: C.white, fontSize: 11, fontWeight: T.wt.bold }}>✓</span>
+                    <span style={{ color: C.white, fontSize: 10, fontWeight: T.wt.bold }}>✓</span>
                   ) : (
                     <span style={{
-                      fontFamily: T.mono,
-                      fontSize:   T.sz.xs,
-                      fontWeight: T.wt.bold,
-                      color:      isCurrent ? C.blueDark : C.inkFaint,
+                      fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold,
+                      color: isCurrent ? C.blueDark : C.inkFaint,
                     }}>
                       {i + 1}
                     </span>
                   )}
                 </div>
-                {/* Label */}
                 <span style={{
-                  fontFamily:  T.mono,
-                  fontSize:    T.sz["2xs"],
-                  fontWeight:  isCurrent ? T.wt.semibold : T.wt.normal,
-                  color:       isDone ? C.inkLight : isCurrent ? C.ink : C.inkFaint,
-                  textAlign:   "center",
-                  lineHeight:  1.3,
-                  whiteSpace:  "nowrap",
+                  fontFamily: T.mono, fontSize: T.sz["2xs"],
+                  fontWeight: isCurrent ? T.wt.semibold : T.wt.normal,
+                  color:      isDone ? C.inkLight : isCurrent ? C.ink : C.inkFaint,
+                  textAlign:  "center", lineHeight: 1.3, whiteSpace: "nowrap",
                 }}>
                   {step.label}
                 </span>
               </div>
 
-              {/* Connector line */}
               {i < steps.length - 1 && (
                 <div style={{
                   flex:       1,
                   height:     2,
                   background: step.done ? C.blueDark : C.line,
                   margin:     `0 ${S[1]}px`,
-                  marginBottom: 18,
-                  transition: "background 0.2s",
+                  marginBottom: 16,
                 }} />
               )}
             </div>
@@ -510,6 +530,7 @@ function ProtagonistCard({
   return (
     <div style={{
       border:        `1px solid ${C.line}`,
+      borderTop:     `3px solid ${C.blueDark}`,
       borderRadius:  R.xl,
       padding:       `${S[5]}px`,
       background:    C.white,
@@ -522,10 +543,10 @@ function ProtagonistCard({
       <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
         <span style={{ fontSize: 16 }}>{icon}</span>
         <span style={{
-          fontFamily:  T.mono,
-          fontSize:    T.sz.xs,
-          fontWeight:  T.wt.bold,
-          color:       C.inkFaint,
+          fontFamily:    T.mono,
+          fontSize:      T.sz.xs,
+          fontWeight:    T.wt.bold,
+          color:         C.inkFaint,
           textTransform: "uppercase",
           letterSpacing: "0.08em",
         }}>
@@ -538,19 +559,19 @@ function ProtagonistCard({
         <div>
           {noData ? (
             <>
-              <div style={{ marginBottom: S[1] }}><Placeholder width={80} height={18} /></div>
-              <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint }}>
-                Esperando datos
+              <div style={{ marginBottom: S[1] }}><Placeholder width={80} height={20} /></div>
+              <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, lineHeight: 1.5 }}>
+                Disponible al conectar la tienda
               </div>
             </>
           ) : (
             <>
               <div style={{
-                fontFamily:  T.mono,
-                fontSize:    T.sz["3xl"],
-                fontWeight:  T.wt.bold,
-                color:       C.ink,
-                lineHeight:  1.1,
+                fontFamily:   T.mono,
+                fontSize:     T.sz["3xl"],
+                fontWeight:   T.wt.bold,
+                color:        C.ink,
+                lineHeight:   1.1,
                 marginBottom: S[1],
               }}>
                 {value}
@@ -569,15 +590,14 @@ function ProtagonistCard({
         {noData ? (
           <div style={{
             width: 120, height: 40,
-            background: C.surfaceAlt, borderRadius: R.md,
-            opacity: 0.5,
+            background: C.surfaceAlt, borderRadius: R.md, opacity: 0.4,
           }} />
         ) : (
           <TrendSparkline direction={trendDir} color={tColor} chartId={chartId} />
         )}
       </div>
 
-      {/* Copilot hint */}
+      {/* Sofía hint */}
       <div style={{
         display:      "flex",
         alignItems:   "flex-start",
@@ -607,10 +627,9 @@ function ProtagonistCard({
           color:        C.inkLight,
           cursor:       "pointer",
           textAlign:    "center",
-          transition:   "border-color 0.15s, color 0.15s",
         }}
       >
-        Ver análisis completo →
+        Explorar análisis →
       </button>
     </div>
   );
@@ -631,7 +650,7 @@ function SalesBlock({
   return (
     <ProtagonistCard
       icon="💰"
-      title="Ventas"
+      title="Estado de las ventas"
       value={noData ? "" : fmtCurrency(overview!.sales.totalRevenue, overview!.sales.currency || "COP")}
       sub={noData ? "" : trendSub(rev!.pct, rev!.direction)}
       trendDir={rev?.direction ?? "stable"}
@@ -641,10 +660,10 @@ function SalesBlock({
       onOpenDrawer={onOpenDrawer}
       copilotHint={
         noData
-          ? "Una vez conectada la tienda, analizaré ventas diarias, tendencias y oportunidades de crecimiento."
+          ? "Sofía analizará las ventas diarias, detectará caídas y te avisará cuando las tendencias cambien."
           : rev!.direction === "down"
-          ? "Las ventas están cayendo. Puedo analizar causas y generar una estrategia de recuperación."
-          : "Las ventas muestran comportamiento positivo. Puedo identificar qué está funcionando mejor."
+          ? "Las ventas están cayendo respecto al período anterior. Sofía puede analizar las causas y proponer acciones."
+          : "Las ventas muestran un comportamiento positivo. Sofía puede identificar qué está impulsando el crecimiento."
       }
     />
   );
@@ -665,7 +684,7 @@ function OrdersBlock({
   return (
     <ProtagonistCard
       icon="📦"
-      title="Pedidos"
+      title="Comportamiento de los pedidos"
       value={noData ? "" : fmtNumber(overview!.sales.orders)}
       sub={noData ? "" : trendSub(ordTrnd!.pct, ordTrnd!.direction)}
       trendDir={ordTrnd?.direction ?? "stable"}
@@ -675,92 +694,101 @@ function OrdersBlock({
       onOpenDrawer={onOpenDrawer}
       copilotHint={
         noData
-          ? "Monitorearé el volumen de pedidos, detectaré incidencias y sugeriré mejoras en fulfillment."
+          ? "Sofía monitoreará el volumen de pedidos, detectará incidencias y sugerirá mejoras en el proceso."
           : overview!.operations.openIncidents > 0
-          ? `${overview!.operations.openIncidents} incidencia${overview!.operations.openIncidents !== 1 ? "s" : ""} abierta${overview!.operations.openIncidents !== 1 ? "s" : ""}. Puedo analizar y sugerir acciones.`
-          : "Sin incidencias activas. El volumen de pedidos está bajo control."
+          ? `${overview!.operations.openIncidents} incidencia${overview!.operations.openIncidents !== 1 ? "s" : ""} abierta${overview!.operations.openIncidents !== 1 ? "s" : ""}. Sofía puede analizar y proponer resolución.`
+          : "Sin incidencias activas. El flujo de pedidos opera con normalidad."
       }
     />
   );
 }
 
-// ── Block 5: KpiGrid ─────────────────────────────────────────────────────────
+// ── Block 5: Indicadores clave ────────────────────────────────────────────────
 
 interface KpiCardDef {
-  id:       DrawerId;
-  icon:     string;
-  label:    string;
-  value:    (o: StatisticsOverview) => string;
-  sub:      (o: StatisticsOverview) => string;
-  variant:  (o: StatisticsOverview) => "ok" | "warning" | "critical" | "neutral";
+  id:          DrawerId;
+  icon:        string;
+  label:       string;
+  noDataHint:  string;
+  value:       (o: StatisticsOverview) => string;
+  sub:         (o: StatisticsOverview) => string;
+  variant:     (o: StatisticsOverview) => "ok" | "warning" | "critical" | "neutral";
 }
 
 const KPI_DEFS: KpiCardDef[] = [
   {
-    id:      "aov",
-    icon:    "🎯",
-    label:   "Ticket promedio",
-    value:   o => fmtCurrency(o.sales.averageOrderValue, o.sales.currency || "COP"),
-    sub:     o => trendSub(o.trends.aov.pct, o.trends.aov.direction),
-    variant: o => o.trends.aov.direction === "up" ? "ok" : "neutral",
+    id:         "aov",
+    icon:       "🎯",
+    label:      "Promedio por pedido",
+    noDataHint: "Sofía calculará cuánto gasta en promedio cada cliente por compra.",
+    value:      o => fmtCurrency(o.sales.averageOrderValue, o.sales.currency || "COP"),
+    sub:        o => trendSub(o.trends.aov.pct, o.trends.aov.direction),
+    variant:    o => o.trends.aov.direction === "up" ? "ok" : "neutral",
   },
   {
-    id:      "conversion",
-    icon:    "🔄",
-    label:   "Conversión",
-    value:   o => o.funnel?.overallConversion != null ? `${(o.funnel.overallConversion * 100).toFixed(1)}%` : "—",
-    sub:     o => o.funnel?.addToCart != null ? `${fmtNumber(o.funnel.addToCart)} con carrito` : "Sin datos de embudo",
-    variant: () => "neutral",
+    id:         "conversion",
+    icon:       "🔄",
+    label:      "Conversión de ventas",
+    noDataHint: "Sofía identificará cuántos visitantes terminan comprando.",
+    value:      o => o.funnel?.overallConversion != null ? `${(o.funnel.overallConversion * 100).toFixed(1)}%` : "—",
+    sub:        o => o.funnel?.addToCart != null ? `${fmtNumber(o.funnel.addToCart)} agregaron al carrito` : "Sin datos de embudo",
+    variant:    () => "neutral",
   },
   {
-    id:      "customers_new",
-    icon:    "👤",
-    label:   "Clientes nuevos",
-    value:   o => fmtNumber(o.sales.newCustomers),
-    sub:     o => `${fmtNumber(o.sales.returningCustomers)} recurrentes`,
-    variant: o => o.sales.newCustomers > 0 ? "ok" : "neutral",
+    id:         "customers_new",
+    icon:       "👤",
+    label:      "Clientes nuevos",
+    noDataHint: "Sofía medirá cuántos compradores nuevos llegan cada período.",
+    value:      o => fmtNumber(o.sales.newCustomers),
+    sub:        o => `${fmtNumber(o.sales.returningCustomers)} regresaron a comprar`,
+    variant:    o => o.sales.newCustomers > 0 ? "ok" : "neutral",
   },
   {
-    id:      "customers_returning",
-    icon:    "🔁",
-    label:   "Tasa de retención",
-    value:   o => o.sales.newCustomers > 0
+    id:         "customers_returning",
+    icon:       "🔁",
+    label:      "Clientes recurrentes",
+    noDataHint: "Sofía te dirá qué tan seguido regresan a comprar tus clientes.",
+    value:      o => o.sales.newCustomers > 0
       ? `${((o.sales.returningCustomers / (o.sales.newCustomers + o.sales.returningCustomers)) * 100).toFixed(0)}%`
       : "—",
-    sub:     () => "retornaron a comprar",
-    variant: () => "neutral",
+    sub:        () => "regresan a comprar",
+    variant:    () => "neutral",
   },
   {
-    id:      "promotions",
-    icon:    "🏷",
-    label:   "Promociones activas",
-    value:   o => fmtNumber(o.promotions.active),
-    sub:     o => `${fmtNumber(o.promotions.scheduled)} programadas`,
-    variant: o => o.promotions.active > 0 ? "ok" : "neutral",
+    id:         "promotions",
+    icon:       "🏷",
+    label:      "Descuentos activos",
+    noDataHint: "Sofía mostrará qué descuentos están vigentes y cómo impactan las ventas.",
+    value:      o => fmtNumber(o.promotions.active),
+    sub:        o => `${fmtNumber(o.promotions.scheduled)} programados`,
+    variant:    o => o.promotions.active > 0 ? "ok" : "neutral",
   },
   {
-    id:      "catalog",
-    icon:    "📋",
-    label:   "Pendientes catálogo",
-    value:   o => fmtNumber(o.catalog.pending),
-    sub:     o => `de ${fmtNumber(o.catalog.totalProducts)} en catálogo`,
-    variant: o => o.catalog.pending > 0 ? "warning" : "ok",
+    id:         "catalog",
+    icon:       "📋",
+    label:      "Pendientes de publicar",
+    noDataHint: "Sofía identificará los productos listos para publicar en Shopify.",
+    value:      o => fmtNumber(o.catalog.pending),
+    sub:        o => `de ${fmtNumber(o.catalog.totalProducts)} en catálogo`,
+    variant:    o => o.catalog.pending > 0 ? "warning" : "ok",
   },
   {
-    id:      "seo",
-    icon:    "✍",
-    label:   "Sin ventas (SEO)",
-    value:   o => fmtNumber(o.catalog.neverSold),
-    sub:     () => "publicados sin ventas",
-    variant: o => o.catalog.neverSold > 0 ? "warning" : "ok",
+    id:         "seo",
+    icon:       "✍",
+    label:      "Productos sin ventas",
+    noDataHint: "Sofía detectará productos publicados que no han tenido ninguna venta.",
+    value:      o => fmtNumber(o.catalog.neverSold),
+    sub:        () => "publicados sin ninguna venta",
+    variant:    o => o.catalog.neverSold > 0 ? "warning" : "ok",
   },
   {
-    id:      "alerts",
-    icon:    "⚡",
-    label:   "Alertas Copilot",
-    value:   o => fmtNumber(o.operations.criticalAlerts),
-    sub:     o => `${fmtNumber(o.insights.length)} señales totales`,
-    variant: o => o.operations.criticalAlerts > 0 ? "critical" : o.insights.length > 0 ? "warning" : "ok",
+    id:         "alerts",
+    icon:       "⚡",
+    label:      "Alertas importantes",
+    noDataHint: "Sofía te avisará cuando algo en tu tienda requiera atención inmediata.",
+    value:      o => fmtNumber(o.operations.criticalAlerts),
+    sub:        o => `${fmtNumber(o.insights.length)} señales detectadas`,
+    variant:    o => o.operations.criticalAlerts > 0 ? "critical" : o.insights.length > 0 ? "warning" : "ok",
   },
 ];
 
@@ -795,16 +823,12 @@ function KpiTile({
         cursor:        "pointer",
         textAlign:     "left",
         boxShadow:     E.xs,
-        transition:    "border-color 0.15s, box-shadow 0.15s",
       }}
     >
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
         <span style={{ fontSize: 14 }}>{def.icon}</span>
-        <span style={{
-          fontFamily: T.mono, fontSize: T.sz.xs,
-          color: C.inkFaint, flex: 1,
-        }}>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, flex: 1 }}>
           {def.label}
         </span>
         <span style={{
@@ -818,24 +842,18 @@ function KpiTile({
         <Placeholder width={52} height={14} />
       ) : (
         <div style={{
-          fontFamily:  T.mono,
-          fontSize:    T.sz.xl,
-          fontWeight:  T.wt.bold,
-          color:       C.ink,
-          lineHeight:  1.2,
+          fontFamily: T.mono, fontSize: T.sz.xl, fontWeight: T.wt.bold,
+          color: C.ink, lineHeight: 1.2,
         }}>
           {def.value(overview!)}
         </div>
       )}
 
-      {/* Sub */}
+      {/* Sub / hint */}
       <div style={{
-        fontFamily: T.mono,
-        fontSize:   T.sz.xs,
-        color:      C.inkFaint,
-        lineHeight: 1.4,
+        fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, lineHeight: 1.5,
       }}>
-        {noData ? "Esperando datos" : def.sub(overview!)}
+        {noData ? def.noDataHint : def.sub(overview!)}
       </div>
 
       {/* Drawer hint */}
@@ -843,7 +861,7 @@ function KpiTile({
         fontFamily: T.mono, fontSize: T.sz["2xs"],
         color: C.blue, marginTop: "auto",
       }}>
-        Ver análisis →
+        Ver detalle →
       </div>
     </button>
   );
@@ -867,7 +885,7 @@ function KpiGrid({
         letterSpacing: "0.08em",
         marginBottom:  S[3],
       }}>
-        KPIs clave
+        Indicadores clave del negocio
       </div>
       <div style={{
         display:             "grid",
@@ -885,37 +903,37 @@ function KpiGrid({
 // ── Drawer contents ───────────────────────────────────────────────────────────
 
 const SALES_ACTIONS = [
-  { id: "analyze_revenue",  label: "Analizar comportamiento de ventas",  utterance: "analiza el comportamiento de ventas de esta semana" },
-  { id: "gen_promo",        label: "Generar promoción de rescate",        utterance: "genera una promoción para recuperar ventas" },
-  { id: "top_products",     label: "Revisar productos líderes",           utterance: "muéstrame los productos con mejores ventas esta semana" },
-  { id: "opportunities",    label: "Explorar oportunidades de crecimiento", utterance: "identifica oportunidades de crecimiento en ventas" },
+  { id: "analyze_revenue",  label: "Analizar el comportamiento de ventas",  utterance: "analiza el comportamiento de ventas de esta semana" },
+  { id: "gen_promo",        label: "Generar una promoción de rescate",       utterance: "genera una promoción para recuperar ventas" },
+  { id: "top_products",     label: "Revisar los productos que más venden",   utterance: "muéstrame los productos con mejores ventas esta semana" },
+  { id: "opportunities",    label: "Explorar oportunidades de crecimiento",  utterance: "identifica oportunidades de crecimiento en ventas" },
 ];
 
 const ORDERS_ACTIONS = [
-  { id: "analyze_orders",   label: "Analizar tendencia de pedidos",  utterance: "analiza la tendencia de pedidos de esta semana" },
-  { id: "review_incidents", label: "Revisar incidencias abiertas",   utterance: "lista las incidencias de pedidos abiertas" },
-  { id: "optimize_flow",    label: "Optimizar flujo de pedidos",     utterance: "sugiere mejoras para el flujo de procesamiento de pedidos" },
+  { id: "analyze_orders",   label: "Analizar la tendencia de pedidos",    utterance: "analiza la tendencia de pedidos de esta semana" },
+  { id: "review_incidents", label: "Revisar las incidencias abiertas",    utterance: "lista las incidencias de pedidos abiertas" },
+  { id: "optimize_flow",    label: "Mejorar el proceso de pedidos",       utterance: "sugiere mejoras para el flujo de procesamiento de pedidos" },
 ];
 
 const SEO_ACTIONS = [
-  { id: "enrich_seo",       label: "Enriquecer SEO de productos",      utterance: "mejora las descripciones SEO de productos pendientes" },
-  { id: "prioritize_seo",   label: "Priorizar productos sin descripción", utterance: "lista los productos sin descripción por prioridad de ventas" },
-  { id: "seo_plan",         label: "Generar plan de contenido SEO",    utterance: "genera un plan de enriquecimiento SEO para el catálogo" },
+  { id: "enrich_seo",       label: "Mejorar descripción de productos",           utterance: "mejora las descripciones de productos que no tienen ventas" },
+  { id: "prioritize_seo",   label: "Listar productos sin ventas por prioridad",  utterance: "lista los productos sin ventas ordenados por potencial" },
+  { id: "seo_plan",         label: "Crear un plan de activación de catálogo",    utterance: "genera un plan para activar los productos sin ventas" },
 ];
 
 const CATALOG_ACTIONS = [
-  { id: "review_pending",   label: "Revisar productos pendientes",   utterance: "lista los productos pendientes de publicación" },
-  { id: "publish_batch",    label: "Publicar lote pendiente",        utterance: "prepara la publicación del lote de productos pendientes" },
+  { id: "review_pending",   label: "Ver los productos pendientes de publicar",  utterance: "lista los productos pendientes de publicación" },
+  { id: "publish_batch",    label: "Preparar la publicación del lote",          utterance: "prepara la publicación del lote de productos pendientes" },
 ];
 
 const PROMO_ACTIONS = [
-  { id: "review_promos",    label: "Analizar rendimiento de promociones", utterance: "analiza el rendimiento de las promociones activas" },
-  { id: "new_promo",        label: "Crear nueva promoción",              utterance: "crea una nueva promoción basada en el inventario actual" },
+  { id: "review_promos",    label: "Analizar el impacto de las promociones",    utterance: "analiza el rendimiento de las promociones activas" },
+  { id: "new_promo",        label: "Crear una nueva promoción",                 utterance: "crea una nueva promoción basada en el inventario actual" },
 ];
 
 const GENERIC_ACTIONS = [
-  { id: "analyze_kpi",      label: "Analizar este indicador",   utterance: "analiza este KPI y sugiere acciones" },
-  { id: "create_plan",      label: "Crear plan de mejora",      utterance: "genera un plan de mejora basado en los datos actuales" },
+  { id: "analyze_kpi",      label: "Analizar este indicador",    utterance: "analiza este indicador y sugiere acciones" },
+  { id: "create_plan",      label: "Crear un plan de mejora",    utterance: "genera un plan de mejora basado en los datos actuales" },
 ];
 
 function DrawerActions({
@@ -946,7 +964,7 @@ function DrawerActions({
         fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint,
         marginTop: S[1], lineHeight: 1.6,
       }}>
-        Todas las acciones pasan por Intent Resolver → Policy → Runtime → Shopify
+        Sofía envía cada acción al flujo de ejecución con aprobación cuando corresponde
       </div>
     </div>
   );
@@ -969,21 +987,19 @@ function SalesDrawerContent({
 
   return (
     <>
-      <DrawerSection title="Resumen ejecutivo">
+      <DrawerSection title="Resumen comercial">
         {noData ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
-            {[100, 72, 88].map((w, i) => <Placeholder key={i} width={w} />)}
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginTop: S[2] }}>
-              Conecta Shopify para ver ingresos, pedidos y ticket promedio.
-            </div>
+          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, lineHeight: 1.7 }}>
+            Aquí verás el resumen de ingresos, pedidos, promedio por compra y nuevos clientes.
+            Conecta tu tienda Shopify para activar el análisis.
           </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[3] }}>
             {[
-              { label: "Ingresos totales",  value: fmtCurrency(s!.totalRevenue, s!.currency || "COP") },
-              { label: "Pedidos",            value: fmtNumber(s!.orders)                               },
-              { label: "Ticket promedio",    value: fmtCurrency(s!.averageOrderValue, s!.currency || "COP") },
-              { label: "Clientes nuevos",    value: fmtNumber(s!.newCustomers)                          },
+              { label: "Ingresos totales",    value: fmtCurrency(s!.totalRevenue, s!.currency || "COP") },
+              { label: "Pedidos",             value: fmtNumber(s!.orders)                               },
+              { label: "Promedio por pedido", value: fmtCurrency(s!.averageOrderValue, s!.currency || "COP") },
+              { label: "Clientes nuevos",     value: fmtNumber(s!.newCustomers)                          },
             ].map(({ label, value }) => (
               <div key={label}>
                 <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginBottom: 2 }}>{label}</div>
@@ -994,15 +1010,14 @@ function SalesDrawerContent({
         )}
       </DrawerSection>
 
-      <DrawerSection title="Evolución temporal">
+      <DrawerSection title="Evolución del período">
         {noData ? (
           <div style={{
-            height: 60, background: C.surfaceAlt,
-            borderRadius: R.lg, opacity: 0.5,
+            height: 60, background: C.surfaceAlt, borderRadius: R.lg, opacity: 0.5,
             display: "flex", alignItems: "center", justifyContent: "center",
           }}>
             <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint }}>
-              Gráfico disponible tras conectar Shopify
+              Gráfico disponible con datos reales
             </span>
           </div>
         ) : (
@@ -1010,36 +1025,37 @@ function SalesDrawerContent({
             <TrendSparkline direction={rev!.direction} color={trendColor(rev!.direction)} chartId="sales-drawer" width={400} height={60} />
             <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight, marginTop: S[2] }}>
               {trendArrow(rev!.direction)} {Math.abs(rev!.pct).toFixed(1)}% vs período anterior ·
-              {rev!.direction === "up" ? " tendencia positiva" : rev!.direction === "down" ? " tendencia negativa" : " sin cambio"}
+              {rev!.direction === "up" ? " tendencia positiva" : rev!.direction === "down" ? " tendencia a la baja" : " sin variación"}
             </div>
           </>
         )}
       </DrawerSection>
 
-      <DrawerSection title="Interpretación Copilot">
+      <DrawerSection title="Análisis de Sofía">
         {noData ? (
           <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight, lineHeight: 1.7 }}>
-            Analizaré ingresos, caídas, picos y patrones temporales. Detectaré automáticamente si las ventas
-            caen por debajo del promedio o si hay oportunidades sin explotar.
+            Cuando conectes la tienda, voy a monitorear las ventas en tiempo real.
+            Detectaré si están cayendo, cuándo hay picos y qué categorías están creciendo.
+            También identificaré qué productos generan más ingresos y cuáles necesitan atención.
           </div>
         ) : rev!.direction === "down" ? (
           <MSAgentSignal
             variant="dark"
-            text="Las ventas están por debajo del período anterior. Hay causas detectables."
-            sub="Puedo analizar productos, horarios y canales que explican la caída."
-            agentLabel="Copilot · Shopify"
+            text="Las ventas están por debajo del período anterior. Puedo identificar las causas."
+            sub="Analiza productos, canales y horarios para encontrar dónde se están perdiendo ingresos."
+            agentLabel="Sofía · Comercio"
           />
         ) : (
           <MSAgentSignal
             variant="positive"
-            text="Las ventas muestran comportamiento positivo en este período."
-            sub={`${fmtCurrency(s!.totalRevenue, s!.currency || "COP")} generados. Puedo identificar qué factores explican el crecimiento.`}
-            agentLabel="Copilot · Shopify"
+            text="Las ventas muestran una tendencia positiva en este período."
+            sub={`${fmtCurrency(s!.totalRevenue, s!.currency || "COP")} generados. Puedo identificar qué está funcionando mejor.`}
+            agentLabel="Sofía · Comercio"
           />
         )}
       </DrawerSection>
 
-      <DrawerSection title="Acciones recomendadas">
+      <DrawerSection title="Acciones sugeridas">
         <DrawerActions
           actions={SALES_ACTIONS}
           onExecute={onExecute}
@@ -1069,18 +1085,18 @@ function OrdersDrawerContent({
 
   return (
     <>
-      <DrawerSection title="Resumen">
+      <DrawerSection title="Resumen de pedidos">
         {noData ? (
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint }}>
-            Conecta Shopify para ver volumen de pedidos, incidencias y fulfillment.
+          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, lineHeight: 1.7 }}>
+            Aquí verás el volumen de pedidos, incidencias abiertas y comparativas con períodos anteriores.
           </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[3] }}>
             {[
-              { label: "Pedidos totales",    value: fmtNumber(s!.orders)             },
-              { label: "Incidencias abiertas", value: fmtNumber(op!.openIncidents)   },
-              { label: "Alertas críticas",   value: fmtNumber(op!.criticalAlerts)     },
-              { label: "Clientes recurrentes", value: fmtNumber(s!.returningCustomers) },
+              { label: "Pedidos totales",       value: fmtNumber(s!.orders)              },
+              { label: "Incidencias abiertas",  value: fmtNumber(op!.openIncidents)      },
+              { label: "Alertas críticas",      value: fmtNumber(op!.criticalAlerts)     },
+              { label: "Clientes recurrentes",  value: fmtNumber(s!.returningCustomers)  },
             ].map(({ label, value }) => (
               <div key={label}>
                 <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginBottom: 2 }}>{label}</div>
@@ -1091,7 +1107,7 @@ function OrdersDrawerContent({
         )}
       </DrawerSection>
 
-      <DrawerSection title="Evolución">
+      <DrawerSection title="Evolución del período">
         {noData ? (
           <div style={{ height: 60, background: C.surfaceAlt, borderRadius: R.lg, opacity: 0.5 }} />
         ) : (
@@ -1104,25 +1120,26 @@ function OrdersDrawerContent({
         )}
       </DrawerSection>
 
-      <DrawerSection title="Análisis Copilot">
+      <DrawerSection title="Análisis de Sofía">
         {noData ? (
           <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight, lineHeight: 1.7 }}>
-            Monitorearé volumen de pedidos, detectaré incidencias y sugeriré mejoras en el proceso
-            de fulfillment basado en los datos reales de tu tienda.
+            Voy a monitorear el flujo de pedidos en tiempo real. Detectaré incidencias,
+            demoras y patrones inusuales. También identificaré si el volumen está creciendo
+            o si hay señales de fricción en el proceso de compra.
           </div>
         ) : op!.openIncidents > 0 ? (
           <MSAgentSignal
             variant="dark"
             text={`${op!.openIncidents} incidencia${op!.openIncidents !== 1 ? "s" : ""} abierta${op!.openIncidents !== 1 ? "s" : ""} que requieren atención.`}
-            sub="Puedo revisar las causas y preparar un plan de resolución."
-            agentLabel="Copilot · Shopify"
+            sub="Puedo revisar las causas y preparar un plan de resolución para cada una."
+            agentLabel="Sofía · Comercio"
           />
         ) : (
           <MSAgentSignal
             variant="positive"
-            text="Sin incidencias activas en pedidos. El flujo está operando normalmente."
+            text="Sin incidencias activas. El flujo de pedidos opera con normalidad."
             sub={`${fmtNumber(s!.orders)} pedidos procesados en este período.`}
-            agentLabel="Copilot · Shopify"
+            agentLabel="Sofía · Comercio"
           />
         )}
       </DrawerSection>
@@ -1161,23 +1178,23 @@ function KpiDrawerContent({
     drawerId === "promotions" ? PROMO_ACTIONS   :
     GENERIC_ACTIONS;
 
-  const copilotMessages: Record<string, string> = {
-    aov:                  "Analizaré tendencias de ticket promedio e identificaré estrategias para incrementarlo.",
-    conversion:           "Detectaré cuellos de botella en el embudo y sugeriré optimizaciones por etapa.",
-    customers_new:        "Evaluaré la adquisición de clientes y su costo relativo vs valor de vida.",
-    customers_returning:  "Analizaré la retención y propondré acciones para mejorar la lealtad.",
-    promotions:           "Revisaré el rendimiento de cada promoción activa y su impacto real en ventas.",
-    catalog:              "Identificaré productos listos para publicar y prepararé el lote de publicación.",
-    seo:                  "Detectaré productos sin descripción, títulos deficientes y alt text faltante.",
-    alerts:               "Interpretaré cada alerta, evaluaré su impacto y prepararé acciones correctivas.",
+  const sofiaMessages: Record<string, string> = {
+    aov:                  "Analizaré la evolución del promedio por pedido e identificaré qué productos o categorías lo están subiendo o bajando. Puedo sugerir acciones concretas para incrementarlo.",
+    conversion:           "Revisaré el recorrido de compra paso a paso para detectar dónde se pierden compradores potenciales. Identificaré los puntos de fricción y las oportunidades de mejora.",
+    customers_new:        "Evaluaré cuántos clientes nuevos están llegando, desde qué canales y cómo se compara con períodos anteriores. Puedo sugerir acciones para acelerar la adquisición.",
+    customers_returning:  "Analizaré con qué frecuencia regresan tus clientes y qué los motiva a volver. Podré recomendar acciones específicas para mejorar la fidelización.",
+    promotions:           "Revisaré el impacto real de cada descuento o promoción activa: cuántos pedidos generó, su margen y si vale la pena mantenerla o ajustarla.",
+    catalog:              "Identificaré qué productos están listos para publicar y los clasificaré por prioridad. Puedo preparar el lote de publicación para que lo revises antes de ejecutar.",
+    seo:                  "Detectaré los productos publicados que no han registrado ninguna venta y analizaré si el problema es de descripción, precio, visibilidad o demanda.",
+    alerts:               "Interpretaré cada alerta, evaluaré su nivel de impacto real en el negocio y prepararé acciones correctivas ordenadas por urgencia.",
   };
 
   return (
     <>
       <DrawerSection title="Resumen">
         {noData ? (
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint }}>
-            Conecta Shopify para ver datos reales de {def?.label ?? "este indicador"}.
+          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, lineHeight: 1.7 }}>
+            {def?.noDataHint ?? "Conecta Shopify para ver datos reales de este indicador."}
           </div>
         ) : def ? (
           <div>
@@ -1191,23 +1208,23 @@ function KpiDrawerContent({
         ) : null}
       </DrawerSection>
 
-      <DrawerSection title="Tendencias">
+      <DrawerSection title="Evolución">
         {noData ? (
           <div style={{ height: 48, background: C.surfaceAlt, borderRadius: R.lg, opacity: 0.5 }} />
         ) : (
           <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight, lineHeight: 1.6 }}>
-            Comparación con período anterior disponible en el panel principal.
+            La comparación con el período anterior está disponible en el resumen principal.
           </div>
         )}
       </DrawerSection>
 
-      <DrawerSection title="Interpretación Copilot">
+      <DrawerSection title="Análisis de Sofía">
         <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight, lineHeight: 1.7 }}>
-          {copilotMessages[drawerId] ?? "Analizaré este indicador y propondré acciones concretas."}
+          {sofiaMessages[drawerId] ?? "Analizaré este indicador y propondré acciones concretas basadas en los datos de tu tienda."}
         </div>
       </DrawerSection>
 
-      <DrawerSection title="Acciones recomendadas">
+      <DrawerSection title="Acciones sugeridas">
         <DrawerActions
           actions={actions}
           onExecute={onExecute}
@@ -1219,7 +1236,7 @@ function KpiDrawerContent({
   );
 }
 
-// ── Copilot Insights ──────────────────────────────────────────────────────────
+// ── Señales del negocio (Sofía) ───────────────────────────────────────────────
 
 function InsightCard({
   insight, isOpen, onToggle, executing, result, onExecute,
@@ -1252,7 +1269,7 @@ function InsightCard({
               · {insight.category}
             </span>
             <span style={{ marginLeft: "auto", fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint }}>
-              P{insight.priority}
+              Prioridad {insight.priority}
             </span>
           </div>
           <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
@@ -1270,7 +1287,7 @@ function InsightCard({
         <div style={{ padding: `0 ${S[4]}px ${S[3]}px`, paddingLeft: S[4] + 8 + S[3] }}>
           {insight.evidence.length > 0 && (
             <div style={{ marginBottom: S[3] }}>
-              <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginBottom: S[1] }}>Evidencia</div>
+              <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginBottom: S[1] }}>Evidencia detectada</div>
               <ul style={{ margin: 0, padding: `0 0 0 ${S[3]}px` }}>
                 {insight.evidence.map((ev, i) => (
                   <li key={i} style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight, marginBottom: 2 }}>{ev}</li>
@@ -1281,7 +1298,7 @@ function InsightCard({
           {insight.suggestedAction && (
             <ActionButton
               actionId={insight.id}
-              label="Ejecutar via Copilot"
+              label="Enviar a Sofía para ejecutar"
               utterance={insight.suggestedAction}
               executing={executing}
               result={result}
@@ -1294,7 +1311,7 @@ function InsightCard({
   );
 }
 
-function CopilotInsights({
+function BusinessSignals({
   overview,
   onExecute,
   executingId,
@@ -1321,7 +1338,7 @@ function CopilotInsights({
         letterSpacing: "0.08em",
         marginBottom:  S[3],
       }}>
-        Inteligencia Copilot
+        Señales del negocio
       </div>
 
       {!overview ? (
@@ -1337,22 +1354,26 @@ function CopilotInsights({
             background: "rgba(191,219,254,.5)", flexShrink: 0, marginTop: 4,
           }} />
           <div>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: "rgba(255,255,255,.85)", marginBottom: S[1] }}>
-              Esperando datos para analizar
+            <div style={{
+              fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold,
+              color: "rgba(255,255,255,.85)", marginBottom: S[2],
+            }}>
+              Sofía está esperando los datos de tu tienda
             </div>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: "rgba(255,255,255,.5)", lineHeight: 1.7 }}>
-              Una vez conectada la tienda: detectaré caídas en ventas, productos sin descripción SEO,
-              promociones de bajo rendimiento, alertas de inventario y oportunidades de crecimiento.
-              Cada señal generará una recomendación accionable.
+            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: "rgba(255,255,255,.50)", lineHeight: 1.8 }}>
+              Cuando conectes Shopify, voy a monitorear tus ventas en tiempo real. Detectaré si
+              están cayendo, qué productos no tienen movimiento, qué descuentos están funcionando
+              y qué oportunidades puedes aprovechar ahora mismo. Cada señal que encuentre
+              vendrá con una recomendación accionable lista para ejecutar.
             </div>
           </div>
         </div>
       ) : insights.length === 0 ? (
         <MSAgentSignal
           variant="positive"
-          text="Sin señales de alerta para este período."
-          sub="Todos los indicadores están dentro de rangos saludables. Puedo buscar oportunidades de optimización."
-          agentLabel="Copilot · Shopify"
+          text="No hay señales de alerta para este período."
+          sub="Todos los indicadores están dentro de rangos normales. Puedo buscar oportunidades de optimización si lo necesitas."
+          agentLabel="Sofía · Comercio"
         />
       ) : (
         <>
@@ -1360,11 +1381,11 @@ function CopilotInsights({
             variant="dark"
             text={
               insights.some(i => i.severity === "critical")
-                ? `${insights.filter(i => i.severity === "critical").length} señal(es) crítica(s) detectada(s).`
-                : `${insights.length} señal(es) detectada(s). Sin críticas activas.`
+                ? `${insights.filter(i => i.severity === "critical").length} señal(es) crítica(s) que requieren atención inmediata.`
+                : `${insights.length} oportunidad(es) detectada(s) en este período.`
             }
-            sub="Reglas determinísticas · Sin IA generativa"
-            agentLabel="Copilot · Shopify"
+            sub="Análisis basado en reglas de negocio · Sin IA generativa"
+            agentLabel="Sofía · Comercio"
             style={{ marginBottom: S[4] }}
           />
           <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
@@ -1375,7 +1396,7 @@ function CopilotInsights({
                 isOpen={openId === insight.id}
                 onToggle={() => {
                   const next = openId === insight.id ? null : insight.id;
-                  if (next) trackEvent("insight_opened", { insightId: insight.id });
+                  if (next) trackEvent("senal_abierta", { id: insight.id, severidad: insight.severity });
                   setOpenId(next);
                 }}
                 executing={executingId === insight.id}
@@ -1390,7 +1411,7 @@ function CopilotInsights({
   );
 }
 
-// ── Execution History ─────────────────────────────────────────────────────────
+// ── Historial de ejecuciones ──────────────────────────────────────────────────
 
 function ExecutionHistory({ executions }: { executions: RecentExecution[] }) {
   if (executions.length === 0) return null;
@@ -1405,22 +1426,22 @@ function ExecutionHistory({ executions }: { executions: RecentExecution[] }) {
         letterSpacing: "0.08em",
         marginBottom:  S[3],
       }}>
-        Historial Copilot
+        Historial de ejecuciones
       </div>
       <Panel>
         <div style={{
-          display: "grid", gridTemplateColumns: "1fr 140px 90px 60px",
+          display: "grid", gridTemplateColumns: "1fr 160px 90px 60px",
           gap: `0 ${S[3]}px`, padding: `${S[2]}px ${S[3]}px`,
           borderBottom: `1px solid ${C.line}`,
           fontFamily: T.mono, fontSize: T.sz.xs,
           color: C.inkFaint, textTransform: "uppercase", letterSpacing: "0.04em",
         }}>
-          <span>Plan</span><span>Estado</span><span>Fecha</span><span>Pasos</span>
+          <span>Acción ejecutada</span><span>Estado</span><span>Fecha</span><span>Pasos</span>
         </div>
         <div className="ag-op-table">
           {executions.map(ex => (
             <div key={ex.executionId} className="ag-op-row" style={{
-              display: "grid", gridTemplateColumns: "1fr 140px 90px 60px",
+              display: "grid", gridTemplateColumns: "1fr 160px 90px 60px",
               gap: `0 ${S[3]}px`, alignItems: "center",
               padding: `${S[2]}px ${S[3]}px`,
             }}>
@@ -1464,22 +1485,22 @@ function getDrawerConfig(
   id:         DrawerId | null,
   overview:   StatisticsOverview | null,
   shopDomain: string,
-): { title: string; subtitle?: string; severity: DrawerSeverity; statusLabel?: string } {
+): { title: string; subtitle?: string; severity: DrawerSeverity } {
   if (!id) return { title: "", severity: "info" };
-  const domain  = shopDomain || "tienda";
-  const noData  = !overview;
+  const domain = shopDomain || "tienda";
+  const noData = !overview;
 
   const configs: Record<DrawerId, { title: string; subtitle?: string; severity: DrawerSeverity }> = {
-    sales:               { title: "Análisis de Ventas",        subtitle: noData ? "Sin conexión" : `${domain} · ${overview!.period}`, severity: noData ? "info" : overview!.trends.revenue.direction === "down" ? "warning" : "info" },
-    orders:              { title: "Análisis de Pedidos",       subtitle: noData ? "Sin conexión" : `${domain} · ${overview!.period}`, severity: noData ? "info" : (overview!.operations.openIncidents > 0 ? "warning" : "info")           },
-    aov:                 { title: "Ticket Promedio",           severity: "info"                       },
-    conversion:          { title: "Conversión del Embudo",     severity: "info"                       },
-    customers_new:       { title: "Adquisición de Clientes",   severity: "info"                       },
-    customers_returning: { title: "Retención de Clientes",     severity: "info"                       },
-    promotions:          { title: "Promociones y Descuentos",  severity: noData ? "info" : (overview!.promotions.active > 0 ? "info" : "watch")   },
-    catalog:             { title: "Estado del Catálogo",       severity: noData ? "info" : (overview!.catalog.pending > 0 ? "warning" : "info")    },
-    seo:                 { title: "Productos Sin Ventas (SEO)", severity: noData ? "info" : (overview!.catalog.neverSold > 0 ? "warning" : "info")                  },
-    alerts:              { title: "Alertas Copilot",           severity: noData ? "info" : (overview!.operations.criticalAlerts > 0 ? "critical" : "watch")         },
+    sales:               { title: "Estado de las ventas",        subtitle: noData ? "Sin datos aún" : `${domain} · ${overview!.period}`, severity: noData ? "info" : overview!.trends.revenue.direction === "down" ? "warning" : "info" },
+    orders:              { title: "Comportamiento de pedidos",   subtitle: noData ? "Sin datos aún" : `${domain} · ${overview!.period}`, severity: noData ? "info" : overview!.operations.openIncidents > 0 ? "warning" : "info"           },
+    aov:                 { title: "Promedio por pedido",          severity: "info"                       },
+    conversion:          { title: "Conversión de ventas",         severity: "info"                       },
+    customers_new:       { title: "Clientes nuevos",              severity: "info"                       },
+    customers_returning: { title: "Clientes recurrentes",         severity: "info"                       },
+    promotions:          { title: "Descuentos y promociones",     severity: noData ? "info" : overview!.promotions.active > 0 ? "info" : "watch"                    },
+    catalog:             { title: "Catálogo de productos",        severity: noData ? "info" : overview!.catalog.pending > 0 ? "warning" : "info"                    },
+    seo:                 { title: "Productos sin ventas",         severity: noData ? "info" : overview!.catalog.neverSold > 0 ? "warning" : "info"                  },
+    alerts:              { title: "Alertas importantes",          severity: noData ? "info" : overview!.operations.criticalAlerts > 0 ? "critical" : "watch"         },
   };
 
   return configs[id] ?? { title: id, severity: "info" };
@@ -1500,7 +1521,7 @@ export function StatisticsClient({
   const [results,      setResults]      = useState<Record<string, { status: string; message: string }>>({});
 
   const handleExecute = useCallback(async (utterance: string, actionId: string) => {
-    trackEvent("action_sent_to_copilot", { actionId, utterance });
+    trackEvent("accion_enviada", { actionId, utterance });
     setExecutingId(actionId);
 
     try {
@@ -1520,9 +1541,9 @@ export function StatisticsClient({
 
       if (res.ok) {
         const message =
-          overallStatus === "completed"         ? "✓ Ejecutado correctamente"    :
-          overallStatus === "awaiting_approval" ? "⏳ Pendiente de aprobación"   :
-          overallStatus === "blocked"           ? "⚠ Bloqueado por política"     :
+          overallStatus === "completed"         ? "✓ Ejecutado correctamente"        :
+          overallStatus === "awaiting_approval" ? "⏳ Pendiente de aprobación"       :
+          overallStatus === "blocked"           ? "⚠ Bloqueado por política de ejecución" :
           "Procesado";
         setResults(prev => ({
           ...prev,
@@ -1534,15 +1555,15 @@ export function StatisticsClient({
       } else {
         const errorCode = data.status ?? "error";
         const message =
-          errorCode === "shopify_not_configured"          ? "⚠ Shopify no configurado"     :
-          errorCode === "domain_provider_not_available"   ? "⚠ Proveedor no disponible"    :
-          data.error ?? "Error al ejecutar";
+          errorCode === "shopify_not_configured"        ? "⚠ Shopify no configurado"       :
+          errorCode === "domain_provider_not_available" ? "⚠ Proveedor no disponible"      :
+          data.error ?? "Error al ejecutar la acción";
         setResults(prev => ({ ...prev, [actionId]: { status: "error", message } }));
       }
     } catch {
       setResults(prev => ({
         ...prev,
-        [actionId]: { status: "error", message: "Error de red al enviar a Copilot" },
+        [actionId]: { status: "error", message: "Error de red al enviar la acción" },
       }));
     } finally {
       setExecutingId(null);
@@ -1553,7 +1574,7 @@ export function StatisticsClient({
 
   return (
     <>
-      {/* Block 1: Hero band */}
+      {/* Block 1: Period selector + connection CTA */}
       <HeroBand
         connected={connected}
         orgSlug={orgSlug}
@@ -1561,7 +1582,7 @@ export function StatisticsClient({
         onPeriodChange={setActivePeriod}
       />
 
-      {/* Block 2: Activation timeline */}
+      {/* Block 2: Activation progress (compact when connected + data) */}
       <ActivationTimeline
         connected={connected}
         overview={overview}
@@ -1574,14 +1595,14 @@ export function StatisticsClient({
         <OrdersBlock overview={overview} onOpenDrawer={() => setOpenDrawer("orders")} />
       </div>
 
-      {/* Block 5: KPI grid */}
+      {/* Block 5: Complementary indicators */}
       <KpiGrid
         overview={overview}
         onOpenDrawer={id => setOpenDrawer(id)}
       />
 
-      {/* Copilot intelligence */}
-      <CopilotInsights
+      {/* Business signals + Sofía recommendations */}
+      <BusinessSignals
         overview={overview}
         onExecute={handleExecute}
         executingId={executingId}
@@ -1601,7 +1622,7 @@ export function StatisticsClient({
         flexWrap:   "wrap",
       }}>
         <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint }}>
-          Estadísticas Shopify · SHOPIFY-STATISTICS-UX-02
+          Estadísticas · Shopify Commerce
         </span>
         {overview && (
           <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint }}>
@@ -1609,7 +1630,7 @@ export function StatisticsClient({
           </span>
         )}
         <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint }}>
-          · Señales determinísticas · Sin IA generativa
+          · Sofía · Análisis de señales comerciales
         </span>
       </div>
 
