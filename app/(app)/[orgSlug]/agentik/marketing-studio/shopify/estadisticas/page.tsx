@@ -2,6 +2,7 @@
  * app/(app)/[orgSlug]/agentik/marketing-studio/shopify/estadisticas/page.tsx
  *
  * SHOPIFY-STATISTICS-UI-01 — Estadísticas Shopify
+ * SHOPIFY-EMPTY-EXPERIENCE-01 — Intelligent guided empty states
  *
  * Server Component. Responsibilities:
  *   1. Auth + org access check
@@ -15,13 +16,14 @@
  *   - accessToken never passed to client
  *   - Statistics consumed as signals; Copilot recommendations via /execute pipeline
  *   - No business logic in UI layer — all computation in service layer
+ *   - DisconnectedState and ErrorState use ModuleEmptyState (reusable, non-Shopify-specific)
  */
 import { redirect }                    from "next/navigation";
 import { requireOrgAccess }            from "@/lib/auth/org-access";
 import { canAccessMarketingStudio }    from "@/lib/auth/module-access";
-import { C, T, S, R }                  from "@/lib/ui/tokens";
+import { T, S }                        from "@/lib/ui/tokens";
 import { OperationalWorkspaceHeader }  from "@/components/workspace/operational-workspace-header";
-import { Panel }                       from "@/components/shell/primitives";
+import { ModuleEmptyState }            from "@/components/workspace/module-empty-state";
 
 import { resolveShopifyContextStatus,
          vaultShopifyContextResolver } from "@/lib/marketing-studio/commerce/shopify-runtime/shopify-context-resolver";
@@ -32,6 +34,60 @@ import { prisma }                      from "@/lib/prisma";
 import { StatisticsClient }            from "./statistics-client";
 import type { RecentExecution }        from "./statistics-client";
 
+// ── Shared Shopify empty state props ──────────────────────────────────────────
+
+const SHOPIFY_CAPABILITIES = [
+  {
+    icon:        "📊",
+    title:       "Inteligencia comercial",
+    description: "Análisis de ventas, pedidos, ticket promedio y tendencias por período.",
+  },
+  {
+    icon:        "📈",
+    title:       "Tendencias de crecimiento",
+    description: "Copilot detecta oportunidades y anomalías antes de que sean problemas.",
+  },
+  {
+    icon:        "🏷",
+    title:       "Promociones y descuentos",
+    description: "Visibilidad completa sobre códigos activos, conversión y uso.",
+  },
+  {
+    icon:        "✍",
+    title:       "Enriquecimiento SEO",
+    description: "Copilot sugiere y ejecuta mejoras de contenido en productos del catálogo.",
+  },
+  {
+    icon:        "🤖",
+    title:       "Automatización segura",
+    description: "Acciones ejecutadas con aprobación humana y trazabilidad total.",
+  },
+  {
+    icon:        "📋",
+    title:       "Historial auditable",
+    description: "Cada recomendación ejecutada queda registrada con contexto completo.",
+  },
+];
+
+const SHOPIFY_PREVIEW_SLOTS = [
+  { label: "Ventas",          sub: "esta semana" },
+  { label: "Pedidos",         sub: "totales" },
+  { label: "Ticket promedio", sub: "AOV" },
+  { label: "Conversión",      sub: "%" },
+  { label: "Clientes nuevos", sub: "únicos" },
+  { label: "Promociones",     sub: "activas" },
+  { label: "Pendientes SEO",  sub: "productos" },
+  { label: "Alertas Copilot", sub: "señales" },
+];
+
+const SHOPIFY_SETUP_STEPS = [
+  { label: "Conectar tienda Shopify",         current: true },
+  { label: "Sincronizar catálogo de productos" },
+  { label: "Generar primeras estadísticas" },
+  { label: "Activar inteligencia Copilot" },
+  { label: "Ejecutar recomendaciones" },
+];
+
 // ── Disconnected state ─────────────────────────────────────────────────────────
 
 function DisconnectedState({
@@ -39,56 +95,50 @@ function DisconnectedState({
   code,
 }: {
   orgSlug: string;
-  code: string;
+  code:    string;
 }) {
-  const messages: Record<string, string> = {
-    shopify_connection_not_found: "No hay una conexión Shopify registrada para esta organización.",
-    shopify_connection_disabled:  "La conexión Shopify está inactiva o fue desconectada.",
-    shopify_shop_domain_missing:  "La conexión existe pero no tiene dominio de tienda configurado.",
-    shopify_access_token_missing: "Faltan credenciales de acceso en el Vault seguro.",
-    shopify_context_resolution_failed: "Error al verificar la conexión. Inténtalo de nuevo.",
-  };
+  const isDisabled = code === "shopify_connection_disabled";
+
+  const copilotHeadline = isDisabled
+    ? "La conexión Shopify está inactiva — reactívala para continuar"
+    : "Conecta tu tienda Shopify y activa la inteligencia comercial";
+
+  const copilotBody = isDisabled
+    ? "Tenía acceso a los datos de tu tienda, pero la conexión fue desactivada. Una vez que la reactives, reanudaré el análisis de ventas, tendencias y recomendaciones automáticamente."
+    : "Una vez que conectes tu tienda, comenzaré a analizar ventas, pedidos y catálogo en tiempo real. Detectaré oportunidades, generaré recomendaciones accionables y podré ejecutar automatizaciones con tu aprobación. No necesitaré configuración adicional.";
+
   return (
     <div style={{ maxWidth: 1100, fontFamily: T.mono }}>
       <OperationalWorkspaceHeader
         title="Estadísticas Shopify"
         subtitle="Inteligencia comercial · Señales Copilot · Trazabilidad"
         status="neutral"
-        statusLabel="Sin conexión Shopify"
+        statusLabel={isDisabled ? "Conexión inactiva" : "Integración requerida"}
         breadcrumbs={[
           { label: "Marketing Studio", href: `/${orgSlug}/agentik/marketing-studio` },
-          { label: "Shopify", href: `/${orgSlug}/agentik/marketing-studio/shopify` },
+          { label: "Shopify",          href: `/${orgSlug}/agentik/marketing-studio/shopify` },
           { label: "Estadísticas" },
         ]}
       />
-      <Panel>
-        <div style={{ padding: `${S[10]}px ${S[4]}px`, textAlign: "center" }}>
-          <div style={{
-            width: 48, height: 48, borderRadius: "50%",
-            background: C.blueLight, border: `1px solid ${C.blueBorder}`,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            margin: `0 auto ${S[4]}px`,
-          }}>
-            <span style={{ fontSize: 22 }}>📊</span>
-          </div>
-          <div style={{ fontSize: T.sz.base, fontWeight: T.wt.semibold, color: C.ink, marginBottom: S[2] }}>
-            Estadísticas no disponibles
-          </div>
-          <div style={{ fontSize: T.sz.sm, color: C.inkLight, maxWidth: 400, margin: `0 auto ${S[5]}px`, lineHeight: 1.6 }}>
-            {messages[code] ?? "Conecta tu tienda Shopify para acceder a estadísticas en tiempo real."}
-          </div>
-          <a
-            href={`/${orgSlug}/agentik/marketing-studio/shopify`}
-            style={{
-              display: "inline-block", padding: `${S[2]}px ${S[4]}px`,
-              background: C.blueDark, color: C.white,
-              borderRadius: R.md, fontSize: T.sz.sm, textDecoration: "none",
-            }}
-          >
-            Ir a Shopify Commerce OS →
-          </a>
-        </div>
-      </Panel>
+      <div style={{ marginTop: S[4] }}>
+        <ModuleEmptyState
+          copilotHeadline={copilotHeadline}
+          copilotBody={copilotBody}
+          setupTag={isDisabled ? "Conexión inactiva" : "Integración requerida"}
+          setupSteps={SHOPIFY_SETUP_STEPS}
+          capabilities={SHOPIFY_CAPABILITIES}
+          previewLabel="Así se verá este panel cuando conectes Shopify"
+          previewSlots={SHOPIFY_PREVIEW_SLOTS}
+          primaryCta={{
+            label: "Conectar tienda Shopify",
+            href:  `/${orgSlug}/agentik/marketing-studio/shopify`,
+          }}
+          secondaryCta={{
+            label: "Ir a Commerce OS",
+            href:  `/${orgSlug}/agentik/marketing-studio/shopify`,
+          }}
+        />
+      </div>
     </div>
   );
 }
@@ -105,20 +155,33 @@ function ErrorState({ orgSlug, shopDomain }: { orgSlug: string; shopDomain: stri
         statusLabel="Error al cargar estadísticas"
         breadcrumbs={[
           { label: "Marketing Studio", href: `/${orgSlug}/agentik/marketing-studio` },
-          { label: "Shopify", href: `/${orgSlug}/agentik/marketing-studio/shopify` },
+          { label: "Shopify",          href: `/${orgSlug}/agentik/marketing-studio/shopify` },
           { label: "Estadísticas" },
         ]}
       />
-      <Panel>
-        <div style={{ padding: `${S[8]}px ${S[4]}px`, textAlign: "center" }}>
-          <div style={{ fontSize: T.sz.sm, color: C.inkLight, marginBottom: S[3] }}>
-            No fue posible obtener estadísticas desde Shopify en este momento.
-          </div>
-          <div style={{ fontSize: T.sz.xs, color: C.inkFaint }}>
-            La tienda Shopify puede estar temporalmente no disponible. Inténtalo de nuevo.
-          </div>
-        </div>
-      </Panel>
+      <div style={{ marginTop: S[4] }}>
+        <ModuleEmptyState
+          copilotHeadline="No pude obtener estadísticas en este momento"
+          copilotBody={`La tienda ${shopDomain} puede estar temporalmente no disponible o hubo un error de conexión. Los datos que ya tenía registrados siguen intactos. Inténtalo de nuevo en unos minutos.`}
+          setupTag="Servicio temporalmente no disponible"
+          setupSteps={[
+            { label: "Verificar conexión con Shopify",        current: true },
+            { label: "Reintentar carga de estadísticas" },
+            { label: "Reanudar inteligencia Copilot" },
+          ]}
+          capabilities={SHOPIFY_CAPABILITIES}
+          previewLabel="Estadísticas disponibles cuando se restaure la conexión"
+          previewSlots={SHOPIFY_PREVIEW_SLOTS}
+          primaryCta={{
+            label: "Reintentar",
+            href:  `/${orgSlug}/agentik/marketing-studio/shopify/estadisticas`,
+          }}
+          secondaryCta={{
+            label: "Ir a Commerce OS",
+            href:  `/${orgSlug}/agentik/marketing-studio/shopify`,
+          }}
+        />
+      </div>
     </div>
   );
 }
