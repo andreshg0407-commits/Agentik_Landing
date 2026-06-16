@@ -62,6 +62,25 @@ import type { ExecutionStore, ExecutionSource, ExecutionStoreStepInput } from "@
 import { noopExecutionStore }                   from "@/lib/copilot/execution-store/noop-execution-store";
 import { sanitizeSnapshot }                     from "@/lib/copilot/execution-store/execution-store-sanitizer";
 
+// ── Approved step override (AGENTIK-EXECUTION-RESUME-01) ──────────────────────
+
+/**
+ * Records a human approval decision for a specific step, enabling the runtime
+ * to continue past a require_approval gate during a resume run.
+ *
+ * Security rules (enforced in the step loop):
+ *   - Only applies when PolicyEngine returns require_approval (NOT deny)
+ *   - deny always wins — an override cannot bypass a deny decision
+ *   - Only applies to the exact stepId specified — never bleeds to other steps
+ *   - approvalId must reference a real CopilotApprovalRequest record
+ */
+export interface ApprovedStepOverride {
+  stepId:     string;
+  approvalId: string;
+  approvedBy: string;
+  approvedAt: Date;
+}
+
 // ── Execution options ──────────────────────────────────────────────────────────
 
 /**
@@ -96,6 +115,31 @@ export interface ExecuteOptions {
   executionSource?: ExecutionSource;
   /** Suppress console logging (for test environments) */
   silent?:          boolean;
+  /**
+   * Resume mode — set to true when continuing a paused execution after approval.
+   * When true: createExecution is skipped, execution_started event is skipped,
+   * updateExecution/execution_completed are skipped (caller handles final update).
+   * Preserves the original executionId and correlationId in all audit events.
+   */
+  resumeMode?:             boolean;
+  /** ID of the CopilotApprovalRequest that triggered this resume. Recorded for audit. */
+  resumedFromApprovalId?:  string;
+  /** User or system initiating the resume — recorded in all step events. */
+  resumedBy?:              string;
+  /**
+   * Per-step approval overrides for resume mode.
+   * Key: stepId. Value: the recorded approval for that exact step.
+   *
+   * When PolicyEngine returns require_approval for a step AND a matching override
+   * exists for that stepId, the runtime:
+   *   1. Records an approval_override_applied event
+   *   2. Continues to dispatch (does not block)
+   *
+   * Invariants:
+   *   - deny always wins — override cannot bypass a deny decision
+   *   - An override only applies to its exact stepId
+   */
+  approvedStepOverrides?:  Record<string, ApprovedStepOverride>;
 }
 
 // ── Extended report ────────────────────────────────────────────────────────────
@@ -398,30 +442,33 @@ export async function executeExecutionPlan(
   });
 
   // ── Persist execution start ───────────────────────────────────────────────
-  await persist("createExecution", () => store.createExecution({
-    executionId:   ctx.executionId,
-    correlationId: ctx.correlationId,
-    tenantId:      ctx.tenantId,
-    userId:        ctx.userId,
-    status:        "running",
-    source,
-    executionMode,
-    planId:        plan.planId,
-    planTitle:     plan.title,
-    planSummary:   plan.summary,
-    idempotencyKey: ctx.idempotencyKey,
-    startedAt,
-    totalSteps:    sortedSteps.length,
-    planSnapshot:  sanitizeSnapshot(plan),
-    metadata:      ctx.metadata,
-  }));
+  // Skip in resume mode — execution record already exists in the store.
+  if (!options.resumeMode) {
+    await persist("createExecution", () => store.createExecution({
+      executionId:   ctx.executionId,
+      correlationId: ctx.correlationId,
+      tenantId:      ctx.tenantId,
+      userId:        ctx.userId,
+      status:        "running",
+      source,
+      executionMode,
+      planId:        plan.planId,
+      planTitle:     plan.title,
+      planSummary:   plan.summary,
+      idempotencyKey: ctx.idempotencyKey,
+      startedAt,
+      totalSteps:    sortedSteps.length,
+      planSnapshot:  sanitizeSnapshot(plan),
+      metadata:      ctx.metadata,
+    }));
 
-  await persist("event:execution_started", () => store.recordEvent({
-    executionId: ctx.executionId,
-    tenantId:    ctx.tenantId,
-    eventType:   "execution_started",
-    message:     `Starting execution of plan "${plan.title}" (${sortedSteps.length} steps)`,
-  }));
+    await persist("event:execution_started", () => store.recordEvent({
+      executionId: ctx.executionId,
+      tenantId:    ctx.tenantId,
+      eventType:   "execution_started",
+      message:     `Starting execution of plan "${plan.title}" (${sortedSteps.length} steps)`,
+    }));
+  }
 
   let shouldStop = false;
 
@@ -480,8 +527,43 @@ export async function executeExecutionPlan(
       deniedByPolicy: policyResult.decision === "deny",
     };
 
+    // ── Approved step override (AGENTIK-EXECUTION-RESUME-01) ──────────────
+    // Only applies when policy says require_approval (not deny).
+    // deny always wins — an override CANNOT bypass a deny decision.
+    const stepOverride =
+      policyResult.decision === "require_approval" &&
+      options.approvedStepOverrides?.[spec.stepId]?.stepId === spec.stepId
+        ? options.approvedStepOverrides![spec.stepId]
+        : undefined;
+
+    // If override present, unlock the gate for this specific step only
+    const effectiveGate = stepOverride
+      ? { ...gate, shouldBlock: false, status: "granted" as const }
+      : gate;
+
+    // Record audit event when an override is actually applied
+    if (stepOverride && gate.shouldBlock) {
+      await persist(`event:approval_override_applied:${spec.stepId}`, () => store.recordEvent({
+        executionId: ctx.executionId,
+        tenantId:    ctx.tenantId,
+        eventType:   "approval_override_applied",
+        stepId:      spec.stepId,
+        actionId:    spec.actionId,
+        domain:      spec.domain,
+        status:      "running",
+        message:     `Approval override applied for step "${spec.displayName}" ` +
+                     `(approvalId: ${stepOverride.approvalId}, approvedBy: ${stepOverride.approvedBy}).`,
+        payload: {
+          approvalId:  stepOverride.approvalId,
+          approvedBy:  stepOverride.approvedBy,
+          approvedAt:  stepOverride.approvedAt,
+          stepId:      stepOverride.stepId,
+        },
+      }));
+    }
+
     // ── Approval gate / deny ────────────────────────────────────────────────
-    if (gate.shouldBlock) {
+    if (effectiveGate.shouldBlock) {
       // "deny" → blocked status; "require_approval" → awaiting_approval
       const stepStatus = policyResult.decision === "deny" ? "blocked" : "awaiting_approval";
       const approvalSt = policyResult.decision === "deny" ? "denied"  : "pending";
@@ -573,7 +655,7 @@ export async function executeExecutionPlan(
       case "not_found": {
         const blocked = makeStepResult(spec, "blocked", stepStart, {
           error:          `Action "${outcome.actionId}" not found in dispatcher registry (domain: ${outcome.domain}).`,
-          approvalStatus: gate.status,
+          approvalStatus: effectiveGate.status,
           auditNote:      "Action not registered in any domain provider.",
           ...policyFields,
         });
@@ -601,7 +683,7 @@ export async function executeExecutionPlan(
       case "context_error": {
         const failed = makeStepResult(spec, "failed", stepStart, {
           error:          `Domain context error for "${outcome.domain}": ${outcome.reason}`,
-          approvalStatus: gate.status,
+          approvalStatus: effectiveGate.status,
           auditNote:      "Domain context could not be resolved.",
           ...policyFields,
         });
@@ -629,7 +711,7 @@ export async function executeExecutionPlan(
       case "handler_error": {
         const failed = makeStepResult(spec, "failed", stepStart, {
           error:          outcome.error,
-          approvalStatus: gate.status,
+          approvalStatus: effectiveGate.status,
           auditNote:      "Handler threw an unhandled exception.",
           ...policyFields,
         });
@@ -662,7 +744,7 @@ export async function executeExecutionPlan(
             error:          result.error ?? "Handler returned success=false without an error message.",
             data:           result.data,
             warnings:       result.warnings,
-            approvalStatus: gate.status,
+            approvalStatus: effectiveGate.status,
             auditNote:      result.auditNote,
             ...policyFields,
           });
@@ -688,7 +770,7 @@ export async function executeExecutionPlan(
           const completed = makeStepResult(spec, "completed", stepStart, {
             data:           result.data,
             warnings:       result.warnings,
-            approvalStatus: gate.status,
+            approvalStatus: effectiveGate.status,
             auditNote:      result.auditNote,
             ...policyFields,
           });
@@ -730,29 +812,33 @@ export async function executeExecutionPlan(
   });
 
   // ── Persist execution completion ──────────────────────────────────────────
-  await persist("updateExecution", () => store.updateExecution(ctx.executionId, ctx.tenantId, {
-    status:          report.overallStatus,
-    finishedAt:      execution.finishedAt,
-    durationMs:      report.durationMs,
-    completedSteps:  report.completedSteps,
-    failedSteps:     report.failedSteps,
-    skippedSteps:    report.skippedSteps,
-    blockedSteps:    report.blockedSteps,
-    approvalRequired: report.audit.approvalRequired,
-    deniedByPolicy:  report.deniedByPolicy,
-    reportSnapshot:  sanitizeSnapshot(report),
-  }));
+  // In resume mode, the caller (execution-resume.ts) handles the final
+  // updateExecution and execution_completed event with combined totals.
+  if (!options.resumeMode) {
+    await persist("updateExecution", () => store.updateExecution(ctx.executionId, ctx.tenantId, {
+      status:          report.overallStatus,
+      finishedAt:      execution.finishedAt,
+      durationMs:      report.durationMs,
+      completedSteps:  report.completedSteps,
+      failedSteps:     report.failedSteps,
+      skippedSteps:    report.skippedSteps,
+      blockedSteps:    report.blockedSteps,
+      approvalRequired: report.audit.approvalRequired,
+      deniedByPolicy:  report.deniedByPolicy,
+      reportSnapshot:  sanitizeSnapshot(report),
+    }));
 
-  await persist("event:execution_completed", () => store.recordEvent({
-    executionId: ctx.executionId,
-    tenantId:    ctx.tenantId,
-    eventType:   "execution_completed",
-    status:      report.overallStatus,
-    message:
-      `Execution complete: ${report.completedSteps}/${report.totalSteps} steps completed ` +
-      `| ${report.failedSteps} failed | ${report.skippedSteps} skipped ` +
-      `| ${report.awaitingApproval} awaiting approval`,
-  }));
+    await persist("event:execution_completed", () => store.recordEvent({
+      executionId: ctx.executionId,
+      tenantId:    ctx.tenantId,
+      eventType:   "execution_completed",
+      status:      report.overallStatus,
+      message:
+        `Execution complete: ${report.completedSteps}/${report.totalSteps} steps completed ` +
+        `| ${report.failedSteps} failed | ${report.skippedSteps} skipped ` +
+        `| ${report.awaitingApproval} awaiting approval`,
+    }));
+  }
 
   // ── Phase 1: build rollback descriptor (descriptive only) ─────────────────
 

@@ -122,8 +122,23 @@ export type {
 
 export { buildRollbackDescriptor } from "./rollback-descriptor";
 
-export type { ExecuteOptions, ExtendedExecutionReport } from "./action-runtime";
+export type { ExecuteOptions, ExtendedExecutionReport, ApprovedStepOverride } from "./action-runtime";
 export { executeExecutionPlan }                         from "./action-runtime";
+
+// ── Execution resume (AGENTIK-EXECUTION-RESUME-01) ────────────────────────────
+
+export type {
+  ExecutionResumeInput,
+  ExecutionResumeStatus,
+  ExecutionResumeResult,
+} from "./execution-resume";
+export { resumeExecutionFromApproval } from "./execution-resume";
+
+export type {
+  ExecutionResumeSmokeCheck,
+  ExecutionResumeValidateResult,
+} from "./execution-resume-validate";
+export { runExecutionResumeSmokeCheck } from "./execution-resume-validate";
 
 // ── Policy Engine re-exports (AGENTIK-POLICY-ENGINE-01) ───────────────────────
 
