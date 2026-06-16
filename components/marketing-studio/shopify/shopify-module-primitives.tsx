@@ -242,6 +242,150 @@ export function ShopifyConnectCTA({
   );
 }
 
+// ── ShopifyDistributionBar ─────────────────────────────────────────────────────
+
+export interface DistributionSegment {
+  /** Legend label */
+  label: string;
+  /** Raw count — used to compute proportional fill */
+  count: number;
+  /** Token color value */
+  color: string;
+}
+
+/**
+ * Proportional horizontal bar with optional legend.
+ * When total is 0, renders a grey placeholder track.
+ */
+export function ShopifyDistributionBar({
+  segments,
+  showLegend = true,
+}: {
+  segments:    DistributionSegment[];
+  showLegend?: boolean;
+}) {
+  const total = segments.reduce((acc, s) => acc + s.count, 0);
+
+  if (total === 0) {
+    return (
+      <div>
+        <div style={{ height: 6, background: C.surfaceAlt, borderRadius: R.pill }} />
+        {showLegend && (
+          <div style={{ display: "flex", gap: S[3], marginTop: S[2], flexWrap: "wrap" as const }}>
+            {segments.map((seg, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: S[1] }}>
+                <div style={{ width: 6, height: 6, borderRadius: "50%", background: C.surfaceAlt }} />
+                <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>{seg.label}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", height: 6, borderRadius: R.pill, overflow: "hidden" }}>
+        {segments.filter(s => s.count > 0).map((seg, i) => (
+          <div key={i} style={{
+            flex:       seg.count,
+            background: seg.color,
+            marginLeft: i > 0 ? 1 : 0,
+            minWidth:   2,
+          }} />
+        ))}
+      </div>
+      {showLegend && (
+        <div style={{ display: "flex", gap: S[3], marginTop: S[2], flexWrap: "wrap" as const }}>
+          {segments.map((seg, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: S[1] }}>
+              <div style={{ width: 6, height: 6, borderRadius: "50%", background: seg.color }} />
+              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
+                {seg.label} · {seg.count}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── ShopifyStageFlow ───────────────────────────────────────────────────────────
+
+export interface StageFlowItem {
+  label: string;
+  /** null renders a placeholder "–" in surfaceAlt color */
+  count: number | null;
+  color: string;
+}
+
+/**
+ * Horizontal pipeline of labelled stages with "→" separators.
+ * Designed for flows like: Pedido → Pago → Preparación → Envío → Entrega.
+ */
+export function ShopifyStageFlow({ stages }: { stages: StageFlowItem[] }) {
+  const fmt = (n: number) => new Intl.NumberFormat("es-CO").format(n);
+
+  const nodes: React.ReactNode[] = [];
+  stages.forEach((stage, i) => {
+    nodes.push(
+      <div key={`s${i}`} style={{ textAlign: "center" as const, minWidth: 56, flex: 1 }}>
+        <div style={{
+          fontFamily: T.mono, fontSize: T.sz["2xl"], fontWeight: T.wt.bold,
+          color: stage.count !== null ? stage.color : C.surfaceAlt,
+          lineHeight: 1.1,
+        }}>
+          {stage.count !== null ? fmt(stage.count) : "–"}
+        </div>
+        <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginTop: 2 }}>
+          {stage.label}
+        </div>
+      </div>,
+    );
+    if (i < stages.length - 1) {
+      nodes.push(
+        <span key={`a${i}`} style={{
+          color: C.lineSubtle, fontFamily: T.mono, fontSize: T.sz.xs, flexShrink: 0,
+        }}>→</span>,
+      );
+    }
+  });
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
+      {nodes}
+    </div>
+  );
+}
+
+// ── ShopifyRiskMeter ───────────────────────────────────────────────────────────
+
+/**
+ * Thin horizontal level indicator for operational risk.
+ * Callers compute the level and label from their domain data.
+ */
+export function ShopifyRiskMeter({
+  level,
+  label,
+}: {
+  level: "ok" | "warning" | "critical";
+  label: string;
+}) {
+  const color = level === "critical" ? C.red : level === "warning" ? C.amber : C.green;
+  const fill  = level === "critical" ? "92%" : level === "warning" ? "52%" : "14%";
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: S[3] }}>
+      <div style={{ flex: 1, height: 4, background: C.surfaceAlt, borderRadius: R.pill, overflow: "hidden" }}>
+        <div style={{ height: "100%", width: fill, background: color, borderRadius: R.pill }} />
+      </div>
+      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color, flexShrink: 0 }}>{label}</span>
+    </div>
+  );
+}
+
 // ── ShopifyActivationTimeline ──────────────────────────────────────────────────
 
 /**

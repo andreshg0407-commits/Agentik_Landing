@@ -3,22 +3,14 @@
 /**
  * app/(app)/[orgSlug]/agentik/marketing-studio/shopify/operaciones/operaciones-client.tsx
  *
- * SHOPIFY-MODULE-MATURITY-01 — Operaciones Intelligence Console — Client Component
- * AGENTIK-COPILOT-BOUNDARIES-01 — Copilot/Sofía belongs in the right rail, not in the canvas
+ * SHOPIFY-MODULE-MATURITY-03 — Operaciones: Torre de Control
+ * AGENTIK-COPILOT-BOUNDARIES-01 — Copilot lives in the right rail only
  *
- * Architecture:
- *   - Unified structure regardless of connection/data state
- *   - Placeholders replace all metrics when ops is null
- *   - All actions route through /execution pipeline
- *   - OperationalSideDrawer for all detail panels (5 sections each)
- *   - Canvas shows module data only; Sofía intelligence lives in right rail
- *   - Language: natural business Spanish for Latin America
- *
- * Blocks:
- *   1. Timeline         — compact strip when connected, steps when onboarding
- *   2. ProtagonistBlock — order flow (pending → in transit → delivered)
- *   3. KpiGrid          — 8 indicator tiles, each with drawer
- *   4. ShipmentsBlock   — in-transit orders (secondary protagonist)
+ * Identity: this module is an operations control tower, not a metrics grid.
+ *   - Protagonist block shows the full order flow + distribution bar + risk meter
+ *   - Context-aware drawer actions (getOperationDrawerActions)
+ *   - Canvas contains only module data
+ *   - Right rail + drawer "Análisis de Sofía" section carry Copilot intelligence
  */
 
 import { useState, useCallback }       from "react";
@@ -31,6 +23,9 @@ import {
   ShopifyDrawerAction,
   ShopifyPlaceholderRow,
   ShopifyActivationTimeline,
+  ShopifyDistributionBar,
+  ShopifyStageFlow,
+  ShopifyRiskMeter,
 }                                      from "@/components/marketing-studio/shopify/shopify-module-primitives";
 
 import type {
@@ -70,7 +65,7 @@ function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString("es-CO", { day: "numeric", month: "short" });
 }
 
-// ── Status labels and colors ───────────────────────────────────────────────────
+// ── Status maps ────────────────────────────────────────────────────────────────
 
 const ORDER_STATUS_LABEL: Record<string, string> = {
   pending:             "Nuevo",
@@ -126,11 +121,77 @@ const ACTIVATION_STEPS = [
   "Activar seguimiento de transportadoras",
 ];
 
+// ── Context-aware drawer actions ───────────────────────────────────────────────
+
+type ActionSpec = { label: string; intent: string };
+
+interface OperationActionCtx {
+  drawerId:      DrawerId;
+  pendingCount:  number;
+  stalledCount:  number;
+  cancelledCount: number;
+  criticalCount: number;
+  atRiskCount:   number;
+  totalOrders:   number;
+}
+
+function getOperationDrawerActions(ctx: OperationActionCtx): ActionSpec[] {
+  const { drawerId, pendingCount, stalledCount, cancelledCount, criticalCount, atRiskCount, totalOrders } = ctx;
+
+  if (drawerId === "pendientes" && pendingCount > 0) return [
+    { label: "Revisar pedidos pendientes",       intent: "operations.review_pending"    },
+    { label: "Preparar seguimiento de pago",     intent: "operations.followup_payment"  },
+    { label: "Marcar para revisión manual",      intent: "operations.mark_review"       },
+  ];
+
+  if (drawerId === "en_transito" && stalledCount > 0) return [
+    { label: "Analizar retrasos de envío",       intent: "operations.analyze_delays"    },
+    { label: "Preparar mensaje de seguimiento",  intent: "operations.notify_customers"  },
+    { label: "Revisar transportadora",           intent: "operations.contact_carrier"   },
+  ];
+
+  if (drawerId === "devoluciones" && cancelledCount > 0) return [
+    { label: "Inspeccionar devoluciones",        intent: "operations.inspect_returns"        },
+    { label: "Analizar causa de cancelaciones",  intent: "operations.analyze_cancellations"  },
+    { label: "Preparar plan de reducción",       intent: "operations.reduce_returns_plan"    },
+  ];
+
+  if (drawerId === "alertas" && criticalCount > 0) return [
+    { label: "Revisar alertas críticas",         intent: "operations.review_critical"    },
+    { label: "Preparar plan de contingencia",    intent: "operations.contingency_plan"   },
+    { label: "Notificar equipo operativo",       intent: "operations.notify_team"        },
+  ];
+
+  if (drawerId === "incidencias" && atRiskCount > 0) return [
+    { label: "Revisar pedidos en riesgo",        intent: "operations.review_risk"        },
+    { label: "Marcar para atención inmediata",   intent: "operations.mark_urgent"        },
+    { label: "Preparar plan de seguimiento",     intent: "operations.followup_plan"      },
+  ];
+
+  if (drawerId === "preparando") return [
+    { label: "Ver pedidos en preparación",       intent: "operations.list_preparing"     },
+    { label: "Priorizar por fecha compromiso",   intent: "operations.prioritize_orders"  },
+    { label: "Generar lista de despacho",        intent: "operations.dispatch_list"      },
+  ];
+
+  if (drawerId === "entregados" && totalOrders > 0) return [
+    { label: "Ver confirmaciones de entrega",    intent: "operations.list_delivered"     },
+    { label: "Revisar operación reciente",       intent: "operations.review_recent"      },
+    { label: "Preparar resumen ejecutivo",       intent: "operations.executive_summary"  },
+  ];
+
+  // No active issues — opportunities mode
+  return [
+    { label: "Revisar operación reciente",       intent: "operations.review_recent"         },
+    { label: "Explorar oportunidades operativas", intent: "operations.explore_opportunities" },
+    { label: "Preparar resumen ejecutivo",       intent: "operations.executive_summary"     },
+  ];
+}
+
 // ── Order row ──────────────────────────────────────────────────────────────────
 
 function OrderRow({ order }: { order: OperationOrderSummary }) {
   const statusColor = ORDER_STATUS_COLOR[order.status] ?? C.inkMid;
-
   return (
     <div className="ag-op-row" style={{ alignItems: "center", gap: S[3] }}>
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -160,10 +221,9 @@ function OrderRow({ order }: { order: OperationOrderSummary }) {
       </div>
       <span style={{
         fontFamily:   T.mono, fontSize: T.sz.xs,
-        color:        statusColor,
-        background:   `${statusColor}18`,
+        color:        statusColor, background: `${statusColor}18`,
         border:       `1px solid ${statusColor}40`,
-        borderRadius: R.pill, padding:  `2px ${S[2]}px`,
+        borderRadius: R.pill, padding: `2px ${S[2]}px`,
         flexShrink:   0, whiteSpace: "nowrap" as const,
       }}>
         {ORDER_STATUS_LABEL[order.status] ?? order.status}
@@ -208,47 +268,13 @@ function ShipmentRow({ shipment }: { shipment: OperationShipmentSummary }) {
         </span>
       )}
       <span style={{
-        fontFamily: T.mono, fontSize: T.sz.xs,
-        color: shipColor, background: `${shipColor}18`,
-        border: `1px solid ${shipColor}40`,
+        fontFamily: T.mono, fontSize: T.sz.xs, color: shipColor,
+        background: `${shipColor}18`, border: `1px solid ${shipColor}40`,
         borderRadius: R.pill, padding: `2px ${S[2]}px`, flexShrink: 0,
       }}>
         {SHIPMENT_STATUS_LABEL[shipment.status] ?? shipment.status}
       </span>
     </div>
-  );
-}
-
-// ── Flow step indicator (protagonist block) ────────────────────────────────────
-
-function FlowStep({
-  label, count, color, isLast,
-}: {
-  label:   string;
-  count:   number | null;
-  color:   string;
-  isLast?: boolean;
-}) {
-  return (
-    <>
-      <div style={{ textAlign: "center" as const, flex: 1, minWidth: 80 }}>
-        <div style={{
-          fontFamily:  T.mono,
-          fontSize:    T.sz["2xl"],
-          fontWeight:  T.wt.bold,
-          color:       count !== null ? color : C.surfaceAlt,
-          lineHeight:  1.15,
-        }}>
-          {count !== null ? fmtNum(count) : "–"}
-        </div>
-        <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, marginTop: 2 }}>
-          {label}
-        </div>
-      </div>
-      {!isLast && (
-        <span style={{ color: C.lineSubtle, fontFamily: T.mono, fontSize: T.sz.sm, flexShrink: 0 }}>→</span>
-      )}
-    </>
   );
 }
 
@@ -274,8 +300,17 @@ export function OperacionesClient({
   const criticalCount  = ops?.alerts.critical         ?? 0;
   const stalledCount   = ops?.alerts.stalledShipments ?? 0;
   const atRiskCount    = ops?.alerts.ordersAtRisk     ?? 0;
+  const alertCount     = criticalCount + stalledCount;
 
-  const alertCount = criticalCount + stalledCount;
+  const riskLevel: "ok" | "warning" | "critical" =
+    criticalCount > 0 ? "critical" : stalledCount > 0 ? "warning" : "ok";
+
+  const riskLabel =
+    criticalCount > 0
+      ? `${criticalCount} alerta${criticalCount !== 1 ? "s" : ""} crítica${criticalCount !== 1 ? "s" : ""}`
+      : stalledCount > 0
+      ? `${stalledCount} envío${stalledCount !== 1 ? "s" : ""} sin movimiento`
+      : "Operación dentro de parámetros normales";
 
   // ── Execute action ───────────────────────────────────────────────────────
   const executeAction = useCallback(async (intent: string) => {
@@ -308,19 +343,19 @@ export function OperacionesClient({
       case "pendientes":
         return {
           title:    "Pedidos pendientes de pago",
-          subtitle: `${pendingCount} pedido${pendingCount !== 1 ? "s" : ""} esperando confirmación · ${shopDomain || "Tienda"}`,
+          subtitle: `${pendingCount} esperando confirmación · ${shopDomain || "Tienda"}`,
           severity: pendingCount > 3 ? "warning" : "info",
         };
       case "preparando":
         return {
           title:    "Pedidos en preparación",
-          subtitle: `${preparingCount} pedido${preparingCount !== 1 ? "s" : ""} siendo procesado${preparingCount !== 1 ? "s" : ""}`,
+          subtitle: `${preparingCount} siendo procesado${preparingCount !== 1 ? "s" : ""}`,
           severity: "info",
         };
       case "en_transito":
         return {
           title:    "Envíos en tránsito",
-          subtitle: `${inTransitCount} envío${inTransitCount !== 1 ? "s" : ""} en la red de transportadoras${stalledCount > 0 ? ` · ${stalledCount} detenido${stalledCount !== 1 ? "s" : ""}` : ""}`,
+          subtitle: `${inTransitCount} en red de transportadoras${stalledCount > 0 ? ` · ${stalledCount} detenido${stalledCount !== 1 ? "s" : ""}` : ""}`,
           severity: stalledCount > 0 ? "warning" : "info",
         };
       case "entregados":
@@ -350,7 +385,9 @@ export function OperacionesClient({
       case "alertas":
         return {
           title:    "Alertas operativas",
-          subtitle: alertCount > 0 ? `${alertCount} situación${alertCount !== 1 ? "es" : ""} que requieren atención` : "Sin alertas activas",
+          subtitle: alertCount > 0
+            ? `${alertCount} situación${alertCount !== 1 ? "es" : ""} que requieren atención`
+            : "Sin alertas activas",
           severity: criticalCount > 0 ? "critical" : stalledCount > 0 ? "warning" : "info",
         };
       default:
@@ -358,7 +395,18 @@ export function OperacionesClient({
     }
   };
 
-  const cfg = drawerConfig(openDrawer);
+  const cfg     = drawerConfig(openDrawer);
+  const actions = openDrawer
+    ? getOperationDrawerActions({
+        drawerId:      openDrawer,
+        pendingCount,
+        stalledCount,
+        cancelledCount,
+        criticalCount,
+        atRiskCount,
+        totalOrders,
+      })
+    : [];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[4], paddingTop: S[4] }}>
@@ -372,7 +420,7 @@ export function OperacionesClient({
         criticalCount={alertCount}
       />
 
-      {/* ── 2. Protagonist: order flow ───────────────────────────────────── */}
+      {/* ── 2. Protagonist: control tower ───────────────────────────────── */}
       <div style={{
         border:       `1px solid ${C.line}`,
         borderTop:    `3px solid ${C.blueDark}`,
@@ -381,10 +429,14 @@ export function OperacionesClient({
         background:   C.white,
         boxShadow:    E.sm,
       }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: S[4] }}>
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: S[4] }}>
           <div>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.inkFaint, textTransform: "uppercase" as const, letterSpacing: "0.09em" }}>
-              Comportamiento de los pedidos
+            <div style={{
+              fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
+              color: C.inkFaint, textTransform: "uppercase" as const, letterSpacing: "0.09em",
+            }}>
+              Flujo operativo
             </div>
             <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid, marginTop: S[1] }}>
               {hasData
@@ -405,57 +457,64 @@ export function OperacionesClient({
           </button>
         </div>
 
-        {/* Flow steps */}
-        <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[4] }}>
-          <FlowStep label="Pendientes pago" count={hasData ? pendingCount   : null} color={C.amber}    />
-          <FlowStep label="Preparando"      count={hasData ? preparingCount : null} color={C.blueDark} />
-          <FlowStep label="En tránsito"     count={hasData ? inTransitCount : null} color={C.blueDark} />
-          <FlowStep label="Entregados"      count={hasData ? deliveredCount : null} color={C.green} isLast />
+        {/* Stage flow */}
+        <div style={{ marginBottom: S[4] }}>
+          <ShopifyStageFlow
+            stages={[
+              { label: "Pago pendiente", count: hasData ? pendingCount   : null, color: C.amber    },
+              { label: "Preparando",     count: hasData ? preparingCount : null, color: C.blueDark },
+              { label: "En tránsito",    count: hasData ? inTransitCount : null, color: C.blueDark },
+              { label: "Entregados",     count: hasData ? deliveredCount : null, color: C.green    },
+              ...(hasData && cancelledCount > 0
+                ? [{ label: "Devueltos", count: cancelledCount, color: C.red }]
+                : []),
+            ]}
+          />
         </div>
 
-        {/* Alert strips */}
-        {criticalCount > 0 && (
-          <div style={{
-            fontFamily: T.mono, fontSize: T.sz.xs, color: C.red,
-            background: C.redLight, border: `1px solid ${C.redBorder}`,
-            borderRadius: R.md, padding: `${S[2]}px ${S[3]}px`, marginBottom: S[2],
-          }}>
-            ⚠ {criticalCount} alerta{criticalCount !== 1 ? "s" : ""} crítica{criticalCount !== 1 ? "s" : ""} — revisión inmediata requerida
-          </div>
-        )}
-        {stalledCount > 0 && (
-          <div style={{
-            fontFamily: T.mono, fontSize: T.sz.xs, color: C.amber,
-            background: C.amberLight, border: `1px solid ${C.amberBorder}`,
-            borderRadius: R.md, padding: `${S[2]}px ${S[3]}px`, marginBottom: S[2],
-          }}>
-            {stalledCount} envío{stalledCount !== 1 ? "s" : ""} sin movimiento por más de 5 días
+        {/* Distribution bar */}
+        <div style={{ marginBottom: S[3] }}>
+          <ShopifyDistributionBar
+            segments={[
+              { label: "Pago pendiente", count: hasData ? pendingCount   : 0, color: C.amber     },
+              { label: "Preparando",     count: hasData ? preparingCount : 0, color: C.blueDark  },
+              { label: "En tránsito",    count: hasData ? inTransitCount : 0, color: C.blue      },
+              { label: "Entregados",     count: hasData ? deliveredCount : 0, color: C.green     },
+              { label: "Cancelados",     count: hasData ? cancelledCount : 0, color: C.lineSubtle },
+            ]}
+          />
+        </div>
+
+        {/* Risk meter */}
+        {hasData && (
+          <div style={{ marginBottom: S[3] }}>
+            <ShopifyRiskMeter level={riskLevel} label={riskLabel} />
           </div>
         )}
 
         {/* Pending orders table */}
         {hasData && ops!.pendingPayment.length > 0 && (
-          <div className="ag-op-table">
+          <div className="ag-op-table" style={{ marginTop: S[2] }}>
             {ops!.pendingPayment.slice(0, 5).map(o => <OrderRow key={o.id} order={o} />)}
           </div>
         )}
         {hasData && ops!.pendingPayment.length === 0 && totalOrders === 0 && (
           <div style={{
-            padding: `${S[5]}px ${S[4]}px`, textAlign: "center",
-            fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid,
+            padding: `${S[4]}px`, textAlign: "center",
+            fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid, marginTop: S[2],
           }}>
             Sin pedidos registrados en este período.
           </div>
         )}
-        {!hasData && [1, 2, 3].map(i => <ShopifyPlaceholderRow key={i} />)}
+        {!hasData && (
+          <div style={{ marginTop: S[2] }}>
+            {[1, 2, 3].map(i => <ShopifyPlaceholderRow key={i} />)}
+          </div>
+        )}
       </div>
 
       {/* ── 3. KPI grid ─────────────────────────────────────────────────── */}
-      <div style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(4, 1fr)",
-        gap: S[3],
-      }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: S[3] }}>
         <ShopifyKpiCard
           icon="⏳"
           label="Pendientes de pago"
@@ -497,7 +556,7 @@ export function OperacionesClient({
           label="Requieren atención"
           value={hasData ? String(atRiskCount) : null}
           sub={hasData ? "con riesgo operativo" : null}
-          noDataHint="Pedidos con señales de riesgo: pausados, con pago fallido o con retraso."
+          noDataHint="Pedidos con señales de riesgo: pausados, pago fallido o retrasos."
           variant={hasData ? (atRiskCount > 0 ? "critical" : "neutral") : "neutral"}
           onClick={() => setOpenDrawer("incidencias")}
         />
@@ -505,7 +564,7 @@ export function OperacionesClient({
           icon="↩️"
           label="Cancelados"
           value={hasData ? String(cancelledCount) : null}
-          sub={hasData ? "devoluciones o cancelados" : null}
+          sub={hasData ? "cancelaciones y devoluciones" : null}
           noDataHint="Pedidos cancelados o devueltos en este período."
           variant={hasData ? (cancelledCount > 0 ? "warning" : "neutral") : "neutral"}
           onClick={() => setOpenDrawer("devoluciones")}
@@ -524,7 +583,7 @@ export function OperacionesClient({
           label="Alertas operativas"
           value={hasData ? String(alertCount) : null}
           sub={hasData ? "requieren revisión" : null}
-          noDataHint="Situaciones críticas o envíos detenidos que afectan el ciclo operativo."
+          noDataHint="Situaciones críticas o envíos detenidos que afectan el ciclo."
           variant={hasData ? (criticalCount > 0 ? "critical" : stalledCount > 0 ? "warning" : "neutral") : "neutral"}
           onClick={() => setOpenDrawer("alertas")}
         />
@@ -536,15 +595,18 @@ export function OperacionesClient({
         padding: `${S[5]}px`, background: C.white, boxShadow: E.xs,
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: S[4] }}>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.inkFaint, textTransform: "uppercase" as const, letterSpacing: "0.09em" }}>
+          <div style={{
+            fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
+            color: C.inkFaint, textTransform: "uppercase" as const, letterSpacing: "0.09em",
+          }}>
             Envíos en seguimiento
           </div>
           <button
             onClick={() => setOpenDrawer("en_transito")}
             style={{
-              fontFamily: T.mono, fontSize: T.sz.xs,
-              color: C.inkFaint, background: "transparent",
-              border: "none", cursor: "pointer", padding: `${S[1]}px ${S[2]}px`,
+              fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint,
+              background: "transparent", border: "none", cursor: "pointer",
+              padding: `${S[1]}px ${S[2]}px`,
             }}
           >
             Ver todos →
@@ -622,8 +684,8 @@ export function OperacionesClient({
               {!hasData
                 ? "Disponible al conectar la tienda Shopify."
                 : atRiskCount > 0
-                ? `${atRiskCount} pedido${atRiskCount !== 1 ? "s" : ""} ha${atRiskCount !== 1 ? "n" : ""} sido marcado${atRiskCount !== 1 ? "s" : ""} con señales de riesgo operativo: pedidos en pausa, pagos fallidos y retrasos prolongados.`
-                : "No hay incidencias activas en este momento. El ciclo operativo está funcionando con normalidad."
+                ? `${atRiskCount} pedido${atRiskCount !== 1 ? "s" : ""} marcado${atRiskCount !== 1 ? "s" : ""} con riesgo operativo: pedidos en pausa, pagos fallidos o retrasos prolongados.`
+                : "Sin incidencias activas. El ciclo operativo está funcionando con normalidad."
               }
             </p>
           )}
@@ -639,7 +701,7 @@ export function OperacionesClient({
           )}
           {openDrawer === "tiempo_prom" && (
             <p style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid, lineHeight: 1.7, margin: 0 }}>
-              El tiempo promedio de entrega se calculará a partir del histórico de pedidos despachados y sus confirmaciones de entrega. Disponible cuando acumules suficientes datos.
+              El tiempo promedio de entrega se calculará a partir del histórico de pedidos despachados y sus confirmaciones. Disponible al acumular datos suficientes.
             </p>
           )}
           {openDrawer === "alertas" && (
@@ -647,8 +709,8 @@ export function OperacionesClient({
               {!hasData
                 ? "Disponible al conectar la tienda Shopify."
                 : alertCount === 0
-                ? "No hay alertas operativas activas en este momento."
-                : `Resumen: ${criticalCount > 0 ? `${criticalCount} crítica${criticalCount !== 1 ? "s" : ""}, ` : ""}${stalledCount > 0 ? `${stalledCount} envío${stalledCount !== 1 ? "s" : ""} detenido${stalledCount !== 1 ? "s" : ""}` : ""}.`
+                ? "Sin alertas operativas activas."
+                : `${criticalCount > 0 ? `${criticalCount} crítica${criticalCount !== 1 ? "s" : ""}` : ""}${criticalCount > 0 && stalledCount > 0 ? " · " : ""}${stalledCount > 0 ? `${stalledCount} envío${stalledCount !== 1 ? "s" : ""} detenido${stalledCount !== 1 ? "s" : ""}` : ""}.`
               }
             </p>
           )}
@@ -658,7 +720,7 @@ export function OperacionesClient({
         <ShopifyDrawerSection title="Evolución">
           <p style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid, lineHeight: 1.7, margin: 0 }}>
             {!hasData
-              ? "El análisis de evolución estará disponible al conectar la tienda."
+              ? "Disponible al conectar la tienda."
               : "La comparación período a período estará disponible una vez que la tienda acumule datos históricos de pedidos y entregas."}
           </p>
         </ShopifyDrawerSection>
@@ -667,10 +729,10 @@ export function OperacionesClient({
         <ShopifyDrawerSection title="Datos relevantes">
           <div style={{ display: "flex", flexDirection: "column" as const, gap: S[2] }}>
             {[
-              { label: "Total pedidos",    value: hasData ? fmtNum(totalOrders)    : "–" },
-              { label: "En tránsito",      value: hasData ? String(inTransitCount) : "–" },
-              { label: "Entregados",       value: hasData ? String(deliveredCount)  : "–" },
-              { label: "Alertas activas",  value: hasData ? String(alertCount)     : "–" },
+              { label: "Total pedidos",   value: hasData ? fmtNum(totalOrders)    : "–" },
+              { label: "En tránsito",     value: hasData ? String(inTransitCount) : "–" },
+              { label: "Entregados",      value: hasData ? String(deliveredCount) : "–" },
+              { label: "Alertas activas", value: hasData ? String(alertCount)     : "–" },
             ].map(({ label, value }) => (
               <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>{label}</span>
@@ -684,57 +746,32 @@ export function OperacionesClient({
         <ShopifyDrawerSection title="Análisis de Sofía">
           <p style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.ink, lineHeight: 1.7, margin: 0 }}>
             {!connected
-              ? "Conecta la tienda y Sofía supervisará el ciclo operativo completo, desde el pedido hasta la entrega."
+              ? "Conecta la tienda y Sofía supervisará el ciclo operativo completo."
               : !hasData
               ? "Cargando análisis operativo…"
               : openDrawer === "pendientes" && pendingCount > 3
-              ? `Hay ${pendingCount} pedidos esperando confirmación de pago. Un volumen alto de pendientes puede indicar fricción en el proceso de pago. Revisa si hay algún método con problemas.`
+              ? `${pendingCount} pedidos esperan pago. Un volumen elevado puede indicar fricción en el proceso de cobro.`
               : openDrawer === "en_transito" && stalledCount > 0
-              ? `${stalledCount} envío${stalledCount !== 1 ? "s" : ""} lleva${stalledCount !== 1 ? "n" : ""} más de 5 días sin actualizaciones de la transportadora. Esto puede afectar la satisfacción del cliente si no se comunica proactivamente.`
+              ? `${stalledCount} envío${stalledCount !== 1 ? "s" : ""} lleva${stalledCount !== 1 ? "n" : ""} más de 5 días sin actualizaciones. Considera comunicarte con la transportadora.`
               : openDrawer === "alertas" && alertCount > 0
-              ? "Hay situaciones que requieren intervención. Te recomiendo revisar cada alerta y tomar acción antes de que escalen."
-              : "El indicador está dentro de los parámetros normales. Sofía continuará monitoreando y te avisará ante cualquier cambio significativo."
+              ? "Hay situaciones que requieren intervención. Te recomiendo revisar cada alerta antes de que escalen."
+              : "El indicador está dentro de parámetros normales. Sofía continuará monitoreando y te avisará ante cambios significativos."
             }
           </p>
         </ShopifyDrawerSection>
 
-        {/* Section 5: Acciones sugeridas */}
+        {/* Section 5: Acciones sugeridas — context-aware */}
         <ShopifyDrawerSection title="Acciones sugeridas">
-          <ShopifyDrawerAction
-            label="Revisar pedidos pendientes"
-            intent="operations.review_pending"
-            executing={executingId}
-            result={results["operations.review_pending"]}
-            onExecute={executeAction}
-          />
-          <ShopifyDrawerAction
-            label="Analizar retrasos de envío"
-            intent="operations.analyze_delays"
-            executing={executingId}
-            result={results["operations.analyze_delays"]}
-            onExecute={executeAction}
-          />
-          <ShopifyDrawerAction
-            label="Inspeccionar devoluciones"
-            intent="operations.inspect_returns"
-            executing={executingId}
-            result={results["operations.inspect_returns"]}
-            onExecute={executeAction}
-          />
-          <ShopifyDrawerAction
-            label="Preparar plan de seguimiento"
-            intent="operations.followup_plan"
-            executing={executingId}
-            result={results["operations.followup_plan"]}
-            onExecute={executeAction}
-          />
-          <ShopifyDrawerAction
-            label="Explorar oportunidades operativas"
-            intent="operations.explore_opportunities"
-            executing={executingId}
-            result={results["operations.explore_opportunities"]}
-            onExecute={executeAction}
-          />
+          {actions.map(action => (
+            <ShopifyDrawerAction
+              key={action.intent}
+              label={action.label}
+              intent={action.intent}
+              executing={executingId}
+              result={results[action.intent]}
+              onExecute={executeAction}
+            />
+          ))}
         </ShopifyDrawerSection>
       </OperationalSideDrawer>
     </div>

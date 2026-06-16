@@ -3,22 +3,14 @@
 /**
  * app/(app)/[orgSlug]/agentik/marketing-studio/shopify/promociones/promociones-client.tsx
  *
- * SHOPIFY-MODULE-MATURITY-01 — Promociones Intelligence Console — Client Component
- * AGENTIK-COPILOT-BOUNDARIES-01 — Copilot/Sofía belongs in the right rail, not in the canvas
+ * SHOPIFY-MODULE-MATURITY-03 — Promociones: Centro de Campañas
+ * AGENTIK-COPILOT-BOUNDARIES-01 — Copilot lives in the right rail only
  *
- * Architecture:
- *   - Unified structure regardless of connection/data state
- *   - Placeholders replace all metrics when promotions is null
- *   - All actions route through /execution pipeline
- *   - OperationalSideDrawer for all detail panels (5 sections each)
- *   - Canvas shows module data only; Sofía intelligence lives in right rail
- *   - Language: natural business Spanish for Latin America
- *
- * Blocks:
- *   1. Timeline       — compact strip when connected, steps when onboarding
- *   2. ProtagonistBlock — active promotions (blue accent card)
- *   3. KpiGrid        — 8 indicator tiles, each with drawer
- *   4. ScheduledBlock — programmed campaigns (secondary protagonist)
+ * Identity: this module is a campaign management center, not a metrics grid.
+ *   - Protagonist block shows campaign state + distribution bar
+ *   - Context-aware drawer actions (getPromotionDrawerActions)
+ *   - Canvas contains only module data
+ *   - Right rail + drawer "Análisis de Sofía" section carry Copilot intelligence
  */
 
 import { useState, useCallback }       from "react";
@@ -31,6 +23,7 @@ import {
   ShopifyDrawerAction,
   ShopifyPlaceholderRow,
   ShopifyActivationTimeline,
+  ShopifyDistributionBar,
 }                                      from "@/components/marketing-studio/shopify/shopify-module-primitives";
 
 import type {
@@ -53,9 +46,7 @@ type DrawerId =
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-function fmtPct(n: number): string {
-  return `${n.toFixed(0)}%`;
-}
+function fmtPct(n: number): string { return `${n.toFixed(0)}%`; }
 
 function fmtNum(n: number): string {
   return new Intl.NumberFormat("es-CO").format(n);
@@ -87,6 +78,85 @@ const ACTIVATION_STEPS = [
   "Activar alertas y automatizaciones",
 ];
 
+// ── Context-aware drawer actions ───────────────────────────────────────────────
+
+type ActionSpec = { label: string; intent: string };
+
+interface PromotionActionCtx {
+  drawerId:      DrawerId;
+  activeCount:   number;
+  porVencerCount: number;
+  avgDescuento:  number | null;
+  codesCount:    number;
+  alertCount:    number;
+  scheduledCount: number;
+}
+
+function getPromotionDrawerActions(ctx: PromotionActionCtx): ActionSpec[] {
+  const { drawerId, activeCount, porVencerCount, avgDescuento, codesCount, alertCount } = ctx;
+
+  if (drawerId === "activas") {
+    if (activeCount === 0) return [
+      { label: "Crear campaña de descuento",    intent: "promotion.create"           },
+      { label: "Generar códigos promocionales", intent: "promotion.generate_codes"   },
+      { label: "Programar campaña futura",      intent: "promotion.schedule"         },
+    ];
+    if (porVencerCount > 0) return [
+      { label: "Extender vigencia de campaña",      intent: "promotion.extend_validity"   },
+      { label: "Duplicar campaña activa",           intent: "promotion.duplicate"         },
+      { label: "Programar campaña de continuidad",  intent: "promotion.schedule_followup" },
+    ];
+    return [
+      { label: "Duplicar campaña activa",           intent: "promotion.duplicate"      },
+      { label: "Crear nueva campaña",               intent: "promotion.create"         },
+      { label: "Analizar impacto de descuentos",    intent: "promotion.analyze_impact" },
+    ];
+  }
+
+  if (drawerId === "por_vencer") return [
+    { label: "Extender vigencia",                 intent: "promotion.extend_validity"   },
+    { label: "Duplicar y reprogramar",            intent: "promotion.duplicate"         },
+    { label: "Programar campaña de continuidad",  intent: "promotion.schedule_followup" },
+  ];
+
+  if (drawerId === "programadas") return [
+    { label: "Revisar campañas programadas",      intent: "promotion.review_scheduled" },
+    { label: "Adelantar inicio de campaña",       intent: "promotion.advance_start"    },
+    { label: "Crear nueva campaña programada",    intent: "promotion.schedule"         },
+  ];
+
+  if (drawerId === "descuento_prom" && avgDescuento !== null && avgDescuento > 40) return [
+    { label: "Revisar margen de descuentos",      intent: "promotion.review_margin"    },
+    { label: "Reducir descuento en campaña",      intent: "promotion.reduce_discount"  },
+    { label: "Segmentar campaña por cliente",     intent: "promotion.segment_campaign" },
+  ];
+
+  if (drawerId === "codigos" && codesCount > 0) return [
+    { label: "Revisar uso de códigos",            intent: "promotion.review_codes"   },
+    { label: "Generar nuevos códigos",            intent: "promotion.generate_codes" },
+    { label: "Pausar códigos de bajo uso",        intent: "promotion.pause_codes"    },
+  ];
+
+  if (drawerId === "alertas" && alertCount > 0) return [
+    { label: "Revisar alertas de campaña",        intent: "promotion.review_alerts"   },
+    { label: "Reactivar promociones pausadas",    intent: "promotion.reactivate"      },
+    { label: "Extender campañas por vencer",      intent: "promotion.extend_validity" },
+  ];
+
+  if (drawerId === "agentik") return [
+    { label: "Ver campañas de Agentik",           intent: "promotion.list_agentik"   },
+    { label: "Crear campaña automatizada",        intent: "promotion.create_auto"    },
+    { label: "Revisar reglas de automatización",  intent: "promotion.review_rules"   },
+  ];
+
+  // Default: contextual fallback
+  return [
+    { label: "Crear campaña de descuento",        intent: "promotion.create"         },
+    { label: "Generar códigos promocionales",     intent: "promotion.generate_codes" },
+    { label: "Analizar impacto de descuentos",    intent: "promotion.analyze_impact" },
+  ];
+}
+
 // ── Pill badge ─────────────────────────────────────────────────────────────────
 
 function Pill({
@@ -112,7 +182,7 @@ const STATUS_PILL: Record<string, { color: string; bg: string; border: string; l
   draft:     { color: C.inkMid,   bg: C.surfaceAlt, border: C.line,        label: "Borrador"    },
 };
 
-// ── Promo row (in drawers and protagonist) ─────────────────────────────────────
+// ── Promo row ─────────────────────────────────────────────────────────────────
 
 function PromoRow({ promo }: { promo: ShopifyPromotionSummary }) {
   const pill = STATUS_PILL[promo.status] ?? STATUS_PILL.expired;
@@ -168,6 +238,7 @@ export function PromocionesClient({
 
   const activeCount    = activeList.length;
   const scheduledCount = scheduledList.length;
+  const inactiveCount  = expiredList.length + disabledList.length;
 
   const porVencer = activeList.filter(
     p => p.endsAt && daysUntil(p.endsAt) <= 7 && daysUntil(p.endsAt) >= 0,
@@ -216,7 +287,7 @@ export function PromocionesClient({
       case "activas":
         return {
           title:    "Promociones activas",
-          subtitle: `${activeCount} promoción${activeCount !== 1 ? "es" : ""} vigente${activeCount !== 1 ? "s" : ""} · ${shopDomain || "Tienda"}`,
+          subtitle: `${activeCount} vigente${activeCount !== 1 ? "s" : ""} · ${shopDomain || "Tienda"}`,
           severity: activeCount > 0 ? "info" : "watch",
         };
       case "programadas":
@@ -228,7 +299,9 @@ export function PromocionesClient({
       case "por_vencer":
         return {
           title:    "Próximas a vencer",
-          subtitle: porVencer.length > 0 ? `${porVencer.length} vencen en los próximos 7 días` : "Sin vencimientos inmediatos",
+          subtitle: porVencer.length > 0
+            ? `${porVencer.length} vencen en los próximos 7 días`
+            : "Sin vencimientos inmediatos",
           severity: porVencer.length > 0 ? "warning" : "info",
         };
       case "codigos":
@@ -240,24 +313,26 @@ export function PromocionesClient({
       case "descuento_prom":
         return {
           title:    "Descuento promedio",
-          subtitle: avgDescuento !== null ? `Promedio: ${fmtPct(avgDescuento)} en promociones porcentuales` : "Sin datos de descuentos activos",
+          subtitle: avgDescuento !== null
+            ? `Promedio: ${fmtPct(avgDescuento)} en campañas porcentuales`
+            : "Sin descuentos porcentuales activos",
           severity: avgDescuento && avgDescuento > 40 ? "warning" : "info",
         };
       case "uso_total":
         return {
           title:    "Usos registrados",
-          subtitle: `${fmtNum(totalUsos)} usos acumulados en promociones`,
+          subtitle: `${fmtNum(totalUsos)} usos acumulados`,
           severity: "info",
         };
       case "agentik":
         return {
-          title:    "Promociones de Agentik",
-          subtitle: `${agentikCount} gestionada${agentikCount !== 1 ? "s" : ""} por Agentik`,
+          title:    "Campañas de Agentik",
+          subtitle: `${agentikCount} gestionada${agentikCount !== 1 ? "s" : ""} automáticamente`,
           severity: "info",
         };
       case "alertas":
         return {
-          title:    "Alertas de promociones",
+          title:    "Alertas de campañas",
           subtitle: alertCount > 0 ? `${alertCount} requieren revisión` : "Sin alertas activas",
           severity: alertCount > 0 ? "warning" : "info",
         };
@@ -266,7 +341,18 @@ export function PromocionesClient({
     }
   };
 
-  const cfg = drawerConfig(openDrawer);
+  const cfg     = drawerConfig(openDrawer);
+  const actions = openDrawer
+    ? getPromotionDrawerActions({
+        drawerId:       openDrawer,
+        activeCount,
+        porVencerCount: porVencer.length,
+        avgDescuento,
+        codesCount,
+        alertCount,
+        scheduledCount,
+      })
+    : [];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[4], paddingTop: S[4] }}>
@@ -280,7 +366,7 @@ export function PromocionesClient({
         criticalCount={alertCount}
       />
 
-      {/* ── 2. Protagonist: active promotions ───────────────────────────── */}
+      {/* ── 2. Protagonist: campaign center ─────────────────────────────── */}
       <div style={{
         border:       `1px solid ${C.line}`,
         borderTop:    `3px solid ${C.blueDark}`,
@@ -289,15 +375,27 @@ export function PromocionesClient({
         background:   C.white,
         boxShadow:    E.sm,
       }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: S[4] }}>
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: S[4] }}>
           <div>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.inkFaint, textTransform: "uppercase" as const, letterSpacing: "0.09em" }}>
-              Estado de las promociones
+            <div style={{
+              fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
+              color: C.inkFaint, textTransform: "uppercase" as const, letterSpacing: "0.09em",
+            }}>
+              Estado de campañas
             </div>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xl"], fontWeight: T.wt.bold, color: C.titleDeep, lineHeight: 1.2, marginTop: S[1] }}>
+            <div style={{
+              fontFamily: T.mono, fontSize: T.sz["2xl"], fontWeight: T.wt.bold,
+              color: C.titleDeep, lineHeight: 1.2, marginTop: S[1],
+            }}>
               {hasData ? `${activeCount}` : "–"}
-              <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.normal, color: C.inkMid, marginLeft: S[2] }}>
-                {hasData ? `activa${activeCount !== 1 ? "s" : ""} · ${scheduledCount} programada${scheduledCount !== 1 ? "s" : ""}` : "Disponible al conectar la tienda"}
+              <span style={{
+                fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.normal,
+                color: C.inkMid, marginLeft: S[2],
+              }}>
+                {hasData
+                  ? `activa${activeCount !== 1 ? "s" : ""} · ${scheduledCount} programada${scheduledCount !== 1 ? "s" : ""} · ${inactiveCount} finalizada${inactiveCount !== 1 ? "s" : ""}`
+                  : "Disponible al conectar la tienda"}
               </span>
             </div>
           </div>
@@ -314,16 +412,39 @@ export function PromocionesClient({
           </button>
         </div>
 
+        {/* Distribution bar */}
+        <div style={{ marginBottom: S[4] }}>
+          <ShopifyDistributionBar
+            segments={[
+              { label: "Activas",     count: hasData ? activeCount    : 0, color: C.green      },
+              { label: "Programadas", count: hasData ? scheduledCount : 0, color: C.blueDark   },
+              { label: "Finalizadas", count: hasData ? inactiveCount  : 0, color: C.lineSubtle },
+            ]}
+          />
+        </div>
+
+        {/* Alerts strip */}
+        {hasData && porVencer.length > 0 && (
+          <div style={{
+            fontFamily: T.mono, fontSize: T.sz.xs, color: C.amber,
+            background: C.amberLight, border: `1px solid ${C.amberBorder}`,
+            borderRadius: R.md, padding: `${S[2]}px ${S[3]}px`, marginBottom: S[3],
+          }}>
+            ⚠ {porVencer.length} campaña{porVencer.length !== 1 ? "s" : ""} vence{porVencer.length !== 1 ? "n" : ""} en los próximos 7 días
+          </div>
+        )}
+
+        {/* Active promotions table */}
         <div className="ag-op-table">
           {hasData && activeList.length > 0
             ? activeList.slice(0, 5).map(p => <PromoRow key={p.id} promo={p} />)
-            : hasData && activeList.length === 0
+            : hasData
             ? (
               <div style={{
-                padding: `${S[6]}px ${S[4]}px`, textAlign: "center",
+                padding: `${S[5]}px ${S[4]}px`, textAlign: "center",
                 fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid,
               }}>
-                Sin promociones activas. Puedes crear una campaña desde el módulo de descuentos.
+                Sin campañas activas en este momento.
               </div>
             )
             : [1, 2, 3].map(i => <ShopifyPlaceholderRow key={i} />)
@@ -332,11 +453,7 @@ export function PromocionesClient({
       </div>
 
       {/* ── 3. KPI grid ─────────────────────────────────────────────────── */}
-      <div style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(4, 1fr)",
-        gap: S[3],
-      }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: S[3] }}>
         <ShopifyKpiCard
           icon="🏷️"
           label="Promociones activas"
@@ -351,7 +468,7 @@ export function PromocionesClient({
           label="Campañas programadas"
           value={hasData ? String(scheduledCount) : null}
           sub={hasData ? "próximas a activarse" : null}
-          noDataHint="Campañas con fecha de inicio futura, esperando activarse."
+          noDataHint="Campañas con fecha de inicio futura."
           variant={hasData ? (scheduledCount > 0 ? "ok" : "neutral") : "neutral"}
           onClick={() => setOpenDrawer("programadas")}
         />
@@ -360,7 +477,7 @@ export function PromocionesClient({
           label="Próximas a vencer"
           value={hasData ? String(porVencer.length) : null}
           sub={hasData ? "vencen en 7 días" : null}
-          noDataHint="Promociones activas que expirarán en los próximos 7 días."
+          noDataHint="Campañas activas que expirarán en los próximos 7 días."
           variant={hasData ? (porVencer.length > 0 ? "warning" : "neutral") : "neutral"}
           onClick={() => setOpenDrawer("por_vencer")}
         />
@@ -369,7 +486,7 @@ export function PromocionesClient({
           label="Códigos activos"
           value={hasData ? String(codesCount) : null}
           sub={hasData ? "en circulación" : null}
-          noDataHint="Cantidad de códigos de descuento que los clientes pueden usar."
+          noDataHint="Códigos de descuento que los clientes pueden usar."
           variant={hasData ? (codesCount > 0 ? "ok" : "neutral") : "neutral"}
           onClick={() => setOpenDrawer("codigos")}
         />
@@ -377,8 +494,8 @@ export function PromocionesClient({
           icon="📉"
           label="Descuento promedio"
           value={hasData && avgDescuento !== null ? fmtPct(avgDescuento) : hasData ? "—" : null}
-          sub={hasData ? "en promociones porcentuales" : null}
-          noDataHint="Promedio de descuento aplicado en las promociones porcentuales activas."
+          sub={hasData ? "en campañas porcentuales" : null}
+          noDataHint="Promedio de descuento en las campañas porcentuales activas."
           variant={hasData && avgDescuento !== null ? (avgDescuento > 40 ? "warning" : "ok") : "neutral"}
           onClick={() => setOpenDrawer("descuento_prom")}
         />
@@ -387,7 +504,7 @@ export function PromocionesClient({
           label="Usos totales"
           value={hasData ? fmtNum(totalUsos) : null}
           sub={hasData ? "usos acumulados" : null}
-          noDataHint="Total de veces que se han utilizado descuentos en la tienda."
+          noDataHint="Total de veces que se han aplicado descuentos."
           variant={hasData ? (totalUsos > 0 ? "ok" : "neutral") : "neutral"}
           onClick={() => setOpenDrawer("uso_total")}
         />
@@ -395,8 +512,8 @@ export function PromocionesClient({
           icon="🤖"
           label="Gestionadas por Agentik"
           value={hasData ? String(agentikCount) : null}
-          sub={hasData ? "creadas por Agentik" : null}
-          noDataHint="Promociones creadas y gestionadas automáticamente por Agentik."
+          sub={hasData ? "creadas automáticamente" : null}
+          noDataHint="Campañas creadas y gestionadas por Agentik."
           variant={hasData ? (agentikCount > 0 ? "ok" : "neutral") : "neutral"}
           onClick={() => setOpenDrawer("agentik")}
         />
@@ -405,28 +522,31 @@ export function PromocionesClient({
           label="Alertas importantes"
           value={hasData ? String(alertCount) : null}
           sub={hasData ? "requieren revisión" : null}
-          noDataHint="Promociones desactivadas o próximas a vencer que requieren atención."
+          noDataHint="Campañas desactivadas o próximas a vencer."
           variant={hasData ? (alertCount > 0 ? "warning" : "neutral") : "neutral"}
           onClick={() => setOpenDrawer("alertas")}
         />
       </div>
 
-      {/* ── 4. Scheduled block ──────────────────────────────────────────── */}
+      {/* ── 4. Scheduled campaigns ──────────────────────────────────────── */}
       {(scheduledList.length > 0 || !hasData) && (
         <div style={{
           border: `1px solid ${C.line}`, borderRadius: R.xl,
           padding: `${S[5]}px`, background: C.white, boxShadow: E.xs,
         }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: S[4] }}>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.inkFaint, textTransform: "uppercase" as const, letterSpacing: "0.09em" }}>
+            <div style={{
+              fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
+              color: C.inkFaint, textTransform: "uppercase" as const, letterSpacing: "0.09em",
+            }}>
               Campañas programadas
             </div>
             <button
               onClick={() => setOpenDrawer("programadas")}
               style={{
-                fontFamily: T.mono, fontSize: T.sz.xs,
-                color: C.inkFaint, background: "transparent",
-                border: "none", cursor: "pointer", padding: `${S[1]}px ${S[2]}px`,
+                fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint,
+                background: "transparent", border: "none", cursor: "pointer",
+                padding: `${S[1]}px ${S[2]}px`,
               }}
             >
               Ver todas →
@@ -441,7 +561,7 @@ export function PromocionesClient({
                   padding: `${S[4]}px`, textAlign: "center",
                   fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid,
                 }}>
-                  Sin campañas programadas. Puedes planificar descuentos futuros desde esta sección.
+                  Sin campañas programadas.
                 </div>
               )
               : [1, 2].map(i => <ShopifyPlaceholderRow key={i} />)
@@ -463,14 +583,14 @@ export function PromocionesClient({
           {openDrawer === "activas" && (
             <p style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.ink, lineHeight: 1.7, margin: 0 }}>
               {hasData
-                ? `Hay ${activeCount} promoción${activeCount !== 1 ? "es" : ""} activa${activeCount !== 1 ? "s" : ""} en tu tienda ahora mismo. ${porVencer.length > 0 ? `${porVencer.length} de ellas vence${porVencer.length !== 1 ? "n" : ""} en los próximos 7 días.` : "Ninguna está próxima a vencer."}`
+                ? `${activeCount} campaña${activeCount !== 1 ? "s" : ""} activa${activeCount !== 1 ? "s" : ""} en la tienda.${porVencer.length > 0 ? ` ${porVencer.length} vencen en los próximos 7 días.` : " Ninguna está próxima a vencer."}`
                 : "Disponible al conectar la tienda Shopify."}
             </p>
           )}
           {openDrawer === "programadas" && (
             <p style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.ink, lineHeight: 1.7, margin: 0 }}>
               {hasData
-                ? `${scheduledCount} campaña${scheduledCount !== 1 ? "s" : ""} está${scheduledCount !== 1 ? "n" : ""} programada${scheduledCount !== 1 ? "s" : ""} para activarse próximamente.`
+                ? `${scheduledCount} campaña${scheduledCount !== 1 ? "s" : ""} programada${scheduledCount !== 1 ? "s" : ""} para activarse próximamente.`
                 : "Disponible al conectar la tienda Shopify."}
             </p>
           )}
@@ -492,7 +612,7 @@ export function PromocionesClient({
                     </div>
                   ))
                 : <p style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid, margin: 0 }}>
-                    {hasData ? "Ninguna promoción vence en los próximos 7 días." : "Disponible al conectar la tienda."}
+                    {hasData ? "Ninguna campaña vence en los próximos 7 días." : "Disponible al conectar la tienda."}
                   </p>
               }
             </div>
@@ -507,12 +627,14 @@ export function PromocionesClient({
                         <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>{p.title} · {promoValue(p)}</div>
                       </div>
                       {p.usageLimit != null && (
-                        <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>{p.currentUsage}/{p.usageLimit}</span>
+                        <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>
+                          {p.currentUsage}/{p.usageLimit}
+                        </span>
                       )}
                     </div>
                   ))
                 : <p style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid, margin: 0 }}>
-                    {hasData ? "Sin códigos activos en este momento." : "Disponible al conectar la tienda."}
+                    {hasData ? "Sin códigos activos." : "Disponible al conectar la tienda."}
                   </p>
               }
             </div>
@@ -523,12 +645,12 @@ export function PromocionesClient({
                 ? "Disponible al conectar la tienda Shopify."
                 : openDrawer === "descuento_prom"
                 ? avgDescuento !== null
-                  ? `Descuento promedio activo: ${fmtPct(avgDescuento)}. Basado en ${pctPromos.length} promoción${pctPromos.length !== 1 ? "es" : ""} porcentual${pctPromos.length !== 1 ? "es" : ""}.`
-                  : "No hay promociones porcentuales activas en este momento."
+                  ? `Descuento promedio: ${fmtPct(avgDescuento)} en ${pctPromos.length} campaña${pctPromos.length !== 1 ? "s" : ""} porcentual${pctPromos.length !== 1 ? "es" : ""}.`
+                  : "Sin campañas porcentuales activas."
                 : openDrawer === "uso_total"
-                ? `${fmtNum(totalUsos)} usos registrados entre promociones activas y finalizadas.`
+                ? `${fmtNum(totalUsos)} usos acumulados entre campañas activas y finalizadas.`
                 : openDrawer === "agentik"
-                ? `${agentikCount} promoción${agentikCount !== 1 ? "es" : ""} gestionada${agentikCount !== 1 ? "s" : ""} por Agentik. El resto fueron creadas manualmente.`
+                ? `${agentikCount} campaña${agentikCount !== 1 ? "s" : ""} gestionada${agentikCount !== 1 ? "s" : ""} automáticamente por Agentik.`
                 : `${alertCount} elemento${alertCount !== 1 ? "s" : ""} requieren revisión: ${disabledList.length} desactivada${disabledList.length !== 1 ? "s" : ""} y ${porVencer.length} próxima${porVencer.length !== 1 ? "s" : ""} a vencer.`
               }
             </p>
@@ -540,7 +662,7 @@ export function PromocionesClient({
           <p style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid, lineHeight: 1.7, margin: 0 }}>
             {!hasData
               ? "El historial de evolución estará disponible al conectar la tienda."
-              : "El análisis de evolución comparará el período actual con las últimas 4 semanas para detectar tendencias en el uso de descuentos."}
+              : "La comparación período a período mostrará tendencias en el uso de descuentos, crecimiento en usos acumulados y variación del descuento promedio."}
           </p>
         </ShopifyDrawerSection>
 
@@ -548,10 +670,10 @@ export function PromocionesClient({
         <ShopifyDrawerSection title="Datos relevantes">
           <div style={{ display: "flex", flexDirection: "column" as const, gap: S[2] }}>
             {[
-              { label: "Activas",      value: hasData ? String(activeCount)    : "–" },
-              { label: "Programadas",  value: hasData ? String(scheduledCount) : "–" },
-              { label: "Por vencer",   value: hasData ? String(porVencer.length) : "–" },
-              { label: "Usos totales", value: hasData ? fmtNum(totalUsos)      : "–" },
+              { label: "Activas",         value: hasData ? String(activeCount)    : "–" },
+              { label: "Programadas",     value: hasData ? String(scheduledCount) : "–" },
+              { label: "Por vencer",      value: hasData ? String(porVencer.length) : "–" },
+              { label: "Usos acumulados", value: hasData ? fmtNum(totalUsos)      : "–" },
             ].map(({ label, value }) => (
               <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>{label}</span>
@@ -565,59 +687,34 @@ export function PromocionesClient({
         <ShopifyDrawerSection title="Análisis de Sofía">
           <p style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.ink, lineHeight: 1.7, margin: 0 }}>
             {!connected
-              ? "Conecta la tienda y Sofía analizará el comportamiento de tus descuentos para identificar oportunidades de optimización."
+              ? "Conecta la tienda y Sofía analizará el comportamiento de tus descuentos para identificar oportunidades."
               : !hasData
               ? "Cargando análisis…"
               : openDrawer === "activas" && activeCount === 0
-              ? "No hay promociones activas. Una campaña de descuentos bien segmentada puede aumentar significativamente la conversión, especialmente fuera de temporadas altas."
+              ? "Sin campañas activas. Una campaña bien segmentada puede aumentar la conversión, especialmente fuera de temporadas altas."
               : openDrawer === "por_vencer" && porVencer.length > 0
-              ? "Varias promociones están por vencer. Considera si quieres renovarlas, extenderlas o dejarlas expirar para medir el impacto en las ventas."
+              ? "Varias campañas están por vencer. Considera renovarlas, extenderlas o dejarlas expirar para medir el impacto en las ventas."
               : openDrawer === "descuento_prom" && avgDescuento !== null && avgDescuento > 40
-              ? "Un descuento promedio superior al 40% puede afectar la percepción de valor de tu marca. Te recomiendo segmentar los descuentos elevados a clientes específicos."
+              ? "Un descuento promedio superior al 40% puede afectar la percepción de valor. Te recomiendo segmentar los descuentos elevados a clientes específicos."
               : openDrawer === "alertas" && alertCount > 0
-              ? "Hay elementos que requieren atención. Revisa las promociones desactivadas y considera si alguna debería estar activa actualmente."
-              : "Todo está en orden en este indicador. Sofía seguirá monitoreando y te avisará si hay cambios relevantes."
+              ? "Hay campañas que requieren atención. Revisa las desactivadas y considera si alguna debería estar activa."
+              : "Todo está en orden. Sofía seguirá monitoreando y te avisará si hay cambios relevantes."
             }
           </p>
         </ShopifyDrawerSection>
 
-        {/* Section 5: Acciones sugeridas */}
+        {/* Section 5: Acciones sugeridas — context-aware */}
         <ShopifyDrawerSection title="Acciones sugeridas">
-          <ShopifyDrawerAction
-            label="Crear nuevo descuento"
-            intent="promotion.create"
-            executing={executingId}
-            result={results["promotion.create"]}
-            onExecute={executeAction}
-          />
-          <ShopifyDrawerAction
-            label="Generar códigos de descuento"
-            intent="promotion.generate_codes"
-            executing={executingId}
-            result={results["promotion.generate_codes"]}
-            onExecute={executeAction}
-          />
-          <ShopifyDrawerAction
-            label="Duplicar campaña activa"
-            intent="promotion.duplicate"
-            executing={executingId}
-            result={results["promotion.duplicate"]}
-            onExecute={executeAction}
-          />
-          <ShopifyDrawerAction
-            label="Programar campaña futura"
-            intent="promotion.schedule"
-            executing={executingId}
-            result={results["promotion.schedule"]}
-            onExecute={executeAction}
-          />
-          <ShopifyDrawerAction
-            label="Analizar impacto de descuentos"
-            intent="promotion.analyze_impact"
-            executing={executingId}
-            result={results["promotion.analyze_impact"]}
-            onExecute={executeAction}
-          />
+          {actions.map(action => (
+            <ShopifyDrawerAction
+              key={action.intent}
+              label={action.label}
+              intent={action.intent}
+              executing={executingId}
+              result={results[action.intent]}
+              onExecute={executeAction}
+            />
+          ))}
         </ShopifyDrawerSection>
       </OperationalSideDrawer>
     </div>
