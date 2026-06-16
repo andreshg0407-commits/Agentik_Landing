@@ -95,6 +95,125 @@ export function vaultShopifyContextResolver(): ShopifyContextResolver {
   };
 }
 
+// ── Context resolution status ─────────────────────────────────────────────────
+
+/**
+ * Structured diagnostic result for Shopify context resolution.
+ * Safe to log and return to callers — NEVER contains accessToken.
+ */
+export interface ShopifyContextResolutionStatus {
+  ok:        boolean;
+  code:      ShopifyContextErrorCode | "ok";
+  missing:   string[];
+  connected: boolean;
+  shopDomain: string | null;
+  source:    "vault" | "env_dev" | "none";
+}
+
+/**
+ * Resolve the Shopify connection status for a tenant without returning credentials.
+ *
+ * Used by:
+ *   - GET /shopify/connection (status endpoint)
+ *   - /execute (upfront check before building execution plan)
+ *
+ * The actual ShopifyContext (with accessToken) is obtained separately via
+ * vaultShopifyContextResolver() — which is called at most ONCE per request.
+ *
+ * @param ctx - Requires only { tenantId: string }
+ */
+export async function resolveShopifyContextStatus(
+  ctx: { tenantId: string },
+): Promise<ShopifyContextResolutionStatus> {
+  try {
+    const connection = await getIntegrationConnection(ctx.tenantId, "shopify");
+
+    // No connection row — check env fallback (dev only)
+    if (!connection) {
+      const envToken  = process.env.SHOPIFY_ACCESS_TOKEN;
+      const envDomain = process.env.SHOPIFY_SHOP_DOMAIN;
+      if (envToken && envDomain && process.env.NODE_ENV !== "production") {
+        return { ok: true, code: "ok", missing: [], connected: true, shopDomain: envDomain, source: "env_dev" };
+      }
+      return {
+        ok:        false,
+        code:      "shopify_connection_not_found",
+        missing:   ["shopify_connection"],
+        connected: false,
+        shopDomain: null,
+        source:    "none",
+      };
+    }
+
+    // Connection exists but not active
+    if (connection.status !== CONNECTION_STATUS.CONNECTED) {
+      return {
+        ok:        false,
+        code:      "shopify_connection_disabled",
+        missing:   ["connection_not_active"],
+        connected: false,
+        shopDomain: connection.shopDomain ?? null,
+        source:    "vault",
+      };
+    }
+
+    // No shopDomain
+    if (!connection.shopDomain) {
+      return {
+        ok:        false,
+        code:      "shopify_shop_domain_missing",
+        missing:   ["shop_domain"],
+        connected: false,
+        shopDomain: null,
+        source:    "vault",
+      };
+    }
+
+    // Check vault for access token (metadata only — no plainValue exposed)
+    let hasToken = false;
+    try {
+      const secret = await getIntegrationSecret({
+        organizationId: ctx.tenantId,
+        connectionId:   connection.id,
+        secretType:     SECRET_TYPE.ACCESS_TOKEN,
+      });
+      hasToken = secret !== null;
+    } catch {
+      hasToken = false;
+    }
+
+    if (!hasToken) {
+      return {
+        ok:        false,
+        code:      "shopify_access_token_missing",
+        missing:   ["access_token"],
+        connected: false,
+        shopDomain: connection.shopDomain,
+        source:    "vault",
+      };
+    }
+
+    return {
+      ok:        true,
+      code:      "ok",
+      missing:   [],
+      connected: true,
+      shopDomain: connection.shopDomain,
+      source:    "vault",
+    };
+
+  } catch {
+    return {
+      ok:        false,
+      code:      "shopify_context_resolution_failed",
+      missing:   ["resolution_failed"],
+      connected: false,
+      shopDomain: null,
+      source:    "none",
+    };
+  }
+}
+
 // ── Static resolver ────────────────────────────────────────────────────────────
 
 /**

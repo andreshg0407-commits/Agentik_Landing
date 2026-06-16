@@ -1,28 +1,37 @@
 /**
  * app/api/orgs/[orgSlug]/marketing-studio/shopify/connection/route.ts
  *
- * SHOPIFY-COPILOT-INTEGRATION-01 — Shopify connection management.
+ * SHOPIFY-COPILOT-INTEGRATION-01 + SHOPIFY-COPILOT-INTEGRATION-POLISH-01
+ * Shopify connection management.
  *
  * GET  /api/orgs/:orgSlug/marketing-studio/shopify/connection
- *   Returns connection status. NEVER returns accessToken.
+ *   Returns connection status via resolveShopifyContextStatus().
+ *   NEVER returns accessToken.
  *   Response: ShopifyConnectionStatus
  *
  * POST /api/orgs/:orgSlug/marketing-studio/shopify/connection
  *   Saves shopDomain + accessToken to Vault and marks connection as CONNECTED.
  *   Body: { shopDomain: string; accessToken: string }
  *   Response: { ok: true; connectionId: string } | { ok: false; error: string }
+ *
+ * POLISH-01 changes:
+ *   - GET delegates to resolveShopifyContextStatus() instead of inline logic
+ *   - POST marks new connections as CONNECTED after creating them (bug fix)
+ *   - POST validates shopDomain format before persisting
  */
 import "server-only";
 
-import { NextRequest, NextResponse }           from "next/server";
-import { requireOrgAccess }                    from "@/lib/auth/org-access";
-import { getIntegrationConnection,
-         createIntegrationConnection,
-         updateIntegrationConnectionStatus }   from "@/lib/integrations/integration-repository";
-import { storeIntegrationSecret,
-         getIntegrationSecret }                from "@/lib/integrations/vault/vault-service";
-import { SECRET_TYPE }                         from "@/lib/integrations/vault/vault-types";
-import { CONNECTION_STATUS, CONNECTION_HEALTH } from "@/lib/integrations/integration-types";
+import { NextRequest, NextResponse }             from "next/server";
+import { requireOrgAccess }                      from "@/lib/auth/org-access";
+import {
+  getIntegrationConnection,
+  createIntegrationConnection,
+  updateIntegrationConnectionStatus,
+}                                                from "@/lib/integrations/integration-repository";
+import { storeIntegrationSecret }                from "@/lib/integrations/vault/vault-service";
+import { SECRET_TYPE }                           from "@/lib/integrations/vault/vault-types";
+import { CONNECTION_STATUS, CONNECTION_HEALTH }  from "@/lib/integrations/integration-types";
+import { resolveShopifyContextStatus }           from "@/lib/marketing-studio/commerce/shopify-runtime/shopify-context-resolver";
 
 type RouteContext = { params: Promise<{ orgSlug: string }> };
 
@@ -36,6 +45,9 @@ export interface ShopifyConnectionStatus {
   lastCheckedAt: string;
   source:        "vault" | "env_dev" | "none";
 }
+
+// Minimal shopDomain format check: must look like a hostname with at least one dot
+const SHOP_DOMAIN_RE = /^[a-zA-Z0-9][a-zA-Z0-9\-\.]*\.[a-zA-Z]{2,}$/;
 
 // ── GET — connection status ────────────────────────────────────────────────────
 
@@ -54,75 +66,15 @@ export async function GET(
   }
 
   try {
-    const connection = await getIntegrationConnection(orgId, "shopify");
-    const lastCheckedAt = new Date().toISOString();
-
-    // No connection row at all
-    if (!connection) {
-      // Fall back to env vars in dev
-      const envToken  = process.env.SHOPIFY_ACCESS_TOKEN;
-      const envDomain = process.env.SHOPIFY_SHOP_DOMAIN;
-
-      if (envToken && envDomain && process.env.NODE_ENV !== "production") {
-        const status: ShopifyConnectionStatus = {
-          connected:     true,
-          shopDomain:    envDomain,
-          missing:       [],
-          canExecute:    true,
-          lastCheckedAt,
-          source:        "env_dev",
-        };
-        return NextResponse.json(status);
-      }
-
-      const status: ShopifyConnectionStatus = {
-        connected:     false,
-        shopDomain:    null,
-        missing:       ["shopify_connection"],
-        canExecute:    false,
-        lastCheckedAt,
-        source:        "none",
-      };
-      return NextResponse.json(status);
-    }
-
-    const missing: string[] = [];
-
-    if (connection.status !== CONNECTION_STATUS.CONNECTED) {
-      missing.push("connection_not_active");
-    }
-    if (!connection.shopDomain) {
-      missing.push("shop_domain");
-    }
-
-    // Check vault secret
-    let hasToken = false;
-    if (connection.status === CONNECTION_STATUS.CONNECTED) {
-      try {
-        const secret = await getIntegrationSecret({
-          organizationId: orgId,
-          connectionId:   connection.id,
-          secretType:     SECRET_TYPE.ACCESS_TOKEN,
-        });
-        hasToken = secret !== null;
-      } catch {
-        hasToken = false;
-      }
-    }
-    if (!hasToken) {
-      missing.push("access_token");
-    }
-
-    const connected  = missing.length === 0;
-    const canExecute = connected;
+    const resolution = await resolveShopifyContextStatus({ tenantId: orgId });
 
     const status: ShopifyConnectionStatus = {
-      connected,
-      shopDomain:    connection.shopDomain ?? null,
-      missing,
-      canExecute,
-      lastCheckedAt,
-      source:        "vault",
+      connected:     resolution.connected,
+      shopDomain:    resolution.shopDomain,
+      missing:       resolution.missing,
+      canExecute:    resolution.ok,
+      lastCheckedAt: new Date().toISOString(),
+      source:        resolution.source,
     };
     return NextResponse.json(status);
 
@@ -148,7 +100,7 @@ export async function POST(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Vault is required — refuse in environments without encryption key
+  // Vault is required — refuse when encryption key is missing
   if (!process.env.VAULT_ENCRYPTION_KEY) {
     return NextResponse.json({
       ok:    false,
@@ -164,40 +116,52 @@ export async function POST(
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { shopDomain, accessToken } = body;
+  const rawDomain = body.shopDomain?.trim() ?? "";
+  const rawToken  = body.accessToken?.trim() ?? "";
 
-  if (!shopDomain || typeof shopDomain !== "string" || shopDomain.trim().length === 0) {
+  if (!rawDomain) {
     return NextResponse.json({ ok: false, error: "shopDomain is required" }, { status: 400 });
   }
-  if (!accessToken || typeof accessToken !== "string" || accessToken.trim().length === 0) {
+  if (!SHOP_DOMAIN_RE.test(rawDomain)) {
+    return NextResponse.json(
+      { ok: false, error: "shopDomain must be a valid hostname (e.g. my-store.myshopify.com)" },
+      { status: 400 },
+    );
+  }
+  if (!rawToken) {
     return NextResponse.json({ ok: false, error: "accessToken is required" }, { status: 400 });
   }
 
   try {
-    // Upsert connection row
     let connection = await getIntegrationConnection(orgId, "shopify");
 
     if (!connection) {
+      // Create and immediately mark CONNECTED
       connection = await createIntegrationConnection({
         organizationId: orgId,
         provider:       "shopify",
-        shopDomain:     shopDomain.trim(),
+        shopDomain:     rawDomain,
+      });
+      await updateIntegrationConnectionStatus(connection.id, orgId, {
+        status:      CONNECTION_STATUS.CONNECTED,
+        health:      CONNECTION_HEALTH.HEALTHY,
+        connectedAt: new Date(),
       });
     } else {
-      // Update shopDomain + mark connected
+      // Update shopDomain + re-mark connected
       await updateIntegrationConnectionStatus(connection.id, orgId, {
-        status:    CONNECTION_STATUS.CONNECTED,
-        health:    CONNECTION_HEALTH.HEALTHY,
+        status:      CONNECTION_STATUS.CONNECTED,
+        health:      CONNECTION_HEALTH.HEALTHY,
         connectedAt: new Date(),
       });
     }
 
-    // Store accessToken in vault
+    // Store accessToken in vault — never returned to caller
     await storeIntegrationSecret({
       organizationId: orgId,
       connectionId:   connection.id,
       secretType:     SECRET_TYPE.ACCESS_TOKEN,
-      plainValue:     accessToken.trim(),
+      plainValue:     rawToken,
     });
 
     return NextResponse.json({ ok: true, connectionId: connection.id });

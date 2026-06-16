@@ -1,21 +1,18 @@
 /**
  * app/api/orgs/[orgSlug]/marketing-studio/shopify/execute/route.ts
  *
- * AGENTIK-RUNTIME-INTEGRATION-01 + SHOPIFY-COPILOT-INTEGRATION-01
- * Copilot execution endpoint — multi-tenant, Vault-backed, fully persisted.
+ * AGENTIK-RUNTIME-INTEGRATION-01 + SHOPIFY-COPILOT-INTEGRATION-POLISH-01
+ * Copilot execution endpoint — multi-tenant, single Vault resolution, fully persisted.
  *
  * POST /api/orgs/:orgSlug/marketing-studio/shopify/execute
  *
  * Body: { utterance: string; bypassApproval?: boolean; idempotencyKey?: string }
  *
- * Response: ExtendedExecutionReport (JSON)
- *
- * Architecture:
- *   - tenantId = organization.id (NOT orgSlug) — stable DB identifier
- *   - Shopify credentials resolved from Vault per tenant
- *   - Returns 409 shopify_not_configured if no active Shopify connection
- *   - bypassApproval guarded — 403 in NODE_ENV=production
- *   - executeExecutionPlan receives PrismaExecutionStore for full audit trail
+ * Vault resolution strategy (POLISH-01):
+ *   - ShopifyContext is resolved ONCE per request via vaultShopifyContextResolver()
+ *   - If null → 409 shopify_not_configured (never proceeds)
+ *   - A per-request ShopifyActionProvider is created with staticShopifyContextResolver(shopifyCtx)
+ *   - executeExecutionPlan never hits the Vault again for this request
  */
 import "server-only";
 
@@ -33,22 +30,10 @@ import type { ExecutionContext }         from "@/lib/copilot/runtime/runtime-typ
 import { DEFAULT_APPROVAL_GATE_CONFIG } from "@/lib/copilot/runtime/approval-gate";
 
 import { ShopifyActionProvider }        from "@/lib/marketing-studio/commerce/shopify-runtime/shopify-action-provider";
-import { vaultShopifyContextResolver }  from "@/lib/marketing-studio/commerce/shopify-runtime/shopify-context-resolver";
-
-// ── Dispatcher factory ─────────────────────────────────────────────────────────
-// The vault resolver reads credentials per-request via ctx.tenantId,
-// so the singleton dispatcher is safe to reuse across requests.
-
-let _dispatcher: ActionDispatcher | null = null;
-
-function getDispatcher(): ActionDispatcher {
-  if (_dispatcher) return _dispatcher;
-  const dispatcher = new ActionDispatcher();
-  const provider   = new ShopifyActionProvider(vaultShopifyContextResolver());
-  dispatcher.registerProvider(provider as Parameters<typeof dispatcher.registerProvider>[0]);
-  _dispatcher = dispatcher;
-  return dispatcher;
-}
+import {
+  vaultShopifyContextResolver,
+  staticShopifyContextResolver,
+}                                       from "@/lib/marketing-studio/commerce/shopify-runtime/shopify-context-resolver";
 
 // ── Route handler ──────────────────────────────────────────────────────────────
 
@@ -85,7 +70,7 @@ export async function POST(
     );
   }
 
-  // ── Phase 4: Guard bypassApproval in production ──────────────────────────
+  // ── Guard: bypassApproval blocked in production ──────────────────────────
   if (bypassApproval && process.env.NODE_ENV === "production") {
     console.warn(
       `[shopify/execute] bypassApproval requested by "${userId}" in production — DENIED.`,
@@ -96,7 +81,24 @@ export async function POST(
     );
   }
 
-  // ── Step 1: Intent resolution ────────────────────────────────────────────
+  // ── Single Vault resolution (POLISH-01) ───────────────────────────────────
+  // Resolve ShopifyContext once. If successful, the per-request provider uses
+  // staticShopifyContextResolver(shopifyCtx) — Vault is never called again.
+  const probeCtx = { tenantId, executionId: "", correlationId: "", userId, requestedAt: new Date() };
+  const shopifyCtx = await vaultShopifyContextResolver()(probeCtx);
+
+  if (!shopifyCtx) {
+    return NextResponse.json({
+      status:   "shopify_not_configured",
+      tenantId,
+      error:    "No active Shopify connection found for this organization. " +
+                "Configure the Shopify integration before executing Copilot actions.",
+      hint:     "GET  /api/orgs/:orgSlug/marketing-studio/shopify/connection for status.\n" +
+                "POST /api/orgs/:orgSlug/marketing-studio/shopify/connection to register credentials.",
+    }, { status: 409 });
+  }
+
+  // ── Intent resolution ─────────────────────────────────────────────────────
   const resolution = intentResolver.resolve(utterance);
 
   if (!resolution.matched || !resolution.resolvedIntent) {
@@ -109,11 +111,11 @@ export async function POST(
     }, { status: 422 });
   }
 
-  // ── Step 2: Build execution plan ─────────────────────────────────────────
+  // ── Build execution plan ──────────────────────────────────────────────────
   const intentPlan  = intentResolver.buildExecutionPlan(resolution.resolvedIntent);
   const runtimePlan = planFromIntentPlan(intentPlan, { domain: "shopify" });
 
-  // ── Step 3: Build execution context ──────────────────────────────────────
+  // ── Build execution context ───────────────────────────────────────────────
   const ctx: ExecutionContext = {
     executionId:    crypto.randomUUID(),
     correlationId:  resolution.resolvedIntent.candidateId,
@@ -129,22 +131,12 @@ export async function POST(
     },
   };
 
-  // ── Step 4: Validate Shopify connection ───────────────────────────────────
-  // Eagerly check vault credentials before spinning up execution.
-  // The vault resolver is called again inside executeExecutionPlan, but
-  // an upfront check lets us return a clean 409 with a structured error.
-  const shopifyCtx = await vaultShopifyContextResolver()(ctx);
-  if (!shopifyCtx) {
-    return NextResponse.json({
-      status:    "shopify_not_configured",
-      tenantId,
-      error:     "No active Shopify connection found for this organization. " +
-                 "Configure the Shopify integration before executing Copilot actions.",
-      hint:      "POST /api/orgs/:orgSlug/marketing-studio/shopify/connection to register credentials.",
-    }, { status: 409 });
-  }
+  // ── Per-request dispatcher (pre-resolved context, no second Vault call) ───
+  const provider   = new ShopifyActionProvider(staticShopifyContextResolver(shopifyCtx));
+  const dispatcher = new ActionDispatcher();
+  dispatcher.registerProvider(provider as Parameters<typeof dispatcher.registerProvider>[0]);
 
-  // ── Step 5: Execute ───────────────────────────────────────────────────────
+  // ── Execute ───────────────────────────────────────────────────────────────
   const approvalConfig = bypassApproval
     ? { strategy: "auto_approve" as const, gateAutomationEligible: false }
     : DEFAULT_APPROVAL_GATE_CONFIG;
@@ -152,17 +144,17 @@ export async function POST(
   const report = await executeExecutionPlan(
     runtimePlan,
     ctx,
-    getDispatcher(),
+    dispatcher,
     {
-      policy:         { stopOnFirstFailure: true, stopOnFirstBlock: false },
+      policy:          { stopOnFirstFailure: true, stopOnFirstBlock: false },
       approvalConfig,
-      executionStore: createPrismaExecutionStore(),
+      executionStore:  createPrismaExecutionStore(),
       executionSource: "api",
       executionMode:   "copilot",
     },
   );
 
-  // ── Step 6: Serialize response ────────────────────────────────────────────
+  // ── Serialize response ────────────────────────────────────────────────────
   const { rollback, ...publicReport } = report;
 
   const status =
