@@ -1,53 +1,50 @@
 /**
  * app/api/orgs/[orgSlug]/marketing-studio/shopify/execute/route.ts
  *
- * AGENTIK-RUNTIME-INTEGRATION-01 — Copilot execution endpoint.
- * Wires Intent Resolver → Action Runtime → Shopify Provider end-to-end.
+ * AGENTIK-RUNTIME-INTEGRATION-01 + SHOPIFY-COPILOT-INTEGRATION-01
+ * Copilot execution endpoint — multi-tenant, Vault-backed, fully persisted.
  *
  * POST /api/orgs/:orgSlug/marketing-studio/shopify/execute
  *
- * Body: { utterance: string; bypassApproval?: boolean }
+ * Body: { utterance: string; bypassApproval?: boolean; idempotencyKey?: string }
  *
  * Response: ExtendedExecutionReport (JSON)
  *
- * Design:
- *   - Resolves Shopify credentials from environment (Phase 1)
- *   - Phase 2: resolve from Vault via tenantId
- *   - All execution is fully auditable (executionId, correlationId, audit trail)
- *   - Approval gate: auto_block by default (bypassApproval only for dev/test)
- *
- * Architecture boundaries:
- *   - This route is the ONLY place that imports ShopifyActionProvider
- *   - The runtime itself remains domain-agnostic
+ * Architecture:
+ *   - tenantId = organization.id (NOT orgSlug) — stable DB identifier
+ *   - Shopify credentials resolved from Vault per tenant
+ *   - Returns 409 shopify_not_configured if no active Shopify connection
+ *   - bypassApproval guarded — 403 in NODE_ENV=production
+ *   - executeExecutionPlan receives PrismaExecutionStore for full audit trail
  */
 import "server-only";
 
-import { NextRequest, NextResponse } from "next/server";
-import { requireOrgAccess }          from "@/lib/auth/org-access";
+import { NextRequest, NextResponse }    from "next/server";
+import { requireOrgAccess }             from "@/lib/auth/org-access";
+import { createPrismaExecutionStore }   from "@/lib/copilot/execution-store";
 
-import { intentResolver }            from "@/lib/copilot/intent-resolver";
+import { intentResolver }               from "@/lib/copilot/intent-resolver";
 import {
   ActionDispatcher,
   executeExecutionPlan,
   planFromIntentPlan,
-}                                    from "@/lib/copilot/runtime/execution-runtime";
-import type { ExecutionContext }      from "@/lib/copilot/runtime/runtime-types";
+}                                       from "@/lib/copilot/runtime/execution-runtime";
+import type { ExecutionContext }         from "@/lib/copilot/runtime/runtime-types";
 import { DEFAULT_APPROVAL_GATE_CONFIG } from "@/lib/copilot/runtime/approval-gate";
 
-import { ShopifyActionProvider }     from "@/lib/marketing-studio/commerce/shopify-runtime/shopify-action-provider";
-import { envShopifyContextResolver } from "@/lib/marketing-studio/commerce/shopify-runtime/shopify-context-resolver";
+import { ShopifyActionProvider }        from "@/lib/marketing-studio/commerce/shopify-runtime/shopify-action-provider";
+import { vaultShopifyContextResolver }  from "@/lib/marketing-studio/commerce/shopify-runtime/shopify-context-resolver";
 
-// ── Singleton dispatcher (module-level, re-used across requests) ───────────────
+// ── Dispatcher factory ─────────────────────────────────────────────────────────
+// The vault resolver reads credentials per-request via ctx.tenantId,
+// so the singleton dispatcher is safe to reuse across requests.
 
 let _dispatcher: ActionDispatcher | null = null;
 
 function getDispatcher(): ActionDispatcher {
   if (_dispatcher) return _dispatcher;
-
   const dispatcher = new ActionDispatcher();
-  const provider   = new ShopifyActionProvider(
-    envShopifyContextResolver({ warnOnMissing: true }),
-  );
+  const provider   = new ShopifyActionProvider(vaultShopifyContextResolver());
   dispatcher.registerProvider(provider as Parameters<typeof dispatcher.registerProvider>[0]);
   _dispatcher = dispatcher;
   return dispatcher;
@@ -59,17 +56,19 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ orgSlug: string }> },
 ): Promise<NextResponse> {
-  // ── Auth ─────────────────────────────────────────────────────────────────────
+  // ── Auth ──────────────────────────────────────────────────────────────────
   const { orgSlug } = await params;
+  let tenantId: string;
   let userId: string;
   try {
     const access = await requireOrgAccess(orgSlug);
-    userId = access.user.id;
+    tenantId = access.organization.id;
+    userId   = access.user.email ?? access.user.id;
   } catch {
     return NextResponse.json({ error: "Unauthorized or org not found" }, { status: 401 });
   }
 
-  // ── Parse body ───────────────────────────────────────────────────────────────
+  // ── Parse body ───────────────────────────────────────────────────────────
   let body: { utterance?: string; bypassApproval?: boolean; idempotencyKey?: string };
   try {
     body = await request.json();
@@ -86,7 +85,18 @@ export async function POST(
     );
   }
 
-  // ── Step 1: Intent resolution ────────────────────────────────────────────────
+  // ── Phase 4: Guard bypassApproval in production ──────────────────────────
+  if (bypassApproval && process.env.NODE_ENV === "production") {
+    console.warn(
+      `[shopify/execute] bypassApproval requested by "${userId}" in production — DENIED.`,
+    );
+    return NextResponse.json(
+      { error: "bypassApproval is not permitted in production environments." },
+      { status: 403 },
+    );
+  }
+
+  // ── Step 1: Intent resolution ────────────────────────────────────────────
   const resolution = intentResolver.resolve(utterance);
 
   if (!resolution.matched || !resolution.resolvedIntent) {
@@ -99,27 +109,42 @@ export async function POST(
     }, { status: 422 });
   }
 
-  // ── Step 2: Build execution plan ─────────────────────────────────────────────
+  // ── Step 2: Build execution plan ─────────────────────────────────────────
   const intentPlan  = intentResolver.buildExecutionPlan(resolution.resolvedIntent);
   const runtimePlan = planFromIntentPlan(intentPlan, { domain: "shopify" });
 
-  // ── Step 3: Build execution context ─────────────────────────────────────────
+  // ── Step 3: Build execution context ──────────────────────────────────────
   const ctx: ExecutionContext = {
     executionId:    crypto.randomUUID(),
     correlationId:  resolution.resolvedIntent.candidateId,
-    tenantId:       orgSlug,
-    userId:         userId,
+    tenantId,
+    userId,
     requestedAt:    new Date(),
     idempotencyKey: idempotencyKey,
     metadata: {
       utterance,
-      intentSource:   utterance,
-      candidateId:    resolution.resolvedIntent.candidateId,
-      confidence:     resolution.resolvedIntent.confidence,
+      intentSource: utterance,
+      candidateId:  resolution.resolvedIntent.candidateId,
+      confidence:   resolution.resolvedIntent.confidence,
     },
   };
 
-  // ── Step 4: Execute ──────────────────────────────────────────────────────────
+  // ── Step 4: Validate Shopify connection ───────────────────────────────────
+  // Eagerly check vault credentials before spinning up execution.
+  // The vault resolver is called again inside executeExecutionPlan, but
+  // an upfront check lets us return a clean 409 with a structured error.
+  const shopifyCtx = await vaultShopifyContextResolver()(ctx);
+  if (!shopifyCtx) {
+    return NextResponse.json({
+      status:    "shopify_not_configured",
+      tenantId,
+      error:     "No active Shopify connection found for this organization. " +
+                 "Configure the Shopify integration before executing Copilot actions.",
+      hint:      "POST /api/orgs/:orgSlug/marketing-studio/shopify/connection to register credentials.",
+    }, { status: 409 });
+  }
+
+  // ── Step 5: Execute ───────────────────────────────────────────────────────
   const approvalConfig = bypassApproval
     ? { strategy: "auto_approve" as const, gateAutomationEligible: false }
     : DEFAULT_APPROVAL_GATE_CONFIG;
@@ -129,13 +154,15 @@ export async function POST(
     ctx,
     getDispatcher(),
     {
-      policy:        { stopOnFirstFailure: true, stopOnFirstBlock: false },
+      policy:         { stopOnFirstFailure: true, stopOnFirstBlock: false },
       approvalConfig,
+      executionStore: createPrismaExecutionStore(),
+      executionSource: "api",
+      executionMode:   "copilot",
     },
   );
 
-  // ── Step 5: Serialize response ────────────────────────────────────────────────
-  // Exclude rollback from the public response to keep payload small
+  // ── Step 6: Serialize response ────────────────────────────────────────────
   const { rollback, ...publicReport } = report;
 
   const status =

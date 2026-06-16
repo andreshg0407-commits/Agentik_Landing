@@ -20,6 +20,10 @@ import "server-only";
 
 import type { ExecutionContext }  from "@/lib/copilot/runtime/runtime-types";
 import type { ShopifyContext }    from "@/lib/marketing-studio/commerce/shopify-actions/action-types";
+import { getIntegrationConnection } from "@/lib/integrations/integration-repository";
+import { getIntegrationSecret }     from "@/lib/integrations/vault/vault-service";
+import { SECRET_TYPE }              from "@/lib/integrations/vault/vault-types";
+import { CONNECTION_STATUS }        from "@/lib/integrations/integration-types";
 
 // ── Resolver type ──────────────────────────────────────────────────────────────
 
@@ -34,6 +38,62 @@ import type { ShopifyContext }    from "@/lib/marketing-studio/commerce/shopify-
 export type ShopifyContextResolver = (
   ctx: ExecutionContext,
 ) => Promise<ShopifyContext | null>;
+
+// ── Error codes ────────────────────────────────────────────────────────────────
+
+export type ShopifyContextErrorCode =
+  | "shopify_connection_not_found"
+  | "shopify_credentials_missing"
+  | "shopify_access_token_missing"
+  | "shopify_shop_domain_missing"
+  | "shopify_connection_disabled"
+  | "shopify_context_resolution_failed";
+
+// ── Vault resolver ─────────────────────────────────────────────────────────────
+
+/**
+ * Create a resolver that reads Shopify credentials from the Agentik Vault
+ * per tenant. This is the PRODUCTION resolver.
+ *
+ * Resolution steps:
+ *   1. Look up IntegrationConnection by (tenantId, "shopify")
+ *   2. Verify status === CONNECTED
+ *   3. Verify shopDomain is set
+ *   4. Fetch ACCESS_TOKEN from vault
+ *   5. Return ShopifyContext
+ *
+ * Returns null on any failure — never throws.
+ * The dispatcher will mark all steps as blocked when null is returned.
+ */
+export function vaultShopifyContextResolver(): ShopifyContextResolver {
+  return async (ctx: ExecutionContext): Promise<ShopifyContext | null> => {
+    try {
+      const connection = await getIntegrationConnection(ctx.tenantId, "shopify");
+
+      if (!connection) return null;
+
+      if (connection.status !== CONNECTION_STATUS.CONNECTED) return null;
+
+      if (!connection.shopDomain) return null;
+
+      const secret = await getIntegrationSecret({
+        organizationId: ctx.tenantId,
+        connectionId:   connection.id,
+        secretType:     SECRET_TYPE.ACCESS_TOKEN,
+      });
+
+      if (!secret) return null;
+
+      return {
+        organizationId: ctx.tenantId,
+        accessToken:    secret.plainValue,
+        shopDomain:     connection.shopDomain,
+      };
+    } catch {
+      return null;
+    }
+  };
+}
 
 // ── Static resolver ────────────────────────────────────────────────────────────
 
