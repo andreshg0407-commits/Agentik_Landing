@@ -466,14 +466,14 @@ export function InventarioClient({ orgSlug, snapshot }: Props) {
           value={health.totalLT}
           color={C.blueDark}
           suffix=" uds"
-          onClick={() => setFilter("latin_kids")}
+          onClick={() => { setFilter("todos"); setExpandedLines(prev => new Set([...prev, "LATIN_KIDS"])); }}
         />
         <KpiCard
           label="Total CS"
           value={health.totalCS}
           color={C.blueDark}
           suffix=" uds"
-          onClick={() => setFilter("castillitos")}
+          onClick={() => { setFilter("todos"); setExpandedLines(prev => new Set([...prev, "CASTILLITOS"])); }}
         />
         <KpiCard
           label="Total Importacion"
@@ -481,7 +481,7 @@ export function InventarioClient({ orgSlug, snapshot }: Props) {
           suffix=" uds"
           detail={health.accesoriosBajaCantidad > 0 ? `${health.accesoriosBajaCantidad} acc. bajo` : undefined}
           detailColor={C.amber}
-          onClick={() => setFilter("importacion")}
+          onClick={() => { setFilter("todos"); setExpandedLines(prev => new Set([...prev, "IMPORTACION"])); }}
         />
         <KpiCard
           label="Subgrupos cubiertos"
