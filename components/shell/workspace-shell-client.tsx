@@ -30,10 +30,10 @@ import {
   TrendingUp,
   Wallet,
   Users,
-  Factory,
   Megaphone,
-  Network,
   Terminal,
+  Network,
+  Factory,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -46,28 +46,28 @@ import {
 // Client-side only: icons are React components and cannot cross the RSC boundary.
 
 const DOMAIN_ICONS: Record<string, LucideIcon> = {
-  gestion:    Building2,
-  finanzas:   TrendingUp,
-  cobranza:   Wallet,
-  comercial:  Users,
-  produccion: Factory,
-  marketing:  Megaphone,
-  agentik:    Network,
-  internal:   Terminal,
+  gestion:   Building2,   // organizational executive layer
+  finanzas:  TrendingUp,  // financial performance / growth
+  cobranza:  Wallet,      // monetary collection / recovery
+  comercial:  Users,       // commercial / client relations
+  produccion: Factory,    // production / manufacturing operations
+  marketing:  Megaphone,  // creative / broadcast / campaign
+  agentik:   Network,     // AI OS orchestration hub — interconnected operations
+  internal:  Terminal,    // system console / advanced tooling
 };
 
 // Rail accent palette — lighter versions of each domain color for display on the
 // dark navy primary rail. Sidebar accents (e.g. Gestión #1e1e2e) are too dark for
 // WCAG contrast on #001E4A–#003A8A. These are the same hue family, lifted for legibility.
 const RAIL_ACCENTS: Record<string, string> = {
-  gestion:    "#94a3b8",   // slate-400  — neutral prestige, executive authority
-  finanzas:   "#60a5fa",   // blue-400   — financial clarity
-  cobranza:   "#a78bfa",   // violet-400 — collections identity
+  gestion:   "#94a3b8",   // slate-400  — neutral prestige, executive authority
+  finanzas:  "#60a5fa",   // blue-400   — financial clarity
+  cobranza:  "#a78bfa",   // violet-400 — collections identity
   comercial:  "#93c5fd",   // blue-300   — commercial presence (not startup-cyan)
-  produccion: "#fbbf24",   // amber-400  — manufacturing/production identity
-  marketing:  "#c084fc",   // purple-400 — creative/AI studio identity
-  agentik:    "#818cf8",   // indigo-400 — AI OS identity
-  internal:   "#818cf8",   // indigo-400 — system console
+  produccion: "#fbbf24",  // amber-400  — production/manufacturing warmth
+  marketing:  "#c084fc",  // purple-400 — creative/AI studio identity
+  agentik:   "#818cf8",   // indigo-400 — AI OS hub
+  internal:  "#64748b",   // slate-500  — system console (muted)
 };
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -256,23 +256,47 @@ function PrimaryRail({
       <div style={{
         width:          34,
         height:         34,
-        background:     "linear-gradient(135deg, #004AAD, #1E63D8)",
         borderRadius:   10,
         display:        "flex",
         alignItems:     "center",
         justifyContent: "center",
         flexShrink:     0,
-        boxShadow:      "0 2px 8px rgba(0,74,173,.40)",
+        overflow:       "hidden",
       }}>
-        <span style={{
-          fontSize:      13,
-          fontWeight:    T.wt.bold,
-          color:         "#fff",
-          fontFamily:    T.sans,
-          letterSpacing: "-0.02em",
+        <img
+          src="/agentik-navy.svg"
+          alt="Agentik"
+          width={34}
+          height={34}
+          style={{ display: "block", objectFit: "contain" }}
+          onError={(e) => {
+            const t = e.currentTarget;
+            t.style.display = "none";
+            const fb = t.nextElementSibling as HTMLElement | null;
+            if (fb) fb.style.display = "flex";
+          }}
+        />
+        {/* Fallback — shown only if SVG fails to load */}
+        <div style={{
+          display:        "none",
+          width:          34,
+          height:         34,
+          background:     "linear-gradient(135deg, #004AAD, #1E63D8)",
+          borderRadius:   10,
+          alignItems:     "center",
+          justifyContent: "center",
+          flexShrink:     0,
         }}>
-          A
-        </span>
+          <span style={{
+            fontSize:      13,
+            fontWeight:    T.wt.bold,
+            color:         "#fff",
+            fontFamily:    T.mono,
+            letterSpacing: "-0.02em",
+          }}>
+            A
+          </span>
+        </div>
       </div>
 
       {/* Logo zone separator */}
@@ -290,10 +314,13 @@ function PrimaryRail({
         const isActive = domain.id === activeDomain;
         const rAccent  = RAIL_ACCENTS[domain.id] ?? domain.accent;
         // Grouping dividers:
-        //   — between Gestión (management) and the first operational domain
-        //   — before the internal console (system layer, visually separate)
+        //   — after Gestión (management layer ends)
+        //   — before Agentik (AI OS layer begins)
+        //   — before Consola (system tools, visually lowest)
         const showDivider = idx > 0 && (
-          domains[idx - 1]?.id === "gestion" || domain.id === "internal"
+          domains[idx - 1]?.id === "gestion" ||
+          domain.id === "agentik" ||
+          domain.id === "internal"
         );
         return (
           <Fragment key={domain.id}>
@@ -434,7 +461,10 @@ function DomainButton({
         transition:     "background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease",
       }}
     >
-      <Icon size={16} strokeWidth={isActive ? 2 : 1.5} />
+      <Icon
+        size={domain.id === "agentik" ? 17 : 16}
+        strokeWidth={isActive ? 2 : 1.5}
+      />
       <span style={{
         fontFamily:    T.mono,
         fontSize:      8,
@@ -502,12 +532,12 @@ function ContextPanel({
             flexShrink:   0,
           }} />
           <div style={{
-            fontFamily:    T.sans,
+            fontFamily:    T.mono,
             fontSize:      T.sz["2xs"],
-            fontWeight:    T.wt.bold,
+            fontWeight:    T.wt.semibold,
             color:         domain.accent,
             textTransform: "uppercase" as const,
-            letterSpacing: "0.08em",
+            letterSpacing: "0.10em",
           }}>
             {domain.label}
           </div>
@@ -564,25 +594,27 @@ function ContextPanel({
         flexShrink:   0,
       }}>
         <span style={{
-          fontFamily:   T.sans,
-          fontSize:     T.sz["2xs"],
-          fontWeight:   T.wt.bold,
-          color:        "#fff",
-          background:   roleBadge.accent,
-          borderRadius: R.pill,
-          padding:      "2px 8px",
-          whiteSpace:   "nowrap",
+          fontFamily:    T.mono,
+          fontSize:      T.sz["2xs"],
+          fontWeight:    T.wt.semibold,
+          color:         "#fff",
+          background:    roleBadge.accent,
+          borderRadius:  R.pill,
+          padding:       "2px 8px",
+          whiteSpace:    "nowrap",
+          letterSpacing: "0.06em",
         }}>
           {roleBadge.label}
         </span>
         <span style={{
-          fontFamily: T.mono,
-          fontSize:   T.sz["2xs"],
-          color:      C.inkFaint,
-          flex:       1,
-          overflow:   "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap" as const,
+          fontFamily:    T.mono,
+          fontSize:      T.sz["2xs"],
+          color:         C.inkFaint,
+          flex:          1,
+          overflow:      "hidden",
+          textOverflow:  "ellipsis",
+          whiteSpace:    "nowrap" as const,
+          letterSpacing: "0.04em",
         }}>
           Agentik OS
         </span>
@@ -609,18 +641,17 @@ function NavItemLink({
     return (
       <div style={{
         fontFamily:    T.mono,
-        fontSize:      T.sz["2xs"],
-        fontWeight:    T.wt.bold,
-        color:         C.inkFaint,
+        fontSize:      8,
+        fontWeight:    T.wt.semibold,
+        color:         C.inkGhost,
         textTransform: "uppercase" as const,
-        letterSpacing: "0.09em",
+        letterSpacing: "0.12em",
         paddingLeft:   S[3],
         paddingRight:  S[2],
-        paddingTop:    S[4],
-        paddingBottom: S[1],
+        paddingTop:    14,
+        paddingBottom: 3,
         lineHeight:    1,
         userSelect:    "none" as const,
-        borderTop:     `1px solid ${C.lineSubtle}`,
         marginTop:     S[1],
       }}>
         {item.label}
@@ -649,27 +680,28 @@ function NavItemLink({
     fontFamily:     T.mono,
     fontSize:       item.indent ? T.sz.xs : T.sz.sm,
     fontWeight:     isActive         ? T.wt.semibold
-                  : item.indent      ? T.wt.medium
-                  : T.wt.semibold,
+                  : item.indent      ? T.wt.normal
+                  : T.wt.medium,
     color,
     textDecoration: "none",
     paddingLeft:    pl,
     paddingRight:   S[2],
-    paddingTop:     5,
-    paddingBottom:  5,
+    paddingTop:     4,
+    paddingBottom:  4,
+    marginBottom:   1,
     borderRadius:   R.md,
     // Persistent left accent bar — transparent when not active, avoids layout shift
     borderLeft:     `2px solid ${isActive ? domainAccent : "transparent"}`,
-    lineHeight:     1.4,
+    lineHeight:     1.45,
     whiteSpace:     "nowrap" as const,
     overflow:       "hidden",
     textOverflow:   "ellipsis",
-    background:     isActive                    ? `${domainAccent}12`
-                  : hovered && !item.disabled  ? "var(--ag-brand-50, #EEF5FF)"
+    background:     isActive                    ? `${domainAccent}14`
+                  : hovered && !item.disabled  ? "rgba(0,74,173,.045)"
                   : "transparent",
     cursor:         item.disabled ? "default" : "pointer",
-    opacity:        item.disabled ? 0.4 : 1,
-    transition:     "color 0.1s ease, background 0.1s ease",
+    opacity:        item.disabled ? 0.38 : 1,
+    transition:     "color 0.12s ease, background 0.12s ease",
   };
 
   const labelNode = (

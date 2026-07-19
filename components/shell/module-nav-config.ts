@@ -203,31 +203,27 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
       shortIcon: "Cm",
       iconKey:   "comercial",
       accent:    "#0369a1",
-      pathKeys:  ["sales", "customer-360", "pipeline", "comercial/maletas", "comercial/inventario", "comercial/importaciones", "comercial/pedidos", "comercial/tiendas", "comercial/clientes", "comercial/vendedores", "comercial/control"],
+      pathKeys:  ["comercial/maletas", "comercial/inventario", "comercial/importaciones", "comercial/pedidos", "comercial/tiendas", "comercial/clientes", "comercial/vendedores", "comercial/control"],
       items: [
-        // ── OPERACIÓN — lo que está ocurriendo ───────────────────────────────
+        // ── OPERACIÓN ────────────────────────────────────────────────────────
         { label: "Operación",            href: "#", isSectionHeader: true },
-        { label: "Maletas",              href: `/${s}/comercial/maletas`,       indent: 1, accent: "#0369a1", pathMatches: ["comercial/maletas"] },
-        { label: "Inventario",           href: `/${s}/comercial/inventario`,    indent: 1, accent: "#0369a1", pathMatches: ["comercial/inventario"] },
-        { label: "Importaciones",        href: `/${s}/comercial/importaciones`, indent: 1, accent: "#0369a1", pathMatches: ["comercial/importaciones"] },
-        { label: "Pedidos",              href: `/${s}/comercial/pedidos`,       indent: 1, accent: "#0369a1", pathMatches: ["comercial/pedidos"] },
-        { label: "Tiendas",              href: `/${s}/comercial/tiendas`,       indent: 1, accent: "#0369a1", pathMatches: ["comercial/tiendas"] },
-        { label: "Clientes",             href: `/${s}/comercial/clientes`,      indent: 1, accent: "#0369a1", pathMatches: ["comercial/clientes"] },
-        { label: "Vendedores",           href: `/${s}/comercial/vendedores`,    indent: 1, accent: "#0369a1", pathMatches: ["comercial/vendedores"] },
-        // ── ESTRUCTURA COMERCIAL — cómo está organizado el negocio ───────────
+        { label: "Maletas",              href: `/${s}/comercial/maletas`,     indent: 1, accent: "#0369a1", pathMatches: ["comercial/maletas"]     },
+        { label: "Inventario",           href: `/${s}/comercial/inventario`,       indent: 1, accent: "#0369a1", pathMatches: ["comercial/inventario"]       },
+        { label: "Importaciones",        href: `/${s}/comercial/importaciones`,  indent: 1, accent: "#0369a1", pathMatches: ["comercial/importaciones"]  },
+        { label: "Pedidos",              href: `/${s}/comercial/pedidos`,         indent: 1, accent: "#0369a1", pathMatches: ["comercial/pedidos"]         },
+        { label: "Tiendas",             href: `/${s}/comercial/tiendas`,     indent: 1, accent: "#0369a1", pathMatches: ["comercial/tiendas"]     },
+        // ── ESTRUCTURA COMERCIAL ──────────────────────────────────────────────
         { label: "Estructura Comercial", href: "#", isSectionHeader: true },
-        { label: "Canales",              href: `/${s}/sales/channels`,    indent: 1 },
-        { label: "Sucursales",           href: `/${s}/sales/branches`,    indent: 1 },
-        { label: "Líneas",               href: `/${s}/sales/lines`,       indent: 1 },
-        // ── INTELIGENCIA — interpreta el sistema comercial ────────────────────
-        { label: "Inteligencia",                  href: "#", isSectionHeader: true },
-        { label: "Inteligencia Operacional",      href: `/${s}/comercial/inteligencia`, indent: 1, accent: "#0369a1", pathMatches: ["comercial/inteligencia"] },
-        { label: "Control Comercial",             href: `/${s}/sales`,                  indent: 1, accent: "#0369a1" },
+        { label: "Clientes",             href: `/${s}/comercial/clientes`,    indent: 1, accent: "#0369a1", pathMatches: ["comercial/clientes"]    },
+        { label: "Vendedores",           href: `/${s}/comercial/vendedores`,  indent: 1, accent: "#0369a1", pathMatches: ["comercial/vendedores"]  },
+        // ── GESTIÓN ───────────────────────────────────────────────────────────
+        { label: "Gestión",              href: "#", isSectionHeader: true },
+        { label: "Control Comercial",    href: `/${s}/comercial/control`,     indent: 1, accent: "#0369a1", pathMatches: ["comercial/control"]     },
       ],
     });
   }
 
-  // ── Producción — manufacturing operations ────────────────────────────────
+  // ── Producción — production operations domain ───────────────────────────
   if (opts.hasProduction) {
     domains.push({
       id:        "produccion",
@@ -237,14 +233,17 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
       accent:    "#b45309",
       pathKeys:  ["produccion"],
       items: [
-        { label: "Panel",      href: `/${s}/produccion`,           badge: "↗", accent: "#b45309" },
-        { label: "Operación",  href: "#", isSectionHeader: true },
-        { label: "Órdenes",    href: `/${s}/produccion/ordenes`,   indent: 1, accent: "#b45309", pathMatches: ["produccion/ordenes"]   },
-        { label: "Timeline",   href: `/${s}/produccion/timeline`,  indent: 1, accent: "#b45309", pathMatches: ["produccion/timeline"]  },
-        { label: "Etapas",     href: `/${s}/produccion/etapas`,    indent: 1, accent: "#b45309", pathMatches: ["produccion/etapas"]    },
-        { label: "Consumos",   href: `/${s}/produccion/consumos`,  indent: 1, accent: "#b45309", pathMatches: ["produccion/consumos"]  },
-        { label: "Costos",     href: `/${s}/produccion/costos`,    indent: 1, accent: "#b45309", pathMatches: ["produccion/costos"]    },
-        { label: "Alertas",    href: `/${s}/produccion/alertas`,   indent: 1, accent: "#b45309", pathMatches: ["produccion/alertas"]   },
+        // ── OPERACIÓN — estado de planta ────────────────────────────────────
+        { label: "Operación",          href: "#", isSectionHeader: true },
+        { label: "Panel de Producción", href: `/${s}/produccion`,           indent: 1, accent: "#b45309", pathMatches: ["produccion"] },
+        { label: "Órdenes",            href: `/${s}/produccion/ordenes`,    indent: 1, accent: "#b45309", pathMatches: ["produccion/ordenes"] },
+        { label: "Timeline",           href: `/${s}/produccion/timeline`,   indent: 1, accent: "#b45309", pathMatches: ["produccion/timeline"] },
+        { label: "Etapas",             href: `/${s}/produccion/etapas`,     indent: 1, accent: "#b45309", pathMatches: ["produccion/etapas"] },
+        // ── ANÁLISIS — interpreta el ciclo productivo ────────────────────────
+        { label: "Análisis",           href: "#", isSectionHeader: true },
+        { label: "Consumos",           href: `/${s}/produccion/consumos`,   indent: 1, accent: "#b45309", pathMatches: ["produccion/consumos"] },
+        { label: "Costos",             href: `/${s}/produccion/costos`,     indent: 1, accent: "#b45309", pathMatches: ["produccion/costos"] },
+        { label: "Alertas",            href: `/${s}/produccion/alertas`,    indent: 1, accent: "#b45309", pathMatches: ["produccion/alertas"] },
       ],
     });
   }
@@ -252,29 +251,30 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
   // ── Marketing Studio — creative + content + commerce ──────────────────────
   if (opts.hasMarketing) {
     const mItems: NavItem[] = [
-      { label: "Hub",          href: `/${s}/agentik/marketing-studio`, badge: "↗", accent: "#7c2d92" },
-
-      // ── CREACIÓN — tenant-visible ──────────────────────────────────────────
-      { label: "Crear",        href: "#", isSectionHeader: true },
-      { label: "Foto Estudio", href: `/${s}/agentik/marketing-studio/foto-estudio/new`, indent: 1, badge: "✨", accent: "#7c2d92" },
-      { label: "Biblioteca",   href: `/${s}/agentik/marketing-studio/biblioteca`,       indent: 1 },
+      // ── RECURSOS — produce y organiza recursos visuales ───────────────────────
+      { label: "Recursos",     href: "#", isSectionHeader: true },
+      { label: "Foto Estudio",    href: `/${s}/agentik/marketing-studio/foto-estudio/new`,  indent: 1, badge: "✨", accent: "#7c2d92" },
+      { label: "Editor de Video", href: `/${s}/agentik/marketing-studio/video-editor`,   indent: 1, accent: "#c2410c", pathMatches: ["marketing-studio/video-editor"] },
+      { label: "Biblioteca",      href: `/${s}/agentik/marketing-studio/biblioteca`,     indent: 1 },
       { label: "Atributos",    href: `/${s}/agentik/marketing-studio/biblioteca/atributos`, indent: 2, accent: "#7c2d92" },
 
-      // ── PUBLICAR — tenant-visible ──────────────────────────────────────────
-      { label: "Publicar",     href: "#", isSectionHeader: true },
-      { label: "Publicaciones", href: `/${s}/agentik/marketing-studio/redes`,     indent: 1 },
+      // ── VENDER — operación comercial y distribución de producto ───────────
+      { label: "Vender",       href: "#", isSectionHeader: true },
       { label: "Catálogos",    href: `/${s}/agentik/marketing-studio/catalogos`,  indent: 1 },
-      { label: "Shopify",      href: `/${s}/agentik/marketing-studio/shopify`,                 indent: 1 },
-      { label: "Estadísticas", href: `/${s}/agentik/marketing-studio/shopify/estadisticas`,  indent: 2 },
-      { label: "Promociones",  href: `/${s}/agentik/marketing-studio/shopify/promociones`,   indent: 2 },
-      { label: "Operaciones",  href: `/${s}/agentik/marketing-studio/shopify/operaciones`,   indent: 2 },
-      { label: "WhatsApp",     href: "#",                                                      indent: 1, disabled: true },
+      { label: "Shopify",      href: `/${s}/agentik/marketing-studio/shopify`,                indent: 1 },
+      { label: "Estadísticas", href: `/${s}/agentik/marketing-studio/shopify/estadisticas`, indent: 2 },
+      { label: "Productos",    href: `/${s}/agentik/marketing-studio/shopify/productos`,    indent: 2 },
+      { label: "Promociones",       href: `/${s}/agentik/marketing-studio/shopify/promociones`,  indent: 2 },
+      { label: "Experiencias",        href: `/${s}/agentik/marketing-studio/shopify/banners`,     indent: 2 },
+      { label: "Operaciones",        href: `/${s}/agentik/marketing-studio/shopify/operaciones`,  indent: 2 },
+      { label: "Configuración",     href: `/${s}/agentik/marketing-studio/shopify/configuracion`, indent: 2 },
 
-      // ── CRECER — tenant-visible ────────────────────────────────────────────
-      { label: "Crecer",       href: "#", isSectionHeader: true },
-      { label: "Campañas",     href: `/${s}/agentik/marketing-studio/campaigns`,  indent: 1 },
-      { label: "Pauta con IA", href: `/${s}/agentik/marketing-studio/pauta`,      indent: 1, badge: "IA", accent: "#7c3aed" },
-      { label: "Analítica",    href: `/${s}/agentik/marketing-studio/analytics`,  indent: 1 },
+      // ── PUBLICIDAD — atrae clientes y distribuye contenido ────────────────
+      { label: "Publicidad",   href: "#", isSectionHeader: true },
+      { label: "Contenido",     href: `/${s}/agentik/marketing-studio/campaigns`,   indent: 1 },
+      { label: "Anuncios",     href: `/${s}/agentik/marketing-studio/anuncios`,    indent: 1, accent: "#004AAD" },
+      { label: "Publicaciones", href: `/${s}/agentik/marketing-studio/publicaciones`, indent: 1 },
+      { label: "Analítica",    href: `/${s}/agentik/marketing-studio/analytics`,   indent: 1 },
       { label: "Conexiones",   href: `/${s}/agentik/marketing-studio/connections`, indent: 1 },
 
       // ── PLATAFORMA — platform-admin only ──────────────────────────────────
@@ -326,6 +326,20 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
       ],
     });
   }
+
+  // ── Configuracion — transversal tenant settings ─────────────────────────
+  domains.push({
+    id:        "configuracion",
+    label:     "Configuracion",
+    shortIcon: "⚙",
+    iconKey:   "configuracion",
+    accent:    "#374151",
+    pathKeys:  ["configuracion"],
+    items: [
+      { label: "Tenant",                href: "#", isSectionHeader: true },
+      { label: "Identidad corporativa", href: `/${s}/configuracion/branding`, indent: 1, pathMatches: ["configuracion/branding"] },
+    ],
+  });
 
   // ── Consola — advanced internal tooling (SUPER_ADMIN / AGENTIK_ADMIN only) ─
   if (opts.showInternal) {
