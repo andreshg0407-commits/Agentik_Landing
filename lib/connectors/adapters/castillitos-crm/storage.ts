@@ -34,6 +34,8 @@
 
 import { prisma }                              from "@/lib/prisma";
 import { ActivityType, OpportunityStatus, QuoteStatus } from "@prisma/client";
+import type { CrmQuoteLineRaw }               from "@/lib/integrations/crm-castillitos/crm-quote-line-types";
+import { crmNumToFloat }                       from "@/lib/integrations/crm-castillitos/crm-quote-line-types";
 import type {
   RunContext,
   StorageHandler,
@@ -514,6 +516,105 @@ export const crmCustomerStorage: StorageHandler<UnifiedCustomer> = {
     return { imported, skipped, errored };
   },
 };
+
+// ── upsertQuoteLines ──────────────────────────────────────────────────────────
+
+/**
+ * Upsert CRMQuoteLine rows for a single quote.
+ *
+ * Called after a quote is synced, when the caller has fetched
+ * AOS_Products_Quotes lines via CastillitosCrmAdapter.pullQuoteLines().
+ *
+ * Upserts by (organizationId, crmId) — the V8 record UUID.
+ * Does NOT delete lines that are absent from the current fetch;
+ * full-sync deletion is opt-in (pass fullSync=true when ready for Phase 3).
+ *
+ * Numeric fields: CRM sends them as strings — crmNumToFloat() handles conversion.
+ */
+export async function upsertQuoteLines(
+  organizationId: string,
+  quoteId:        string,       // Prisma CRMQuote.id
+  quoteCrmId:     string | null, // CRMQuote.crmId (CRM UUID)
+  lines:          CrmQuoteLineRaw[],
+): Promise<{ upserted: number; errored: number }> {
+  let upserted = 0;
+  let errored  = 0;
+  const now    = new Date();
+
+  for (const line of lines) {
+    const attr    = line.attributes;
+    const crmId   = line.id;
+    const reference = String(attr["name"] ?? attr["part_number"] ?? "").toUpperCase().trim();
+
+    if (!reference) {
+      console.warn(`[upsertQuoteLines] Skipping line crmId=${crmId} — empty reference`);
+      continue;
+    }
+
+    try {
+      await prisma.cRMQuoteLine.upsert({
+        where: {
+          organizationId_crmId: { organizationId, crmId },
+        },
+        create: {
+          organizationId,
+          crmId,
+          quoteId,
+          quoteCrmId,
+          productCrmId:   String(attr["product_id"] ?? "").trim() || null,
+          reference,
+          productName:    String(attr["name"] ?? "").trim() || null,
+          qty:            crmNumToFloat(attr["product_qty"], 1),
+          unitPrice:      crmNumToFloat(attr["product_unit_price"]),
+          listPrice:      crmNumToFloat(attr["product_list_price"]),
+          totalPrice:     crmNumToFloat(attr["product_total_price"]),
+          discount:       crmNumToFloat(attr["product_discount"]),
+          discountAmount: crmNumToFloat(attr["product_discount_amount"]),
+          vatRate:        crmNumToFloat(attr["vat"]),
+          vatAmount:      crmNumToFloat(attr["vat_amt"]),
+          size:           String(attr["talla_c"] ?? "").trim() || null,
+          color:          String(attr["color_c"] ?? "").trim() || null,
+          warehouseName:  String(attr["bodega_c"] ?? "").trim() || null,
+          warehouseId:    String(attr["adm_bodega_id_c"] ?? "").trim() || null,
+          status:         String(attr["estado_pedido_c"] ?? "").trim() || null,
+          rawCrmJson:     attr as object,
+          syncedAt:       now,
+        },
+        update: {
+          quoteId,
+          quoteCrmId,
+          productCrmId:   String(attr["product_id"] ?? "").trim() || null,
+          reference,
+          productName:    String(attr["name"] ?? "").trim() || null,
+          qty:            crmNumToFloat(attr["product_qty"], 1),
+          unitPrice:      crmNumToFloat(attr["product_unit_price"]),
+          listPrice:      crmNumToFloat(attr["product_list_price"]),
+          totalPrice:     crmNumToFloat(attr["product_total_price"]),
+          discount:       crmNumToFloat(attr["product_discount"]),
+          discountAmount: crmNumToFloat(attr["product_discount_amount"]),
+          vatRate:        crmNumToFloat(attr["vat"]),
+          vatAmount:      crmNumToFloat(attr["vat_amt"]),
+          size:           String(attr["talla_c"] ?? "").trim() || null,
+          color:          String(attr["color_c"] ?? "").trim() || null,
+          warehouseName:  String(attr["bodega_c"] ?? "").trim() || null,
+          warehouseId:    String(attr["adm_bodega_id_c"] ?? "").trim() || null,
+          status:         String(attr["estado_pedido_c"] ?? "").trim() || null,
+          rawCrmJson:     attr as object,
+          syncedAt:       now,
+        },
+      });
+      upserted++;
+    } catch (e) {
+      console.error(
+        `[upsertQuoteLines] Failed crmId=${crmId} quoteId=${quoteId}:`,
+        (e as Error).message,
+      );
+      errored++;
+    }
+  }
+
+  return { upserted, errored };
+}
 
 // ── CRMQuoteStorageHandler ─────────────────────────────────────────────────────
 
