@@ -1,0 +1,1022 @@
+{
+  "capturedAt": "2026-04-08T20:41:18.858Z",
+  "rows": [
+    {
+      "ka_nl_tercero": 185,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 186,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 191,
+      "nd_comision_ventas": 2,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 192,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 193,
+      "nd_comision_ventas": 2,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 194,
+      "nd_comision_ventas": 2,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 211,
+      "nd_comision_ventas": 3.5,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 278,
+      "nd_comision_ventas": 2.5,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 280,
+      "nd_comision_ventas": 3.5,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 281,
+      "nd_comision_ventas": 2.5,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 282,
+      "nd_comision_ventas": 5,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 427,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 516,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 522,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 526,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 567,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 676,
+      "nd_comision_ventas": 2,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 807,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 971,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 974,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 1348,
+      "nd_comision_ventas": 2,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 1971,
+      "nd_comision_ventas": 2,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 2218,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 2245,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 2249,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 2523,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": 8,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 4123,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 4501,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 4503,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 4504,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 4909,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 4910,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 4986,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 5040,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 5252,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 5253,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 8773,
+      "nd_comision_ventas": 3.5,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 8794,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 10742,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 10866,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 11052,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 11082,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 11203,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 11549,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 11550,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 11551,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 13621,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 14161,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 14639,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 15474,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 15999,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 16098,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 16493,
+      "nd_comision_ventas": 3.5,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 17938,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 19614,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 19869,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 19944,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 19962,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 21420,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 21515,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 21949,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 23077,
+      "nd_comision_ventas": 3.5,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 23102,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 24456,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 24983,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 25338,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 25349,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 26077,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 26273,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 26308,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 26532,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 26831,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 27160,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 27755,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 29000,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 29122,
+      "nd_comision_ventas": 3.5,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 29565,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 29734,
+      "nd_comision_ventas": 3.5,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 29984,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 30016,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 30257,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 30548,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 30624,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 30627,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 30628,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 31208,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 31281,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 31395,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 32075,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 32123,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 32420,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 32573,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 32808,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 33304,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 33305,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 33401,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 35051,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 35438,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 35657,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": 1,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 36077,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 36475,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 36719,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 37062,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 37240,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 37286,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 37598,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 37896,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 37897,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 37898,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 37908,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 39268,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 39270,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 39363,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    }
+  ]
+}

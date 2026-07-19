@@ -48,7 +48,7 @@ export default function HomePage() {
       {/* BOTONES */}
       <div className="mt-10 flex flex-col sm:flex-row gap-4">
         <a
-          href="/agentes/marketing"
+          href="/agents"
           className="rounded-xl bg-black px-6 py-3 font-semibold text-white hover:bg-black/90 transition"
         >
           Conocer los agentes
@@ -394,7 +394,7 @@ export default function HomePage() {
 
           <div className="mt-10 flex flex-col sm:flex-row gap-4 justify-center">
             <a
-              href="/agentes/marketing"
+              href="/agents"
               className="inline-flex items-center justify-center rounded-xl bg-white px-7 py-3 font-semibold text-black hover:bg-gray-100 transition"
             >
               Crear mi primer empleado
@@ -402,7 +402,7 @@ export default function HomePage() {
             </a>
 
             <a
-              href="#pricing"
+              href="#como-funciona"
               className="inline-flex items-center justify-center rounded-xl border border-white/30 px-7 py-3 font-semibold text-white hover:bg-white/10 transition"
             >
               Ver planes
@@ -433,8 +433,8 @@ export default function HomePage() {
             <div className="space-y-4">
               <h4 className="text-sm font-semibold text-white uppercase tracking-wide">Producto</h4>
               <ul className="space-y-2 text-sm text-gray-400">
-                <li><a href="/agentes/marketing" className="hover:text-white transition">Luca · Marketing</a></li>
-                <li><a href="#pricing" className="hover:text-white transition">Planes</a></li>
+                <li><a href="/agents" className="hover:text-white transition">Luca · Marketing</a></li>
+                <li><a href="#como-funciona" className="hover:text-white transition">Cómo trabajamos</a></li>
                 <li><a href="#como-funciona" className="hover:text-white transition">Cómo funciona</a></li>
               </ul>
             </div>

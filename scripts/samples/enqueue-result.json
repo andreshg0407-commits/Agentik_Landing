@@ -1,0 +1,41 @@
+{
+  "capturedAt": "2026-04-08T21:11:11.949Z",
+  "mode": "ENQUEUE-ONLY — status=PENDING — not approved — not executed",
+  "operationId": "cmnqjm6260000x3y5a610uaaj",
+  "organizationId": "cmmpwstuf000dp5y58kj1daaj",
+  "writeType": 1,
+  "writeTypeLabel": "UPSERT_CUSTOMER (tipo 1) — LOW risk — idempotent",
+  "status": "PENDING",
+  "risk": "LOW",
+  "description": "[TEST] Castillitos customer upsert preview — PENDING, do not approve",
+  "sourceRef": "terceros:ka_nl_tercero=106",
+  "initiatedBy": "sag-test-enqueue-script",
+  "initiatedAt": "2026-04-08T21:11:11.399Z",
+  "retryCount": 0,
+  "approvedBy": null,
+  "sentAt": null,
+  "generatedXml": "<CLIENTES><CLIENTE><NIT>860007379</NIT><NOMBRE>CAJA DE AUXILIOS Y PRESTACIONES DE LA ASOCIACION COLOMBIANA</NOMBRE><TIPO_DOC>NIT</TIPO_DOC><DIGITO_VERIFICACION>8</DIGITO_VERIFICACION><NATURALEZA>J</NATURALEZA><DIRECCION>CL 99  10 19 OF 402</DIRECCION><CODIGO_DANE_CIUDAD>11001</CODIGO_DANE_CIUDAD><CIUDAD>BOGOTA</CIUDAD><TELEFONO>6180287</TELEFONO><TIPO_TERCERO>O</TIPO_TERCERO><ZONA>1</ZONA><RETENEDOR>N</RETENEDOR><IVA>S</IVA><ACTIVO>S</ACTIVO><ACTIVO_FIJO>N</ACTIVO_FIJO></CLIENTE></CLIENTES>",
+  "xmlMatchesPreviewB": true,
+  "pendingCountBefore": 0,
+  "pendingCountAfter": 1,
+  "inputJson": {
+    "type": 1,
+    "payload": {
+      "IVA": "S",
+      "NIT": "860007379",
+      "ZONA": "1",
+      "ACTIVO": "S",
+      "CIUDAD": "BOGOTA",
+      "NOMBRE": "CAJA DE AUXILIOS Y PRESTACIONES DE LA ASOCIACION COLOMBIANA",
+      "TELEFONO": "6180287",
+      "TIPO_DOC": "NIT",
+      "DIRECCION": "CL 99  10 19 OF 402",
+      "RETENEDOR": "N",
+      "NATURALEZA": "J",
+      "ACTIVO_FIJO": "N",
+      "TIPO_TERCERO": "O",
+      "CODIGO_DANE_CIUDAD": "11001",
+      "DIGITO_VERIFICACION": "8"
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "capturedAt": "2026-04-08T20:41:16.575Z",
+  "rows": [
+    {
+      "ka_nl_linea": 1,
+      "ss_linea": "LATIN KIDS",
+      "dd_fecha_ult_modificacion": "2020-11-20T00:00:00"
+    },
+    {
+      "ka_nl_linea": 2,
+      "ss_linea": "CASTILLITOS",
+      "dd_fecha_ult_modificacion": "2020-11-20T00:00:00"
+    },
+    {
+      "ka_nl_linea": 3,
+      "ss_linea": "OTROS",
+      "dd_fecha_ult_modificacion": "2023-01-11T00:00:00"
+    },
+    {
+      "ka_nl_linea": 4,
+      "ss_linea": "POWER",
+      "dd_fecha_ult_modificacion": "2023-01-14T00:00:00"
+    },
+    {
+      "ka_nl_linea": 5,
+      "ss_linea": "IMPORTACION",
+      "dd_fecha_ult_modificacion": "2024-02-27T00:00:00"
+    }
+  ]
+}

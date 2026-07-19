@@ -1,0 +1,50 @@
+{
+  "capturedAt": "2026-04-08T20:37:02.116Z",
+  "rows": [
+    {
+      "ka_nl_tercero": 185,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 186,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 191,
+      "nd_comision_ventas": 2,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 192,
+      "nd_comision_ventas": 0,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    },
+    {
+      "ka_nl_tercero": 193,
+      "nd_comision_ventas": 2,
+      "nd_comision_cobros": 0,
+      "sc_activo": "S",
+      "sc_avisar_ped_fact": "N",
+      "ka_ni_zona": null,
+      "ka_ni_canal": null
+    }
+  ]
+}

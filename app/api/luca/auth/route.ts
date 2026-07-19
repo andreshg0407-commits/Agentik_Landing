@@ -1,11 +1,11 @@
 // app/api/luca/auth/route.ts
 import { NextResponse } from "next/server"
 import crypto from "crypto"
-import { cookieDomain, cookieSecure } from "@/app/lib/tiktokEnv"
+import { cookieDomain, cookieSecure } from "@/lib/tiktokEnv"
 
 export const runtime = "nodejs"
 
-const ALLOWED_CLIENTS = ["moda-colombia"]
+const ALLOWED_CLIENTS = ["moda-colombia", "castillitos", "do-jeans"]
 
 const SESSION_COOKIE = "agentik_session"
 const SESSION_TTL_SECONDS = 60 * 60 * 24 // 24h

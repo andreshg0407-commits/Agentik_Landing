@@ -1,0 +1,28 @@
+{
+  "crons": [
+    {
+      "path": "/api/internal/financial-memory/capture",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/finance/runtime",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/video-render",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/data-sync?source=castillitos_crm",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/data-sync?source=sag_pya_soap",
+      "schedule": "30 */6 * * *"
+    },
+    {
+      "path": "/api/cron/inventory-refresh",
+      "schedule": "0 5 * * *"
+    }
+  ]
+}

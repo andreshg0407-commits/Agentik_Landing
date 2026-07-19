@@ -1,0 +1,25 @@
+{
+  "capturedAt": "2026-04-08T21:05:37.499Z",
+  "mode": "DRY-RUN — NO SAG WRITE — NO DB WRITE",
+  "previewId": "preview-a-minimal",
+  "writeType": 1,
+  "writeTypeLabel": "UPSERT_CUSTOMER (tipo 1) — LOW risk — idempotent",
+  "input": {
+    "NIT": "860007379",
+    "NOMBRE": "CAJA DE AUXILIOS Y PRESTACIONES DE LA ASOCIACION COLOMBIANA"
+  },
+  "schemaValidation": {
+    "valid": true,
+    "errors": []
+  },
+  "masterValidation": {
+    "safe": true,
+    "errors": [],
+    "warnings": []
+  },
+  "generatedXml": "<CLIENTES><CLIENTE><NIT>860007379</NIT><NOMBRE>CAJA DE AUXILIOS Y PRESTACIONES DE LA ASOCIACION COLOMBIANA</NOMBRE><ACTIVO>S</ACTIVO></CLIENTE></CLIENTES>",
+  "xmlByteLength": 154,
+  "readyToEnqueue": true,
+  "blockers": [],
+  "advisories": []
+}

@@ -1,0 +1,71 @@
+{
+  "capturedAt": "2026-04-08T21:05:37.500Z",
+  "mode": "DRY-RUN — NO SAG WRITE — NO DB WRITE",
+  "previewId": "preview-c-bad",
+  "writeType": 1,
+  "writeTypeLabel": "UPSERT_CUSTOMER (tipo 1) — LOW risk — idempotent",
+  "input": {
+    "NIT": "900.123.456-7",
+    "NOMBRE": "CLIENTE INVALIDO TEST",
+    "ZONA": "ZONA_INEXISTENTE_99",
+    "TIPO_TERCERO": "X",
+    "NATURALEZA": "Z",
+    "EMAIL": "not-an-email",
+    "DIGITO_VERIFICACION": "ab"
+  },
+  "schemaValidation": {
+    "valid": false,
+    "errors": [
+      {
+        "field": "NIT",
+        "message": "NIT debe ser el NIT en formato canónico (9 dígitos, sin puntos ni guión). Recibido: \"900.123.456-7\"."
+      },
+      {
+        "field": "DIGITO_VERIFICACION",
+        "message": "DIGITO_VERIFICACION debe ser un único dígito (0-9)."
+      },
+      {
+        "field": "NATURALEZA",
+        "message": "NATURALEZA debe ser \"J\" (Jurídica) o \"N\" (Natural)."
+      },
+      {
+        "field": "EMAIL",
+        "message": "EMAIL no es un correo electrónico válido."
+      }
+    ]
+  },
+  "masterValidation": {
+    "safe": false,
+    "errors": [
+      {
+        "field": "NATURALEZA",
+        "value": "Z",
+        "message": "NATURALEZA = \"Z\": debe ser \"J\" (Jurídica) o \"N\" (Natural)."
+      },
+      {
+        "field": "ZONA",
+        "value": "ZONA_INEXISTENTE_99",
+        "message": "ZONA = \"ZONA_INEXISTENTE_99\": valor no reconocido en SAG Castillitos. Valores válidos: 1, 3, 5, 6, 7, 8, 9, 10, …"
+      },
+      {
+        "field": "TIPO_TERCERO",
+        "value": "X",
+        "message": "TIPO_TERCERO = \"X\": valor no reconocido en SAG Castillitos. Valores válidos: G, N, O"
+      }
+    ],
+    "warnings": []
+  },
+  "generatedXml": null,
+  "xmlByteLength": null,
+  "readyToEnqueue": false,
+  "blockers": [
+    "[SCHEMA] NIT: NIT debe ser el NIT en formato canónico (9 dígitos, sin puntos ni guión). Recibido: \"900.123.456-7\".",
+    "[SCHEMA] DIGITO_VERIFICACION: DIGITO_VERIFICACION debe ser un único dígito (0-9).",
+    "[SCHEMA] NATURALEZA: NATURALEZA debe ser \"J\" (Jurídica) o \"N\" (Natural).",
+    "[SCHEMA] EMAIL: EMAIL no es un correo electrónico válido.",
+    "[MASTER] NATURALEZA: NATURALEZA = \"Z\": debe ser \"J\" (Jurídica) o \"N\" (Natural).",
+    "[MASTER] ZONA: ZONA = \"ZONA_INEXISTENTE_99\": valor no reconocido en SAG Castillitos. Valores válidos: 1, 3, 5, 6, 7, 8, 9, 10, …",
+    "[MASTER] TIPO_TERCERO: TIPO_TERCERO = \"X\": valor no reconocido en SAG Castillitos. Valores válidos: G, N, O"
+  ],
+  "advisories": []
+}

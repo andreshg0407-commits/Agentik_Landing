@@ -1,0 +1,200 @@
+{
+  "capturedAt": "2026-04-08T20:41:18.080Z",
+  "rows": [
+    {
+      "ka_ni_zona": 1,
+      "sc_detalle_zona": "MEDELLIN Y AREA METROPOLITANA",
+      "dd_fecha_ult_modificacion": "2016-09-21T00:00:00"
+    },
+    {
+      "ka_ni_zona": 3,
+      "sc_detalle_zona": "BOGOTA",
+      "dd_fecha_ult_modificacion": "2016-09-21T00:00:00"
+    },
+    {
+      "ka_ni_zona": 9,
+      "sc_detalle_zona": "OTRAS ZONAS",
+      "dd_fecha_ult_modificacion": "2016-09-21T00:00:00"
+    },
+    {
+      "ka_ni_zona": 5,
+      "sc_detalle_zona": "EJE CAFETERO",
+      "dd_fecha_ult_modificacion": "2016-09-21T00:00:00"
+    },
+    {
+      "ka_ni_zona": 6,
+      "sc_detalle_zona": "COSTA NORTE",
+      "dd_fecha_ult_modificacion": "2016-09-21T00:00:00"
+    },
+    {
+      "ka_ni_zona": 7,
+      "sc_detalle_zona": "COSTA PACIFICA",
+      "dd_fecha_ult_modificacion": "2016-09-21T00:00:00"
+    },
+    {
+      "ka_ni_zona": 8,
+      "sc_detalle_zona": "OTROS PAISES",
+      "dd_fecha_ult_modificacion": "2016-09-21T00:00:00"
+    },
+    {
+      "ka_ni_zona": 10,
+      "sc_detalle_zona": "CALI-VALLE",
+      "dd_fecha_ult_modificacion": "2020-06-01T00:00:00"
+    },
+    {
+      "ka_ni_zona": 11,
+      "sc_detalle_zona": "CARTGAENA-BOLIVAR",
+      "dd_fecha_ult_modificacion": "2020-06-01T00:00:00"
+    },
+    {
+      "ka_ni_zona": 12,
+      "sc_detalle_zona": "ARMENIA-QUINDIO",
+      "dd_fecha_ult_modificacion": "2020-06-02T00:00:00"
+    },
+    {
+      "ka_ni_zona": 13,
+      "sc_detalle_zona": "PEREIRA-RISARALDA",
+      "dd_fecha_ult_modificacion": "2020-06-02T00:00:00"
+    },
+    {
+      "ka_ni_zona": 15,
+      "sc_detalle_zona": "APARTADO",
+      "dd_fecha_ult_modificacion": "2020-06-10T00:00:00"
+    },
+    {
+      "ka_ni_zona": 16,
+      "sc_detalle_zona": "BOSCONIA",
+      "dd_fecha_ult_modificacion": "2020-06-10T00:00:00"
+    },
+    {
+      "ka_ni_zona": 17,
+      "sc_detalle_zona": "BUGA",
+      "dd_fecha_ult_modificacion": "2020-06-10T00:00:00"
+    },
+    {
+      "ka_ni_zona": 18,
+      "sc_detalle_zona": "CIENAGA",
+      "dd_fecha_ult_modificacion": "2020-06-10T00:00:00"
+    },
+    {
+      "ka_ni_zona": 19,
+      "sc_detalle_zona": "COROZAL",
+      "dd_fecha_ult_modificacion": "2020-06-10T00:00:00"
+    },
+    {
+      "ka_ni_zona": 20,
+      "sc_detalle_zona": "PITALITO",
+      "dd_fecha_ult_modificacion": "2020-06-10T00:00:00"
+    },
+    {
+      "ka_ni_zona": 21,
+      "sc_detalle_zona": "SANTANDER DE QUILICHAO",
+      "dd_fecha_ult_modificacion": "2020-06-10T00:00:00"
+    },
+    {
+      "ka_ni_zona": 22,
+      "sc_detalle_zona": "ZARZAL",
+      "dd_fecha_ult_modificacion": "2020-06-10T00:00:00"
+    },
+    {
+      "ka_ni_zona": 23,
+      "sc_detalle_zona": "PIVIJAY",
+      "dd_fecha_ult_modificacion": "2020-06-10T00:00:00"
+    },
+    {
+      "ka_ni_zona": 24,
+      "sc_detalle_zona": "CARMEN DE BOLIVAR",
+      "dd_fecha_ult_modificacion": "2020-06-10T00:00:00"
+    },
+    {
+      "ka_ni_zona": 25,
+      "sc_detalle_zona": "MONTELIBANO",
+      "dd_fecha_ult_modificacion": "2020-06-10T00:00:00"
+    },
+    {
+      "ka_ni_zona": 26,
+      "sc_detalle_zona": "MARIA LA BAJA",
+      "dd_fecha_ult_modificacion": "2020-06-10T00:00:00"
+    },
+    {
+      "ka_ni_zona": 27,
+      "sc_detalle_zona": "MAICAO",
+      "dd_fecha_ult_modificacion": "2020-06-10T00:00:00"
+    },
+    {
+      "ka_ni_zona": 28,
+      "sc_detalle_zona": "FLORENCIA-CAQUETA",
+      "dd_fecha_ult_modificacion": "2020-06-10T00:00:00"
+    },
+    {
+      "ka_ni_zona": 29,
+      "sc_detalle_zona": "LA VIRGINIA",
+      "dd_fecha_ult_modificacion": "2020-06-10T00:00:00"
+    },
+    {
+      "ka_ni_zona": 30,
+      "sc_detalle_zona": "CURUMANI",
+      "dd_fecha_ult_modificacion": "2020-06-10T00:00:00"
+    },
+    {
+      "ka_ni_zona": 31,
+      "sc_detalle_zona": "CIRCASIA",
+      "dd_fecha_ult_modificacion": "2020-06-10T00:00:00"
+    },
+    {
+      "ka_ni_zona": 32,
+      "sc_detalle_zona": "CERETE",
+      "dd_fecha_ult_modificacion": "2020-06-10T00:00:00"
+    },
+    {
+      "ka_ni_zona": 33,
+      "sc_detalle_zona": "CHIGORODO",
+      "dd_fecha_ult_modificacion": "2020-06-10T00:00:00"
+    },
+    {
+      "ka_ni_zona": 34,
+      "sc_detalle_zona": "YUMBO",
+      "dd_fecha_ult_modificacion": "2020-06-10T00:00:00"
+    },
+    {
+      "ka_ni_zona": 35,
+      "sc_detalle_zona": "ROLDANILLO",
+      "dd_fecha_ult_modificacion": "2020-06-10T00:00:00"
+    },
+    {
+      "ka_ni_zona": 36,
+      "sc_detalle_zona": "MOMIL",
+      "dd_fecha_ult_modificacion": "2020-06-10T00:00:00"
+    },
+    {
+      "ka_ni_zona": 37,
+      "sc_detalle_zona": "MIRANDA.CAUCA",
+      "dd_fecha_ult_modificacion": "2020-06-10T00:00:00"
+    },
+    {
+      "ka_ni_zona": 38,
+      "sc_detalle_zona": "LA TEBAIDA-QUINDIO",
+      "dd_fecha_ult_modificacion": "2020-06-10T00:00:00"
+    },
+    {
+      "ka_ni_zona": 40,
+      "sc_detalle_zona": "CERRITO-VALLE",
+      "dd_fecha_ult_modificacion": "2020-06-12T00:00:00"
+    },
+    {
+      "ka_ni_zona": 41,
+      "sc_detalle_zona": "BARRANCABERMEJA",
+      "dd_fecha_ult_modificacion": "2020-09-03T00:00:00"
+    },
+    {
+      "ka_ni_zona": 14,
+      "sc_detalle_zona": "BARRANQUILLA",
+      "dd_fecha_ult_modificacion": "2020-06-02T00:00:00"
+    },
+    {
+      "ka_ni_zona": 39,
+      "sc_detalle_zona": "LA UNION - VALLE",
+      "dd_fecha_ult_modificacion": "2020-06-11T00:00:00"
+    }
+  ]
+}
