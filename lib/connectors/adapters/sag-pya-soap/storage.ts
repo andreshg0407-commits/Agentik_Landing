@@ -119,8 +119,8 @@ export const customerProfileStorage: StorageHandler<UnifiedCustomer> = {
               name:          record.name,
               email:         record.email      ?? null,
               phone:         record.phone      ?? null,
-              city:          record.address?.city       ?? null,
-              department:    record.address?.state      ?? null,
+              // CUSTOMER-GEOGRAPHY-RECOVERY-01: SAG city/department are unresolvable FK integers.
+              // Geography is owned by CRM (DANE codes). SAG must never write these fields.
               sellerName:    record.salesRepName        ?? null,
               sellerSlug:    record.salesRepName ? toSlug(record.salesRepName) : null,
               customerType:  "B2B",
@@ -139,8 +139,8 @@ export const customerProfileStorage: StorageHandler<UnifiedCustomer> = {
               name:          record.name,
               email:         record.email      ?? null,
               phone:         record.phone      ?? null,
-              city:          record.address?.city       ?? null,
-              department:    record.address?.state      ?? null,
+              // CUSTOMER-GEOGRAPHY-RECOVERY-01: city/department intentionally omitted.
+              // CRM DANE codes are authoritative — SAG FK integers must not overwrite.
               sellerName:    record.salesRepName        ?? null,
               sellerSlug:    record.salesRepName ? toSlug(record.salesRepName) : null,
               erpSyncedAt:   now,

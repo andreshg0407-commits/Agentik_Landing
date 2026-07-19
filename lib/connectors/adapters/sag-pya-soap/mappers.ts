@@ -153,10 +153,12 @@ export function mapSagCustomer(
     ? createdRaw
     : updatedAt.getTime() > 0 ? updatedAt : new Date();
 
-  // City/state: SAG stores integer FKs — emit as string codes for now;
-  // a JOIN against CIUDADES/DEPARTAMENTOS would be needed for labels.
-  const cityCode  = str(row, "ka_ni_ciudad");
-  const stateCode = str(row, "ka_nl_departamento");
+  // City/state: SAG stores integer FKs (ka_ni_ciudad, ka_nl_departamento)
+  // that are NOT resolvable without a CIUDADES/DEPARTAMENTOS lookup table.
+  // Emitting them as city/state overwrites correct CRM DANE codes on every sync.
+  // CUSTOMER-GEOGRAPHY-RECOVERY-01: emit undefined so SAG never touches geography.
+  const cityCode:  string | undefined = undefined;
+  const stateCode: string | undefined = undefined;
 
   const customerType: UnifiedCustomer["type"] =
     naturaleza === "J" ? "company"
