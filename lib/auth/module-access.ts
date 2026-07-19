@@ -76,7 +76,7 @@ const ROLE_MODULES: Record<Role, readonly ModuleKey[]> = {
     "dashboard", "torre_control", "agentik", "finance",
     "sales", "collections", "workforce", "runs", "events",
     "alerts", "documents", "knowledge", "agents", "integrations",
-    "settings", "whatsapp",
+    "settings", "whatsapp", "marketing", "production",
   ],
 
   AGENTIK_ADMIN: [
@@ -91,6 +91,7 @@ const ROLE_MODULES: Record<Role, readonly ModuleKey[]> = {
     "dashboard", "torre_control", "finance",
     "sales", "collections", "workforce",
     "alerts", "documents", "knowledge", "whatsapp",
+    "marketing", "production",
   ],
 
   MANAGER: [
@@ -98,12 +99,14 @@ const ROLE_MODULES: Record<Role, readonly ModuleKey[]> = {
     "dashboard", "torre_control", "finance",
     "sales", "collections", "workforce",
     "alerts", "documents", "knowledge", "whatsapp",
+    "marketing", "production",
   ],
 
   OPERATOR: [
     // Day-to-day ops — collections + commercial, NO executive/finance
     "dashboard", "sales", "collections", "workforce",
     "alerts", "documents", "knowledge", "whatsapp",
+    "marketing", "production",
   ],
 
   BILLING: [

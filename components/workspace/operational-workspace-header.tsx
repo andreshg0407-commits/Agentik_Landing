@@ -17,7 +17,8 @@ const SIGNAL: Record<StatusSignal, { dot: string; text: string }> = {
 
 interface Props {
   breadcrumbs:          BreadcrumbItem[];
-  title:                string;
+  /** When omitted, only breadcrumbs render (Agent Workspaces where the Executive Header is the title anchor). */
+  title?:               string;
   subtitle?:            string;
   status?:              StatusSignal;
   statusLabel?:         string;
@@ -39,7 +40,7 @@ export function OperationalWorkspaceHeader({
   const sig = SIGNAL[status];
 
   return (
-    <div style={{ marginBottom: S[6] }}>
+    <div style={{ marginBottom: title ? S[6] : S[3] }}>
       {/* Contextual back link — shown when navigating from another workspace */}
       {contextualBackHref && contextualBackLabel && (
         <div style={{ marginBottom: S[2] }}>
@@ -62,7 +63,7 @@ export function OperationalWorkspaceHeader({
         display:      "flex",
         alignItems:   "center",
         gap:          6,
-        marginBottom: S[3],
+        marginBottom: title ? S[3] : 0,
         flexWrap:     "wrap" as const,
       }}>
         {breadcrumbs.map((crumb, i) => (
@@ -98,68 +99,70 @@ export function OperationalWorkspaceHeader({
         ))}
       </nav>
 
-      {/* Title row + optional status badge */}
-      <div style={{
-        display:        "flex",
-        alignItems:     "flex-start",
-        justifyContent: "space-between",
-        flexWrap:       "wrap" as const,
-        gap:            S[2],
-      }}>
-        <div>
-          <h1 style={{
-            fontFamily:   T.mono,
-            fontSize:     T.sz["2xl"],
-            fontWeight:   T.wt.bold,
-            color:        C.ink,
-            margin:       0,
-            marginBottom: subtitle ? S[1] : 0,
-            lineHeight:   1.2,
-          }}>
-            {title}
-          </h1>
-          {subtitle && (
-            <div style={{
-              fontFamily: T.mono,
-              fontSize:   T.sz.sm,
-              color:      C.inkLight,
-              lineHeight: 1.5,
+      {/* Title row + optional status badge — omitted for breadcrumb-only mode */}
+      {title && (
+        <div style={{
+          display:        "flex",
+          alignItems:     "flex-start",
+          justifyContent: "space-between",
+          flexWrap:       "wrap" as const,
+          gap:            S[2],
+        }}>
+          <div>
+            <h1 style={{
+              fontFamily:   T.mono,
+              fontSize:     T.sz["2xl"],
+              fontWeight:   T.wt.bold,
+              color:        C.ink,
+              margin:       0,
+              marginBottom: subtitle ? S[1] : 0,
+              lineHeight:   1.2,
             }}>
-              {subtitle}
+              {title}
+            </h1>
+            {subtitle && (
+              <div style={{
+                fontFamily: T.mono,
+                fontSize:   T.sz.sm,
+                color:      C.inkLight,
+                lineHeight: 1.5,
+              }}>
+                {subtitle}
+              </div>
+            )}
+          </div>
+
+          {statusLabel && (
+            <div style={{
+              display:      "flex",
+              alignItems:   "center",
+              gap:          S[1],
+              padding:      `4px ${S[2]}px`,
+              background:   C.surface,
+              border:       `1px solid ${C.line}`,
+              borderRadius: R.pill,
+              flexShrink:   0,
+            }}>
+              <span style={{
+                width:        7,
+                height:       7,
+                borderRadius: "50%",
+                background:   sig.dot,
+                display:      "inline-block",
+                flexShrink:   0,
+              }} />
+              <span style={{
+                fontFamily: T.mono,
+                fontSize:   T.sz["2xs"],
+                fontWeight: T.wt.semibold,
+                color:      sig.text,
+              }}>
+                {statusLabel}
+              </span>
             </div>
           )}
         </div>
-
-        {statusLabel && (
-          <div style={{
-            display:      "flex",
-            alignItems:   "center",
-            gap:          S[1],
-            padding:      `4px ${S[2]}px`,
-            background:   C.surface,
-            border:       `1px solid ${C.line}`,
-            borderRadius: R.pill,
-            flexShrink:   0,
-          }}>
-            <span style={{
-              width:        7,
-              height:       7,
-              borderRadius: "50%",
-              background:   sig.dot,
-              display:      "inline-block",
-              flexShrink:   0,
-            }} />
-            <span style={{
-              fontFamily: T.mono,
-              fontSize:   T.sz["2xs"],
-              fontWeight: T.wt.semibold,
-              color:      sig.text,
-            }}>
-              {statusLabel}
-            </span>
-          </div>
-        )}
-      </div>
+      )}
     </div>
   );
 }

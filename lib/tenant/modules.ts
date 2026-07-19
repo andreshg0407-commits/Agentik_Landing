@@ -49,6 +49,8 @@ export const ROUTE_MODULE_MAP: ReadonlyArray<[string, ModuleKey]> = [
   ["sag",           "integrations"],
   ["settings",      "settings"],
   ["whatsapp",      "whatsapp"],
+  ["comercial",     "sales"],
+  ["produccion",    "production"],
 ] as const;
 
 /**
@@ -105,6 +107,8 @@ export const MODULE_KEYS = [
   "integrations",    // Integraciones + SAG write sub-pages
   "settings",        // Configuración
   "whatsapp",        // WhatsApp Business AI module (opt-in only)
+  "marketing",       // Marketing Studio
+  "production",      // Producción
 ] as const;
 
 export type ModuleKey = (typeof MODULE_KEYS)[number];

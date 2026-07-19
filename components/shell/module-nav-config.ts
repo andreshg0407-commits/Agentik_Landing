@@ -63,6 +63,7 @@ export interface NavBuildOptions {
   hasAlerts:         boolean;
   hasDocuments:      boolean;   // retained — no longer gates an Ops domain
   hasKnowledge:      boolean;   // retained — no longer gates an Ops domain
+  hasProduction:     boolean;
   hasAgentik:        boolean;
   hasIntegrations:   boolean;
   hasRuns:           boolean;
@@ -202,16 +203,19 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
       shortIcon: "Cm",
       iconKey:   "comercial",
       accent:    "#0369a1",
-      pathKeys:  ["sales", "customer-360", "pipeline", "comercial/maletas"],
+      pathKeys:  ["sales", "customer-360", "pipeline", "comercial/maletas", "comercial/inventario", "comercial/importaciones", "comercial/pedidos", "comercial/tiendas", "comercial/clientes", "comercial/vendedores", "comercial/control"],
       items: [
         // ── OPERACIÓN — lo que está ocurriendo ───────────────────────────────
         { label: "Operación",            href: "#", isSectionHeader: true },
-        { label: "Maletas",              href: `/${s}/comercial/maletas`, indent: 1, accent: "#0369a1", pathMatches: ["comercial/maletas"] },
-        { label: "Pedidos",              href: `/${s}/pipeline`,          indent: 1 },
-        { label: "Vendedores",           href: `/${s}/sales/vendors`,     indent: 1 },
+        { label: "Maletas",              href: `/${s}/comercial/maletas`,       indent: 1, accent: "#0369a1", pathMatches: ["comercial/maletas"] },
+        { label: "Inventario",           href: `/${s}/comercial/inventario`,    indent: 1, accent: "#0369a1", pathMatches: ["comercial/inventario"] },
+        { label: "Importaciones",        href: `/${s}/comercial/importaciones`, indent: 1, accent: "#0369a1", pathMatches: ["comercial/importaciones"] },
+        { label: "Pedidos",              href: `/${s}/comercial/pedidos`,       indent: 1, accent: "#0369a1", pathMatches: ["comercial/pedidos"] },
+        { label: "Tiendas",              href: `/${s}/comercial/tiendas`,       indent: 1, accent: "#0369a1", pathMatches: ["comercial/tiendas"] },
+        { label: "Clientes",             href: `/${s}/comercial/clientes`,      indent: 1, accent: "#0369a1", pathMatches: ["comercial/clientes"] },
+        { label: "Vendedores",           href: `/${s}/comercial/vendedores`,    indent: 1, accent: "#0369a1", pathMatches: ["comercial/vendedores"] },
         // ── ESTRUCTURA COMERCIAL — cómo está organizado el negocio ───────────
         { label: "Estructura Comercial", href: "#", isSectionHeader: true },
-        { label: "Clientes",             href: `/${s}/customer-360`,      indent: 1, pathMatches: ["customer-360"] },
         { label: "Canales",              href: `/${s}/sales/channels`,    indent: 1 },
         { label: "Sucursales",           href: `/${s}/sales/branches`,    indent: 1 },
         { label: "Líneas",               href: `/${s}/sales/lines`,       indent: 1 },
@@ -219,6 +223,28 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
         { label: "Inteligencia",                  href: "#", isSectionHeader: true },
         { label: "Inteligencia Operacional",      href: `/${s}/comercial/inteligencia`, indent: 1, accent: "#0369a1", pathMatches: ["comercial/inteligencia"] },
         { label: "Control Comercial",             href: `/${s}/sales`,                  indent: 1, accent: "#0369a1" },
+      ],
+    });
+  }
+
+  // ── Producción — manufacturing operations ────────────────────────────────
+  if (opts.hasProduction) {
+    domains.push({
+      id:        "produccion",
+      label:     "Producción",
+      shortIcon: "Pr",
+      iconKey:   "produccion",
+      accent:    "#b45309",
+      pathKeys:  ["produccion"],
+      items: [
+        { label: "Panel",      href: `/${s}/produccion`,           badge: "↗", accent: "#b45309" },
+        { label: "Operación",  href: "#", isSectionHeader: true },
+        { label: "Órdenes",    href: `/${s}/produccion/ordenes`,   indent: 1, accent: "#b45309", pathMatches: ["produccion/ordenes"]   },
+        { label: "Timeline",   href: `/${s}/produccion/timeline`,  indent: 1, accent: "#b45309", pathMatches: ["produccion/timeline"]  },
+        { label: "Etapas",     href: `/${s}/produccion/etapas`,    indent: 1, accent: "#b45309", pathMatches: ["produccion/etapas"]    },
+        { label: "Consumos",   href: `/${s}/produccion/consumos`,  indent: 1, accent: "#b45309", pathMatches: ["produccion/consumos"]  },
+        { label: "Costos",     href: `/${s}/produccion/costos`,    indent: 1, accent: "#b45309", pathMatches: ["produccion/costos"]    },
+        { label: "Alertas",    href: `/${s}/produccion/alertas`,   indent: 1, accent: "#b45309", pathMatches: ["produccion/alertas"]   },
       ],
     });
   }

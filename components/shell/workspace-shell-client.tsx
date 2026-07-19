@@ -26,11 +26,13 @@ import Link                    from "next/link";
 import type { ReactNode }      from "react";
 import { C, T, S, R }         from "@/lib/ui/tokens";
 import {
-  LayoutDashboard,
+  Building2,
   TrendingUp,
-  CircleDollarSign,
+  Wallet,
   Users,
-  Sparkles,
+  Factory,
+  Megaphone,
+  Network,
   Terminal,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -44,24 +46,28 @@ import {
 // Client-side only: icons are React components and cannot cross the RSC boundary.
 
 const DOMAIN_ICONS: Record<string, LucideIcon> = {
-  gestion:   LayoutDashboard,
-  finanzas:  TrendingUp,
-  cobranza:  CircleDollarSign,
-  comercial: Users,
-  marketing: Sparkles,
-  internal:  Terminal,
+  gestion:    Building2,
+  finanzas:   TrendingUp,
+  cobranza:   Wallet,
+  comercial:  Users,
+  produccion: Factory,
+  marketing:  Megaphone,
+  agentik:    Network,
+  internal:   Terminal,
 };
 
 // Rail accent palette — lighter versions of each domain color for display on the
 // dark navy primary rail. Sidebar accents (e.g. Gestión #1e1e2e) are too dark for
 // WCAG contrast on #001E4A–#003A8A. These are the same hue family, lifted for legibility.
 const RAIL_ACCENTS: Record<string, string> = {
-  gestion:   "#94a3b8",   // slate-400  — neutral prestige, executive authority
-  finanzas:  "#60a5fa",   // blue-400   — financial clarity
-  cobranza:  "#a78bfa",   // violet-400 — collections identity
-  comercial: "#93c5fd",   // blue-300   — commercial presence (not startup-cyan)
-  marketing: "#c084fc",   // purple-400 — creative/AI studio identity
-  internal:  "#818cf8",   // indigo-400 — system console
+  gestion:    "#94a3b8",   // slate-400  — neutral prestige, executive authority
+  finanzas:   "#60a5fa",   // blue-400   — financial clarity
+  cobranza:   "#a78bfa",   // violet-400 — collections identity
+  comercial:  "#93c5fd",   // blue-300   — commercial presence (not startup-cyan)
+  produccion: "#fbbf24",   // amber-400  — manufacturing/production identity
+  marketing:  "#c084fc",   // purple-400 — creative/AI studio identity
+  agentik:    "#818cf8",   // indigo-400 — AI OS identity
+  internal:   "#818cf8",   // indigo-400 — system console
 };
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -374,7 +380,7 @@ function DomainButton({
   railAccent:  string;
 }) {
   const [hovered, setHovered] = useState(false);
-  const Icon = DOMAIN_ICONS[domain.iconKey] ?? LayoutDashboard;
+  const Icon = DOMAIN_ICONS[domain.iconKey] ?? Building2;
 
   // Three-tier icon opacity hierarchy:
   // Active: pure white — maximum legibility, unambiguous "you are here"

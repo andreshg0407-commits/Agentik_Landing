@@ -19,8 +19,8 @@ const pool =
   global.__prismaPool ??
   new Pool({
     connectionString,
-    // Si tu URL ya tiene sslmode=require, esto no es necesario.
-    // ssl: { rejectUnauthorized: false },
+    query_timeout:          30_000,
+    connectionTimeoutMillis: 10_000,
   });
 
 if (process.env.NODE_ENV !== "production") {

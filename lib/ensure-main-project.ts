@@ -13,38 +13,44 @@ const DEFAULT_MODULES: Array<{ code: string; enabled: boolean; configJson?: any 
 ];
 
 export async function ensureMainProject(orgId: string) {
-  const existing = await prisma.project.findFirst({
-    where: { organizationId: orgId },
-    orderBy: { createdAt: "asc" },
-    select: { id: true, key: true },
-  });
-
-  if (existing) return existing;
-
-  // Transacción: crear project + seedear módulos
-  const created = await prisma.$transaction(async (tx) => {
-    const project = await tx.project.create({
-      data: {
-        organizationId: orgId,
-        name: "Main",
-        key: "main",
-        status: "ACTIVE",
-      },
+  try {
+    const existing = await prisma.project.findFirst({
+      where: { organizationId: orgId },
+      orderBy: { createdAt: "asc" },
       select: { id: true, key: true },
     });
 
-    await tx.projectModule.createMany({
-      data: DEFAULT_MODULES.map((m) => ({
-        projectId: project.id,
-        code: m.code,
-        enabled: m.enabled,
-        configJson: m.configJson ?? undefined,
-      })),
-      skipDuplicates: true,
+    if (existing) return existing;
+
+    // Transacción: crear project + seedear módulos
+    const created = await prisma.$transaction(async (tx) => {
+      const project = await tx.project.create({
+        data: {
+          organizationId: orgId,
+          name: "Main",
+          key: "main",
+          status: "ACTIVE",
+        },
+        select: { id: true, key: true },
+      });
+
+      await tx.projectModule.createMany({
+        data: DEFAULT_MODULES.map((m) => ({
+          projectId: project.id,
+          code: m.code,
+          enabled: m.enabled,
+          configJson: m.configJson ?? undefined,
+        })),
+        skipDuplicates: true,
+      });
+
+      return project;
     });
 
-    return project;
-  });
-
-  return created;
+    return created;
+  } catch {
+    // Fallback so the shell renders even when the DB is unreachable.
+    // The fallback ID must never be used for writes.
+    return { id: "__fallback_project__", key: "main" };
+  }
 }

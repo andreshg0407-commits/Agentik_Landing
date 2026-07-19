@@ -98,6 +98,32 @@ Before implementing any new page or module, answer these 7 questions:
 
 ---
 
+## Entity state policy (COMERCIAL-TIENDAS-ENTERPRISE-05)
+
+**"La estructura del negocio pertenece a Agentik. Los datos operativos pertenecen a las integraciones. Si una integracion falla, la estructura sigue existiendo."**
+
+Every entity has **two independent state dimensions**:
+
+| Dimension | States | Owner |
+|---|---|---|
+| **Administrative** | Configurada / Deshabilitada / Archivada | Agentik (user actions) |
+| **Operational** | Nunca sincronizada / Sincronizada / Error de sincronizacion | SAG / external integrations |
+
+Rules:
+
+- A configured entity MUST NEVER disappear due to missing sync data.
+- Sync only enriches — it never creates, destroys, or replaces admin structure.
+- Show `"\u2014"` (em dash) instead of `0` — zero implies measurement, dash implies absence.
+- Sync badge always visible. Health badge only when synced (real data exists).
+- Copilot agents MUST NEVER generate conclusions without evidence.
+- Every tab/section remains visible with sync-aware empty messages.
+- Admin entities appear immediately — never wait for external sync.
+- First sync updates existing cards in place — same ID, same config.
+
+Applies to: Tiendas, Maletas, Marketing Studio, Shopify, Tesoreria, Conciliacion, Inventario, Produccion, Compras, and all future modules.
+
+---
+
 ## Architecture boundaries (never cross)
 
 - No client component imports in Server Components (use ReactNode slot pattern)
@@ -140,3 +166,32 @@ Unacceptable: any new error introduced by your change.
 
 CURRENT_ACTIVE_TENANT = castillitos
 All SAG data lives in castillitos only.
+
+---
+
+## Marketing Studio design rule (MARKETING-STUDIO-DESIGN-SYSTEM-LOCK-01)
+
+`lib/marketing-studio/ms-design-system.ts` is the single source of truth for all Marketing Studio visual tokens.
+
+**Before writing any color, shadow, icon size, card dimension, or variant for a Marketing Studio screen, check this file first.**
+
+A new screen MUST NOT define its own:
+- hex color values for domain colors (product/social/video/design)
+- shadow formulas
+- app icon dimensions
+- card height or border-radius
+- stepper measurements
+
+if an equivalent already exists in `ms-design-system.ts`.
+
+```typescript
+// ✅ Correct
+import { MS_PALETTE, MS_SHADOWS, MS_APP_ICON, MS_CARD } from "@/lib/marketing-studio/ms-design-system";
+
+// ❌ Prohibited — never duplicate inline
+const color = "#004AAD";
+const shadow = "0 8px 28px ...";
+const iconSize = 56;
+```
+
+Violation = introducing a parallel token that already exists in the design system file.
