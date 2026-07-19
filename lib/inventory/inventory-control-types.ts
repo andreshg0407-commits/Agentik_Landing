@@ -149,7 +149,14 @@ export function getActiveCanonicalInventory<T extends { inventoryVisibility: Inv
 
 // ── Inventory Item ───────────────────────────────────────────────────────────
 
-/** Enriched inventory item — availability + criticality + production context. */
+/** Enriched inventory item — availability + criticality + production context.
+ *
+ * This is the canonical product record for all commercial consumers:
+ * Maletas, Pedidos, Tiendas, Produccion, Marketing Studio.
+ *
+ * Consumers MUST NOT duplicate classification, availability, or variant data.
+ * Sprint: COMERCIAL-MALETAS-CANONICAL-INVENTORY-INTEGRATION-01
+ */
 export interface InventoryItem {
   /** SAG reference code. */
   reference: string;
@@ -165,6 +172,26 @@ export interface InventoryItem {
   grupoSag?: string;
   /** Handling unit for accessories (PEQUENO/MEDIANO/GRANDE). */
   handlingUnit?: string | null;
+
+  // ── Identity (COMERCIAL-MALETAS-CANONICAL-INVENTORY-INTEGRATION-01) ──
+  /** ProductEntity.id — null if no PE record found for this SKU. */
+  productId: string | null;
+  /** SAG grupo FK (numeric). */
+  grupoId: number | null;
+  /** SAG subgrupo FK (numeric). */
+  subgrupoId: number | null;
+
+  // ── Variants (COMERCIAL-MALETAS-CANONICAL-INVENTORY-INTEGRATION-01) ──
+  /** Unique talla values from ProductVariant. */
+  sizes: string[];
+  /** Unique color values from ProductVariant. */
+  colors: string[];
+  /** Total number of ProductVariant records. */
+  variantCount: number;
+
+  // ── Cost (COMERCIAL-MALETAS-CANONICAL-INVENTORY-INTEGRATION-01) ──
+  /** Product cost from ProductEntity.costo. */
+  cost: number | null;
 
   /** Inventory in Bodega 01. */
   existenciaBodega01: number;
@@ -204,6 +231,32 @@ export interface InventoryItem {
    * Sprint: COMERCIAL-INVENTARIO-ACTIVO-HISTORICO-01
    */
   inventoryVisibility: InventoryVisibility;
+}
+
+// ── Sales Portfolio Eligibility (COMERCIAL-MALETAS-CANONICAL-INVENTORY-INTEGRATION-01)
+
+/**
+ * Pure function — determines if an inventory item is eligible for inclusion
+ * in a sales portfolio (maleta).
+ *
+ * Eligible if ALL of:
+ *   - inventoryVisibility === "ACTIVE"
+ *   - disponibleReal > 0
+ *   - canonicalLine is resolved (not SIN_CLASIFICAR)
+ *   - not OUT_OF_STOCK, not NO_DATA
+ *
+ * Photos are NOT a condition — they are enrichment, not eligibility.
+ */
+export function isEligibleForSalesPortfolio(item: {
+  inventoryVisibility: InventoryVisibility;
+  disponibleReal: number;
+  canonicalLine: CanonicalLine;
+}): boolean {
+  return (
+    item.inventoryVisibility === "ACTIVE" &&
+    item.disponibleReal > 0 &&
+    item.canonicalLine !== "SIN_CLASIFICAR"
+  );
 }
 
 // ── Line Summary ─────────────────────────────────────────────────────────────

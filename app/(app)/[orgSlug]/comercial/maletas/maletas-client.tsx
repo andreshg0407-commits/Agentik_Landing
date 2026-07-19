@@ -64,6 +64,8 @@ import type {
   VendorMalletBaseMetrics,
 } from "@/lib/comercial/maletas/maletas-functional-evaluation";
 import { getVendorMalletBaseMetrics } from "@/lib/comercial/maletas/maletas-functional-evaluation";
+import { MaletaPortfolioBuilder } from "@/components/comercial/maletas/maleta-portfolio-builder";
+import type { MaletaSelectionItem } from "@/lib/comercial/maletas/vendor-bag-types";
 
 // ── Props ────────────────────────────────────────────────────────────────────
 
@@ -222,6 +224,10 @@ export function MaletasClient({
   // ── Derrotero rules lifted to drawer level (GO-LIVE-MALETAS-DERROTERO-POR-LINEA-01) ──
   const [derroteroRules, setDerroteroRules] = useState<IdealRouteRule[]>([]);
   const [derroteroLoading, setDerroteroLoading] = useState(false);
+
+  // ── Portfolio builder (COMERCIAL-MALETAS-CANONICAL-INVENTORY-INTEGRATION-01) ──
+  const [builderOpen, setBuilderOpen] = useState(false);
+  const [builderSelection, setBuilderSelection] = useState<MaletaSelectionItem[]>([]);
 
   // ── API helpers ───────────────────────────────────────────────────────────
   const planApiUrl = `/api/orgs/${orgSlug}/comercial/maletas/replenishment-plans`;
@@ -671,6 +677,20 @@ export function MaletasClient({
           }}>
             Ir a:
           </span>
+          {/* COMERCIAL-MALETAS-CANONICAL-INVENTORY-INTEGRATION-01: Builder entry */}
+          <button
+            onClick={() => setBuilderOpen(true)}
+            className="ag-action-primary"
+            style={{
+              fontFamily: T.mono, fontSize: 9, fontWeight: 600,
+              color: C.white, background: C.blueDark,
+              border: "none", borderRadius: R.pill,
+              padding: "4px 12px", cursor: "pointer",
+              display: "inline-flex", alignItems: "center", gap: S[1],
+            }}
+          >
+            + Nueva maleta
+          </button>
           {[
             { label: "Produccion", ref: productionSectionRef, key: "produccion", count: prodThresholdProducir.length },
             { label: "Recompra / Baja rotacion", ref: recompraSectionRef, key: "recompra", count: importRebuy.length + importLowRotation.length },
@@ -1799,6 +1819,22 @@ export function MaletasClient({
       {printPlan && (
         <PrintPlanOverlay plan={printPlan} onClose={() => setPrintPlan(null)} />
       )}
+
+      {/* ── Portfolio Builder Drawer (COMERCIAL-MALETAS-CANONICAL-INVENTORY-INTEGRATION-01) ── */}
+      <OperationalSideDrawer
+        open={builderOpen}
+        onClose={() => setBuilderOpen(false)}
+        title="Constructor de maleta"
+        subtitle={`${builderSelection.length} refs · ${builderSelection.reduce<number>((s, i) => s + i.assignedQty, 0)} uds`}
+        severity="info"
+        size="wide"
+      >
+        <MaletaPortfolioBuilder
+          orgSlug={orgSlug}
+          onSelectionChange={setBuilderSelection}
+          onClose={() => setBuilderOpen(false)}
+        />
+      </OperationalSideDrawer>
     </div>
   );
 }
@@ -5413,6 +5449,7 @@ function UnresolvedRefsPanel({
           )}
         </div>
       )}
+
     </div>
   );
 }
