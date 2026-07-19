@@ -23,6 +23,7 @@
  */
 
 import { prisma } from "@/lib/prisma";
+import { LINE_TO_BRAND, SAG_LINE_FK_MAP } from "@/lib/comercial/line-map";
 import { loadSagTestEnv } from "@/lib/sag/env";
 import {
   fetchAllVendorPresence,
@@ -45,6 +46,7 @@ import type {
   SupplyActionType,
 } from "./vendor-sample-types";
 import {
+  isEligibleForProductionSuggestion,
   getMinimumForLine,
   IMPORT_SCARCITY_MINIMUM,
   IMPORT_SOURCE_WAREHOUSES,
@@ -331,7 +333,7 @@ export async function loadVendorSampleData(
 
   for (const vendor of vendors) {
     for (const ref of vendor.refs) {
-      if (!ref.requiresProductionSuggestion) continue;
+      if (!isEligibleForProductionSuggestion(ref)) continue;
       const sg = ref.subgrupoSag || "SIN_SUBGRUPO_SAG";
       const key = `${ref.line}|${sg}`;
       const existing = subgroupProdMap.get(key);
@@ -458,7 +460,7 @@ export async function loadVendorSampleData(
   const centralStockBySubgrupo = buildStockBySubgrupoFromCanonical(canonical, productionStockKey);
 
   // 9c. Build OP active set by grupo+subgrupo (CS) or subgrupo only (LT)
-  const LINE_TO_BRAND_OP: Record<string, string> = { CS: "Castillitos", LT: "Latin Kids" };
+  const LINE_TO_BRAND_OP = LINE_TO_BRAND;
   const opActiveBySubgrupo = new Set<string>();
   for (const [subgrupoId, options] of opOptionsBySubgrupoId) {
     if (options.length === 0) continue;
@@ -658,7 +660,7 @@ async function loadOpBySubgrupo(
       select: { sku: true, subgrupoId: true, subgrupoSag: true, productLine: true },
     });
 
-    const LINE_MAP: Record<string, string> = { "1": "LT", "2": "CS", "3": "PK", "5": "AC" };
+    const LINE_MAP = SAG_LINE_FK_MAP;
     const peMap = new Map<string, { subgrupoId: number; subgrupoSag: string; line: string }>();
     for (const p of products) {
       if (p.sku && p.subgrupoId != null) {
@@ -913,8 +915,12 @@ function buildVendorSnapshot(
 
 function deriveVendorHealth(refs: VendorSampleRef[]): VendorHealth {
   if (refs.length === 0) return "sin_datos";
-  const replace = refs.filter((r) => r.state === "reemplazar").length;
-  const replacePct = replace / refs.length;
+  // Phase 10: Exclude sin_datos refs from health calculation —
+  // they provide no actionable signal and would dilute the replacement percentage.
+  const evaluableRefs = refs.filter((r) => r.state !== "sin_datos");
+  if (evaluableRefs.length === 0) return "sin_datos";
+  const replace = evaluableRefs.filter((r) => r.state === "reemplazar").length;
+  const replacePct = replace / evaluableRefs.length;
   if (replacePct > 0.15 || replace >= 10) return "critico";
   if (replacePct > 0.05 || replace >= 5) return "riesgo";
   return "saludable";

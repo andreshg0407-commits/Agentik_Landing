@@ -22,7 +22,7 @@ import type {
   ReplacementSuggestion,
   ProductionSuggestion,
 } from "./vendor-sample-types";
-import { getMinimumForLine } from "./vendor-sample-types";
+import { getMinimumForLine, isEligibleForProductionSuggestion } from "./vendor-sample-types";
 
 // ── RIESGO_AGOTAMIENTO_BUFFER
 const RIESGO_BUFFER = 10;
@@ -43,8 +43,11 @@ function deriveSampleState(
 
 function deriveVendorHealth(refs: VendorSampleRef[]): VendorHealth {
   if (refs.length === 0) return "sin_datos";
-  const replace = refs.filter((r) => r.state === "reemplazar").length;
-  const replacePct = replace / refs.length;
+  // Phase 10: Exclude sin_datos refs from health calculation
+  const evaluableRefs = refs.filter((r) => r.state !== "sin_datos");
+  if (evaluableRefs.length === 0) return "sin_datos";
+  const replace = evaluableRefs.filter((r) => r.state === "reemplazar").length;
+  const replacePct = replace / evaluableRefs.length;
   if (replacePct > 0.15 || replace >= 10) return "critico";
   if (replacePct > 0.05 || replace >= 5) return "riesgo";
   return "saludable";
@@ -324,7 +327,7 @@ export function buildProductionSuggestions(
 
   for (const vendor of vendors) {
     for (const ref of vendor.refs) {
-      if (!ref.requiresProductionSuggestion) continue;
+      if (!isEligibleForProductionSuggestion(ref)) continue;
       const existing = refMap.get(ref.reference);
       if (existing) {
         existing.affectedVendors.push(vendor.vendorName);

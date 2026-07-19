@@ -37,8 +37,10 @@ export type AccessoryScarcityState = "saludable" | "escasez";
 
 export const IMPORT_SCARCITY_MINIMUM = 10;
 
-/** Import source warehouses — aggregated for central availability */
-export const IMPORT_SOURCE_WAREHOUSES = ["36", "37"];
+/** Import source warehouses — bodega CODES (externalRef), not SAG numeric PKs.
+ *  SAG-DATAFLOW-FIX-01: was ["36","37"] (SAG PKs) which mapped to codes "26","27".
+ *  Now uses the actual codes that match ProductInventoryLevel.externalRef. */
+export const IMPORT_SOURCE_WAREHOUSES = ["26", "27"];
 
 // ── Motor 2: Derrotero de Maleta Ideal ──────────────────────────────────────
 // Subgroup coverage thresholds for vendor bags.
@@ -240,6 +242,73 @@ export type ProductionReasonType =
   | "subgroup_shortage"
   | "no_replacement_available"
   | "central_stock_insufficient";
+
+// ── Production suggestion eligibility (COMERCIAL-MALETAS-PRODUCTION-CANONICAL-FILTER-01)
+//
+// Pure function — determines if a vendor sample ref is eligible to feed
+// the production suggestion engine.
+//
+// Does NOT filter by centralAvailable — a correctly classified ref with
+// stock === 0 IS a legitimate production suggestion.
+//
+// Filters OUT:
+//   - refs not flagged for production suggestion
+//   - non-textile lines (only LT/CS produce)
+//   - missing or sentinel grupoSag values
+//   - missing or sentinel subgrupoSag values
+//   - refs with state "sin_datos" (no inventory data = cannot certify need)
+
+/** Sentinel values that indicate missing or fallback classification. */
+const CLASSIFICATION_SENTINELS = new Set([
+  "OTRO",
+  "SIN_CLASIFICAR",
+  "SIN CLASIFICAR",
+  "SIN_GRUPO",
+  "SIN GRUPO",
+  "SIN_SUBGRUPO",
+  "SIN SUBGRUPO",
+  "SIN_SUBGRUPO_SAG",
+  "SIN SUBGRUPO SAG",
+  "",
+  "—",
+  "-",
+]);
+
+function isSentinel(value: string | null | undefined): boolean {
+  if (value == null) return true;
+  return CLASSIFICATION_SENTINELS.has(value.trim().toUpperCase());
+}
+
+/** Textile lines eligible for production suggestions. */
+const TEXTILE_LINES = new Set(["LT", "CS"]);
+
+/**
+ * Determines if a VendorSampleRef is eligible to feed production suggestions.
+ *
+ * Eligible if ALL of:
+ *   - requiresProductionSuggestion === true
+ *   - line is LT or CS (textile only — imports use RECOMPRA, never production)
+ *   - grupoSag exists and is not a sentinel/fallback value
+ *   - subgrupoSag exists and is not a sentinel/fallback value
+ *   - state !== "sin_datos" (inventory data must be certified)
+ *
+ * Does NOT require centralAvailable > 0.
+ * A classified ref with certified stock === 0 IS a valid production suggestion.
+ */
+export function isEligibleForProductionSuggestion(ref: {
+  requiresProductionSuggestion: boolean;
+  line: string;
+  grupoSag: string | null;
+  subgrupoSag: string;
+  state: SampleState;
+}): boolean {
+  if (!ref.requiresProductionSuggestion) return false;
+  if (!TEXTILE_LINES.has(ref.line.trim().toUpperCase())) return false;
+  if (isSentinel(ref.grupoSag)) return false;
+  if (isSentinel(ref.subgrupoSag)) return false;
+  if (ref.state === "sin_datos") return false;
+  return true;
+}
 
 export interface ProductionSuggestion {
   /** Subgroup key: line + subgrupoSag */
