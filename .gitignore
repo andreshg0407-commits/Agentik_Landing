@@ -61,3 +61,18 @@ package-lock 4.json
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Sprint / session transcript docs (Claude development artifacts)
+# Production documentation lives in docs/
+/*.md
+!CLAUDE.md
+!README.md
+
+# Temporary diagnostic scripts (prefixed with _)
+scripts/_*
+
+# External tooling / MCP skills
+.github/prompts/
+
+# Generated export artifacts
+exports/
