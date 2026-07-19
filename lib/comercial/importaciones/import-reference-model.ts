@@ -1,0 +1,187 @@
+/**
+ * lib/comercial/importaciones/import-reference-model.ts
+ *
+ * Canonical domain model for the Importaciones module.
+ *
+ * Derived from EXCEL_DISCOVERY_01 analysis of Castillitos "INFO VENTAS ACC MAYO 17.xlsx"
+ * and SAG data mapping. This model supersedes the Excel structure with a proper
+ * relational model that supports:
+ * - Multiple import batches per reference (not fixed period columns)
+ * - Dynamic sales by channel from SaleRecord
+ * - Real inventory from ProductInventoryLevel (not compra - ventas formula)
+ * - SAG PV3/PV4 prices instead of manual entry
+ * - Rule-based repurchase recommendations
+ *
+ * Sprint: COMPRAS-IMPORTACIONES-DATA-DISCOVERY-01
+ */
+
+// ── ImportReference — core entity ───────────────────────────────────────────
+
+/**
+ * A product reference in the IMPORTACION line.
+ * Source: ProductEntity where productLine = "IMPORT" and sc_detalle_grupo = "IMPORTACION"
+ */
+export interface ImportReference {
+  productId:     string;   // ProductEntity.id
+  reference:     string;   // k_sc_codigo_articulo (SAG code, e.g. "C6-24-129")
+  description:   string;   // sc_detalle_articulo
+  group:         string;   // sc_detalle_grupo (always "IMPORTACION" for this module)
+  unit:          string;   // sc_tipo_unidad (typically "UNIDAD")
+
+  // ── Prices (from SAG v_articulos) ──
+  /** PV3 — Precio al detal. Source: n_valor_venta_promocion */
+  pricePV3:      number | null;  // TODO: sync from SAG v_articulos
+  /** PV4 — Precio al por mayor / maleta. Source: nd_valor_venta4 */
+  pricePV4:      number | null;  // TODO: sync from SAG v_articulos
+  /** PV1 — Precio normal. Source: n_valor_venta_normal */
+  pricePV1:      number | null;
+  /** PV2 — Precio especial. Source: n_valor_venta_especial */
+  pricePV2:      number | null;
+  /** IVA percentage. Source: n_porcentaje_iva */
+  ivaPercent:    number;
+
+  // ── Inventory (from ProductInventoryLevel — REAL, not formula) ──
+  /** Current total available stock across all warehouses */
+  currentStock:  number;
+
+  // ── Sales (from SaleRecord — aggregated) ──
+  /** Total units sold (all time) */
+  totalSold:     number;
+  /** Sales breakdown by channel (last 6 months) */
+  salesByChannel: ImportSalesChannelSummary;
+
+  // ── Import history (from MOVIMIENTOS — PENDING SAG sync) ──
+  /** All known import batches for this reference */
+  batches:       ImportBatch[];
+  /** Sum of all batch quantities */
+  totalImported: number | null;  // null until SAG entry sync is available
+
+  // ── Derived analytics ──
+  analytics:     ImportReferenceAnalytics;
+
+  // ── Decision ──
+  decision:      ImportPurchaseDecision;
+}
+
+// ── ImportBatch — a single purchase/entry event ─────────────────────────────
+
+/**
+ * Represents one import/purchase of a reference.
+ * In the Excel, these are spread across fixed period columns (Oct 2024, Jan 2025, etc.).
+ * In Agentik, each is a distinct record with a date and quantity.
+ *
+ * Source (future): MOVIMIENTOS + MOVIMIENTOS_ITEMS where k_n_clase_fuente = entry type
+ * Source (current): Not available — field will be empty until SAG entry sync.
+ */
+export interface ImportBatch {
+  /** Unique identifier (MOVIMIENTOS.ka_nl_movimiento if from SAG) */
+  batchId:       string;
+  /** Date of entry / import */
+  entryDate:     string;          // ISO date
+  /** Quantity purchased in this batch */
+  quantity:      number;
+  /** Document number (n_numero_documento) */
+  documentNumber: string | null;
+  /** Container/shipment identifier — may not be in SAG */
+  container:     string | null;
+  /** Supplier name (TERCEROS.sc_beneficiario via ka_nl_tercero) */
+  supplierName:  string | null;
+  /** Source of this data */
+  source:        "sag" | "manual" | "excel_import";
+}
+
+// ── ImportSalesChannelSummary — sales breakdown ─────────────────────────────
+
+/**
+ * Sales summary for a reference, broken down by channel and time period.
+ * Replaces the empty Excel columns R-S ("VENTA ULTIMOS 6 MESES PAGINA Y TIENDAS"
+ * and "VENTA ULTIMOS 6 MESES AL X MAYOR").
+ *
+ * Source: SaleRecord grouped by productCode + channel + period
+ */
+export interface ImportSalesChannelSummary {
+  // ── Total (all time) ──
+  totalTiendas:     number;
+  totalWeb:         number;
+  totalMayoristas:  number;
+  totalAll:         number;
+
+  // ── Last 6 months ──
+  last6mTiendas:    number;
+  last6mWeb:        number;
+  last6mMayoristas: number;
+  last6mAll:        number;
+
+  // ── Monthly breakdown (last 6 months) ──
+  monthly:          ImportMonthlySales[];
+
+  /** True if SaleRecord.channel cannot reliably distinguish detal vs mayorista */
+  pendingClassification: boolean;
+}
+
+export interface ImportMonthlySales {
+  month:       string;   // "2026-01"
+  tiendas:     number;
+  web:         number;
+  mayoristas:  number;
+  total:       number;
+}
+
+// ── ImportPurchaseDecision — repurchase recommendation ───────────────────────
+
+/**
+ * Repurchase recommendation for a reference.
+ * Generated by rule-based logic (not AI, not Excel formula).
+ *
+ * Levels:
+ * - RECOMPRAR: high sell-through, low stock, positive rotation
+ * - VIGILAR: moderate metrics, monitor before deciding
+ * - NO_RECOMPRAR: low rotation or high stock
+ * - SIN_DATOS: insufficient data for recommendation
+ */
+export interface ImportPurchaseDecision {
+  level:        "RECOMPRAR" | "VIGILAR" | "NO_RECOMPRAR" | "SIN_DATOS";
+  /** Human-readable reason */
+  reason:       string;
+  /** Confidence: 0–1. Higher when more data sources are available */
+  confidence:   number;
+  /** Suggested quantity to reorder (null if not enough data) */
+  suggestedQty: number | null;
+  /** Factors that contributed to the decision */
+  factors:      DecisionFactor[];
+}
+
+export interface DecisionFactor {
+  name:   string;   // "percentSold", "rotation6m", "daysInStock", etc.
+  value:  number;
+  weight: number;   // 0–1 relative importance
+  signal: "positive" | "neutral" | "negative";
+}
+
+// ── ImportReferenceAnalytics — derived metrics ──────────────────────────────
+
+/**
+ * Computed analytics for a reference. All fields are derived — none are stored.
+ *
+ * In the Excel:
+ * - % VENDIDO = M/L (vendido / comprado) — we use vendido / (vendido + stock) as proxy
+ * - EXISTENCIA = L-M (comprado - vendido) — we use real inventory
+ *
+ * In Agentik: all metrics use real data sources.
+ */
+export interface ImportReferenceAnalytics {
+  /** % of total imported that has been sold (0–100). Null if totalImported unknown. */
+  percentSold:       number | null;
+  /** Days since first import (null if no batch data) */
+  daysInWarehouse:   number | null;
+  /** Average monthly sales (last 6 months) */
+  avgMonthlySales:   number;
+  /** Months of stock remaining at current sales rate. Null if no sales. */
+  monthsOfStock:     number | null;
+  /** Rotation index: last6mSales / currentStock. Higher = faster rotation. */
+  rotationIndex:     number | null;
+  /** Trend: are recent months selling more or less than earlier months? */
+  trend:             "accelerating" | "stable" | "decelerating" | "insufficient_data";
+  /** Detal vs mayorista ratio for last 6 months (0–1 where 1 = all detal) */
+  detalRatio:        number | null;
+}

@@ -57,3 +57,7 @@ raw-
 package-lock 2.json
 package-lock 3.json
 package-lock 4.json
+
+# Python bytecode
+__pycache__/
+*.pyc
