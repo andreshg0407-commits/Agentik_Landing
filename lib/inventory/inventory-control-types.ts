@@ -120,6 +120,33 @@ export function resolveCanonicalLine(
   return "SIN_CLASIFICAR";
 }
 
+// ── Catalog Enrichment Eligibility (COMERCIAL-INVENTARIO-AGOTADOS-HISTORICO-02)
+
+/**
+ * Pure function — determines if an inventory item is eligible for catalog
+ * enrichment (photos, Shopify sync, creative AI, marketing).
+ *
+ * Only ACTIVE items qualify. OUT_OF_STOCK and NO_DATA are excluded.
+ * Consumers: foto-estudio, Shopify publisher, catalog generator, marketing studio.
+ */
+export function isEligibleForCatalogEnrichment(item: {
+  inventoryVisibility: InventoryVisibility;
+}): boolean {
+  return item.inventoryVisibility === "ACTIVE";
+}
+
+/**
+ * Filters an inventory item array to only active operational items.
+ * Consumers: Maletas, Tiendas, Pedidos, Produccion, Oportunidades, Catalogo, Fotos.
+ *
+ * Never returns OUT_OF_STOCK or NO_DATA items.
+ */
+export function getActiveCanonicalInventory<T extends { inventoryVisibility: InventoryVisibility }>(
+  items: T[],
+): T[] {
+  return items.filter(i => i.inventoryVisibility === "ACTIVE");
+}
+
 // ── Inventory Item ───────────────────────────────────────────────────────────
 
 /** Enriched inventory item — availability + criticality + production context. */

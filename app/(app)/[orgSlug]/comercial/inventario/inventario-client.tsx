@@ -37,6 +37,7 @@ import type {
 import {
   CANONICAL_LINE_LABELS,
   CANONICAL_LINE_ORDER,
+  getActiveCanonicalInventory,
 } from "@/lib/inventory/inventory-control-types";
 
 // ── Date formatting (hydration-safe) ─────────────────────────────────────────
@@ -60,16 +61,10 @@ function formatDateTimeEsCoStable(iso: string): string {
 
 const PAGE_SIZE = 20;
 
-// ── Availability filter (COMERCIAL-INVENTARIO-CANONICAL-STRUCTURE-01) ────────
-// Replaces the old visibility tabs. AGOTADOS is NOT a line — it's a filter.
-
-type AvailabilityFilter = "todos" | "disponibles" | "agotados";
-
-const AVAILABILITY_FILTERS: { key: AvailabilityFilter; label: string }[] = [
-  { key: "todos",        label: "Todos" },
-  { key: "disponibles",  label: "Solo disponibles" },
-  { key: "agotados",     label: "Solo agotados" },
-];
+// ── COMERCIAL-INVENTARIO-AGOTADOS-HISTORICO-02 ──────────────────────────────
+// Active inventory = 4 canonical lines (only disponibleReal > 0).
+// Agotados = separate section (disponibleReal <= 0, certified data).
+// NO_DATA never mixes with Agotados.
 
 type FilterKey =
   | "todos"
@@ -131,7 +126,6 @@ interface Props {
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function InventarioClient({ orgSlug, snapshot }: Props) {
-  const [availabilityFilter, setAvailabilityFilter] = useState<AvailabilityFilter>("todos");
   const [filter, setFilter] = useState<FilterKey>("todos");
   const [search, setSearch] = useState("");
   const [expandedLines, setExpandedLines] = useState<Set<string>>(
@@ -139,36 +133,32 @@ export function InventarioClient({ orgSlug, snapshot }: Props) {
   );
   const [pageMap, setPageMap] = useState<Record<string, number>>({});
 
-  const { health, dataQuality, items, lineSummaries, subgrupoCoverage, accesoriosBajaCantidad } = snapshot;
+  const { health, dataQuality, items, subgrupoCoverage, accesoriosBajaCantidad } = snapshot;
 
-  // ── Availability counts — always from full item set ────────────────────
+  // ── Split items: active vs agotados (AGOTADOS-HISTORICO-02) ────────────
+  // ACTIVE = disponibleReal > 0 (operational inventory)
+  // OUT_OF_STOCK = disponibleReal <= 0 AND has certified data (historical)
+  // NO_DATA = no availability record — never mixed with agotados
 
-  const availabilityCounts = useMemo(() => ({
-    todos: items.length,
-    disponibles: items.filter(i => i.disponibleReal > 0).length,
-    agotados: items.filter(i => i.disponibleReal <= 0).length,
-  }), [items]);
+  const activeItems = useMemo(
+    () => getActiveCanonicalInventory(items),
+    [items],
+  );
 
-  // ── Canonical line counts — always from full item set ──────────────────
+  const agotadosItems = useMemo(
+    () => items.filter(i => i.inventoryVisibility === "OUT_OF_STOCK"),
+    [items],
+  );
 
-  const canonicalCounts = useMemo(() => {
-    const counts: Record<CanonicalLine, number> = {
-      CASTILLITOS: 0, LATIN_KIDS: 0, IMPORTACION: 0, SIN_CLASIFICAR: 0,
-    };
-    for (const item of items) counts[item.canonicalLine]++;
-    return counts;
-  }, [items]);
+  // ── Counts — always from full item set ─────────────────────────────────
+
+  const agotadosCount = agotadosItems.length;
 
   const filtered = useMemo(() => {
-    // Step 1: Apply availability filter (replaces old visibility tabs)
-    let result = items;
-    if (availabilityFilter === "disponibles") {
-      result = result.filter(i => i.disponibleReal > 0);
-    } else if (availabilityFilter === "agotados") {
-      result = result.filter(i => i.disponibleReal <= 0);
-    }
+    // Only filter active items — agotados have their own section
+    let result = activeItems;
 
-    // Step 2: Apply operational filter
+    // Step 1: Apply operational filter
     switch (filter) {
       case "disponible":
         result = result.filter(i => i.operationalState === "disponible" || i.operationalState === "alta_disponibilidad");
@@ -190,7 +180,7 @@ export function InventarioClient({ orgSlug, snapshot }: Props) {
         break;
     }
 
-    // Step 3: Apply search
+    // Step 2: Apply search
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       result = result.filter(
@@ -199,9 +189,9 @@ export function InventarioClient({ orgSlug, snapshot }: Props) {
     }
 
     return result;
-  }, [items, availabilityFilter, filter, search]);
+  }, [activeItems, filter, search]);
 
-  // ── Group by canonical line (COMERCIAL-INVENTARIO-CANONICAL-STRUCTURE-01) ──
+  // ── Group ACTIVE items by canonical line ─────────────────────────────────
 
   const groupedByCanonicalLine = useMemo(() => {
     const map = new Map<CanonicalLine, InventoryItem[]>();
@@ -222,6 +212,29 @@ export function InventarioClient({ orgSlug, snapshot }: Props) {
     }
     return map;
   }, [filtered]);
+
+  // ── Group AGOTADOS by original canonical line (for sub-grouping) ───────
+
+  const agotadosFiltered = useMemo(() => {
+    if (!search.trim()) return agotadosItems;
+    const q = search.trim().toLowerCase();
+    return agotadosItems.filter(
+      i => i.reference.toLowerCase().includes(q) || i.description.toLowerCase().includes(q),
+    );
+  }, [agotadosItems, search]);
+
+  const agotadosByLine = useMemo(() => {
+    const map = new Map<CanonicalLine, InventoryItem[]>();
+    for (const item of agotadosFiltered) {
+      const list = map.get(item.canonicalLine) ?? [];
+      list.push(item);
+      map.set(item.canonicalLine, list);
+    }
+    for (const [, lineItems] of map) {
+      lineItems.sort((a, b) => a.reference.localeCompare(b.reference));
+    }
+    return map;
+  }, [agotadosFiltered]);
 
   // ── Handlers ───────────────────────────────────────────────────────────
 
@@ -391,59 +404,12 @@ export function InventarioClient({ orgSlug, snapshot }: Props) {
           { label: "Inventario" },
         ]}
         title="Inventario"
-        subtitle={`Disponibilidad comercial — B01+B04+B14+B15 (Textil) + B26+B27 (Importacion) · ${items.length} refs totales`}
+        subtitle={`Disponibilidad comercial — ${activeItems.length} activas · ${agotadosCount} agotadas · ${items.length} totales`}
         status={headerStatus}
         statusLabel={headerStatusLabel}
       />
 
-      {/* ── Availability Filter (COMERCIAL-INVENTARIO-CANONICAL-STRUCTURE-01) ── */}
-      <div style={{
-        display: "flex",
-        gap: S[1],
-        marginBottom: S[5],
-      }}>
-        {AVAILABILITY_FILTERS.map(af => {
-          const count = availabilityCounts[af.key];
-          const active = availabilityFilter === af.key;
-          return (
-            <button
-              key={af.key}
-              onClick={() => {
-                setAvailabilityFilter(af.key);
-                setFilter("todos");
-                setSearch("");
-                setPageMap({});
-              }}
-              style={{
-                fontFamily: T.mono,
-                fontSize: T.sz.xs,
-                fontWeight: active ? T.wt.bold : T.wt.normal,
-                padding: `${S[2]}px ${S[4]}px`,
-                borderRadius: `${R.sm}px ${R.sm}px 0 0`,
-                border: `1px solid ${active ? C.blueDark : C.line}`,
-                borderBottom: active ? `2px solid ${C.blueDark}` : `1px solid ${C.line}`,
-                background: active ? `${C.blueDark}08` : "transparent",
-                color: active ? C.blueDark : C.inkMid,
-                cursor: "pointer",
-                transition: "all 0.15s",
-              }}
-            >
-              {af.label}
-              <span style={{
-                fontFamily: T.mono,
-                fontSize: T.sz["2xs"],
-                color: active ? C.blueDark : C.inkLight,
-                marginLeft: S[2],
-                fontWeight: T.wt.normal,
-              }}>
-                {count.toLocaleString("es-CO")}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* ── KPI Strip — 3x2 grid (INVENTARIO-ACCESSORY-LOW-STOCK-AND-KPI-LAYOUT-01) */}
+      {/* ── KPI Strip — operational (active only) (AGOTADOS-HISTORICO-02) */}
       <div style={{
         display: "grid",
         gridTemplateColumns: "repeat(3, 1fr)",
@@ -451,8 +417,8 @@ export function InventarioClient({ orgSlug, snapshot }: Props) {
         marginBottom: S[6],
       }}>
         <KpiCard
-          label={availabilityFilter === "agotados" ? "Refs agotadas" : availabilityFilter === "disponibles" ? "Refs disponibles" : "Refs totales"}
-          value={availabilityCounts[availabilityFilter]}
+          label="Refs activas"
+          value={activeItems.length}
           onClick={() => setFilter("todos")}
         />
         <KpiCard
@@ -484,11 +450,10 @@ export function InventarioClient({ orgSlug, snapshot }: Props) {
           onClick={() => { setFilter("todos"); setExpandedLines(prev => new Set([...prev, "IMPORTACION"])); }}
         />
         <KpiCard
-          label="Subgrupos cubiertos"
-          value={health.subgruposCubiertos}
-          detail={health.subgruposEnRiesgo > 0 ? `${health.subgruposEnRiesgo} en riesgo` : undefined}
-          detailColor={C.amber}
-          onClick={() => setFilter("subgrupos")}
+          label="Agotadas historicas"
+          value={agotadosCount}
+          color={C.inkLight}
+          onClick={() => setExpandedLines(prev => new Set([...prev, "AGOTADOS"]))}
         />
       </div>
 
@@ -554,7 +519,7 @@ export function InventarioClient({ orgSlug, snapshot }: Props) {
           color: C.inkLight,
           flexShrink: 0,
         }}>
-          {filtered.length} ref{filtered.length !== 1 ? "s" : ""}
+          {filtered.length} activa{filtered.length !== 1 ? "s" : ""}
         </span>
       </div>
 
@@ -589,12 +554,13 @@ export function InventarioClient({ orgSlug, snapshot }: Props) {
             const isAccessoryLine = cl === "IMPORTACION";
             const isSinClasificar = cl === "SIN_CLASIFICAR";
 
-            // Compute mini-stats from lineItems directly
-            const lineDisp = lineItems.filter(i => i.disponibleReal > 0).length;
+            // Compute mini-stats — active items only (no agotados in these sections)
+            const lineDisp = lineItems.filter(i =>
+              i.operationalState === "disponible" || i.operationalState === "alta_disponibilidad"
+            ).length;
             const lineCrit = lineItems.filter(i =>
               i.operationalState === "critico" || i.operationalState === "bajo"
             ).length;
-            const lineAgot = lineItems.filter(i => i.disponibleReal <= 0).length;
 
             return (
               <div key={cl} style={{ marginBottom: S[4] }}>
@@ -636,7 +602,7 @@ export function InventarioClient({ orgSlug, snapshot }: Props) {
                       fontSize: T.sz["2xs"],
                       color: C.inkLight,
                     }}>
-                      {lineItems.length} refs
+                      {lineItems.length} activas
                     </span>
                     {isAccessoryLine && (
                       <span style={{
@@ -667,9 +633,8 @@ export function InventarioClient({ orgSlug, snapshot }: Props) {
                   </div>
 
                   <div style={{ display: "flex", gap: S[3], alignItems: "center" }}>
-                    <MiniStat label="Disp" value={lineDisp} color={C.green} />
-                    <MiniStat label="Crit" value={lineCrit} color={C.amber} />
-                    <MiniStat label="Agot" value={lineAgot} color={C.red} />
+                    <MiniStat label="Activas" value={lineDisp} color={C.green} />
+                    <MiniStat label="Criticas" value={lineCrit} color={C.amber} />
                   </div>
                 </button>
 
@@ -731,6 +696,19 @@ export function InventarioClient({ orgSlug, snapshot }: Props) {
               </div>
             );
           })
+      )}
+
+      {/* ── Agotados / Historico Section (AGOTADOS-HISTORICO-02) ────────── */}
+      {agotadosFiltered.length > 0 && (
+        <AgotadosSection
+          items={agotadosFiltered}
+          byLine={agotadosByLine}
+          expanded={expandedLines.has("AGOTADOS")}
+          onToggle={() => toggleLine("AGOTADOS")}
+          getPage={getPage}
+          setPage={setPage}
+          onRowClick={openDrawer}
+        />
       )}
 
       {/* ── Subgrupo Coverage Detail (INVENTARIO-KPI-REALIGNMENT-01) ────── */}
@@ -1490,6 +1468,261 @@ function AccesorioBajaCantidadPanel({ items }: { items: AccesorioBajaCantidad[] 
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ── Agotados Section (COMERCIAL-INVENTARIO-AGOTADOS-HISTORICO-02) ────────────
+
+const AGOTADOS_GRID = "36px 120px 1fr 100px 100px 80px";
+
+function AgotadosSection({
+  items,
+  byLine,
+  expanded,
+  onToggle,
+  getPage,
+  setPage,
+  onRowClick,
+}: {
+  items: InventoryItem[];
+  byLine: Map<CanonicalLine, InventoryItem[]>;
+  expanded: boolean;
+  onToggle: () => void;
+  getPage: (line: string) => number;
+  setPage: (line: string, page: number) => void;
+  onRowClick: (item: InventoryItem) => void;
+}) {
+  const page = getPage("AGOTADOS");
+  const totalPages = Math.ceil(items.length / PAGE_SIZE);
+  const pageItems = expanded
+    ? items.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+    : [];
+
+  return (
+    <div style={{ marginBottom: S[4], marginTop: S[6] }}>
+      {/* Section Header */}
+      <button
+        onClick={onToggle}
+        style={{
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: `${S[3]}px ${S[4]}px`,
+          background: `${C.ink}04`,
+          border: `1px solid ${C.line}`,
+          borderRadius: expanded ? `${R.sm}px ${R.sm}px 0 0` : R.sm,
+          cursor: "pointer",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: S[3] }}>
+          <span style={{
+            fontFamily: T.mono,
+            fontSize: T.sz.xs,
+            color: C.inkGhost,
+            width: 16,
+            textAlign: "center" as const,
+          }}>
+            {expanded ? "\u25BE" : "\u25B8"}
+          </span>
+          <span style={{
+            fontFamily: T.mono,
+            fontSize: T.sz.sm,
+            fontWeight: T.wt.bold,
+            color: C.inkMid,
+          }}>
+            Agotados
+          </span>
+          <span style={{
+            fontFamily: T.mono,
+            fontSize: T.sz["2xs"],
+            color: C.inkLight,
+          }}>
+            {items.length} historicas
+          </span>
+          <span style={{
+            fontFamily: T.mono,
+            fontSize: T.sz["2xs"],
+            color: C.inkGhost,
+            padding: "2px 8px",
+            borderRadius: R.pill,
+            background: `${C.ink}06`,
+            border: `1px solid ${C.line}`,
+          }}>
+            Solo lectura
+          </span>
+        </div>
+
+        {/* Sub-line breakdown */}
+        <div style={{ display: "flex", gap: S[3], alignItems: "center" }}>
+          {CANONICAL_LINE_ORDER.map(cl => {
+            const count = byLine.get(cl)?.length ?? 0;
+            if (count === 0) return null;
+            return (
+              <span key={cl} style={{
+                fontFamily: T.mono,
+                fontSize: T.sz["2xs"],
+                color: C.inkGhost,
+              }}>
+                {CANONICAL_LINE_LABELS[cl].split(" /")[0]} {count}
+              </span>
+            );
+          })}
+        </div>
+      </button>
+
+      {/* Expanded Table */}
+      {expanded && (
+        <div style={{
+          border: `1px solid ${C.line}`,
+          borderTop: "none",
+          borderRadius: `0 0 ${R.sm}px ${R.sm}px`,
+          overflow: "hidden",
+        }}>
+          {/* Table Header */}
+          <div className="ag-op-row" style={{
+            display: "grid",
+            gridTemplateColumns: AGOTADOS_GRID,
+            gap: S[2],
+            padding: `${S[2]}px ${S[4]}px`,
+            background: C.surfaceAlt ?? C.surface,
+            borderBottom: `1px solid ${C.line}`,
+          }}>
+            {["", "Referencia", "Descripcion", "Linea original", "Subgrupo", "Disponible"].map((h, i) => (
+              <span key={`${h}-${i}`} style={{
+                fontFamily: T.mono,
+                fontSize: T.sz["2xs"],
+                fontWeight: T.wt.semibold,
+                color: C.inkLight,
+                textTransform: "uppercase" as const,
+                textAlign: i === 5 ? "center" as const : "left" as const,
+              }}>
+                {h}
+              </span>
+            ))}
+          </div>
+
+          {/* Rows */}
+          {pageItems.map((item, idx) => (
+            <AgotadoRow key={item.reference} item={item} even={idx % 2 === 0} onClick={onRowClick} />
+          ))}
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: S[2],
+              padding: `${S[3]}px ${S[4]}px`,
+              borderTop: `1px solid ${C.line}`,
+            }}>
+              <PagButton
+                label="Anterior"
+                disabled={page <= 1}
+                onClick={() => setPage("AGOTADOS", page - 1)}
+              />
+              <span style={{
+                fontFamily: T.mono,
+                fontSize: T.sz["2xs"],
+                color: C.inkMid,
+              }}>
+                {page} / {totalPages}
+              </span>
+              <PagButton
+                label="Siguiente"
+                disabled={page >= totalPages}
+                onClick={() => setPage("AGOTADOS", page + 1)}
+              />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AgotadoRow({ item, even, onClick }: { item: InventoryItem; even: boolean; onClick: (item: InventoryItem) => void }) {
+  return (
+    <div
+      className="ag-op-row"
+      onClick={() => onClick(item)}
+      style={{
+        display: "grid",
+        gridTemplateColumns: AGOTADOS_GRID,
+        gap: S[2],
+        padding: `${S[2]}px ${S[4]}px`,
+        background: even ? C.surface : "transparent",
+        borderBottom: `1px solid ${C.line}22`,
+        alignItems: "center",
+        cursor: "pointer",
+        transition: "background 0.12s",
+      }}
+      onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = `${C.blueDark}06`; }}
+      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = even ? C.surface : "transparent"; }}
+    >
+      {/* Thumbnail */}
+      <ProductThumbnail reference={item.reference} size={28} />
+
+      {/* Reference */}
+      <span style={{
+        fontFamily: T.mono,
+        fontSize: T.sz.xs,
+        fontWeight: T.wt.semibold,
+        color: C.inkMid,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap" as const,
+      }}>
+        {item.reference}
+      </span>
+
+      {/* Description */}
+      <span style={{
+        fontFamily: T.mono,
+        fontSize: T.sz["2xs"],
+        color: C.inkLight,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap" as const,
+      }}>
+        {item.description}
+      </span>
+
+      {/* Original canonical line */}
+      <span style={{
+        fontFamily: T.mono,
+        fontSize: T.sz["2xs"],
+        color: C.inkGhost,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap" as const,
+      }}>
+        {CANONICAL_LINE_LABELS[item.canonicalLine]}
+      </span>
+
+      {/* Subgrupo */}
+      <span style={{
+        fontFamily: T.mono,
+        fontSize: T.sz["2xs"],
+        color: C.inkGhost,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap" as const,
+      }}>
+        {item.subgrupoSag}
+      </span>
+
+      {/* Disponible (always 0 or negative — show em dash) */}
+      <span style={{
+        fontFamily: T.mono,
+        fontSize: T.sz.xs,
+        color: C.inkGhost,
+        textAlign: "center" as const,
+      }}>
+        {"\u2014"}
+      </span>
     </div>
   );
 }
