@@ -166,13 +166,52 @@ async function main() {
         userId: testUser.id,
       },
     },
-    update: { role: Role.ORG_ADMIN, status: MembershipStatus.ACTIVE, acceptedAt: new Date() },
+    update: { role: Role.SUPER_ADMIN, status: MembershipStatus.ACTIVE, acceptedAt: new Date() },
     create: {
       organizationId: castillitos.id,
       userId: testUser.id,
-      role: Role.ORG_ADMIN,
+      role: Role.SUPER_ADMIN,
       status: MembershipStatus.ACTIVE,
       acceptedAt: new Date(),
+    },
+  });
+
+  // ── Castillitos opt-in modules ─────────────────────────────────────────────
+  // Enable opt-in modules that Castillitos needs as a manufacturing tenant.
+  // "production" and "inventory" are opt-in by default in tenant/modules.ts,
+  // so they require explicit TenantModule rows.
+
+  const castillitosOptInModules = ["production", "inventory", "marketing_studio", "copilot"];
+  for (const moduleKey of castillitosOptInModules) {
+    await (prisma as any).tenantModule.upsert({
+      where: {
+        organizationId_moduleKey: {
+          organizationId: castillitos.id,
+          moduleKey,
+        },
+      },
+      update: { enabled: true },
+      create: {
+        organizationId: castillitos.id,
+        moduleKey,
+        enabled: true,
+      },
+    });
+  }
+
+  // ── Castillitos branding ─────────────────────────────────────────────────────
+  await (prisma as any).organizationBranding.upsert({
+    where: { organizationId: castillitos.id },
+    update: {},
+    create: {
+      organizationId: castillitos.id,
+      commercialName: "Castillitos",
+      legalName: "Castillitos",
+      country: "Colombia",
+      primaryColor: "#004AAD",
+      secondaryColor: "#1e1e2e",
+      accentColor: "#004AAD",
+      documentFooter: "Documento generado por Agentik para Castillitos.",
     },
   });
 
