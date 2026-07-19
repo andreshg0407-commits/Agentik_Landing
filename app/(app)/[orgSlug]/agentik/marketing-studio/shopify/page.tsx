@@ -66,7 +66,7 @@ function CollectionRow({
     campaign:    "Campaña",
     seasonal:    "Temporada",
     dynamic:     "Dinámica",
-    readiness:   "Readiness",
+    readiness:   "Preparación",
   };
 
   return (

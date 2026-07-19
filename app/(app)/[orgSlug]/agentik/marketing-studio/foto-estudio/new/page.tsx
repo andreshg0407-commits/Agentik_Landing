@@ -10,8 +10,9 @@ import { redirect }         from "next/navigation";
 import { requireOrgAccess } from "@/lib/auth/org-access";
 import { canAccessMarketingStudio } from "@/lib/auth/module-access";
 import { getTenantConfig }  from "@/lib/marketing-studio/tenant-config";
-import type { GarmentType, BrandLine } from "@/lib/marketing-studio/foto-estudio-types";
-import { C, T, S }          from "@/lib/ui/tokens";
+import { listTenantVisualFormats } from "@/lib/marketing-studio/visual-format-service";
+import type { GarmentType, ProductCategory, BrandLine } from "@/lib/marketing-studio/foto-estudio-types";
+import { C, T, S, R }       from "@/lib/ui/tokens";
 import { Badge }            from "@/components/shell/primitives";
 import { FotoEstudioWizard } from "./wizard";
 
@@ -20,14 +21,19 @@ export default async function FotoEstudioNewPage({
 }: {
   params: Promise<{ orgSlug: string }>;
 }) {
-  const { orgSlug }    = await params;
-  const { membership } = await requireOrgAccess(orgSlug);
+  const { orgSlug }                = await params;
+  const { membership, organization } = await requireOrgAccess(orgSlug);
 
   if (!canAccessMarketingStudio(membership.role)) redirect(`/${orgSlug}/agentik`);
 
   // tenantId is always the orgSlug from the URL — never a forced env var.
   const tenantId  = orgSlug;
   const tenantCfg = getTenantConfig(tenantId);
+
+  // Load persisted custom formats for this tenant (non-blocking — empty array on error)
+  const { customFormats } = await listTenantVisualFormats(organization.id, orgSlug).catch(() => ({
+    systemFormats: [], customFormats: [],
+  }));
 
   // Diagnostic: confirm which tenant config loaded (server log only).
   console.log(
@@ -38,8 +44,9 @@ export default async function FotoEstudioNewPage({
     `presets=${tenantCfg?.allowedPresets?.slice(0,3).join(",") ?? "n/a"}...`,
   );
 
-  const defaultBrandLine:   BrandLine   = (tenantCfg?.fotoEstudio?.defaultBrandLine   ?? "casual") as BrandLine;
-  const defaultGarmentType: GarmentType = (tenantCfg?.fotoEstudio?.defaultGarmentType ?? "otro")   as GarmentType;
+  const defaultBrandLine:        BrandLine       = (tenantCfg?.fotoEstudio?.defaultBrandLine        ?? "casual")    as BrandLine;
+  const defaultGarmentType:     GarmentType     = (tenantCfg?.fotoEstudio?.defaultGarmentType     ?? "otro")      as GarmentType;
+  const defaultProductCategory: ProductCategory = (tenantCfg?.fotoEstudio?.defaultProductCategory ?? "ropa_nino") as ProductCategory;
 
   return (
     <div style={{ fontFamily: "monospace", maxWidth: 860 }}>
@@ -60,15 +67,15 @@ export default async function FotoEstudioNewPage({
       </div>
 
       {/* ── Header ── */}
-      <div style={{ marginBottom: S[5], paddingBottom: S[3], borderBottom: `1.5px solid ${C.ink}` }}>
+      <div style={{ marginBottom: S[5], paddingBottom: S[3], borderBottom: `1px solid ${C.line}` }}>
         <div style={{ display: "flex", alignItems: "center", gap: S[3], flexWrap: "wrap" }}>
           <div>
             <h1 style={{ margin: 0, fontSize: T.sz["3xl"], fontWeight: T.wt.black,
               color: C.ink, letterSpacing: "-0.02em" }}>
-              📸 Foto estudio
+              Foto Estudio
             </h1>
-            <div style={{ fontSize: T.sz.sm, color: C.inkLight, marginTop: 3 }}>
-              Sube tu producto y Agentik generará el contenido visual listo para publicar.
+            <div style={{ fontSize: T.sz.sm, color: C.inkLight, marginTop: 3, fontFamily: T.mono }}>
+              Generación de contenido visual con IA.
             </div>
           </div>
           <div style={{ marginLeft: "auto", display: "flex", gap: S[2] }}>
@@ -78,12 +85,14 @@ export default async function FotoEstudioNewPage({
         </div>
       </div>
 
-      {/* ── Wizard ── */}
+      {/* ── Wizard — módulo emite contexto, NO renderiza agentes ── */}
       <FotoEstudioWizard
         orgSlug={orgSlug}
         tenantId={tenantId}
         defaultBrandLine={defaultBrandLine}
         defaultGarmentType={defaultGarmentType}
+        defaultProductCategory={defaultProductCategory}
+        initialCustomFormats={customFormats}
       />
 
     </div>

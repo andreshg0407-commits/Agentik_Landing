@@ -39,14 +39,13 @@ export type AspectRatio = "1:1" | "9:16" | "4:5" | "4:3" | "16:9";
  *                               uniforme, juguete, juego_mesa, utiles,
  *                               mochila, calzado_nino, accesorio_nino, bebe
  */
-// NOTE: This type is currently used for both garment types AND business categories.
-// For tenants like Castillitos, these values represent PRODUCT CATEGORIES (Ropa niño,
-// Bebé, Juguetes, Transporte…), not garment subtypes like "jean" or "pijama".
-// Future refactor should split into:
-//   - GarmentType      → true clothing types (Do Jeans / fashion tenants)
-//   - ProductCategory  → business-level commercial categories (Castillitos / kids retail)
+/**
+ * GarmentType — true clothing subtypes for fashion tenants (Do Jeans).
+ * Use for prenda-level identification, prompt construction, and detail locks.
+ *
+ * Retail tenants (Castillitos) should use ProductCategory instead.
+ */
 export type GarmentType =
-  // Fashion (legacy — Do Jeans)
   | "jean"
   | "short"
   | "falda"
@@ -54,7 +53,21 @@ export type GarmentType =
   | "top"
   | "chaqueta"
   | "vestido"
-  // Kids retail (Castillitos M1)
+  | "otro";
+
+/**
+ * ProductCategory — business-level commercial categories for retail tenants (Castillitos).
+ *
+ * Represents what the product IS commercially (toy, kids outfit, school supplies),
+ * NOT the specific garment subtype. Used for:
+ *   - Foto Estudio wizard product selector (retail path)
+ *   - Biblioteca filtering by product line
+ *   - Campaign routing and seasonal preset resolution
+ *   - ERP alias mapping via categoryAliases
+ *
+ * Fashion tenants (Do Jeans) use GarmentType instead.
+ */
+export type ProductCategory =
   | "ropa_nino"        // ropa infantil niño
   | "ropa_nina"        // ropa infantil niña
   | "conjunto"         // conjunto / set infantil
@@ -70,8 +83,7 @@ export type GarmentType =
   | "accesorio_bebe"   // accesorios de bebé (chupetes, baberos, etc.)
   | "transporte"       // carritos, coches, sillas de bebé
   | "aseo"             // bañeras, bacinillas, sets de aseo
-  // Fallback
-  | "kids_clothing"    // alias — maps from GarmentCategory
+  | "kids_clothing"    // legacy alias — maps from GarmentCategory (ERP compat)
   | "otro";
 
 /**
@@ -203,7 +215,12 @@ export interface FotoEstudioSettings {
   background:             BackgroundType;
   aspectRatio:            AspectRatio;
   quantity:               number;   // variants per output type, 1–4
-  garmentType:            GarmentType;
+  // TODO(marketing-studio): garmentType legacy path.
+  // Retail tenants should migrate to productCategory.
+  // Kept for backwards compatibility with the generation pipeline (reads garmentType from inputsJson).
+  garmentType?:           GarmentType;
+  /** Retail tenants (Castillitos): canonical product category. Preferred over garmentType. */
+  productCategory?:       ProductCategory;
   brandLine:              BrandLine;
   socialPublicationType?: SocialPublicationType;  // only for social_photo
   // Adult model profile (Do Jeans / default tenants)
@@ -217,6 +234,15 @@ export interface FotoEstudioSettings {
   kidsVisualTrait?:       KidsVisualTrait;
   kidsVisualStyle?:       KidsVisualStyle;
   kidsExpression?:        KidsExpression;
+  /** Creative direction text from the "Dirección creativa IA" field.
+   *  Injected directly into the prompt — influences scene, mood, atmosphere. */
+  freePrompt?:            string;
+  /**
+   * Visual canvas format for catalog generation.
+   * Only populated for retail tenants (Castillitos).
+   * Non-retail tenants use aspectRatio instead.
+   */
+  visualFormat?:          import("./visual-format-types").VisualFormat;
 }
 
 /** Maps a FotoOutputType to the asset type strings used in GeneratedAsset */
@@ -235,8 +261,8 @@ export function mapOutputToAssetTypes(output: FotoOutputType): string[] {
   }
 }
 
+/** Labels for fashion garment subtypes — Do Jeans / fashion tenants. */
 export const GARMENT_TYPE_LABELS: Record<GarmentType, string> = {
-  // Fashion (legacy)
   jean:     "Jean",
   short:    "Short",
   falda:    "Falda",
@@ -244,7 +270,11 @@ export const GARMENT_TYPE_LABELS: Record<GarmentType, string> = {
   top:      "Top",
   chaqueta: "Chaqueta",
   vestido:  "Vestido",
-  // Kids retail
+  otro:     "Otro",
+};
+
+/** Labels for retail product categories — Castillitos / kids retail tenants. */
+export const PRODUCT_CATEGORY_LABELS: Record<ProductCategory, string> = {
   ropa_nino:      "Ropa niño",
   ropa_nina:      "Ropa niña",
   conjunto:       "Conjunto / Set",

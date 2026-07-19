@@ -47,12 +47,16 @@ function getClient(env: ReturnType<typeof getEnv>): S3Client {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const MIME_TO_EXT: Record<string, string> = {
-  "image/jpeg": "jpg",
-  "image/jpg":  "jpg",
-  "image/png":  "png",
-  "image/webp": "webp",
-  "image/gif":  "gif",
-  "image/avif": "avif",
+  "image/jpeg":        "jpg",
+  "image/jpg":         "jpg",
+  "image/png":         "png",
+  "image/webp":        "webp",
+  "image/gif":         "gif",
+  "image/avif":        "avif",
+  // Manual upload additions
+  "video/mp4":         "mp4",
+  "video/quicktime":   "mov",
+  "application/pdf":   "pdf",
 };
 
 function extFromMime(mime: string): string {
@@ -129,6 +133,71 @@ export async function uploadStudioImage(input: StudioUploadInput): Promise<Studi
     url:      `${env.publicBaseUrl}/${key}`,
     key,
     bytes,
+    mimeType: input.mimeType,
+  };
+}
+
+// ── Manual upload ─────────────────────────────────────────────────────────────
+
+export interface ManualAssetUploadInput {
+  buffer:    Buffer;
+  mimeType:  string;
+  tenantId:  string;
+  productId: string;
+  /** Original filename — used to derive extension fallback */
+  fileName:  string;
+}
+
+/**
+ * Uploads a manually provided file (image, video, or document) to R2
+ * under the manual-upload prefix for the product.
+ *
+ * Key pattern:
+ *   marketing-studio/{tenantId}/{yyyy}/{mm}/manual/{productId}/{uuid}.{ext}
+ *
+ * Reuses the same bucket and credentials as Foto Estudio.
+ * Does NOT require a sessionId or angle — those are Foto Estudio concepts.
+ */
+export async function uploadManualAsset(
+  input: ManualAssetUploadInput,
+): Promise<StudioUploadResult> {
+  const env = getEnv();
+  if (!env.bucket)         throw new Error("Missing R2_BUCKET");
+  if (!env.publicBaseUrl)  throw new Error("Missing R2_PUBLIC_BASE_URL");
+
+  const s3 = getClient(env);
+
+  const maxBytes = Number(process.env.MAX_UPLOAD_MB ?? 20) * 1024 * 1024;
+  if (input.buffer.byteLength > maxBytes) {
+    throw new Error(
+      `File too large: ${(input.buffer.byteLength / 1024 / 1024).toFixed(1)} MB ` +
+      `(max ${process.env.MAX_UPLOAD_MB ?? 20} MB)`,
+    );
+  }
+
+  const now      = new Date();
+  const yyyy     = String(now.getUTCFullYear());
+  const mm       = String(now.getUTCMonth() + 1).padStart(2, "0");
+  const ext      = extFromMime(input.mimeType) ||
+                   input.fileName.split(".").pop()?.toLowerCase() || "bin";
+  const uuid     = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  const safePid  = input.productId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const safeTid  = input.tenantId.replace(/[^a-zA-Z0-9_-]/g, "_");
+
+  const key = `marketing-studio/${safeTid}/${yyyy}/${mm}/manual/${safePid}/${uuid}.${ext}`;
+
+  await s3.send(new PutObjectCommand({
+    Bucket:       env.bucket,
+    Key:          key,
+    Body:         input.buffer,
+    ContentType:  input.mimeType,
+    CacheControl: "public, max-age=31536000, immutable",
+  }));
+
+  return {
+    url:      `${env.publicBaseUrl}/${key}`,
+    key,
+    bytes:    input.buffer.byteLength,
     mimeType: input.mimeType,
   };
 }

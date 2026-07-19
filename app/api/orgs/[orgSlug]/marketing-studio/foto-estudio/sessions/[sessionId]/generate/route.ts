@@ -15,6 +15,7 @@ import { createDbAssetsForSession }               from "@/lib/marketing-studio/a
 import { getExecutor }                            from "@/lib/marketing-studio/n8n-executor";
 import { buildN8nWebhookPayload }                 from "@/lib/marketing-studio/execution-payload";
 import type { StudioExecutionPayload }            from "@/lib/marketing-studio/execution-payload";
+import { buildCanvasInstruction }                 from "@/lib/marketing-studio/visual-format-types";
 import { mapOutputToAssetTypes }                  from "@/lib/marketing-studio/foto-estudio-types";
 import { getOrgPromptEngine }                    from "@/lib/marketing-studio/tenant-config";
 import type {
@@ -79,6 +80,11 @@ export async function POST(
     const kidsVisualTrait = (settings.kidsVisualTrait ?? "latino")     as KidsVisualTrait;
     const kidsVisualStyle = (settings.kidsVisualStyle ?? "catalogo_comercial") as KidsVisualStyle;
     const kidsExpression  = (settings.kidsExpression  ?? "sonriente")  as KidsExpression;
+    // Creative direction — user-authored scene/mood/context text
+    const freePrompt      = settings.freePrompt ?? "";
+    // Retail canvas format (Castillitos only — absent for fashion tenants)
+    const visualFormat    = settings.visualFormat;
+    const visualFormatInstruction = visualFormat ? buildCanvasInstruction(visualFormat) : undefined;
 
     if (!frontImageUrl && !backImageUrl) {
       return NextResponse.json({ error: "Se requiere al menos una imagen (frontal o trasera)" }, { status: 422 });
@@ -122,6 +128,8 @@ export async function POST(
           kidsModelType, kidsAgeRange, kidsVisualTrait, kidsVisualStyle, kidsExpression,
           tenantId: session.tenantId,
           promptEngine,
+          freePrompt,
+          visualFormatInstruction,
         });
         const fidelityMode = isCatalog ? "strict" : "standard";
         const angle: "front" | "back" | undefined = assetType === "back_clean" ? "back" : assetType === "front_clean" ? "front" : undefined;
@@ -182,6 +190,8 @@ export async function POST(
       framingType,
       // Session-level fidelityMode: "strict" if any catalog asset is present
       fidelityMode:    assetSpecs.some(s => s.fidelityMode === "strict") ? "strict" : "standard",
+      // Retail canvas format — injected into n8n payload for pixel-exact output sizing
+      visualFormat,
       draftShopify:    false,
       assets: dbAssets.map((a, idx) => ({
         assetId:          a.id,
@@ -259,6 +269,32 @@ interface BuildPromptOpts {
   kidsVisualTrait?:      KidsVisualTrait;
   kidsVisualStyle?:      KidsVisualStyle;
   kidsExpression?:       KidsExpression;
+  /** Creative direction text from the "Dirección creativa IA" field.
+   *  Injected into the prompt to influence scene, mood, atmosphere. */
+  freePrompt?:           string;
+  /**
+   * Pre-built canvas instruction from buildCanvasInstruction().
+   * Injected into catalog prompts to enforce pixel-exact output sizing (Castillitos only).
+   */
+  visualFormatInstruction?: string;
+}
+
+// ── Creative direction builder ────────────────────────────────────────────────
+//
+// Translates the user's freePrompt into a scene/atmosphere clause that is
+// appended at the end of the assembled prompt. The text is preserved verbatim
+// with a framing prefix so the model understands it as a direction, not noise.
+//
+// Examples:
+//   "Playa en Italia"      → "Scene direction: Mediterranean beach in Italy, warm light."
+//   "Editorial Vogue"      → "Scene direction: high-fashion Vogue editorial aesthetic."
+//   "Europa invierno"      → "Scene direction: European winter setting, cold tones."
+//   "Calle urbana en Tokio"→ "Scene direction: urban Tokyo street, neon accents."
+//
+function buildCreativeDirection(freePrompt: string | undefined): string {
+  const text = freePrompt?.trim();
+  if (!text || text.length < 3) return "";
+  return `Creative direction: ${text}.`;
 }
 
 function buildPrompt(opts: BuildPromptOpts): PromptResult {
@@ -274,14 +310,14 @@ function buildPrompt(opts: BuildPromptOpts): PromptResult {
 // Mode: product-only catalog / flat lay / kids product environment.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Kids clothing garment types — require children-safe product presentation. */
-const KIDS_CLOTHING_TYPES = new Set<GarmentType>([
+/** Kids clothing product categories — require children-safe product presentation. */
+const KIDS_CLOTHING_TYPES = new Set<string>([
   "ropa_nino", "ropa_nina", "bebe", "conjunto", "pijama",
   "uniforme", "kids_clothing", "calzado_nino", "accesorio_nino",
 ]);
 
-/** Toy / game types — require playful product environment. */
-const KIDS_TOY_TYPES = new Set<GarmentType>([
+/** Toy / game product categories — require playful product environment. */
+const KIDS_TOY_TYPES = new Set<string>([
   "juguete", "juego_mesa",
 ]);
 
@@ -293,7 +329,11 @@ function buildCastillitosProductPrompt(opts: BuildPromptOpts): PromptResult {
     kidsVisualTrait = "latino",
     kidsVisualStyle = "catalogo_comercial",
     kidsExpression  = "sonriente",
+    freePrompt,
+    visualFormatInstruction,
   } = opts;
+
+  const creativeDirection = buildCreativeDirection(freePrompt);
 
   const defaultModel = "black-forest-labs/flux-kontext-pro";
 
@@ -350,7 +390,9 @@ function buildCastillitosProductPrompt(opts: BuildPromptOpts): PromptResult {
   const brandStr = brandContext[brandLine] ?? "children's retail catalog";
 
   // ── Product descriptor ──────────────────────────────────────────────────
-  const garmentDesc: Record<GarmentType, string> = {
+  // Covers both ProductCategory (retail/Castillitos) and GarmentType (fashion/Do Jeans) values.
+  const garmentDesc: Record<string, string> = {
+    // ProductCategory — Castillitos retail
     ropa_nino:      "children's clothing item for boys",
     ropa_nina:      "children's clothing item for girls",
     bebe:           "baby clothing or accessory",
@@ -367,7 +409,7 @@ function buildCastillitosProductPrompt(opts: BuildPromptOpts): PromptResult {
     transporte:     "children's ride-on or transport toy",
     aseo:           "personal hygiene or care product",
     kids_clothing:  "children's clothing",
-    // legacy (should not appear for castillitos but kept for safety)
+    // GarmentType — Do Jeans fashion (kept for safety)
     jean:     "product",
     short:    "product",
     falda:    "product",
@@ -491,7 +533,10 @@ function buildCastillitosProductPrompt(opts: BuildPromptOpts): PromptResult {
       "Professional even studio lighting, soft boxes, no harsh shadows.",
       `${qualityStr}.`,
       "Product fully in frame, centered, no cropping.",
-    ].join(" ");
+      // Canvas / composition rules — from VisualFormat (Castillitos retail only)
+      visualFormatInstruction,
+      creativeDirection,
+    ].filter(Boolean).join(" ");
 
     return { prompt, negativePrompt: catalogNegative, replicateModelId: defaultModel };
   }
@@ -513,7 +558,8 @@ function buildCastillitosProductPrompt(opts: BuildPromptOpts): PromptResult {
       `${socialBg}.`,
       "Warm natural light, inviting fun mood.",
       `${qualityStr}.`,
-    ].join(" ");
+      creativeDirection,
+    ].filter(Boolean).join(" ");
 
     return { prompt, negativePrompt: castillitosNegative, replicateModelId: defaultModel };
   }
@@ -530,7 +576,8 @@ function buildCastillitosProductPrompt(opts: BuildPromptOpts): PromptResult {
       `${brandStr}. ${styleCtx}.`,
       `Product design and colors preserved. ${bgStr}.`,
       "Smooth camera motion, warm inviting light.",
-    ].join(" ");
+      creativeDirection,
+    ].filter(Boolean).join(" ");
 
     return { prompt, negativePrompt: castillitosNegative, replicateModelId: defaultModel };
   }
@@ -539,7 +586,8 @@ function buildCastillitosProductPrompt(opts: BuildPromptOpts): PromptResult {
   const prompt = [
     KIDS_PRODUCT_PREFIX,
     `The ${productStr} displayed cleanly. ${brandStr}. ${styleCtx}. ${bgStr}. ${qualityStr}.`,
-  ].join(" ");
+    creativeDirection,
+  ].filter(Boolean).join(" ");
   return { prompt, negativePrompt: castillitosNegative, replicateModelId: defaultModel };
 }
 
@@ -559,8 +607,9 @@ function buildDoJeansFashionPrompt(opts: BuildPromptOpts): PromptResult {
 
   // ── Garment ──────────────────────────────────────────────────────────────
 
-  const garmentLabel: Record<GarmentType, string> = {
-    // Fashion (legacy)
+  // Covers both GarmentType (fashion/Do Jeans) and ProductCategory (retail/Castillitos) values.
+  const garmentLabel: Record<string, string> = {
+    // GarmentType — Do Jeans fashion
     jean:     "denim jeans",
     short:    "denim shorts",
     falda:    "denim skirt",
@@ -568,7 +617,7 @@ function buildDoJeansFashionPrompt(opts: BuildPromptOpts): PromptResult {
     top:      "top",
     chaqueta: "denim jacket",
     vestido:  "dress",
-    // Kids retail (Castillitos M1)
+    // ProductCategory — Castillitos retail
     ropa_nino:      "kids clothing for boys",
     ropa_nina:      "kids clothing for girls",
     conjunto:       "kids outfit set",

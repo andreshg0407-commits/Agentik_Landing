@@ -408,9 +408,18 @@ export interface LucaIntegrationConfig {
  */
 export interface TenantFotoEstudioDefaults {
   /** Default brand line selected in Step 3 of the Foto Estudio wizard. */
-  defaultBrandLine:   "luxury" | "casual" | "kids_fun" | "latin_kids" | "institutional" | "importacion" | "otros";
-  /** Default garment type selected in Step 3 of the Foto Estudio wizard. */
-  defaultGarmentType: string;
+  defaultBrandLine:        "luxury" | "casual" | "kids_fun" | "latin_kids" | "institutional" | "importacion" | "otros";
+  /**
+   * Default garment type for fashion tenants (Do Jeans).
+   * Retail tenants should use defaultProductCategory instead.
+   * @deprecated use defaultProductCategory for retail tenants.
+   */
+  defaultGarmentType?:     string;
+  /**
+   * Default product category for retail tenants (Castillitos).
+   * Takes precedence over defaultGarmentType when present.
+   */
+  defaultProductCategory?: string;
 }
 
 /**
@@ -465,6 +474,12 @@ export interface TenantMarketingConfig {
    * rather than falling back to a global default.
    */
   shopify?:          TenantShopifyConfig;
+  /**
+   * Custom visual formats saved by this tenant in Foto Estudio.
+   * Stored in configJson so they persist across sessions.
+   * Built-in Castillitos formats are NOT stored here — they come from CASTILLITOS_FORMATS.
+   */
+  visualFormats?:    import("./visual-format-types").StoredVisualFormat[];
 }
 
 // ── Luca bridge payload ───────────────────────────────────────────────────────

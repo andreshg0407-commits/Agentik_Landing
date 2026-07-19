@@ -175,6 +175,15 @@ export interface StudioExecutionPayload {
    */
   detailLocks?:       GarmentDetailLocks;
 
+  // ── Visual format (Castillitos catalog) ───────────────────────────────────
+  /**
+   * Canvas specification for Castillitos retail catalog generation.
+   * When present the generate route injects canvas/composition instructions
+   * into the prompt and n8n can apply pixel-exact output sizing.
+   * Absent for non-retail tenants (Do Jeans uses aspectRatio instead).
+   */
+  visualFormat?: import("./visual-format-types").VisualFormat;
+
   // ── Shopify draft flag ─────────────────────────────────────────────────────
   /**
    * When true the executor should deliver a Shopify-ready product draft alongside

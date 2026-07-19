@@ -233,8 +233,9 @@ export const CASTILLITOS_CONFIG: TenantMarketingConfig = {
   fidelityMode: "standard",
 
   fotoEstudio: {
-    defaultBrandLine:   "kids_fun",
-    defaultGarmentType: "kids_clothing",
+    defaultBrandLine:        "kids_fun",
+    // Retail path — uses productCategory, not garmentType.
+    defaultProductCategory:  "ropa_nino",
   },
 
   // shopify intentionally absent: Castillitos does not use Shopify publishing.
