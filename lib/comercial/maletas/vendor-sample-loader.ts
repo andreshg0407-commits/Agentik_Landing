@@ -239,7 +239,7 @@ export async function loadVendorSampleData(
         ? (subgrupoToGrupoLookup.get(resolvedSubgrupoId) ?? null)
         : null;
 
-      let availableB24: number | null = null;
+      let centralImportAvailable: number | null = null;
       let accessoryScarcityState: AccessoryScarcityState | null = null;
       let accessorySuggestedAction: "DEJAR_DE_VENDER" | null = null;
       if (isAccessory) {
@@ -248,11 +248,11 @@ export async function loadVendorSampleData(
         // Only derive scarcity state when PIL data exists.
         // Absent PIL record ≠ zero stock.
         if (rawImportAvail !== undefined) {
-          availableB24 = rawImportAvail;
-          accessoryScarcityState = availableB24 > IMPORT_SCARCITY_MINIMUM ? "saludable" : "escasez";
+          centralImportAvailable = rawImportAvail;
+          accessoryScarcityState = centralImportAvailable > IMPORT_SCARCITY_MINIMUM ? "saludable" : "escasez";
           accessorySuggestedAction = accessoryScarcityState === "escasez" ? "DEJAR_DE_VENDER" : null;
         } else {
-          availableB24 = null;
+          centralImportAvailable = null;
           accessoryScarcityState = null;
           accessorySuggestedAction = null;
         }
@@ -289,7 +289,7 @@ export async function loadVendorSampleData(
         lastTransferDate: item.lastTransferDate,
         sourceWarehouse: sourceLabel,
         isAccessory,
-        availableB24,
+        centralImportAvailable,
         accessoryScarcityState,
         accessorySuggestedAction,
       };

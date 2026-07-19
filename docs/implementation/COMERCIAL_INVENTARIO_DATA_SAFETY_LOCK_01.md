@@ -14,7 +14,7 @@ Severity: **CRITICAL** — prevents wrong decisions from absent/inferred/stale d
 | File | Line | Pattern | Risk | Fix |
 |---|---|---|---|---|
 | `vendor-sample-loader.ts` | 222-223 | `importAvailability ?? 0` / `coverage?.disponible ?? 0` | HIGH — triggers false `reemplazar` | `deriveState()` now takes `hasCoverageData`; returns `"sin_datos"` when absent |
-| `vendor-sample-loader.ts` | 244 | `importAvailMap.get(ref) ?? 0` | HIGH — triggers false `DEJAR_DE_VENDER` | Explicit `undefined` check; absent → `availableB24 = null`, no scarcity state |
+| `vendor-sample-loader.ts` | 244 | `importAvailMap.get(ref) ?? 0` | HIGH — triggers false `DEJAR_DE_VENDER` | Explicit `undefined` check; absent → `centralImportAvailable = null`, no scarcity state |
 | `vendor-sample-loader.ts` | 960 | `importAvailMap.get(sku) ?? 0` | MILD — counter only | `continue` on absent; don't count as zero stock |
 | `maletas-engine.ts` | 78 | `availRecord?.disponible ?? 0` | HIGH — triggers false `sin_stock` alerts | `hasAvailabilityData` flag; absent → `status = "ok"` (prevents alerts) |
 | `maletas-engine.ts` | 79-80 | `inventario/pedidos ?? 0` | SAFE | No change — display only |

@@ -37,10 +37,8 @@ export type AccessoryScarcityState = "saludable" | "escasez";
 
 export const IMPORT_SCARCITY_MINIMUM = 10;
 
-/** Import source warehouses — bodega CODES (externalRef), not SAG numeric PKs.
- *  SAG-DATAFLOW-FIX-01: was ["36","37"] (SAG PKs) which mapped to codes "26","27".
- *  Now uses the actual codes that match ProductInventoryLevel.externalRef. */
-export const IMPORT_SOURCE_WAREHOUSES = ["26", "27"];
+/** Import source warehouses — aggregated for central availability */
+export const IMPORT_SOURCE_WAREHOUSES = ["36", "37"];
 
 // ── Motor 2: Derrotero de Maleta Ideal ──────────────────────────────────────
 // Subgroup coverage thresholds for vendor bags.
@@ -150,7 +148,7 @@ export interface VendorSampleRef {
   sourceWarehouse: string | null;
   // Accessory/import scarcity (IMPORT-SCARCITY-ENGINE-01)
   isAccessory: boolean;                                // true when line = "IMPORT" or productLine = "5"
-  availableB24: number | null;                         // sum of import source warehouses (B36+B37)
+  centralImportAvailable: number | null;                // sum of import source warehouses (B36+B37)
   accessoryScarcityState: AccessoryScarcityState | null; // "saludable" | "escasez"
   accessorySuggestedAction: "DEJAR_DE_VENDER" | null;
 }

@@ -214,7 +214,7 @@ export function buildVendorSnapshots(
         lastTransferDate: null,
         sourceWarehouse: null,
         isAccessory: false,
-        availableB24: null,
+        centralImportAvailable: null,
         accessoryScarcityState: null,
         accessorySuggestedAction: null,
       };
