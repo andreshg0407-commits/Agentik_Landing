@@ -16,6 +16,7 @@
  */
 
 import type { CSSProperties, ReactNode } from "react";
+import { formatDateCol } from "@/lib/utils/formatDate";
 import type {
   PipelineKpis,
   SellerPipelineRow,
@@ -93,9 +94,7 @@ function fmtN(n: number | null | undefined): string {
 
 function fmtDate(d: string | null | undefined): string {
   if (!d) return "—";
-  return new Date(d).toLocaleDateString("es-CO", {
-    year: "numeric", month: "short", day: "numeric",
-  });
+  return formatDateCol(d);
 }
 
 function fmtPct(n: number): string {

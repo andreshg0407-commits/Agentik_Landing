@@ -10,6 +10,7 @@
 import { NextResponse }     from "next/server";
 import { requireOrgAccess } from "@/lib/auth/org-access";
 import { reject }           from "@/lib/sag/write/queue";
+import { dispatchOrderPostSync } from "@/lib/comercial/pedidos/order-lifecycle-hooks";
 
 export const runtime = "nodejs";
 
@@ -39,6 +40,14 @@ export async function POST(
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: 409 });
     }
+
+    // Post-sync callback: release order reservation if this was an order operation
+    await dispatchOrderPostSync(
+      organization.id,
+      params.operationId,
+      "REJECTED",
+      { rejectionReason: reason },
+    );
 
     return NextResponse.json({ ok: true });
   } catch (e) {

@@ -9,6 +9,7 @@
  */
 
 import { useState, useCallback } from "react";
+import { formatDateCol } from "@/lib/utils/formatDate";
 import type { ScheduledReport }  from "@prisma/client";
 
 // ── Token shorthands ──────────────────────────────────────────────────────────
@@ -95,7 +96,7 @@ const TEMPLATES: Template[] = [
 
 function fmtDate(d: Date | string | null | undefined): string {
   if (!d) return "—";
-  return new Date(d).toLocaleDateString("es-CO", { day: "numeric", month: "short", year: "numeric" });
+  return formatDateCol(d);
 }
 
 const FREQ_LABEL: Record<string, string> = {

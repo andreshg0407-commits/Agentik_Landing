@@ -12,14 +12,16 @@ import { useState }    from "react";
 import { useRouter }   from "next/navigation";
 
 interface ModuleResult {
-  rowsRead:    number;
+  rowsRead:     number;
   rowsImported: number;
-  rowsSkipped: number;
-  rowsErrored: number;
-  status:      string;
-  error:       string | null;
-  ms:          number;
-  note?:       string;
+  rowsSkipped:  number;
+  rowsErrored:  number;
+  status:       string;
+  error:        string | null;
+  ms:           number;
+  note?:        string;
+  /** True when there are more pages to sync (cursor is still page:N). */
+  resumable?:   boolean;
 }
 
 interface Props {
@@ -30,9 +32,10 @@ interface Props {
 
 type ActionState =
   | { phase: "idle" }
-  | { phase: "loading"; module: string; action: "dry-run" | "sync" }
-  | { phase: "done";    module: string; action: "dry-run" | "sync"; result: ModuleResult }
-  | { phase: "error";   module: string; action: "dry-run" | "sync"; message: string };
+  | { phase: "loading";       module: string; action: "dry-run" | "sync" }
+  | { phase: "syncing-batch"; module: string; batch: number; rowsImported: number }
+  | { phase: "done";          module: string; action: "dry-run" | "sync"; result: ModuleResult }
+  | { phase: "error";         module: string; action: "dry-run" | "sync"; message: string };
 
 // ── Module display labels ─────────────────────────────────────────────────────
 
@@ -60,7 +63,10 @@ export default function ConnectorSyncPanel({ orgSlug, connectorId, modules }: Pr
     { phase: "idle" } | { phase: "loading" } | { phase: "done"; ms: number } | { phase: "error"; message: string }
   >({ phase: "idle" });
 
-  const isLoading = state.phase === "loading" || syncAllState.phase === "loading";
+  const isLoading =
+    state.phase === "loading" ||
+    state.phase === "syncing-batch" ||
+    syncAllState.phase === "loading";
 
   async function triggerDryRun(module: string) {
     console.log("dry-run click", module);
@@ -84,16 +90,62 @@ export default function ConnectorSyncPanel({ orgSlug, connectorId, modules }: Pr
 
   async function triggerSync(module: string) {
     setState({ phase: "loading", module, action: "sync" });
+
+    let batch         = 0;
+    let totalImported = 0;
+    let totalRead     = 0;
+    let totalSkipped  = 0;
+    let totalErrored  = 0;
+    let lastStatus    = "SUCCESS";
+    let lastError: string | null = null;
+    const t0 = Date.now();
+
     try {
-      const res  = await fetch(`/api/orgs/${orgSlug}/connectors/${connectorId}/sync`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ module }),
+      // Loop while the server signals there are more pages (resumable batch import).
+      // For all other modules / adapters resumable is always false so the loop
+      // runs exactly once — identical behaviour to the previous implementation.
+      while (true) {
+        batch++;
+
+        // After the first batch switch to the batch-progress indicator
+        if (batch > 1) {
+          setState({ phase: "syncing-batch", module, batch, rowsImported: totalImported });
+        }
+
+        const res  = await fetch(`/api/orgs/${orgSlug}/connectors/${connectorId}/sync`, {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({ module }),
+        });
+        const data: ModuleResult & { resumable?: boolean } = await res.json();
+        if (!res.ok) throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`);
+
+        // Accumulate counters across all batches
+        totalImported += data.rowsImported ?? 0;
+        totalRead     += data.rowsRead     ?? 0;
+        totalSkipped  += data.rowsSkipped  ?? 0;
+        totalErrored  += data.rowsErrored  ?? 0;
+        lastStatus     = data.status       ?? lastStatus;
+        if (data.error) lastError = data.error;
+
+        if (!data.resumable) break;
+      }
+
+      setState({
+        phase: "done",
+        module,
+        action: "sync",
+        result: {
+          rowsRead:     totalRead,
+          rowsImported: totalImported,
+          rowsSkipped:  totalSkipped,
+          rowsErrored:  totalErrored,
+          status:       lastStatus,
+          error:        lastError,
+          ms:           Date.now() - t0,
+        },
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
-      setState({ phase: "done", module, action: "sync", result: data });
-      router.refresh(); // reload server-rendered run history
+      router.refresh();
     } catch (e) {
       setState({ phase: "error", module, action: "sync", message: (e as Error).message });
     }
@@ -141,9 +193,11 @@ export default function ConnectorSyncPanel({ orgSlug, connectorId, modules }: Pr
               (state as { action: string }).action === "dry-run";
 
             const isSyncLoading =
-              active &&
-              state.phase === "loading" &&
-              (state as { action: string }).action === "sync";
+              (active &&
+                state.phase === "loading" &&
+                (state as { action: string }).action === "sync") ||
+              (state.phase === "syncing-batch" &&
+                (state as { module: string }).module === module);
 
             return (
               <tr key={module} style={{ borderBottom: "1px solid #f3f4f6" }}>
@@ -185,7 +239,11 @@ export default function ConnectorSyncPanel({ orgSlug, connectorId, modules }: Pr
                       color: isSyncLoading ? "#93c5fd" : "#ffffff",
                     }}
                   >
-                    {isSyncLoading ? "Sincronizando…" : `Sincronizar ${moduleLabel(module)}`}
+                    {isSyncLoading
+                    ? (state.phase === "syncing-batch" && (state as { module: string }).module === module)
+                      ? `Lote ${(state as { batch: number }).batch}…`
+                      : "Conectando…"
+                    : `Sincronizar ${moduleLabel(module)}`}
                   </button>
                 </td>
               </tr>
@@ -206,6 +264,25 @@ export default function ConnectorSyncPanel({ orgSlug, connectorId, modules }: Pr
           <span style={{ marginRight: 8 }}>⏳</span>
           {state.action === "dry-run" ? "Verificando" : "Sincronizando"} <b>{moduleLabel(state.module)}</b>
           {" "}— conectando con la fuente de datos…
+        </div>
+      )}
+
+      {/* Batch-import progress — visible while looping through resumable pages */}
+      {state.phase === "syncing-batch" && (
+        <div style={{
+          marginTop: 16, padding: "12px 16px", borderRadius: 6,
+          background: "#f0f9ff", border: "1px solid #bae6fd", fontSize: 13,
+          color: "#0369a1",
+        }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>
+            ⏳ Importando <b>{moduleLabel(state.module)}</b> — lote {state.batch}
+          </div>
+          <div style={{ color: "#0c4a6e" }}>
+            {state.rowsImported.toLocaleString("es-CO")} registros guardados hasta ahora…
+            <span style={{ marginLeft: 12, fontSize: 11, color: "#0369a1" }}>
+              (cada lote ≈ 10 000 registros · puede tomar 60–70 s)
+            </span>
+          </div>
         </div>
       )}
 

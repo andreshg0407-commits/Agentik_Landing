@@ -766,20 +766,88 @@ const ACCOUNTS: Record<string, QueryEntry> = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// COMMERCIAL PRODUCTS — Precios PV3/PV4 + historial de entradas
+// ─────────────────────────────────────────────────────────────────────────────
+
+const COMMERCIAL_PRODUCTS: Record<string, QueryEntry> = {
+
+  prices: {
+    key:     "commercialProducts.prices",
+    purpose: "Fetch PV3 (detal) and PV4 (mayorista) prices from v_articulos for imported products.",
+    method:  "consultaSagJson",
+    query:   "SELECT k_sc_codigo_articulo, n_valor_venta_promocion, nd_valor_venta4 FROM v_articulos",
+    expectedFields: ["k_sc_codigo_articulo", "n_valor_venta_promocion", "nd_valor_venta4"],
+    notes: [
+      "n_valor_venta_promocion = PV3 = precio detal. Confirmed via Hoja3 cross-reference.",
+      "nd_valor_venta4 = PV4 = precio mayorista/maleta. Confirmed via Hoja3 cross-reference.",
+      "Example: C6-24-129 → PV3=23900, PV4=14500 (matches Excel INFORME).",
+      "v_articulos is a view — field names are stable across SAG versions.",
+    ].join(" | "),
+    validationChecklist: [
+      "Confirm v_articulos view exists (already used in production sync)",
+      "Confirm n_valor_venta_promocion returns numeric PV3 values",
+      "Confirm nd_valor_venta4 returns numeric PV4 values",
+    ],
+    status: "pending",
+  },
+
+  entryReceipts: {
+    key:     "commercialProducts.entryReceipts",
+    purpose: "Fetch purchase/entry receipts (C1/C2 documents) with product codes for import history.",
+    method:  "consultaSagJson",
+    query: [
+      "SELECT",
+      "  m.n_numero_documento, m.d_fecha_documento, m.ka_ni_fuente,",
+      "  m.ka_nl_tercero, m.sc_beneficiario,",
+      "  mi.n_cantidad, v.k_sc_codigo_articulo,",
+      "  MAX(t.n_nit) AS nit_tercero",
+      "FROM MOVIMIENTOS m",
+      "LEFT JOIN MOVIMIENTOS_ITEMS mi ON mi.ka_nl_movimiento = m.ka_nl_movimiento",
+      "LEFT JOIN v_articulos v ON v.ka_nl_articulo = mi.ka_nl_articulo",
+      "LEFT JOIN TERCEROS t ON t.ka_nl_tercero = m.ka_nl_tercero",
+      "WHERE m.ka_ni_fuente IN (1, 95) AND m.sc_anulado = 'N'",
+      "GROUP BY m.n_numero_documento, m.d_fecha_documento, m.ka_ni_fuente,",
+      "  m.ka_nl_tercero, m.sc_beneficiario, mi.n_cantidad, v.k_sc_codigo_articulo",
+      "ORDER BY m.d_fecha_documento DESC",
+    ].join(" "),
+    expectedFields: [
+      "n_numero_documento", "d_fecha_documento", "ka_ni_fuente",
+      "sc_beneficiario", "n_cantidad", "k_sc_codigo_articulo", "nit_tercero",
+    ],
+    notes: [
+      "ka_ni_fuente=1 → C1 (FACTURA DE COMPRA). ka_ni_fuente=95 → C2 (FACTURA DE COMPRAS 2).",
+      "v_articulos JOIN provides k_sc_codigo_articulo (product code).",
+      "TERCEROS JOIN provides provider NIT/name.",
+      "n_cantidad = quantity per line item.",
+      "Used by SagDirectImportacionesDataSource for real import dates and batch count.",
+    ].join(" | "),
+    validationChecklist: [
+      "Confirm ka_ni_fuente IN (1,95) returns purchase documents",
+      "Confirm v_articulos.ka_nl_articulo joins correctly with MOVIMIENTOS_ITEMS",
+      "Confirm n_cantidad field name in MOVIMIENTOS_ITEMS",
+      "Test query returns rows with IMPORT-line product codes",
+    ],
+    status: "pending",
+  },
+
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Unified catalog export
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const QUERY_CATALOG = {
-  customers:     CUSTOMERS,
-  receivables:   RECEIVABLES,
-  collections:   COLLECTIONS,
-  articles:      ARTICLES,
-  inventory:     INVENTORY,
-  prices:        PRICES,
-  orders:        ORDERS,
-  production:    PRODUCTION,
-  accounts:      ACCOUNTS,
-  masterLookups: MASTER_LOOKUPS,
+  customers:      CUSTOMERS,
+  receivables:    RECEIVABLES,
+  collections:    COLLECTIONS,
+  articles:       ARTICLES,
+  inventory:      INVENTORY,
+  prices:         PRICES,
+  orders:         ORDERS,
+  production:     PRODUCTION,
+  accounts:       ACCOUNTS,
+  commercialProducts: COMMERCIAL_PRODUCTS,
+  masterLookups:  MASTER_LOOKUPS,
 } as const;
 
 /** Flat list of all query entries for iteration / report generation */

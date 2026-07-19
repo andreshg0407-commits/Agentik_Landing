@@ -25,8 +25,9 @@
  *   getWhoToCallToday(orgId, limit?, window?)     → top-N work queue (copilot-ready)
  */
 
-import { prisma }                       from "@/lib/prisma";
-import type { FiscalWindow }            from "@/lib/finance/fiscal-window";
+import { Prisma }                        from "@prisma/client";
+import { prisma }                        from "@/lib/prisma";
+import type { FiscalWindow }             from "@/lib/finance/fiscal-window";
 import { isCarryOver as checkCarryOver } from "@/lib/finance/fiscal-window";
 import { suggestAction }                from "./suggest-action";
 import type {
@@ -78,16 +79,59 @@ function riskTier(maxDpd: number, overdueRatio: number): RiskTier {
 
 // ── Main query ────────────────────────────────────────────────────────────────
 
+// ── SQL date filter for CustomerReceivable ────────────────────────────────────
+
+function buildRxDateSql(window: FiscalWindow): Prisma.Sql {
+  if (window.mode === "full_history") return Prisma.sql``;
+
+  if (window.mode === "current_and_prior") {
+    // window.from is already Jan 1 of prior year — simple >= suffices
+    return Prisma.sql`AND rx."invoiceDate" >= ${window.from}`;
+  }
+
+  // For all other modes: window + one-year carry-over for overdue docs
+  const priorYearFrom = new Date(window.from);
+  priorYearFrom.setFullYear(priorYearFrom.getFullYear() - 1);
+  return Prisma.sql`
+    AND (
+      rx."invoiceDate" >= ${window.from}
+      OR (
+        rx."invoiceDate" >= ${priorYearFrom}
+        AND rx."invoiceDate" <  ${window.from}
+        AND rx."daysOverdue" > 0
+      )
+    )
+  `;
+}
+
+// ── Queue row shape returned by the raw SQL ───────────────────────────────────
+
+type RawQueueRow = {
+  slug:           string;
+  name:           string;
+  nit:            string | null;
+  city:           string | null;
+  sellerName:     string | null;
+  overdue:        number;
+  total:          number;
+  maxDpd:         number;
+  riskScore:      string | null;
+  lastPurchaseAt: Date   | null;
+};
+
 /**
  * Returns the collections work queue for an org, sorted by risk.
- * Only customers with overdueReceivable > 0 are included.
  *
- * Carry-over rule: ALL overdue customers are returned regardless of fiscal
- * window — the window only annotates rows with isCarryOver for UI display.
+ * When a fiscal window (other than full_history) is provided, the overdue
+ * and total balances are computed from CustomerReceivable directly so that
+ * old debts outside the window do not contaminate current-year KPIs.
+ *
+ * For full_history (or no window): reads the denormalized CustomerProfile
+ * fields for speed — returns all customers with any outstanding balance.
  *
  * @param organizationId  Org to query.
  * @param limit           Max rows (default 50).
- * @param window          Optional fiscal window for carry-over annotation.
+ * @param window          Optional fiscal window — controls which invoices count.
  */
 export async function getCollectionsQueue(
   organizationId: string,
@@ -96,6 +140,60 @@ export async function getCollectionsQueue(
 ): Promise<CollectionsQueueRow[]> {
   const db = prisma as any;
 
+  // ── Windowed path: query CustomerReceivable with date filter ───────────────
+  if (window && window.mode !== "full_history") {
+    const dateSql = buildRxDateSql(window);
+
+    const rows = await prisma.$queryRaw<RawQueueRow[]>(Prisma.sql`
+      SELECT
+        cp.slug,
+        cp.name,
+        cp.nit,
+        cp.city,
+        cp."sellerName"                                                           AS "sellerName",
+        SUM(CASE WHEN rx."daysOverdue" > 0 THEN rx."balanceDue" ELSE 0 END)::float8
+                                                                                 AS overdue,
+        SUM(rx."balanceDue")::float8                                             AS total,
+        COALESCE(MAX(rx."daysOverdue"), 0)                                       AS "maxDpd",
+        cp."riskScore"::text                                                     AS "riskScore",
+        cp."lastPurchaseAt"
+      FROM  "CustomerProfile"  cp
+      JOIN  "CustomerReceivable" rx
+        ON  rx."organizationId" = cp."organizationId"
+        AND rx."customerId"     = cp.id
+        AND rx.status IN ('OPEN', 'PARTIAL', 'OVERDUE')
+        ${dateSql}
+      WHERE cp."organizationId" = ${organizationId}
+      GROUP BY cp.id, cp.slug, cp.name, cp.nit, cp.city, cp."sellerName", cp."riskScore", cp."lastPurchaseAt"
+      HAVING SUM(CASE WHEN rx."daysOverdue" > 0 THEN rx."balanceDue" ELSE 0 END) > 0
+      ORDER BY overdue DESC, "maxDpd" DESC
+      LIMIT ${limit}
+    `);
+
+    return rows.map((r) => {
+      const ov  = toNum(r.overdue);
+      const tot = toNum(r.total);
+      const dpd = toNum(r.maxDpd);
+      const ovRatio = tot > 0 ? (ov / tot) * 100 : 0;
+      return {
+        slug:              r.slug,
+        name:              r.name,
+        nit:               r.nit ?? null,
+        city:              r.city ?? null,
+        sellerName:        r.sellerName ?? null,
+        overdueReceivable: ov,
+        totalReceivable:   tot,
+        maxDpd:            dpd,
+        riskScore:         r.riskScore != null ? Number(r.riskScore) : null,
+        riskTier:          riskTier(dpd, ovRatio),
+        overdueRatio:      ovRatio,
+        suggestedAction:   suggestAction(dpd, ovRatio),
+        isCarryOver:       checkCarryOver(r.lastPurchaseAt, window),
+      };
+    });
+  }
+
+  // ── Full-history path: fast denormalized read from CustomerProfile ──────────
   const rows = await db.customerProfile.findMany({
     where: {
       organizationId,

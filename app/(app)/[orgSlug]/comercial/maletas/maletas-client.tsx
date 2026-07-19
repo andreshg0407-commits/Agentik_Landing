@@ -2366,7 +2366,7 @@ function AccessoryScarcityPanel({ ref_ }: { ref_: VendorSampleRef }) {
         </div>
         <div>
           <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint, textTransform: "uppercase" as const, letterSpacing: "0.05em" }}>Disponible B36+B37</div>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: 700, color: accentColor }}>{ref_.centralImportAvailable ?? 0}</div>
+          <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: 700, color: accentColor }}>{ref_.availableB24 ?? 0}</div>
         </div>
         <div>
           <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint, textTransform: "uppercase" as const, letterSpacing: "0.05em" }}>Minimo operativo</div>

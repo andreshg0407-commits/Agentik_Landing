@@ -27,6 +27,7 @@
 import { NextResponse }     from "next/server";
 import { requireOrgAccess } from "@/lib/auth/org-access";
 import { executeOperation } from "@/lib/sag/write/executor";
+import { dispatchOrderPostSync } from "@/lib/comercial/pedidos/order-lifecycle-hooks";
 
 export const runtime = "nodejs";
 
@@ -48,6 +49,14 @@ export async function POST(
 
     // APPROVED → SENDING → SUCCEEDED | FAILED (real SAG SOAP call)
     const result = await executeOperation(params.operationId, organization.id);
+
+    // Post-sync callback: update order if this operation originated from one
+    await dispatchOrderPostSync(
+      organization.id,
+      params.operationId,
+      result.ok ? "SUCCEEDED" : "FAILED",
+      result.sagResponse,
+    );
 
     return NextResponse.json(
       {

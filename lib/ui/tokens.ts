@@ -62,6 +62,7 @@ export const C = {
   // Semantic — info / brand blue
   blue:        "#0369a1",
   blueDark:    "#004AAD",   // Agentik primary brand blue
+  titleDeep:   "#0D2454",   // enterprise navy — module titles
   blueLight:   "#eff6ff",
   blueBorder:  "#bfdbfe",
 

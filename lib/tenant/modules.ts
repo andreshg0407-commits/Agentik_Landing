@@ -19,14 +19,34 @@ import { prisma } from "@/lib/prisma";
 // ── Module key registry ────────────────────────────────────────────────────────
 
 /**
- * Maps the first URL path segment after /<orgSlug>/ to its owning ModuleKey.
+ * Maps URL path prefixes after /<orgSlug>/ to their owning ModuleKey.
  *
  * Rules:
- *   - Exact match on the segment only (sub-paths inherit the parent module).
- *   - Ordered: first match wins (though no two entries share a segment today).
- *   - Segments not listed here resolve to null → no guard applied (open).
+ *   - Multi-segment prefixes are supported (e.g. "agentik/marketing-studio").
+ *   - Longer (more specific) entries take precedence over shorter ones.
+ *     resolveModuleForPath() sorts by length descending before matching.
+ *   - Exact match OR startsWith(prefix + "/") — no partial-segment matches.
+ *   - Paths not listed here resolve to null → no guard applied (open).
+ *
+ * IMPORTANT: when adding a multi-segment entry, always also add the shorter
+ * parent prefix if it needs its own module gate (e.g. both
+ * "agentik/marketing-studio" AND "agentik" should be listed).
  */
 export const ROUTE_MODULE_MAP: ReadonlyArray<[string, ModuleKey]> = [
+  // ── Multi-segment entries (more specific — must come before their parents) ──
+  // Marketing Studio is a separate module from the internal Agentik console.
+  // ORG_ADMIN / MANAGER can access marketing-studio but NOT the full agentik console.
+  ["agentik/marketing-studio",     "marketing_studio"],
+  // Torre de Control drilldown workspaces — same gate as the parent /executive page.
+  ["finanzas/torre-control",        "torre_control"],
+  // Finanzas submodules — gated by the "finance" module key.
+  ["finanzas/tesoreria",            "finance"],
+  ["finanzas/documentos",           "finance"],
+  ["finanzas/cierre",               "finance"],
+  ["finanzas/planeacion",           "finance"],
+  ["finanzas/facturas",             "finance"],
+
+  // ── Single-segment entries ──────────────────────────────────────────────────
   ["dashboard",     "dashboard"],
   ["executive",     "torre_control"],
   ["agentik",       "agentik"],
@@ -49,8 +69,6 @@ export const ROUTE_MODULE_MAP: ReadonlyArray<[string, ModuleKey]> = [
   ["sag",           "integrations"],
   ["settings",      "settings"],
   ["whatsapp",      "whatsapp"],
-  ["comercial",     "sales"],
-  ["produccion",    "production"],
 ] as const;
 
 /**
@@ -68,18 +86,24 @@ export function resolveModuleForPath(
   if (!pathname) return null;
 
   // Strip leading slash, then strip orgSlug prefix.
-  // e.g. "/castillitos/finance/overview" → "finance/overview"
+  // e.g. "/castillitos/agentik/marketing-studio/foto-estudio/new"
+  //   →  "agentik/marketing-studio/foto-estudio/new"
   const withoutLeadingSlash = pathname.startsWith("/") ? pathname.slice(1) : pathname;
   const prefix = orgSlug + "/";
   const afterOrg = withoutLeadingSlash.startsWith(prefix)
     ? withoutLeadingSlash.slice(prefix.length)
     : withoutLeadingSlash;
 
-  // Take only the first segment.
-  const segment = afterOrg.split("/")[0];
-  if (!segment) return null;
+  if (!afterOrg) return null;
 
-  const entry = ROUTE_MODULE_MAP.find(([path]) => path === segment);
+  // Sort by path length descending so longer (more specific) entries match first.
+  // This ensures "agentik/marketing-studio" wins over "agentik" for marketing-studio paths.
+  const sorted = ([...ROUTE_MODULE_MAP] as Array<[string, ModuleKey]>)
+    .sort((a, b) => b[0].length - a[0].length);
+
+  const entry = sorted.find(([path]) =>
+    afterOrg === path || afterOrg.startsWith(path + "/"),
+  );
   return entry ? entry[1] : null;
 }
 
@@ -91,24 +115,42 @@ export function resolveModuleForPath(
  * Keep in sync with the nav definition in app/(app)/[orgSlug]/layout.tsx.
  */
 export const MODULE_KEYS = [
-  "dashboard",       // Centro de Operaciones
-  "torre_control",   // Torre de Control / executive
-  "agentik",         // Agentik agents
-  "finance",         // Finanzas / FP&A
-  "sales",           // Control Comercial + all sub-pages
-  "collections",     // Cola de Cobranza + campañas + rendimiento
-  "workforce",       // Workforce · RRHH
-  "runs",            // Ejecuciones
-  "events",          // Eventos
-  "alerts",          // Alertas
-  "documents",       // Documentos
-  "knowledge",       // Conocimiento
-  "agents",          // Agentes
-  "integrations",    // Integraciones + SAG write sub-pages
-  "settings",        // Configuración
-  "whatsapp",        // WhatsApp Business AI module (opt-in only)
-  "marketing",       // Marketing Studio
-  "production",      // Producción
+  // ── Client operational modules ─────────────────────────────────────────────
+  "dashboard",         // Centro de Operaciones
+  "torre_control",     // Torre de Control / executive
+  "finance",           // Finanzas / FP&A
+  "sales",             // Control Comercial + all sub-pages
+  "collections",       // Cola de Cobranza + campañas + rendimiento
+  "workforce",         // Workforce · RRHH
+  "alerts",            // Alertas
+  "documents",         // Documentos
+  "knowledge",         // Conocimiento
+  // ── Operaciones opt-in sub-modules ──────────────────────────────────────────
+  "inventory",         // Inventario (opt-in)
+  "production",        // Producción (opt-in)
+  "purchases",         // Compras (opt-in)
+  "dispatch",          // Despacho (opt-in)
+  // ── Marketing Studio ────────────────────────────────────────────────────────
+  "marketing_studio",  // Marketing Studio — accessible to ORG_ADMIN / MANAGER
+  // ── IA Empresarial (client-facing AI layer, opt-in per tenant) ────────────
+  "copilot",           // IA Copilot — estrategia, chat, consultas (opt-in)
+  "strategic_memory",  // Memoria Estratégica (opt-in)
+  "prompts",           // Biblioteca de Prompts (opt-in)
+  "playbooks",         // Playbooks IA (opt-in)
+  "ai_lab",            // Lab IA — experimentos y prototipos (opt-in)
+  // ── Internal Agentik console ────────────────────────────────────────────────
+  "agentik",           // Agentik internal console (SUPER_ADMIN / AGENTIK_ADMIN only)
+  "runs",              // Ejecuciones
+  "events",            // Eventos
+  "agents",            // Agentes
+  "integrations",      // Integraciones + SAG write sub-pages
+  "settings",          // Configuración
+  // ── Platform admin (SUPER_ADMIN only) ────────────────────────────────────
+  "tenants_admin",     // Gestión de Tenants (SUPER_ADMIN)
+  "plans_admin",       // Planes y Facturación (SUPER_ADMIN)
+  "feature_flags_admin", // Feature Flags (SUPER_ADMIN)
+  // ── Opt-in channel modules ─────────────────────────────────────────────────
+  "whatsapp",          // WhatsApp Business AI module (opt-in only)
 ] as const;
 
 export type ModuleKey = (typeof MODULE_KEYS)[number];
@@ -121,7 +163,18 @@ export type ModuleKey = (typeof MODULE_KEYS)[number];
  * (WhatsApp, etc.) require deliberate activation per tenant so they don't
  * silently appear for existing orgs that predate the feature.
  */
-const OPT_IN_MODULES = new Set<ModuleKey>(["whatsapp"]);
+const OPT_IN_MODULES = new Set<ModuleKey>([
+  // Channel modules
+  "whatsapp",
+  // Operaciones sub-modules
+  "inventory", "production", "purchases", "dispatch",
+  // Workforce — GOCEN integration incomplete; must be explicitly activated per tenant
+  "workforce",
+  // IA Empresarial client layer
+  "copilot", "strategic_memory", "prompts", "playbooks", "ai_lab",
+  // Platform admin
+  "tenants_admin", "plans_admin", "feature_flags_admin",
+]);
 
 // ── Helper ────────────────────────────────────────────────────────────────────
 

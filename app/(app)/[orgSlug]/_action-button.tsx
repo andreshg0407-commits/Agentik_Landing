@@ -21,6 +21,7 @@
  */
 
 import { useState, useEffect, type FormEvent } from "react";
+import { T }               from "@/lib/ui/tokens";
 import { saCreateAction }  from "@/lib/actions/server-actions";
 import {
   ActionTaskType,
@@ -86,23 +87,28 @@ const PRIORITY_LABELS: Record<ActionTaskPriority, string> = {
 
 const VARIANT_STYLES: Record<NonNullable<ActionButtonProps["variant"]>, React.CSSProperties> = {
   primary: {
-    background: "#111", color: "#fff",
-    border: "1px solid #111",
+    background: "var(--ag-grad-hero, linear-gradient(135deg, #004AAD, #1E63D8))",
+    color:  "#ffffff",
+    border: "none",
   },
   outline: {
-    background: "#fff", color: "#374151",
-    border: "1px solid #d1d5db",
+    background: "var(--ag-brand-50, #EEF5FF)",
+    color:  "#004AAD",
+    border: "1px solid rgba(0,74,173,.18)",
   },
   ghost: {
-    background: "transparent", color: "#6b7280",
+    background: "transparent",
+    color:  "#6b7280",
     border: "1px solid transparent",
   },
   danger: {
-    background: "#fef2f2", color: "#dc2626",
+    background: "#fef2f2",
+    color:  "#dc2626",
     border: "1px solid #fca5a5",
   },
   purple: {
-    background: "#faf5ff", color: "#7c3aed",
+    background: "#faf5ff",
+    color:  "#7c3aed",
     border: "1px solid #c4b5fd",
   },
 };
@@ -195,7 +201,7 @@ export default function ActionButton({
     ...VARIANT_STYLES[variant],
     ...SIZE_STYLES[size],
     fontWeight: 700,
-    fontFamily: "monospace",
+    fontFamily: T.mono,
     cursor: "pointer",
     display: "inline-flex",
     alignItems: "center",
@@ -239,7 +245,7 @@ export default function ActionButton({
             background: "#fff",
             borderRadius: 10,
             boxShadow: "0 20px 60px rgba(0,0,0,0.25)",
-            fontFamily: "monospace",
+            fontFamily: T.mono,
           }}>
             {/* Modal header */}
             <div style={{
@@ -414,11 +420,11 @@ export default function ActionButton({
                     disabled={busy || !title.trim()}
                     style={{
                       flex: 1,
-                      background: busy ? "#c4b5fd" : "#7c3aed",
+                      background: busy ? "rgba(0,74,173,.35)" : "var(--ag-grad-hero, linear-gradient(135deg, #004AAD, #1E63D8))",
                       color: "#fff", border: "none", borderRadius: 6,
                       padding: "10px", fontSize: 12, fontWeight: 700,
                       cursor: busy ? "not-allowed" : "pointer",
-                      fontFamily: "monospace", letterSpacing: "0.03em",
+                      fontFamily: T.mono, letterSpacing: "0.03em",
                     }}
                   >
                     {busy ? "Creando…" : "Crear acción →"}
@@ -431,7 +437,7 @@ export default function ActionButton({
                       background: "#fff", color: "#6b7280",
                       border: "1px solid #e5e7eb", borderRadius: 6,
                       padding: "10px 16px", fontSize: 11, fontWeight: 600,
-                      cursor: "pointer", fontFamily: "monospace",
+                      cursor: "pointer", fontFamily: T.mono,
                     }}
                   >
                     Cancelar
@@ -458,7 +464,7 @@ const INPUT: React.CSSProperties = {
   borderRadius: 5,
   padding: "8px 10px",
   fontSize: 11,
-  fontFamily: "monospace",
+  fontFamily: T.mono,
   outline: "none",
   background: "#fff",
 };

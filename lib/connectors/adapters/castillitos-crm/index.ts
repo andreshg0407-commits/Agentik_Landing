@@ -56,6 +56,7 @@ import type {
   UnifiedOpportunity,
   UnifiedQuote,
 } from "@/lib/connectors/core/types";
+import type { CrmQuoteLineRaw } from "@/lib/integrations/crm-castillitos/crm-quote-line-types";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -195,6 +196,80 @@ export class CastillitosCrmAdapter extends BaseAdapter {
       hasMore:    false,
       totalCount: null,
     };
+  }
+
+  // ── pullQuoteLines ──────────────────────────────────────────────────────────
+
+  /**
+   * Fetch all AOS_Products_Quotes lines for a single AOS_Quotes record.
+   *
+   * Endpoint:
+   *   GET /Api/V8/module/AOS_Products_Quotes
+   *     ?filter[operator]=and
+   *     &filter[parent_id][eq]={quoteId}
+   *     &page[size]=500
+   *     &page[number]=N
+   *
+   * @param quoteId — the CRM UUID of the parent AOS_Quotes record
+   */
+  async pullQuoteLines(quoteId: string): Promise<CrmQuoteLineRaw[]> {
+    const path = "/Api/V8/module/AOS_Products_Quotes";
+    const baseParams: Record<string, string> = {
+      "page[size]":         "500",
+      "filter[operator]":   "and",
+      "filter[parent_id][eq]": quoteId,
+    };
+
+    const lines:    CrmQuoteLineRaw[] = [];
+    let page        = 1;
+    let totalPages  = 1;
+
+    do {
+      const params = { ...baseParams, "page[number]": String(page) };
+      const v8Page = await this.client.getV8Page(path, params);
+
+      for (const record of v8Page.data) {
+        lines.push({
+          id:         record.id,
+          type:       record.type,
+          attributes: record.attributes as CrmQuoteLineRaw["attributes"],
+        });
+      }
+
+      totalPages = v8Page.totalPages;
+      page++;
+    } while (page <= totalPages);
+
+    return lines;
+  }
+
+  /**
+   * Fetch quote lines for multiple AOS_Quotes records.
+   *
+   * V1: sequential — one request per quoteId.
+   * Returns a Map<quoteId, CrmQuoteLineRaw[]> for O(1) lookup by callers.
+   *
+   * Performance note: For large catalogs, consider batching with
+   * filter[parent_id][in] if the CRM API supports it. The V8 JSON:API spec
+   * does not guarantee `in` support, so sequential is safest for V1.
+   */
+  async pullQuoteLinesBatch(quoteIds: string[]): Promise<Map<string, CrmQuoteLineRaw[]>> {
+    const result = new Map<string, CrmQuoteLineRaw[]>();
+
+    for (const quoteId of quoteIds) {
+      try {
+        const lines = await this.pullQuoteLines(quoteId);
+        result.set(quoteId, lines);
+      } catch (e) {
+        console.warn(
+          `[CastillitosCrmAdapter] pullQuoteLinesBatch: failed to load lines for quoteId=${quoteId}:`,
+          (e as Error).message,
+        );
+        result.set(quoteId, []);
+      }
+    }
+
+    return result;
   }
 
   // ── testConnection ──────────────────────────────────────────────────────────

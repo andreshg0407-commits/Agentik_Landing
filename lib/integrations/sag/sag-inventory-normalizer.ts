@@ -26,27 +26,9 @@ import {
   inferProductType,
 } from "@/lib/comercial/maletas/sag-inventory-adapter";
 
-// ─── Line inference ───────────────────────────────────────────────────────────
+// ─── Line inference (consolidated in line-map.ts — Phase 7) ──────────────────
 
-function inferLine(rawLine: string | undefined, description: string): "LT" | "CS" | "OTRO" {
-  // COMERCIAL-INVENTARIO-DATA-SAFETY-LOCK-01 Phase 3:
-  // Never default unrecognized SAG line codes to "CS".
-  // Only return a known line when the evidence is clear.
-  if (rawLine) {
-    const u = rawLine.trim().toUpperCase();
-    if (u === "LT" || u === "CS") return u as "LT" | "CS";
-    // SAG line codes: "1"→LT, "2"→CS are common numeric mappings
-    if (u === "1" || u.startsWith("L") || u === "LENCERIA") return "LT";
-    if (u === "2" || u === "CONFECCION") return "CS";
-    // Any other SAG line code (e.g., "5" = Import) → OTRO
-    return "OTRO";
-  }
-  // Fallback: infer from description keywords (only when rawLine is absent)
-  const d = description.toUpperCase();
-  if (d.includes("LENCERIA") || d.includes("TELERIA")) return "LT";
-  // No evidence → OTRO (was incorrectly defaulting to "CS")
-  return "OTRO";
-}
+import { resolveLineCode } from "@/lib/comercial/line-map";
 
 // ─── Normalizer result ────────────────────────────────────────────────────────
 
@@ -119,7 +101,7 @@ export function normalizeSagInventoryRows(
       rowIndex:         i,
       refCode:          rawRef.toUpperCase(),
       description:      desc,
-      line:             inferLine(row.line, desc),
+      line:             resolveLineCode(row.line, desc),
       disponible,
       warehouseQty,
       pendingOrdersQty,

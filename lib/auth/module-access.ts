@@ -73,40 +73,53 @@ const ROLE_MODULES: Record<Role, readonly ModuleKey[]> = {
 
   SUPER_ADMIN: [
     // Full override — sees everything
-    "dashboard", "torre_control", "agentik", "finance",
-    "sales", "collections", "workforce", "runs", "events",
-    "alerts", "documents", "knowledge", "agents", "integrations",
-    "settings", "whatsapp", "marketing", "production",
+    "dashboard", "torre_control", "finance",
+    "sales", "collections", "workforce",
+    "alerts", "documents", "knowledge",
+    "inventory", "production", "purchases", "dispatch",
+    "marketing_studio",
+    "copilot", "strategic_memory", "prompts", "playbooks", "ai_lab",
+    "agentik", "runs", "events", "agents", "integrations", "settings",
+    "tenants_admin", "plans_admin", "feature_flags_admin",
+    "whatsapp",
   ],
 
   AGENTIK_ADMIN: [
-    // Internal console only — ZERO client business data
-    "agentik", "agents", "runs", "events", "integrations", "settings",
+    // Internal console + Marketing Studio setup (ZERO client business data)
+    "agentik", "marketing_studio", "agents", "runs", "events", "integrations", "settings",
+    "prompts", "playbooks",
   ],
 
   // ── Client-facing roles ─────────────────────────────────────────────────────
 
   ORG_ADMIN: [
-    // Org-level admin — full client view, NO internal console
+    // Org-level admin — full client view + Marketing Studio + IA layer, NO internal console
     "dashboard", "torre_control", "finance",
     "sales", "collections", "workforce",
-    "alerts", "documents", "knowledge", "whatsapp",
-    "marketing", "production",
+    "alerts", "documents", "knowledge",
+    "inventory", "production", "purchases", "dispatch",
+    "marketing_studio",
+    "copilot", "strategic_memory", "prompts", "playbooks",
+    "whatsapp",
   ],
 
   MANAGER: [
-    // Director — operational + executive view, NO internal console
+    // Director — operational + executive + Marketing Studio + IA layer, NO internal console
     "dashboard", "torre_control", "finance",
     "sales", "collections", "workforce",
-    "alerts", "documents", "knowledge", "whatsapp",
-    "marketing", "production",
+    "alerts", "documents", "knowledge",
+    "inventory", "purchases", "dispatch",
+    "marketing_studio",
+    "copilot", "prompts", "playbooks",
+    "whatsapp",
   ],
 
   OPERATOR: [
     // Day-to-day ops — collections + commercial, NO executive/finance
     "dashboard", "sales", "collections", "workforce",
-    "alerts", "documents", "knowledge", "whatsapp",
-    "marketing", "production",
+    "alerts", "documents", "knowledge",
+    "inventory", "dispatch",
+    "whatsapp",
   ],
 
   BILLING: [
@@ -203,6 +216,26 @@ export function canApproveAlerts(role: Role): boolean {
  */
 export function canViewExecutive(role: Role): boolean {
   return role === "SUPER_ADMIN"
+    || role === "ORG_ADMIN"
+    || role === "MANAGER";
+}
+
+/**
+ * True for roles that can access Marketing Studio production surfaces:
+ * Foto Estudio, Biblioteca Creativa, Redes, Intake, Shopify, Plantillas, Hub.
+ *
+ * Includes client-facing org roles so Castillitos operators can use it.
+ * DOES NOT cover platform-admin pages (tenants/, presets/) — those stay internal.
+ *
+ * Gates:
+ *   SUPER_ADMIN   — full override
+ *   AGENTIK_ADMIN — Agentik staff (platform setup)
+ *   ORG_ADMIN     — org administrator (primary Castillitos operator)
+ *   MANAGER       — department director (can create campaigns)
+ */
+export function canAccessMarketingStudio(role: Role): boolean {
+  return role === "SUPER_ADMIN"
+    || role === "AGENTIK_ADMIN"
     || role === "ORG_ADMIN"
     || role === "MANAGER";
 }

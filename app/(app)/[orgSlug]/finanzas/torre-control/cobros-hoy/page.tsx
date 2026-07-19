@@ -14,6 +14,7 @@
 
 import { requireTenant }                 from "@/lib/tenant";
 import { getTodayCollectionDetail }      from "@/lib/finance/cobros-detail";
+import { getGraphHealthSummary }         from "@/lib/finance/graph";
 import { prisma }                        from "@/lib/prisma";
 import { C, T, S, R, E }                from "@/lib/ui/tokens";
 import { OperationalWorkspaceHeader }    from "@/components/workspace/operational-workspace-header";
@@ -39,6 +40,22 @@ export default async function CobrosHoyPage({
   const initialFuente = getInitialFilter(sp);
   const returnTo      = getReturnTo(sp);
   const returnLabel   = getReturnLabel(returnTo);
+
+  const graphHealth = await getGraphHealthSummary(ctx.orgId).catch(() => null);
+  const graphConfidenceLabel = !graphHealth
+    ? "Sin datos"
+    : graphHealth.criticalIssues > 0
+      ? "Baja"
+      : graphHealth.warningIssues > 0
+        ? "Media"
+        : "Alta";
+  const graphConfidenceAccent = !graphHealth
+    ? C.inkFaint
+    : graphHealth.criticalIssues > 0
+      ? C.red
+      : graphHealth.warningIssues > 0
+        ? C.amber
+        : C.green;
 
   // Determine the latest operational day with CollectionRecord data
   const latestRow = await (prisma as any).collectionRecord.findFirst({
@@ -91,10 +108,11 @@ export default async function CobrosHoyPage({
       />
 
       <SummaryMetricRow metrics={[
-        { label: "Total cobrado",  value: total > 0 ? fmtCOP(total) : "—" },
-        { label: "Recibos",        value: records.length },
-        { label: "Conciliación",   value: "Pendiente", accent: C.amber },
-        { label: "Día operativo",  value: opDayLabel, note: "Último día SAG con datos" },
+        { label: "Total cobrado",          value: total > 0 ? fmtCOP(total) : "—" },
+        { label: "Recibos",                value: records.length },
+        { label: "Conciliación",           value: "Pendiente", accent: C.amber },
+        { label: "Día operativo",          value: opDayLabel, note: "Último día SAG con datos" },
+        { label: "Confianza financiera",   value: graphConfidenceLabel, accent: graphConfidenceAccent },
       ]} />
 
       <WorkspaceActions actions={[

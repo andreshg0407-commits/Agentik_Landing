@@ -59,8 +59,8 @@ export interface SagInventoryNormalizedRow {
   /** UPPERCASE trimmed reference code */
   refCode:          string;
   description:      string;
-  /** "LT" | "CS" | "OTRO" — resolved from SAG line code; "OTRO" when unresolvable */
-  line:             "LT" | "CS" | "OTRO";
+  /** Resolved from SAG line code; "OTRO" when unresolvable */
+  line:             string;
   /** Operational disponible — non-negative */
   disponible:       number;
   /** Total warehouse qty = disponible + pendingOrdersQty */

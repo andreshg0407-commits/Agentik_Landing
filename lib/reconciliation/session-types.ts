@@ -167,7 +167,10 @@ export type ReconAuditEventType =
   /** Operator reopened a previously resolved or ignored exception. */
   | "exception_reopened"
   /** Operator added an audit note to an exception. */
-  | "exception_note_added";
+  | "exception_note_added"
+  // AGENTIK-RECON-RULES-WIRING-01 — rule engine events
+  /** Rule engine completed a run against a record pair set. */
+  | "rule_engine_completed";
 
 export interface ReconciliationAuditEvent {
   id:             string;

@@ -51,7 +51,7 @@ export async function loadAvailabilityRecords(
   }
 
   // Load all rows from the latest batch
-  const rows = await prisma.commercialCoverageSnapshot.findMany({
+  const allRows = await prisma.commercialCoverageSnapshot.findMany({
     where: {
       organizationId,
       snapshotAt: latest.snapshotAt,
@@ -66,17 +66,44 @@ export async function loadAvailabilityRecords(
     },
   });
 
+  // COMERCIAL-INVENTARIO-IMPORT-PIPELINE-CANONICALIZATION-01:
+  // Defensive guard — exclude productLine="5" refs that may exist in
+  // historical snapshots. These belong to the accessory pipeline (PIL 26/27).
+  // Uses refCode cross-reference against ProductEntity.
+  const accessorySkus = new Set<string>();
+  try {
+    const accProducts = await (prisma as any).productEntity.findMany({
+      where: { organizationId, productLine: "5" },
+      select: { sku: true },
+    });
+    for (const p of accProducts) {
+      if (p.sku) accessorySkus.add(p.sku);
+    }
+  } catch {
+    // Graceful — if ProductEntity is unavailable, no exclusion
+  }
+
+  const rows = accessorySkus.size > 0
+    ? allRows.filter(r => !accessorySkus.has(r.refCode))
+    : allRows;
+
   const records: SagAvailabilityRecord[] = rows.map(row => {
     const pendingOrders = row.pendingOrdersQty ?? 0;
     // warehouseQty = disponible + pendingOrders (reconstruct from stored data)
     const inventarioBodega = row.disponible + pendingOrders;
 
+    // COMERCIAL-INVENTARIO-DATA-SAFETY-LOCK-01 Phase 4:
+    // Track whether subGrupo comes from real SAG data or text inference.
+    const rawSubgrupoSag = (row as any).subgrupoSag as string | null;
+    const subGrupoInferred = !rawSubgrupoSag;
+
     return {
       reference: row.refCode,
       description: row.description,
       subLinea: mapLineToSubLinea(row.line),
-      subGrupo: (row as any).subgrupoSag ?? inferProductType(row.description),
-      bodega: "01+04",  // MULTI-BODEGA: textile commercial availability
+      subGrupo: rawSubgrupoSag ?? inferProductType(row.description),
+      subGrupoInferred,
+      bodega: "01+04+14+15",  // SAG-DATAFLOW-FIX-01: expanded commercial bodegas
       inventarioBodega,
       pedidosPendientes: pendingOrders,
     };

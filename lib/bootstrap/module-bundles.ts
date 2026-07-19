@@ -109,6 +109,8 @@ export const MODULE_BUNDLES: Record<ModuleBundleKey, ModuleKey[]> = {
   operations: [
     "dashboard",
     "workforce",
+    "production",
+    "inventory",
     "runs",
     "integrations",
     "documents",
