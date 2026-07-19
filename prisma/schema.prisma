@@ -332,6 +332,7 @@ model Organization {
   whatsAppContactMemories WhatsAppContactMemory[]
   studioSessions          StudioSession[]
   customerOrderRecords    CustomerOrderRecord[]
+  customerOrderLines      CustomerOrderLine[]
   collectionRecords       CollectionRecord[]
   collectionAllocations   CollectionAllocation[]
   orgGroupMemberships     OrgGroupMember[]
@@ -347,6 +348,7 @@ model Organization {
   integrationConnections    IntegrationConnection[]
   integrationSecrets        IntegrationSecret[]
   integrationEvents         IntegrationEvent[]
+  integrationResources      IntegrationResource[]
   integrationWebhookEvents  IntegrationWebhookEvent[]
   commerceJobs              CommerceJob[]
   destinationHealthSnapshots DestinationHealthSnapshot[]
@@ -416,7 +418,69 @@ model Organization {
   catalogDefinitions                 CatalogDefinition[]
   catalogPublicLinks                 CatalogPublicLink[]
 
+  // ── Production Orders (SAG OP Sync) ─────────────────────────────────────
+  productionOrders                   ProductionOrder[]
+  productionOrderLines               ProductionOrderLine[]
+
+  // ── Inventory Transfers (SAG TR/TM Sync) ───────────────────────────────
+  inventoryTransfers                 InventoryTransfer[]
+  inventoryTransferLines             InventoryTransferLine[]
+
+  // ── Production Events (Universal, ERP-agnostic) ───────────────────────
+  productionEvents                   ProductionEvent[]
+  productionEventLines               ProductionEventLine[]
+
+  // ── Maleta Replenishment Plans ──────────────────────────────────────────
+  maletaReplenishmentPlans           MaletaReplenishmentPlan[]
+  maletaReplenishmentItems           MaletaReplenishmentItem[]
+  maletaReplenishmentEvents          MaletaReplenishmentEvent[]
+  vendorBagIdealRouteRules           VendorBagIdealRouteRule[]
+  assortmentIdealOverrides           AssortmentIdealOverride[]
+
+  // ── Tenant Branding ─────────────────────────────────────────────────────
+  branding                           OrganizationBranding?
+
   @@index([status])
+}
+
+/// Corporate identity per tenant — transversal source of truth for
+/// Comercial, Marketing, PDFs, catalogs, and communications.
+model OrganizationBranding {
+  id              String   @id @default(cuid())
+  organizationId  String   @unique
+  organization    Organization @relation(fields: [organizationId], references: [id])
+
+  // Identity
+  commercialName  String?
+  legalName       String?
+  taxId           String?
+
+  // Contact
+  address         String?
+  city            String?
+  country         String?
+  phone           String?
+  email           String?
+  website         String?
+
+  // Visual
+  primaryColor    String?
+  secondaryColor  String?
+  accentColor     String?
+  logoUrl         String?
+  logoDarkUrl     String?
+  logoMonoUrl     String?
+
+  // Document
+  documentFooter  String?
+
+  // Social
+  socialInstagram String?
+  socialFacebook  String?
+  socialWhatsapp  String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }
 
 model User {
@@ -3204,12 +3268,48 @@ model CustomerOrderRecord {
   syncedAt       DateTime            @default(now()) @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lines        CustomerOrderLine[]
 
   @@unique([organizationId, erpMovId])
   @@index([organizationId, orderDate])
   @@index([organizationId, customerNit])
   @@index([organizationId, status])
   @@index([organizationId, orderDate, status])
+}
+
+// ── CustomerOrderLine — SAG PD order lines (MOVIMIENTOS_ITEMS) ───────────────
+//
+// Product-level lines for each CustomerOrderRecord.
+// Source: SAG MOVIMIENTOS_ITEMS where header.k_n_clase_fuente=4 (PD).
+// Fields mirror the MOVIMIENTOS_ITEMS columns for PD documents.
+//
+// Populated by: lib/connectors/adapters/sag-pya-soap/orders/sag-order-lines-sync.ts
+// Consumed by:  scripts/_resync-coverage-snapshot.ts (pendingOrdersQty per reference)
+
+model CustomerOrderLine {
+  id             String   @id @default(cuid())
+  organizationId String
+
+  orderId        String   // FK → CustomerOrderRecord
+  erpItemId      Int      // ka_nl_movimiento_item — stable SAG PK for the line
+  erpMovId       Int      // ka_nl_movimiento — parent document FK
+  articleId      Int      // ka_nl_articulo — SAG product FK
+  referenceCode  String   // k_sc_codigo_articulo from v_articulos JOIN
+  articleName    String   // sc_detalle_articulo from v_articulos JOIN
+  quantity       Decimal  @db.Decimal(18, 2) // n_cantidad — ordered quantity
+  size           String?  // ss_talla
+  color          String?  // ss_color
+  warehouseId    Int?     // ka_nl_bodega — source warehouse for this line
+  unitValue      Decimal  @db.Decimal(18, 2) @default(0) // n_valor — line value
+  syncedAt       DateTime @default(now()) @updatedAt
+
+  order        CustomerOrderRecord @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, erpItemId])
+  @@index([organizationId, referenceCode])
+  @@index([organizationId, orderId])
+  @@index([orderId])
 }
 
 // Adapter:     lib/connectors/adapters/gocen/   (not yet implemented)
@@ -3788,6 +3888,43 @@ model ProductEntity {
   partialDestinations     Json?     // String[] — channel names that are partial
   blockedDestinations     Json?     // String[] — channel names that are blocked
   lastReadinessComputedAt DateTime?
+
+  /// ── SAG classification enrichment ──
+  /// ka_ni_grupo FK from SAG ARTICULOS
+  grupoId        Int?
+  /// Resolved name from SAG GRUPOS.sc_detalle_grupo (e.g. "CS NIÑO KIDS")
+  grupoSag       String?
+  /// ka_ni_subgrupo FK from SAG ARTICULOS
+  subgrupoId     Int?
+  /// Resolved name from SAG SUBGRUPOS.sc_detalle_subgrupo (e.g. "PIJAMA CL 2-8")
+  subgrupoSag    String?
+  /// ka_nl_linea FK from SAG ARTICULOS
+  lineaId        Int?
+  /// Resolved name from SAG LINEAS.ss_linea (e.g. "CASTILLITOS")
+  lineaSag       String?
+
+  /// ── SAG operational fields ──
+  /// nd_costo_std from SAG ARTICULOS
+  costo          Float?
+  /// sc_maneja_tallas from SAG ARTICULOS (S/N → true/false)
+  manejaTallaColor Boolean @default(false)
+  /// dd_fecha_ult_modificacion from SAG ARTICULOS
+  lastModifiedSag  DateTime?
+  /// dd_fch_primer_vez from SAG ARTICULOS (first creation date)
+  createdAtSag     DateTime?
+  /// d_ultima_compra from SAG ARTICULOS
+  lastPurchaseSag  DateTime?
+  /// d_ultima_venta from SAG ARTICULOS
+  lastSaleSag      DateTime?
+  /// ss_codigo_barras from SAG ARTICULOS
+  barcode          String?
+  /// ss_detalle_artic2 from SAG ARTICULOS (secondary description)
+  description2     String?
+
+  /// ── SAG handling unit (IMPORT-SIZECLASS-FROM-SAG-01) ──
+  /// "Unidad de manejo" from SAG ARTICULOS — canonical: PEQUENO | MEDIANO | GRANDE
+  /// Used for Import/Accessory size classification in Maletas derrotero.
+  handlingUnit   String?
 
   /// ── External import identity (SAG / ERP / Shopify) ──
   /// Enables idempotent upsert: find product by its source system + source ID.
@@ -4445,12 +4582,54 @@ model IntegrationConnection {
   secrets      IntegrationSecret[]
   events       IntegrationEvent[]
   commerceJobs CommerceJob[]
+  resources    IntegrationResource[]
 
   @@index([organizationId])
   @@index([organizationId, provider])
   @@index([organizationId, provider, externalAccountId])
   @@index([organizationId, status])
   @@index([provider, status])
+}
+
+/// Discovered resources per integration connection.
+/// MARKETING-CONNECTIONS-HARDENING-01
+/// Covers: pages, IG accounts, ad accounts, pixels, catalogs, TikTok advertisers, etc.
+/// Safe — no secrets. externalId/externalName only.
+model IntegrationResource {
+  id             String   @id @default(cuid())
+  organizationId String
+  connectionId   String?
+
+  /// Provider key (meta_facebook | meta_instagram | meta_ads | tiktok | ...)
+  provider       String
+
+  /// Resource type: page | instagram_account | ad_account | pixel | catalog |
+  ///   business_manager | tiktok_advertiser | tiktok_business_center
+  resourceType   String
+
+  /// Provider-assigned external ID (safe — no secrets)
+  externalId     String
+
+  /// Human-readable name from the provider
+  externalName   String
+
+  /// Whether this tenant has selected this resource for use
+  selected       Boolean  @default(false)
+
+  /// Safe metadata (currency, timezone, category, etc.) — no secrets
+  metadataJson   Json?
+
+  discoveredAt   DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection   IntegrationConnection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, provider, externalId])
+  @@index([organizationId])
+  @@index([organizationId, provider])
+  @@index([organizationId, resourceType])
+  @@index([connectionId])
 }
 
 /// Encrypted secret per connection × secret type.
@@ -5249,6 +5428,14 @@ model CommercialCoverageSnapshot {
   /// SAG PD demand fields (AGENTIK-SAG-PD-DEMAND-LAYER-01)
   pendingOrdersQty   Int?   // SAG PD pending orders for this ref at snapshot time
   demandPressureScore Int?  // 0–100 combined demand pressure score
+
+  /// CRM reservation fields (INVENTORY-CRM-RESERVATION-LAYER-01)
+  physicalQty        Int?   // B01+B04 gross stock before deductions
+  crmReservedQty     Int?   // CRM DRAFT quotes with warehouseName='PRODUCTO EN PROCESO'
+
+  /// SAG subgroup enrichment (CATALOG-SAG-SUBGROUP-ENRICHMENT-01)
+  subgrupoId         Int?   // ka_ni_subgrupo FK from SAG
+  subgrupoSag        String? // Resolved sc_detalle_subgrupo (e.g. "PIJAMA CL 2-8")
 
   snapshotAt       DateTime
   createdAt        DateTime @default(now())
@@ -8920,4 +9107,674 @@ model CopilotApprovalRequest {
   @@index([resolvedAt])
   @@index([tenantId, approvalStatus])
   @@index([tenantId, executionId])
+}
+
+/// Ads platform account selection preferences per tenant.
+/// Stores ONLY external resource IDs — NO secrets, NO tokens.
+/// Secrets live exclusively in the Vault (VaultSecret model).
+/// These are operational preferences: which account/page to use when Agentik
+/// prepares or executes an ad campaign.
+/// MARKETING-ADS-ACCOUNTS-01
+model TenantAdsConfig {
+  id             String   @id @default(cuid())
+  /// Organization (tenant) that owns this config.
+  organizationId String
+
+  /// Platform: meta | tiktok | google
+  platform       String
+
+  /// Selected ad account (safe ID — no secrets)
+  selectedAdAccountId    String?
+  selectedAdAccountName  String?
+
+  /// Selected Business Manager
+  selectedBusinessId     String?
+  selectedBusinessName   String?
+
+  /// Selected Facebook Page
+  selectedPageId         String?
+  selectedPageName       String?
+
+  /// Selected Instagram Account linked to the page
+  selectedInstagramAccountId   String?
+  selectedInstagramAccountName String?
+
+  /// Selected TikTok Advertiser
+  selectedAdvertiserId   String?
+  selectedAdvertiserName String?
+
+  /// ISO timestamp of last resource discovery run for this platform
+  lastDiscoveredAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, platform])
+  @@index([organizationId])
+}
+
+/// Historical metric snapshots for paid ads per tenant, platform, and execution.
+///
+/// MARKETING-ANALYTICS-HISTORY-01
+///
+/// Design rules:
+///   - Multi-tenant: all queries filter by tenantId.
+///   - No secrets: never store tokens or raw payloads.
+///   - Normalized metrics only: spend, impressions, clicks, ctr, cpc, cpm, conversions.
+///   - Upsert key: tenantId + executionId + range + date.
+///   - Powers Luca trend analysis and period comparison.
+model AdsMetricSnapshot {
+  id String @id @default(cuid())
+
+  /// Tenant boundary.
+  tenantId String
+
+  /// AgentExecution that originated this metric.
+  executionId String
+
+  /// Integration provider: meta | tiktok
+  provider String
+
+  /// Normalized platform name: meta | tiktok
+  platform String
+
+  /// External campaign ID from the platform (safe — not a secret).
+  externalCampaignId String?
+
+  /// External adset / adgroup ID from the platform.
+  externalAdsetId String?
+
+  /// External ad ID from the platform.
+  externalAdId String?
+
+  /// Analytics range: today | week | month
+  range String
+
+  /// Date this snapshot was captured (YYYY-MM-DD string for cross-DB portability).
+  date String
+
+  /// Currency ISO 4217
+  currency String @default("USD")
+
+  /// Total spend in the currency of the account.
+  spend Float @default(0)
+
+  /// Total impressions.
+  impressions Int @default(0)
+
+  /// Estimated reach (if reported by platform).
+  reach Int @default(0)
+
+  /// Total clicks.
+  clicks Int @default(0)
+
+  /// Click-through rate (clicks / impressions). Stored as decimal 0.0–1.0.
+  ctr Float @default(0)
+
+  /// Cost per click.
+  cpc Float @default(0)
+
+  /// Cost per mille (1000 impressions).
+  cpm Float @default(0)
+
+  /// Conversions / results as reported by the platform.
+  conversions Float @default(0)
+
+  /// Generic "results" field from the platform (may map to conversions or other goal metric).
+  results Float @default(0)
+
+  /// Cost per result (spend / results).
+  costPerResult Float @default(0)
+
+  /// Normalized external status at time of snapshot: active | paused | in_review | rejected | completed | failed | archived | unknown
+  externalStatus String @default("unknown")
+
+  /// Raw provider status string at time of snapshot.
+  providerStatus String?
+
+  /// Additional safe metadata (no tokens, no raw payloads).
+  metadataJson Json?
+
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, executionId, range, date])
+  @@index([tenantId, date])
+  @@index([tenantId, executionId, date])
+  @@index([tenantId, provider, date])
+  @@index([tenantId, externalCampaignId, date])
+  @@index([tenantId, createdAt(sort: Desc)])
+}
+
+/// Cross-module execution registry for all Agentik-initiated actions.
+/// Every module that performs actions on external systems (Ads, DIAN, WhatsApp,
+/// Shopify, Reconciliation, Copilot, etc.) registers an AgentExecution here.
+///
+/// AGENTIK-EXECUTION-REGISTRY-01
+///
+/// Design rules:
+///   - Multi-tenant: all queries filter by tenantId.
+///   - No secrets: never store tokens, passwords, or encrypted values.
+///   - Compact: summaries only — no full payloads.
+///   - Reference-safe: externalReferenceIds stores platform IDs (e.g. meta_ad_id).
+model AgentExecution {
+  id       String @id @default(cuid())
+
+  /// Tenant boundary — all queries must filter by tenantId.
+  tenantId String
+
+  /// Module that owns this execution.
+  /// ads | finance | shopify | whatsapp | dian | reconciliation | copilot | other
+  module   String
+
+  /// External system / integration provider (e.g. meta, tiktok, shopify, dian).
+  /// Null for internal-only operations.
+  provider String?
+
+  /// Human-readable description of what was intended (e.g. "Crear anuncio en Meta").
+  intent   String?
+
+  /// Machine-readable operation key (e.g. CREATE_AD, PUBLISH_POST, EMIT_INVOICE).
+  operation String
+
+  /// Normalized execution status.
+  /// pending | validating | awaiting_approval | approved | executing | completed | failed | cancelled
+  status    String @default("pending")
+
+  /// Actor that created the execution (userId, agentId, or "system").
+  createdBy  String
+
+  /// Actor that approved the execution (if approval was required).
+  approvedBy String?
+  /// When the execution was approved. Set atomically with approvedBy.
+  approvedAt DateTime?
+
+  /// Safe external system references (platform IDs only — no secrets).
+  /// Example: { "meta_ad_id": "act_123", "tiktok_post_id": "7001..." }
+  externalReferenceIds Json?
+
+  /// Short human-readable outcome summary (max ~500 chars).
+  /// Example: "Anuncio creado en Meta Ads — cuenta act_123, campaña ID 456."
+  summary String?
+
+  /// Arbitrary safe metadata for this execution (no secrets).
+  metadataJson Json?
+
+  /// Machine-readable error code (e.g. INVALID_CREDENTIALS, QUOTA_EXCEEDED).
+  errorCode    String?
+
+  /// Human-readable error description (no token values, no stack traces).
+  errorMessage String?
+
+  /// When execution transitioned to "executing".
+  startedAt   DateTime?
+  /// When execution reached "completed" or "failed".
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, module])
+  @@index([tenantId, provider])
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([status])
+  @@index([module, provider])
+  @@index([createdAt])
+}
+
+/// ──────────────────────────────────────────────────────────────────────
+/// PRODUCTION-SYNC-01A — Production Order Snapshot (Read Model)
+/// ──────────────────────────────────────────────────────────────────────
+
+/// SAG Orden de Produccion header — synced from MOVIMIENTOS where ka_ni_fuente = 33.
+/// Read-only snapshot: never written back to SAG.
+/// externalId = "sag:{ka_nl_movimiento}" — globally stable PK from SAG.
+model ProductionOrder {
+  id             String   @id @default(cuid())
+  organizationId String
+
+  /// Stable SAG PK — ka_nl_movimiento (unique within SAG instance)
+  erpMovId       Int
+  /// n_numero_documento — NOT unique globally (each fuente has its own sequence)
+  documentNumber String
+  /// Fuente code from FUENTES table (always "OP" for production orders)
+  sourceCode     String   @default("OP")
+  /// Human-readable fuente name
+  sourceName     String   @default("Orden de Produccion")
+  /// open | closed | unknown
+  status         String   @default("open")
+  /// sc_dcto_cerrado = 'S'
+  isClosed       Boolean  @default(false)
+  /// d_fecha_documento — the business date of the OP
+  documentDate   DateTime
+  /// sc_beneficiario or user who created
+  createdBy      String?
+  /// ss_remision — cross-reference field (pattern: doc#+2 with "-1" suffix)
+  remisionRef    String?
+  /// ka_nl_bodega — warehouse code (13 = Producto en Proceso)
+  warehouseCode  String?
+  /// Resolved warehouse name
+  warehouseName  String?
+  /// Full raw SAG row for traceability
+  rawJson        Json
+
+  syncedAt  DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lines        ProductionOrderLine[]
+
+  @@unique([organizationId, erpMovId])
+  @@index([organizationId, status])
+  @@index([organizationId, documentDate])
+  @@index([organizationId, isClosed])
+}
+
+/// SAG OP line item — synced from MOVIMIENTOS_ITEMS for production fuente 33.
+/// externalId = "sag:{ka_nl_movimiento_item}" — globally stable PK.
+model ProductionOrderLine {
+  id                String @id @default(cuid())
+  organizationId    String
+  productionOrderId String
+
+  /// Stable SAG PK — ka_nl_movimiento_item
+  erpItemId      Int
+  /// k_sc_codigo_articulo from v_articulos — the reference code
+  referenceCode  String
+  /// sc_detalle_articulo — product name from SAG
+  productName    String?
+  /// ss_talla — size
+  size           String?
+  /// ss_color — color code
+  color          String?
+  /// n_cantidad — quantity ordered in this OP line
+  quantityOrdered Float   @default(0)
+  /// n_valor_unitario — unit cost if available
+  unitCost       Float?
+  /// quantityOrdered * unitCost
+  lineTotal      Float?
+  /// Full raw SAG item row for traceability
+  rawJson        Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  productionOrder ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, erpItemId])
+  @@index([productionOrderId])
+  @@index([organizationId, referenceCode])
+  @@index([organizationId, referenceCode, size, color])
+}
+
+/// SAG inventory transfer — synced from MOVIMIENTOS for fuentes 34 (TR) and 206 (TM).
+/// TR = Traslado entre Bodegas (inter-warehouse), TM = Traslado de Maletas (seller portfolio).
+/// Read-only snapshot: never written back to SAG.
+model InventoryTransfer {
+  id             String   @id @default(cuid())
+  organizationId String
+
+  /// Stable SAG PK — ka_nl_movimiento
+  erpMovId       Int
+  /// n_numero_documento — NOT unique globally (each fuente has its own sequence)
+  documentNumber String
+  /// "TR" or "TM"
+  transferType   String
+  /// Fuente code — "TR" for fuente 34, "TM" for fuente 206
+  sourceCode     String
+  /// Human-readable fuente name
+  sourceName     String
+  /// open | closed | unknown
+  status         String   @default("open")
+  /// sc_dcto_cerrado = 'S'
+  isClosed       Boolean  @default(false)
+  /// d_fecha_documento — the business date of the transfer
+  documentDate   DateTime
+  /// sc_beneficiario or user who created
+  createdBy      String?
+  /// ss_remision — cross-reference field
+  remisionRef    String?
+  /// ka_nl_bodega — origin warehouse code
+  originWarehouseCode  String?
+  /// Resolved origin warehouse name
+  originWarehouseName  String?
+  /// ka_nl_bodega_destino_wms — destination warehouse code
+  destinationWarehouseCode String?
+  /// Resolved destination warehouse name
+  destinationWarehouseName String?
+  /// Full raw SAG row for traceability
+  rawJson        Json
+
+  syncedAt  DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lines        InventoryTransferLine[]
+
+  @@unique([organizationId, erpMovId])
+  @@index([organizationId, transferType])
+  @@index([organizationId, status])
+  @@index([organizationId, documentDate])
+  @@index([organizationId, originWarehouseCode])
+  @@index([organizationId, destinationWarehouseCode])
+}
+
+/// SAG transfer line item — synced from MOVIMIENTOS_ITEMS for transfer fuentes 34/206.
+model InventoryTransferLine {
+  id                  String @id @default(cuid())
+  organizationId      String
+  inventoryTransferId String
+
+  /// Stable SAG PK — ka_nl_movimiento_item
+  erpItemId      Int
+  /// k_sc_codigo_articulo from v_articulos
+  referenceCode  String
+  /// sc_detalle_articulo — product name from SAG
+  productName    String?
+  /// ss_talla — size
+  size           String?
+  /// ss_color — color code
+  color          String?
+  /// n_cantidad — quantity transferred
+  quantity       Float   @default(0)
+  /// n_valor_unitario — unit cost if available
+  unitCost       Float?
+  /// quantity * unitCost
+  lineTotal      Float?
+  /// ka_nl_bodega_destino_wms — per-line destination warehouse
+  destinationWarehouseCode String?
+  /// Full raw SAG item row for traceability
+  rawJson        Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization      Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  inventoryTransfer InventoryTransfer  @relation(fields: [inventoryTransferId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, erpItemId])
+  @@index([inventoryTransferId])
+  @@index([organizationId, referenceCode])
+  @@index([organizationId, referenceCode, size, color])
+}
+
+/// ──────────────────────────────────────────────────────────────────────
+/// PRODUCTION-EVENT-MODEL-01 — Universal Production Event Model
+/// ──────────────────────────────────────────────────────────────────────
+
+/// Universal production lifecycle event. Any ERP document (SAG OP/CN/ET,
+/// Siigo production receipt, Odoo MO, etc.) normalizes into this model.
+/// ERP-agnostic: sourceSystem + sourceDocumentType capture the origin;
+/// eventType captures the universal Agentik meaning.
+model ProductionEvent {
+  id             String   @id @default(cuid())
+  organizationId String
+
+  /// Universal event type (PRODUCTION_ORDER_CREATED, MATERIAL_CONSUMED, etc.)
+  eventType      String
+  /// Source ERP system (SAG, SIIGO, ALEGRA, ODOO, SAP, BUSINESS_CENTRAL, CUSTOM)
+  sourceSystem   String
+  /// ERP-native document type code (e.g. "CN", "ET", "OP" for SAG)
+  sourceDocumentType String
+  /// Stable unique ID from the ERP (e.g. SAG ka_nl_movimiento as string)
+  sourceDocumentId   String
+  /// Human-readable document number (NOT unique across fuentes)
+  sourceDocumentNumber String
+  /// ERP-specific raw code for the document type (e.g. SAG fuente number "80")
+  sourceRawCode  String   @default("")
+  /// Human-readable source name (e.g. "Consumos Insumos y Telas")
+  sourceRawName  String   @default("")
+
+  /// Reference to parent production order (OP number or equivalent)
+  productionOrderRef String?
+  /// Primary product reference code — nullable because multi-line documents
+  /// (CN, ET, T2, Y1) span many references. When set, this is the first or
+  /// primary reference from lines. The full detail lives in ProductionEventLine.
+  referenceCode  String?
+  /// Primary description — nullable for multi-line or status-only events.
+  /// Full detail lives in ProductionEventLine.
+  description    String?
+  /// Number of line items — quick hint for consumers without querying lines.
+  lineCount      Int      @default(0)
+  /// Commercial line (LATIN KIDS, CASTILLITOS, etc.)
+  line           String?
+  /// Product sub-group (BOLSO, BILLETERA, etc.)
+  subGroup       String?
+  /// Origin location (bodega code, warehouse, external processor)
+  locationFrom   String?
+  /// Destination location
+  locationTo     String?
+  /// Production stage before this event
+  stageFrom      String?
+  /// Production stage after this event
+  stageTo        String?
+  /// Quantity affected
+  quantity       Float    @default(0)
+  /// Business date of the event (from ERP)
+  eventDate      DateTime
+  /// When Agentik detected/synced this event
+  detectedAt     DateTime @default(now())
+  /// Processing status: active | superseded | cancelled | historical
+  status         String   @default("active")
+  /// Confidence in the event type mapping: confirmed | inferred | provisional | unknown
+  confidence     String   @default("provisional")
+  /// Structured evidence supporting this event
+  evidence       Json     @default("{}")
+  /// Additional metadata (costs, cross-references, raw SAG row, etc.)
+  metadata       Json     @default("{}")
+
+  syncedAt  DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lines        ProductionEventLine[]
+
+  /// Idempotency: one event per org + source system + source doc type + source doc ID
+  @@unique([organizationId, sourceSystem, sourceDocumentType, sourceDocumentId])
+  @@index([organizationId, eventType])
+  @@index([organizationId, sourceSystem])
+  @@index([organizationId, referenceCode])
+  @@index([organizationId, eventDate])
+  @@index([organizationId, productionOrderRef])
+  @@index([organizationId, status])
+}
+
+/// Line item within a production event.
+/// Captures variant-level detail: specific size, color, quantity.
+model ProductionEventLine {
+  id                String @id @default(cuid())
+  organizationId    String
+  productionEventId String
+
+  /// Product reference code
+  referenceCode  String
+  /// Product description
+  description    String?
+  /// Size variant (ss_talla in SAG)
+  size           String?
+  /// Color variant (ss_color in SAG)
+  color          String?
+  /// Quantity for this variant
+  quantity       Float    @default(0)
+  /// Unit of measure
+  unit           String   @default("unidades")
+  /// Stable source line ID from ERP (e.g. SAG ka_nl_movimiento_item as string)
+  sourceLineId   String?
+  /// Link to Agentik ProductVariant (if resolved)
+  variantId      String?
+  /// Link to Agentik ProductEntity (if resolved)
+  productId      String?
+  /// Additional line-level metadata
+  lineMetadata   Json     @default("{}")
+  /// Line-level evidence
+  evidence       Json     @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  productionEvent ProductionEvent @relation(fields: [productionEventId], references: [id], onDelete: Cascade)
+
+  /// Idempotency: when sourceLineId exists, prevent duplicates
+  @@unique([productionEventId, sourceLineId])
+  @@index([organizationId, referenceCode])
+  @@index([organizationId, referenceCode, size, color])
+  @@index([productionEventId])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MALETA REPLENISHMENT PLANS (MALETAS-BULK-REPLENISHMENT-PERSISTENCE-01)
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// Bulk replenishment plan per vendor maleta.
+// Operational unit: "Plan de surtido de maleta" — accumulates multiple changes,
+// generates one warehouse document, tracks full lifecycle.
+
+/// Replenishment plan — one per vendor, accumulates swap items.
+model MaletaReplenishmentPlan {
+  id               String   @id @default(cuid())
+  organizationId   String
+  vendorId         String
+  vendorName       String
+  warehouseCode    String
+  /// draft | pending_warehouse | prepared | shipped | received | cancelled
+  status           String   @default("draft")
+  /// Document number assigned when status moves to pending_warehouse (PS-YYYYMMDD-NNN)
+  documentNumber   String?
+  notes            String   @default("")
+  summaryAddedRefs Int      @default(0)
+  summaryRemovedRefs Int    @default(0)
+  createdBy        String   @default("sistema")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  organization Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  items        MaletaReplenishmentItem[]
+  events       MaletaReplenishmentEvent[]
+
+  @@index([organizationId, vendorId])
+  @@index([organizationId, status])
+  @@index([organizationId, documentNumber])
+  @@index([organizationId, createdAt])
+  @@index([vendorId])
+}
+
+/// Single swap/addition item within a replenishment plan.
+model MaletaReplenishmentItem {
+  id                 String   @id @default(cuid())
+  organizationId     String
+  planId             String
+  subgroupSag        String
+  removedReference   String?
+  removedDescription String?
+  addedReference     String
+  addedDescription   String
+  quantity           Int      @default(1)
+  reason             String   @default("")
+  createdAt          DateTime @default(now())
+
+  organization Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plan         MaletaReplenishmentPlan  @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([planId])
+  @@index([organizationId, subgroupSag])
+  @@index([organizationId, addedReference])
+  @@index([organizationId, removedReference])
+}
+
+/// Traceability event for a replenishment plan lifecycle.
+model MaletaReplenishmentEvent {
+  id             String   @id @default(cuid())
+  organizationId String
+  planId         String
+  /// created | item_added | item_removed | document_generated | prepared | shipped | received | cancelled
+  type           String
+  description    String
+  userId         String   @default("sistema")
+  createdAt      DateTime @default(now())
+
+  organization Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plan         MaletaReplenishmentPlan  @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([planId])
+  @@index([organizationId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VENDOR BAG IDEAL ROUTE RULES
+// Sprint: GO-LIVE-MALETAS-DERROTERO-CONFIG-01
+//
+// Manual configuration of minimum references per subgroup per vendor bag.
+// When a vendor's active refs in a subgroup drop to this minimum, Motor 2
+// (abastecimiento) triggers the replacement cascade.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model VendorBagIdealRouteRule {
+  id             String   @id @default(cuid())
+  organizationId String
+
+  /// Vendor identifier (e.g. "ORLANDO", "CARLOS_LEON") — matches presence engine vendorId
+  vendorId       String
+
+  /// Product line: "LT" | "CS" | "IMPORT"
+  line           String
+
+  /// SAG subgroup name (e.g. "PIJAMA CC 10-16")
+  subgrupoSag    String
+
+  /// Minimum refs before Motor 2 alert triggers
+  minimumRefs    Int
+
+  /// Active rules are used by Motor 2; inactive are kept for history
+  isActive       Boolean  @default(true)
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, vendorId, line, subgrupoSag])
+  @@index([organizationId, vendorId])
+  @@index([organizationId, vendorId, line])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ASSORTMENT IDEAL OVERRIDES
+// Sprint: MALETAS-DERROTERO-IDEALES-EDITABLES-01
+//
+// Per-tenant custom ideal overrides for derrotero entries.
+// idealEffective = customIdeal ?? officialIdeal (from catalog code).
+// Does NOT store currentUnits, faltan, exceso, or cobertura — those recalculate.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model AssortmentIdealOverride {
+  id             String   @id @default(cuid())
+  organizationId String
+
+  /// Catalog identifier (e.g. "cat-cs-textil-v1", "cat-lt-textil-v1")
+  catalogId      String
+
+  /// Group code within catalog (e.g. "CS_NINA_BEBE", "LT_SUBGRUPOS")
+  groupCode      String
+
+  /// Subgroup code within group (e.g. "PIJAMA_CL", "CONJUNTO_2_12")
+  subgroupCode   String
+
+  /// Custom ideal units (overrides officialIdeal from catalog code)
+  idealUnits     Int
+
+  /// Audit trail
+  updatedBy      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, catalogId, groupCode, subgroupCode])
+  @@index([organizationId, catalogId])
 }
