@@ -1,12 +1,13 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
+@import './design-system.css';
 
 @custom-variant dark (&:is(.dark *));
 
 :root {
   /* Agentik brand */
-  --agentik-blue: #304f9d;
-  --agentik-blue-hover: #274184;
+  --agentik-blue: #004AAD;
+  --agentik-blue-hover: #003A8C;
 
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
@@ -151,14 +152,5 @@
     @apply bg-background text-foreground;
   }
 }
-.agentik-text {
-  color: var(--agentik-blue);
-}
-
-.agentik-bg {
-  background-color: var(--agentik-blue);
-}
-
-.agentik-bg-hover:hover {
-  filter: brightness(0.92);
-}
+/* ag-* classes, responsive shell, op-* interaction states, and legacy
+   utilities are all defined in app/design-system.css (imported above). */
