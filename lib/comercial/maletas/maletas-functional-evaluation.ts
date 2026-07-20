@@ -660,66 +660,33 @@ export function evaluateImportRefs(
 // 4. COVERAGE THRESHOLDS & OPPORTUNITIES — derived from derrotero faltantes
 // ══════════════════════════════════════════════════════════════════════════════
 
-// ── MALETA EXIT THRESHOLDS ──────────────────────────────────────────────────
-// Determine when a reference currently in a maleta is at risk of leaving.
-// A ref with disponible <= exit threshold is "agotada o proxima a salir".
-//
-// Contract: MALETA_EXIT_THRESHOLDS
-// Castillitos (CS) = 30 | Latin Kids (LT) = 20 | Importacion/Accesorios = 10
-
-export const MALETA_EXIT_THRESHOLDS: Readonly<Record<string, number>> = {
-  Castillitos: 30,
-  "Latin Kids": 20,
-  IMPORTACION: 10,
-};
-
 // ── COVERAGE ELIGIBILITY THRESHOLDS ─────────────────────────────────────────
-// Determine if a substitute reference has enough stock to sell with confidence.
-// A candidate must have disponible STRICTLY GREATER than the threshold.
+// Per-reference candidate eligibility: a replacement ref must have
+// disponible STRICTLY GREATER than its line exit threshold.
 //
-// Contract: COVERAGE_ELIGIBILITY_THRESHOLDS
-// Castillitos (CS) > 100 | Latin Kids (LT) > 200 | Importacion/Accesorios > 10
+// These match SAMPLE_MINIMUM_RULES (vendor-sample-types.ts):
+//   Castillitos (CS): candidate disponible > 20
+//   Latin Kids  (LT): candidate disponible > 30
+//   Import/Acc:       candidate disponible > 10
+//
+// NOTE: 100/200 are PRODUCTION_THRESHOLD values for subgroup-aggregate
+// decisions. They must NOT be reused as per-ref coverage eligibility.
 
 export const COVERAGE_ELIGIBILITY_THRESHOLDS: Readonly<Record<string, number>> = {
-  Castillitos: 100,
-  "Latin Kids": 200,
+  Castillitos: 20,
+  "Latin Kids": 30,
   IMPORTACION: 10,
 };
 
-// ── Coverage Engine Types ────────────────────────────────────────────────────
+// ── OP Coverage Freshness ────────────────────────────────────────────────────
 
-export type CoverageSource = "BODEGA" | "OP_ACTIVA" | "PRODUCCION_URGENTE";
+export const OP_COVERAGE_MAX_AGE_DAYS = 60;
 
-export interface CoverageOpportunity {
-  // Gap context
-  vendorId: string;
-  catalogName: string;
-  groupName: string;
-  subgroupName: string;
-  sizeClass: string | null;
-  faltante: number;
-
-  // Resolution
-  source: CoverageSource;
-  replacementReference: string;
-  replacementDescription: string;
-  line: string;
-  catalog: string;
-  group: string | null;
-  subgroup: string;
-
-  // Bodega-specific
-  availableNow: number | null;
-
-  // OP-specific
-  incomingUnits: number | null;
-  opNumber: string | null;
-  eta: string | null;
-
-  // Quality
-  confidence: "ALTA" | "MEDIA" | "BAJA";
-  reason: string;
-}
+export type OpExclusionReason =
+  | "OP_STALE"
+  | "OP_NO_OPERATIONAL_DATE"
+  | "OP_BELOW_THRESHOLD"
+  | "OP_CLASSIFICATION_MISMATCH";
 
 /** OP candidate passed to the coverage engine from vendor-sample-loader */
 export interface OpCoverageCandidate {
@@ -731,11 +698,40 @@ export interface OpCoverageCandidate {
   pendingQty: number;
   opNumber: string;
   createdAt: string;
+  lastEventDate: string | null;
+}
+
+function getOpOperationalDate(op: OpCoverageCandidate): Date | null {
+  const raw = op.lastEventDate ?? op.createdAt ?? null;
+  if (!raw) return null;
+  const d = new Date(raw);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+export type OpEligibilityResult =
+  | { eligible: true; operationalDate: Date; ageDays: number }
+  | { eligible: false; reason: OpExclusionReason };
+
+export function checkOpEligibility(
+  op: OpCoverageCandidate,
+  now: Date,
+): OpEligibilityResult {
+  if (op.pendingQty <= 0) {
+    return { eligible: false, reason: "OP_BELOW_THRESHOLD" };
+  }
+  const operationalDate = getOpOperationalDate(op);
+  if (!operationalDate) {
+    return { eligible: false, reason: "OP_NO_OPERATIONAL_DATE" };
+  }
+  const ageDays = (now.getTime() - operationalDate.getTime()) / (1000 * 60 * 60 * 24);
+  if (ageDays > OP_COVERAGE_MAX_AGE_DAYS) {
+    return { eligible: false, reason: "OP_STALE" };
+  }
+  return { eligible: true, operationalDate, ageDays };
 }
 
 // ── Matching helpers ────────────────────────────────────────────────────────
 
-/** Check if a ref matches an entry's SAG values for textil */
 function matchesTextilEntry(
   candidateLine: string,
   candidateSubgrupoSag: string | null,
@@ -747,26 +743,98 @@ function matchesTextilEntry(
   if (candidateLine !== requiredLine) return false;
   if (!candidateSubgrupoSag) return false;
   if (!sagSubgrupos.includes(candidateSubgrupoSag)) return false;
-  // Castillitos: grupo must also match when sagGrupo is defined
   if (sagGrupo && candidateGrupoSag !== sagGrupo) return false;
   return true;
 }
 
+// ── Coverage Output Types ───────────────────────────────────────────────────
+
+export type CoverageSource = "BODEGA" | "OP_ACTIVA";
+
+/** A target bag need that a replacement can serve */
+export interface CoverageTarget {
+  vendorId: string;
+  vendorName?: string;
+  catalogName: string;
+  groupName: string;
+  subgroupName: string;
+  faltante: number;
+}
+
+/** Textile coverage opportunity (BODEGA or OP_ACTIVA — never PRODUCCION_URGENTE) */
+export interface TextileCoverageOpportunity {
+  replacementReference: string;
+  replacementDescription: string;
+  source: CoverageSource;
+  line: string;
+  brand: string;
+  group: string;
+  subgroup: string;
+  availableNow: number | null;
+  incomingUnits: number | null;
+  opNumber: string | null;
+  operationalDate: string | null;
+  ageDays: number | null;
+  confidence: "ALTA" | "MEDIA" | "BAJA";
+  explanation: string;
+  targets: CoverageTarget[];
+}
+
+/** Import coverage opportunity (BODEGA only — no OP, no production) */
+export interface ImportCoverageOpportunity {
+  replacementReference: string;
+  replacementDescription: string;
+  source: "BODEGA";
+  sizeClass: string;
+  availableNow: number;
+  confidence: "ALTA" | "MEDIA" | "BAJA";
+  explanation: string;
+  targets: CoverageTarget[];
+}
+
+/** Textile gap with no coverage — routes to production section */
+export interface UrgentProductionNeed {
+  line: string;
+  brand: string;
+  group: string;
+  subgroup: string;
+  sagGrupo: string | null;
+  sagSubgrupos: string[];
+  totalFaltante: number;
+  affectedVendors: string[];
+  explanation: string;
+}
+
+/** Grouped coverage result — COMERCIAL-MALETAS-COVERAGE-BUSINESS-VIEW-08 */
+export interface BusinessCoverageResult {
+  textileCoverage: TextileCoverageOpportunity[];
+  importCoverage: ImportCoverageOpportunity[];
+  urgentProductionNeeds: UrgentProductionNeed[];
+}
+
+// ── Legacy compat type (kept for backward compatibility during migration) ──
+export type CoverageOpportunity = TextileCoverageOpportunity | ImportCoverageOpportunity;
+
 /**
- * Unified Coverage Engine — COMERCIAL-MALETAS-COVERAGE-ENGINE-05
+ * Business Coverage Engine — COMERCIAL-MALETAS-COVERAGE-BUSINESS-VIEW-08
  *
- * Waterfall per derrotero gap:
- *   1. Bodega Principal → candidate with disponible > threshold
- *   2. OP Activa        → candidate with pendingQty > threshold
- *   3. Produccion Urgente → no candidate found
+ * Produces three separate outputs:
+ *   textileCoverage:        real replacement opportunities (BODEGA or OP_ACTIVA)
+ *   importCoverage:         import replacements (BODEGA only, no OP)
+ *   urgentProductionNeeds:  textile gaps with no coverage (routed to production)
  *
- * Matching:
- *   Textil: line + grupoSag (CS only) + subgrupoSag (via sagSubgrupos)
- *   Import: sizeClass
+ * Textile rules:
+ *   CS: line + grupoSag + subgrupoSag
+ *   LT: line + subgrupoSag
+ *   Waterfall: bodega → OP activa (60d) → urgentProductionNeeds
  *
- * Never consults OP before bodega. Each opportunity has exactly one source.
+ * Import rules:
+ *   sizeClass match only
+ *   Bodega only — no OP, no production suggestions in Maletas
+ *
+ * Grouped by replacementReference+source: one row per replacement, N targets.
  */
-export function findCoverageOpportunities(
+export function findBusinessCoverageOpportunities(
   evaluations: VendorAssortmentResult[],
   allCentralRefs: Array<{
     reference: string;
@@ -779,20 +847,16 @@ export function findCoverageOpportunities(
   }>,
   opCandidates: OpCoverageCandidate[],
   vendorRefSets: Map<string, Set<string>>,
-): CoverageOpportunity[] {
-  const opportunities: CoverageOpportunity[] = [];
-  const isDev = process.env.NODE_ENV === "development";
+): BusinessCoverageResult {
+  const now = new Date();
 
-  // Diagnostics
-  let totalSlots = 0;
-  let resolvedBodega = 0;
-  let resolvedOp = 0;
-  let resolvedProduccion = 0;
-  let filteredBodegaCS = 0;
-  let filteredBodegaLT = 0;
-  let filteredBodegaImport = 0;
-  let filteredOpCS = 0;
-  let filteredOpLT = 0;
+  // Pre-filter OP candidates
+  const freshOpCandidates = opCandidates.filter((op) => checkOpEligibility(op, now).eligible);
+
+  // Accumulators grouped by replacementRef+source
+  const textileMap = new Map<string, TextileCoverageOpportunity>();
+  const importMap = new Map<string, ImportCoverageOpportunity>();
+  const urgentMap = new Map<string, UrgentProductionNeed>();
 
   for (const vendorEval of evaluations) {
     const vendorRefs = vendorRefSets.get(vendorEval.vendorId) ?? new Set<string>();
@@ -800,13 +864,11 @@ export function findCoverageOpportunities(
     for (const catalog of vendorEval.catalogs) {
       const isImport = catalog.commercialWorld === "IMPORTACION";
 
-      // Resolve eligibility threshold
       const threshold = isImport
         ? COVERAGE_ELIGIBILITY_THRESHOLDS.IMPORTACION
         : (catalog.brand ? COVERAGE_ELIGIBILITY_THRESHOLDS[catalog.brand] : undefined);
       if (threshold === undefined) continue;
 
-      // For textil, determine required candidate line
       const requiredLine = isImport ? null : (
         catalog.brand === "Castillitos" ? "CS" :
         catalog.brand === "Latin Kids" ? "LT" : null
@@ -817,141 +879,187 @@ export function findCoverageOpportunities(
           if (entry.complete) continue;
           const needed = entry.targetUnits - entry.currentUnits;
           if (needed <= 0) continue;
-          totalSlots++;
 
-          const baseOpp = {
+          const target: CoverageTarget = {
             vendorId: vendorEval.vendorId,
             catalogName: catalog.catalogName,
             groupName: group.groupName,
             subgroupName: entry.subgroupName,
-            sizeClass: isImport ? entry.subgroupCode : null,
             faltante: needed,
-            catalog: catalog.catalogName,
-            group: group.groupName,
-            subgroup: entry.subgroupName,
           };
 
-          // ── STEP 1: Search Bodega Principal ────────────────────────────
+          if (isImport) {
+            // ── IMPORT: bodega only, no OP ────────────────────────────────
+            const candidates = allCentralRefs.filter((r) => {
+              if (vendorRefs.has(r.reference)) return false;
+              if (r.disponible <= 0) return false;
+              if (r.sizeClass !== entry.subgroupCode) return false;
+              if (!(r.disponible > threshold)) return false;
+              return true;
+            });
+            candidates.sort((a, b) => b.disponible - a.disponible);
+
+            if (candidates.length > 0) {
+              const best = candidates[0];
+              const key = `${best.reference}|BODEGA`;
+              const existing = importMap.get(key);
+              if (existing) {
+                existing.targets.push(target);
+              } else {
+                const ratio = best.disponible / threshold;
+                importMap.set(key, {
+                  replacementReference: best.reference,
+                  replacementDescription: best.description,
+                  source: "BODEGA",
+                  sizeClass: entry.subgroupCode ?? "",
+                  availableNow: best.disponible,
+                  confidence: ratio > 3 ? "ALTA" : ratio > 1.5 ? "MEDIA" : "BAJA",
+                  explanation: `Disponible en bodegas de importacion: ${best.disponible} unidades`,
+                  targets: [target],
+                });
+              }
+            }
+            // Import without coverage → silent (not shown in Maletas, belongs to Importaciones)
+            continue;
+          }
+
+          // ── TEXTILE: bodega → OP → urgentProductionNeeds ──────────────
+          if (!requiredLine) continue;
+
+          // STEP 1: Bodega principal
           const bodegaCandidates = allCentralRefs.filter((r) => {
             if (vendorRefs.has(r.reference)) return false;
             if (r.disponible <= 0) return false;
-
-            if (isImport) {
-              if (r.sizeClass !== entry.subgroupCode) return false;
-            } else {
-              if (!requiredLine) return false;
-              if (!matchesTextilEntry(
-                r.line, r.subgrupoSag, r.grupoSag,
-                requiredLine, group.sagGrupo, entry.sagSubgrupos,
-              )) return false;
-            }
-
-            // Apply coverage eligibility threshold (strictly greater)
-            if (!(r.disponible > threshold)) {
-              if (isImport) filteredBodegaImport++;
-              else if (requiredLine === "CS") filteredBodegaCS++;
-              else if (requiredLine === "LT") filteredBodegaLT++;
-              return false;
-            }
+            if (!matchesTextilEntry(
+              r.line, r.subgrupoSag, r.grupoSag,
+              requiredLine, group.sagGrupo, entry.sagSubgrupos,
+            )) return false;
+            if (!(r.disponible > threshold)) return false;
             return true;
           });
-
           bodegaCandidates.sort((a, b) => b.disponible - a.disponible);
 
           if (bodegaCandidates.length > 0) {
-            // Best bodega candidate
-            let remaining = needed;
-            for (const c of bodegaCandidates.slice(0, 3)) {
-              if (remaining <= 0) break;
-              resolvedBodega++;
-              const ratio = c.disponible / threshold;
-              opportunities.push({
-                ...baseOpp,
-                source: "BODEGA",
-                replacementReference: c.reference,
-                replacementDescription: c.description,
-                line: c.line,
-                availableNow: c.disponible,
-                incomingUnits: null,
-                opNumber: null,
-                eta: null,
-                confidence: ratio > 3 ? "ALTA" : ratio > 1.5 ? "MEDIA" : "BAJA",
-                reason: `Disponible en bodega principal: ${c.disponible} unidades (umbral: >${threshold})`,
-              });
-              remaining--;
-            }
-            continue; // slot resolved — never consult OP
-          }
-
-          // ── STEP 2: Search OP Activa (only if bodega found nothing) ────
-          if (!isImport && requiredLine) {
-            const opMatches = opCandidates.filter((op) => {
-              if (vendorRefs.has(op.reference)) return false;
-              if (!matchesTextilEntry(
-                op.line, op.subgrupoSag, op.grupoSag,
-                requiredLine, group.sagGrupo, entry.sagSubgrupos,
-              )) return false;
-
-              if (!(op.pendingQty > threshold)) {
-                if (requiredLine === "CS") filteredOpCS++;
-                else if (requiredLine === "LT") filteredOpLT++;
-                return false;
-              }
-              return true;
-            });
-
-            opMatches.sort((a, b) => b.pendingQty - a.pendingQty);
-
-            if (opMatches.length > 0) {
-              const best = opMatches[0];
-              resolvedOp++;
-              opportunities.push({
-                ...baseOpp,
-                source: "OP_ACTIVA",
+            const best = bodegaCandidates[0];
+            const key = `${best.reference}|BODEGA`;
+            const existing = textileMap.get(key);
+            if (existing) {
+              existing.targets.push(target);
+            } else {
+              const ratio = best.disponible / threshold;
+              textileMap.set(key, {
                 replacementReference: best.reference,
                 replacementDescription: best.description,
-                line: best.line,
+                source: "BODEGA",
+                line: requiredLine,
+                brand: catalog.brand ?? "",
+                group: group.groupName,
+                subgroup: entry.subgroupName,
+                availableNow: best.disponible,
+                incomingUnits: null,
+                opNumber: null,
+                operationalDate: null,
+                ageDays: null,
+                confidence: ratio > 3 ? "ALTA" : ratio > 1.5 ? "MEDIA" : "BAJA",
+                explanation: `Disponible en bodega principal: ${best.disponible} unidades`,
+                targets: [target],
+              });
+            }
+            continue;
+          }
+
+          // STEP 2: OP Activa (textile only, ≤60d)
+          const opMatches = freshOpCandidates.filter((op) => {
+            if (vendorRefs.has(op.reference)) return false;
+            if (!matchesTextilEntry(
+              op.line, op.subgrupoSag, op.grupoSag,
+              requiredLine, group.sagGrupo, entry.sagSubgrupos,
+            )) return false;
+            if (op.pendingQty <= 0) return false;
+            return true;
+          });
+          opMatches.sort((a, b) => b.pendingQty - a.pendingQty);
+
+          if (opMatches.length > 0) {
+            const best = opMatches[0];
+            const eligibility = checkOpEligibility(best, now);
+            const bestOpDate = best.lastEventDate ?? best.createdAt;
+            const bestAgeDays = eligibility.eligible ? Math.round(eligibility.ageDays) : null;
+            const key = `${best.reference}|OP_ACTIVA|${best.opNumber}`;
+            const existing = textileMap.get(key);
+            if (existing) {
+              existing.targets.push(target);
+            } else {
+              textileMap.set(key, {
+                replacementReference: best.reference,
+                replacementDescription: best.description,
+                source: "OP_ACTIVA",
+                line: requiredLine,
+                brand: catalog.brand ?? "",
+                group: group.groupName,
+                subgroup: entry.subgroupName,
                 availableNow: null,
                 incomingUnits: best.pendingQty,
                 opNumber: best.opNumber,
-                eta: null, // requires production timeline integration
+                operationalDate: bestOpDate,
+                ageDays: bestAgeDays,
                 confidence: "MEDIA",
-                reason: `OP ${best.opNumber}: ${best.pendingQty} unidades pendientes (umbral: >${threshold})`,
+                explanation: `OP #${best.opNumber}: ${best.pendingQty} unidades pendientes`,
+                targets: [target],
               });
-              continue; // slot resolved
             }
+            continue;
           }
 
-          // ── STEP 3: Produccion Urgente ─────────────────────────────────
-          resolvedProduccion++;
-          opportunities.push({
-            ...baseOpp,
-            source: "PRODUCCION_URGENTE",
-            replacementReference: "",
-            replacementDescription: "",
-            line: requiredLine ?? "IMPORT",
-            availableNow: null,
-            incomingUnits: null,
-            opNumber: null,
-            eta: null,
-            confidence: "BAJA",
-            reason: `Sin cobertura en bodega ni OP activa para ${entry.subgroupName}`,
-          });
+          // STEP 3: No coverage → urgentProductionNeeds
+          const urgentKey = `${requiredLine}|${group.sagGrupo ?? ""}|${entry.sagSubgrupos.join(",")}`;
+          const existingUrgent = urgentMap.get(urgentKey);
+          if (existingUrgent) {
+            existingUrgent.totalFaltante += needed;
+            if (!existingUrgent.affectedVendors.includes(vendorEval.vendorId)) {
+              existingUrgent.affectedVendors.push(vendorEval.vendorId);
+            }
+          } else {
+            urgentMap.set(urgentKey, {
+              line: requiredLine,
+              brand: catalog.brand ?? "",
+              group: group.groupName,
+              subgroup: entry.subgroupName,
+              sagGrupo: group.sagGrupo,
+              sagSubgrupos: entry.sagSubgrupos,
+              totalFaltante: needed,
+              affectedVendors: [vendorEval.vendorId],
+              explanation: `No existe cobertura en bodega ni OP vigente`,
+            });
+          }
         }
       }
     }
   }
 
-  if (isDev) {
-    console.log(
-      `[COVERAGE-ENGINE] slots=${totalSlots}`,
-      `| bodega=${resolvedBodega} op=${resolvedOp} produccion=${resolvedProduccion}`,
-      `| filtered bodega: CS(<=100)=${filteredBodegaCS} LT(<=200)=${filteredBodegaLT} Import(<=10)=${filteredBodegaImport}`,
-      `| filtered OP: CS(<=100)=${filteredOpCS} LT(<=200)=${filteredOpLT}`,
-    );
-  }
+  // Sort textile: BODEGA first, then OP; within each, more targets first, then higher qty
+  const textileCoverage = [...textileMap.values()].sort((a, b) => {
+    const sa = a.source === "BODEGA" ? 0 : 1;
+    const sb = b.source === "BODEGA" ? 0 : 1;
+    if (sa !== sb) return sa - sb;
+    if (a.targets.length !== b.targets.length) return b.targets.length - a.targets.length;
+    const qa = a.availableNow ?? a.incomingUnits ?? 0;
+    const qb = b.availableNow ?? b.incomingUnits ?? 0;
+    return qb - qa;
+  });
 
-  return opportunities;
+  // Sort import: more targets first, then higher qty
+  const importCoverage = [...importMap.values()].sort((a, b) => {
+    if (a.targets.length !== b.targets.length) return b.targets.length - a.targets.length;
+    return b.availableNow - a.availableNow;
+  });
+
+  // Sort urgent: higher totalFaltante first
+  const urgentProductionNeeds = [...urgentMap.values()].sort(
+    (a, b) => b.totalFaltante - a.totalFaltante,
+  );
+
+  return { textileCoverage, importCoverage, urgentProductionNeeds };
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

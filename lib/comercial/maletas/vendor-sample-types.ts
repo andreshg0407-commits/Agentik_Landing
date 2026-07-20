@@ -96,6 +96,8 @@ export interface VendorOpReplacementOption {
   producedQty: number;
   pendingQty: number;
   createdAt: string;
+  /** Last ProductionEvent date for this OP, ISO string or null */
+  lastEventDate: string | null;
   source: "op_activa";
 }
 

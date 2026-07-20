@@ -61,7 +61,7 @@ import {
   evaluateVendorAssortment,
   evaluateProductionThresholds,
   evaluateImportRefs,
-  findCoverageOpportunities,
+  findBusinessCoverageOpportunities,
   idealOverrideKey,
   productionStockKey,
 } from "./maletas-functional-evaluation";
@@ -73,9 +73,9 @@ import type {
   VendorAssortmentResult,
   SubgroupProductionEval,
   ImportEvaluationResult,
-  CoverageOpportunity,
   OpCoverageCandidate,
   IdealOverrideMap,
+  BusinessCoverageResult,
 } from "./maletas-functional-evaluation";
 
 // Bodega ka_nl → human-readable name (for sourceWarehouse display)
@@ -104,7 +104,7 @@ export interface VendorSampleLoadResult {
   assortmentEvaluations: VendorAssortmentResult[];
   productionThresholds: SubgroupProductionEval[];
   importEvaluation: ImportEvaluationResult;
-  coverageOpportunities: CoverageOpportunity[];
+  coverageResult: BusinessCoverageResult;
 }
 
 // ── Main loader ──────────────────────────────────────────────────────────────
@@ -151,7 +151,7 @@ export async function loadVendorSampleData(
       assortmentEvaluations: [],
       productionThresholds: [],
       importEvaluation: { evaluations: [], diagnostic: { evaluadas: 0, sinFechaIngreso: 0, sinVentas: 0, sinTamano: 0, sinInventario: 0, watch: 0, doNotRebuy: 0, rebuy: 0, lowRotation: 0 } },
-      coverageOpportunities: [],
+      coverageResult: { textileCoverage: [], importCoverage: [], urgentProductionNeeds: [] },
     };
   }
 
@@ -516,11 +516,12 @@ export async function loadVendorSampleData(
         pendingQty: opt.pendingQty,
         opNumber: opt.opNumber,
         createdAt: opt.createdAt,
+        lastEventDate: opt.lastEventDate,
       });
     }
   }
 
-  const coverageOpportunities = findCoverageOpportunities(
+  const coverageResult = findBusinessCoverageOpportunities(
     assortmentEvaluations,
     allCentralRefs,
     opCovCandidates,
@@ -540,7 +541,7 @@ export async function loadVendorSampleData(
     assortmentEvaluations,
     productionThresholds,
     importEvaluation,
-    coverageOpportunities,
+    coverageResult,
   };
 }
 
@@ -700,6 +701,7 @@ async function loadOpBySubgrupo(
       const pe = peMap.get(line.referenceCode);
       if (!pe) continue; // can't resolve subgrupo — skip
 
+      const lastEvent = lastEventMap.get(line.documentNumber);
       const option: VendorOpReplacementOption = {
         reference: line.referenceCode,
         description: line.productName ?? line.referenceCode,
@@ -711,6 +713,7 @@ async function loadOpBySubgrupo(
         producedQty: 0, // no ET reconciliation yet
         pendingQty: Math.round(line.quantityOrdered),
         createdAt: line.documentDate?.toISOString?.() ?? new Date().toISOString(),
+        lastEventDate: lastEvent?.toISOString?.() ?? null,
         source: "op_activa",
       };
 

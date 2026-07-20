@@ -41,10 +41,10 @@ import type {
   VendorAssortmentResult,
   SubgroupProductionEval,
   ProductionDecision,
-  CoverageOpportunity,
   UnresolvedRef as UnresolvedRefType,
   UnresolvedSummary,
   VendorMalletBaseMetrics,
+  BusinessCoverageResult,
 } from "@/lib/comercial/maletas/maletas-functional-evaluation";
 import { getVendorMalletBaseMetrics } from "@/lib/comercial/maletas/maletas-functional-evaluation";
 
@@ -63,7 +63,7 @@ interface MaletasClientProps {
   // MALLETS-FUNCTIONAL-RECOVERY-01
   assortmentEvaluations: VendorAssortmentResult[];
   productionThresholds: SubgroupProductionEval[];
-  coverageOpportunities: CoverageOpportunity[];
+  coverageResult: BusinessCoverageResult;
 }
 
 // ── Design tokens ────────────────────────────────────────────────────────────
@@ -150,7 +150,7 @@ export function MaletasClient({
   loadedAt,
   assortmentEvaluations,
   productionThresholds,
-  coverageOpportunities,
+  coverageResult,
 }: MaletasClientProps) {
   const [selectedVendor, setSelectedVendor] = useState<VendorSampleSnapshot | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -424,7 +424,7 @@ export function MaletasClient({
           </span>
           {[
             { label: "Produccion", ref: productionSectionRef, key: "produccion", count: prodThresholdProducir.length },
-            { label: "Oportunidades", ref: coverageSectionRef, key: "cobertura", count: coverageOpportunities.length },
+            { label: "Oportunidades", ref: coverageSectionRef, key: "cobertura", count: coverageResult.textileCoverage.length + coverageResult.importCoverage.length },
           ].map(({ label, ref, key, count }) => (
             <button
               key={key}
@@ -693,80 +693,215 @@ export function MaletasClient({
           )}
         </SectionHeader>
 
-        {/* ── Oportunidades de cobertura (MALLETS-FUNCTIONAL-RECOVERY-01 Phase 7) ── */}
+        {/* ── Oportunidades de cobertura (COVERAGE-BUSINESS-VIEW-08) ── */}
         <SectionHeader
           title="Oportunidades de cobertura"
-          subtitle="Faltantes del derrotero con inventario disponible para completar"
-          count={coverageOpportunities.length > 0 ? coverageOpportunities.length : undefined}
+          subtitle="Referencias disponibles para completar faltantes del derrotero"
+          count={(coverageResult.textileCoverage.length + coverageResult.importCoverage.length) || undefined}
           open={sectionOpen.cobertura}
           onToggle={() => toggleSection("cobertura")}
           sectionRef={coverageSectionRef}
-          statusHint={coverageOpportunities.length > 0 ? `${coverageOpportunities.length} oportunidades` : "sin faltantes"}
+          statusHint={
+            (coverageResult.textileCoverage.length + coverageResult.importCoverage.length) > 0
+              ? `${coverageResult.textileCoverage.length + coverageResult.importCoverage.length} oportunidades`
+              : "sin faltantes"
+          }
         >
-          {coverageOpportunities.length > 0 ? (
-            <div style={{
-              background: C.white, borderRadius: R.lg,
-              border: `1px solid ${C.line}`, boxShadow: `0 1px 3px ${C.ink}06`,
-              overflow: "hidden", overflowX: "auto", minWidth: 0,
-            }}>
+          {/* ── Oportunidades Textiles ── */}
+          {coverageResult.textileCoverage.length > 0 && (
+            <div style={{ marginBottom: S[4] }}>
               <div style={{
-                display: "grid",
-                gridTemplateColumns: "minmax(100px,1fr) minmax(70px,0.7fr) 55px 90px minmax(80px,1fr) 70px minmax(100px,1fr)",
-                padding: `10px 16px`, background: C.surfaceAlt,
-                borderBottom: `1px solid ${C.line}`, gap: S[2], alignItems: "center",
+                fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.titleDeep,
+                textTransform: "uppercase" as const, letterSpacing: "0.08em",
+                marginBottom: S[2],
               }}>
-                {["Catalogo / Grupo", "Subgrupo", "Faltan", "Origen", "Ref. sugerida", "Cant.", "Detalle"].map((h) => (
-                  <div key={h} style={{
-                    ...listHeaderCell,
-                    textAlign: h === "Faltan" || h === "Cant." ? "right" as const : undefined,
-                  }}>{h}</div>
+                Textil ({coverageResult.textileCoverage.length})
+              </div>
+              <div style={{
+                background: C.white, borderRadius: R.lg,
+                border: `1px solid ${C.line}`, boxShadow: `0 1px 3px ${C.ink}06`,
+                overflow: "hidden", overflowX: "auto", minWidth: 0,
+              }}>
+                <div style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(80px,0.9fr) minmax(90px,1fr) minmax(60px,0.6fr) minmax(60px,0.6fr) 90px 60px 60px 50px minmax(70px,0.8fr)",
+                  padding: `10px 16px`, background: C.surfaceAlt,
+                  borderBottom: `1px solid ${C.line}`, gap: S[2], alignItems: "center",
+                }}>
+                  {["Referencia", "Descripcion", "Grupo", "Subgrupo", "Origen", "Disponible", "En prod.", "OP", "Sirve para"].map((h) => (
+                    <div key={h} style={{
+                      ...listHeaderCell,
+                      textAlign: (h === "Disponible" || h === "En prod.") ? "right" as const : undefined,
+                    }}>{h}</div>
+                  ))}
+                </div>
+                {coverageResult.textileCoverage.slice(0, showAllGaps ? 100 : 10).map((opp, i) => {
+                  const sourceLabel = opp.source === "BODEGA" ? "Bodega principal" : "OP activa";
+                  const sourceColor = opp.source === "BODEGA" ? C.green : C.blueDark;
+                  const opDate = opp.operationalDate ? new Date(opp.operationalDate).toISOString().slice(0, 10) : null;
+                  const ageLabel = opp.ageDays != null ? `${opp.ageDays}d` : null;
+
+                  return (
+                  <div key={`${opp.replacementReference}-${opp.source}-${opp.opNumber ?? ""}-${i}`}>
+                    <div style={{
+                      display: "grid",
+                      gridTemplateColumns: "minmax(80px,0.9fr) minmax(90px,1fr) minmax(60px,0.6fr) minmax(60px,0.6fr) 90px 60px 60px 50px minmax(70px,0.8fr)",
+                      padding: ROW_PAD,
+                      borderBottom: `1px solid ${C.lineSubtle}`,
+                      gap: S[2], alignItems: "center",
+                    }}>
+                      <div style={{ ...listCell, fontWeight: 700, color: C.titleDeep }}>{opp.replacementReference}</div>
+                      <div style={{ ...listCell, color: C.inkMid, fontSize: 10 }}>{opp.replacementDescription}</div>
+                      <div style={{ ...listCell, color: C.ink }}>{opp.group}</div>
+                      <div style={{ ...listCell, color: C.inkMid }}>{opp.subgroup}</div>
+                      <div style={{ ...listCell }}>
+                        <span style={{
+                          fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: sourceColor,
+                          padding: "2px 6px", borderRadius: R.sm,
+                          background: `${sourceColor}12`,
+                        }}>{sourceLabel}</span>
+                      </div>
+                      <div style={{ ...listCell, fontWeight: 600, color: opp.availableNow != null ? C.green : C.inkFaint, textAlign: "right" as const }}>
+                        {opp.availableNow != null ? opp.availableNow : "\u2014"}
+                      </div>
+                      <div style={{ ...listCell, fontWeight: 600, color: opp.incomingUnits != null ? C.blueDark : C.inkFaint, textAlign: "right" as const }}>
+                        {opp.incomingUnits != null ? opp.incomingUnits : "\u2014"}
+                      </div>
+                      <div style={{ ...listCell, color: opp.opNumber ? C.ink : C.inkFaint }}>
+                        {opp.opNumber ? (
+                          <span>{opp.opNumber}{ageLabel && <span style={{ fontSize: 8, color: C.inkFaint, marginLeft: 2 }}>({ageLabel})</span>}</span>
+                        ) : "\u2014"}
+                      </div>
+                      <div style={{ ...listCell }}>
+                        <button
+                          onClick={() => setExpandedRef(expandedRef === opp.replacementReference ? null : opp.replacementReference)}
+                          style={{
+                            fontFamily: T.mono, fontSize: 9, fontWeight: 600, color: C.blueDark,
+                            background: "none", border: "none", cursor: "pointer", padding: 0,
+                            textDecoration: "underline", textUnderlineOffset: 2,
+                          }}
+                        >
+                          {opp.targets.length} referencia{opp.targets.length !== 1 ? "s" : ""}
+                        </button>
+                      </div>
+                    </div>
+                    {/* Expanded targets */}
+                    {expandedRef === opp.replacementReference && (
+                      <div style={{
+                        padding: `${S[2]} ${S[4]}`, background: `${C.blueDark}06`,
+                        borderBottom: `1px solid ${C.lineSubtle}`,
+                      }}>
+                        <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 600, color: C.inkMid, marginBottom: S[1] }}>
+                          Sirve para reemplazar {opp.targets.length} necesidad{opp.targets.length !== 1 ? "es" : ""}:
+                        </div>
+                        {opp.targets.map((t, ti) => (
+                          <div key={ti} style={{
+                            fontFamily: T.mono, fontSize: 9, color: C.inkMid,
+                            display: "flex", gap: S[3], padding: "2px 0",
+                          }}>
+                            <span style={{ color: C.ink, fontWeight: 600 }}>{t.vendorId}</span>
+                            <span>{t.groupName} / {t.subgroupName}</span>
+                            <span style={{ color: C.red }}>faltan {t.faltante}</span>
+                          </div>
+                        ))}
+                        {opp.source === "OP_ACTIVA" && opDate && (
+                          <div style={{ fontFamily: T.mono, fontSize: 8, color: C.inkFaint, marginTop: S[1] }}>
+                            Ultima actividad: {opDate}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  );
+                })}
+              </div>
+              {coverageResult.textileCoverage.length > 10 && !showAllGaps && (
+                <button onClick={() => setShowAllGaps(true)} style={showMoreBtnStyle}>
+                  Ver todas ({coverageResult.textileCoverage.length})
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* ── Oportunidades de Importacion ── */}
+          {coverageResult.importCoverage.length > 0 && (
+            <div style={{ marginBottom: S[4] }}>
+              <div style={{
+                fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.titleDeep,
+                textTransform: "uppercase" as const, letterSpacing: "0.08em",
+                marginBottom: S[2],
+              }}>
+                Importacion ({coverageResult.importCoverage.length})
+              </div>
+              <div style={{
+                background: C.white, borderRadius: R.lg,
+                border: `1px solid ${C.line}`, boxShadow: `0 1px 3px ${C.ink}06`,
+                overflow: "hidden", overflowX: "auto", minWidth: 0,
+              }}>
+                <div style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(80px,0.9fr) minmax(120px,1.5fr) 80px 70px minmax(80px,0.8fr)",
+                  padding: `10px 16px`, background: C.surfaceAlt,
+                  borderBottom: `1px solid ${C.line}`, gap: S[2], alignItems: "center",
+                }}>
+                  {["Referencia", "Descripcion", "Tamano", "Disponible", "Sirve para"].map((h) => (
+                    <div key={h} style={{
+                      ...listHeaderCell,
+                      textAlign: h === "Disponible" ? "right" as const : undefined,
+                    }}>{h}</div>
+                  ))}
+                </div>
+                {coverageResult.importCoverage.map((opp, i) => (
+                  <div key={`${opp.replacementReference}-${i}`}>
+                    <div style={{
+                      display: "grid",
+                      gridTemplateColumns: "minmax(80px,0.9fr) minmax(120px,1.5fr) 80px 70px minmax(80px,0.8fr)",
+                      padding: ROW_PAD,
+                      borderBottom: i === coverageResult.importCoverage.length - 1 ? "none" : `1px solid ${C.lineSubtle}`,
+                      gap: S[2], alignItems: "center",
+                    }}>
+                      <div style={{ ...listCell, fontWeight: 700, color: C.titleDeep }}>{opp.replacementReference}</div>
+                      <div style={{ ...listCell, color: C.inkMid, fontSize: 10 }}>{opp.replacementDescription}</div>
+                      <div style={{ ...listCell, color: C.ink }}>{opp.sizeClass}</div>
+                      <div style={{ ...listCell, fontWeight: 600, color: C.green, textAlign: "right" as const }}>{opp.availableNow}</div>
+                      <div style={{ ...listCell }}>
+                        <button
+                          onClick={() => setExpandedRef(expandedRef === opp.replacementReference ? null : opp.replacementReference)}
+                          style={{
+                            fontFamily: T.mono, fontSize: 9, fontWeight: 600, color: C.blueDark,
+                            background: "none", border: "none", cursor: "pointer", padding: 0,
+                            textDecoration: "underline", textUnderlineOffset: 2,
+                          }}
+                        >
+                          {opp.targets.length} referencia{opp.targets.length !== 1 ? "s" : ""}
+                        </button>
+                      </div>
+                    </div>
+                    {expandedRef === opp.replacementReference && (
+                      <div style={{
+                        padding: `${S[2]} ${S[4]}`, background: `${C.blueDark}06`,
+                        borderBottom: `1px solid ${C.lineSubtle}`,
+                      }}>
+                        {opp.targets.map((t, ti) => (
+                          <div key={ti} style={{
+                            fontFamily: T.mono, fontSize: 9, color: C.inkMid,
+                            display: "flex", gap: S[3], padding: "2px 0",
+                          }}>
+                            <span style={{ color: C.ink, fontWeight: 600 }}>{t.vendorId}</span>
+                            <span>{t.subgroupName}</span>
+                            <span style={{ color: C.red }}>faltan {t.faltante}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
-              {coverageOpportunities.slice(0, showAllGaps ? 100 : 10).map((opp, i) => {
-                const sourceLabel = opp.source === "BODEGA" ? "Bodega"
-                  : opp.source === "OP_ACTIVA" ? "OP Activa"
-                  : "Produccion";
-                const sourceColor = opp.source === "BODEGA" ? C.green
-                  : opp.source === "OP_ACTIVA" ? C.blueDark
-                  : C.red;
-                const qty = opp.source === "BODEGA" ? opp.availableNow
-                  : opp.source === "OP_ACTIVA" ? opp.incomingUnits
-                  : null;
-                return (
-                <div key={`${opp.replacementReference || "prod"}-${opp.subgroupName}-${i}`} style={{
-                  display: "grid",
-                  gridTemplateColumns: "minmax(100px,1fr) minmax(70px,0.7fr) 55px 90px minmax(80px,1fr) 70px minmax(100px,1fr)",
-                  padding: ROW_PAD,
-                  borderBottom: i === Math.min(coverageOpportunities.length, showAllGaps ? 100 : 10) - 1 ? "none" : `1px solid ${C.lineSubtle}`,
-                  gap: S[2], alignItems: "center",
-                }}>
-                  <div style={{ ...listCell, color: C.ink }}>
-                    <span style={{ fontWeight: 700 }}>{opp.groupName}</span>
-                    <span style={{ fontSize: 9, color: C.inkFaint, marginLeft: 4 }}>{opp.catalogName}</span>
-                  </div>
-                  <div style={{ ...listCell, color: C.inkMid }}>{opp.subgroupName}</div>
-                  <div style={{ ...listCell, fontWeight: 700, color: C.red, textAlign: "right" as const }}>{opp.faltante}</div>
-                  <div style={{ ...listCell }}>
-                    <span style={{
-                      fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: sourceColor,
-                      padding: "2px 6px", borderRadius: R.sm,
-                      background: opp.source === "BODEGA" ? `${C.green}12`
-                        : opp.source === "OP_ACTIVA" ? `${C.blueDark}12`
-                        : `${C.red}12`,
-                    }}>{sourceLabel}</span>
-                  </div>
-                  <div style={{ ...listCell, fontWeight: 700, color: opp.replacementReference ? C.titleDeep : C.inkFaint }}>
-                    {opp.replacementReference || "\u2014"}
-                  </div>
-                  <div style={{ ...listCell, fontWeight: 700, color: sourceColor, textAlign: "right" as const }}>
-                    {qty != null ? qty : "\u2014"}
-                  </div>
-                  <div style={{ ...listCell, fontSize: 10, color: C.inkMid }}>{opp.reason}</div>
-                </div>
-                );
-              })}
             </div>
-          ) : (
+          )}
+
+          {/* Empty state — no opportunities at all */}
+          {coverageResult.textileCoverage.length === 0 && coverageResult.importCoverage.length === 0 && (
             <div style={{
               padding: S[5], background: C.white, borderRadius: R.lg,
               border: `1px solid ${C.line}`,
@@ -775,11 +910,6 @@ export function MaletasClient({
                 Sin faltantes de cobertura. Todos los subgrupos del derrotero estan completos.
               </div>
             </div>
-          )}
-          {coverageOpportunities.length > 10 && !showAllGaps && (
-            <button onClick={() => setShowAllGaps(true)} style={showMoreBtnStyle}>
-              Ver todas ({coverageOpportunities.length})
-            </button>
           )}
         </SectionHeader>
 

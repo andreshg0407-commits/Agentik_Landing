@@ -33,7 +33,7 @@ export default async function MaletasPage({
       loadedAt={data.loadedAt}
       assortmentEvaluations={data.assortmentEvaluations}
       productionThresholds={data.productionThresholds}
-      coverageOpportunities={data.coverageOpportunities}
+      coverageResult={data.coverageResult}
     />
   );
 }
