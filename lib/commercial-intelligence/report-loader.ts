@@ -19,6 +19,7 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import { inferProductType } from "@/lib/comercial/maletas/sag-inventory-adapter";
+import { loadLatestCCSBatch } from "./ccs-reader";
 import type { SagAvailabilityRecord } from "./availability-types";
 import type { SellerMaletaRecord } from "./maleta-replacement-engine";
 
@@ -39,32 +40,11 @@ function mapLineToSubLinea(line: string): string {
 export async function loadAvailabilityRecords(
   organizationId: string,
 ): Promise<{ records: SagAvailabilityRecord[]; snapshotAt: string | null }> {
-  // Find latest snapshot timestamp
-  const latest = await prisma.commercialCoverageSnapshot.findFirst({
-    where: { organizationId },
-    orderBy: { snapshotAt: "desc" },
-    select: { snapshotAt: true },
-  });
+  const batch = await loadLatestCCSBatch(organizationId);
 
-  if (!latest) {
-    return { records: [], snapshotAt: null };
+  if (batch.rows.length === 0) {
+    return { records: [], snapshotAt: batch.snapshotAt };
   }
-
-  // Load all rows from the latest batch
-  const allRows = await prisma.commercialCoverageSnapshot.findMany({
-    where: {
-      organizationId,
-      snapshotAt: latest.snapshotAt,
-    },
-    select: {
-      refCode: true,
-      description: true,
-      line: true,
-      disponible: true,
-      pendingOrdersQty: true,
-      subgrupoSag: true,
-    },
-  });
 
   // COMERCIAL-INVENTARIO-IMPORT-PIPELINE-CANONICALIZATION-01:
   // Defensive guard — exclude productLine="5" refs that may exist in
@@ -84,8 +64,8 @@ export async function loadAvailabilityRecords(
   }
 
   const rows = accessorySkus.size > 0
-    ? allRows.filter(r => !accessorySkus.has(r.refCode))
-    : allRows;
+    ? batch.rows.filter(r => !accessorySkus.has(r.refCode))
+    : batch.rows;
 
   const records: SagAvailabilityRecord[] = rows.map(row => {
     const pendingOrders = row.pendingOrdersQty ?? 0;
@@ -94,14 +74,13 @@ export async function loadAvailabilityRecords(
 
     // COMERCIAL-INVENTARIO-DATA-SAFETY-LOCK-01 Phase 4:
     // Track whether subGrupo comes from real SAG data or text inference.
-    const rawSubgrupoSag = (row as any).subgrupoSag as string | null;
-    const subGrupoInferred = !rawSubgrupoSag;
+    const subGrupoInferred = !row.subgrupoSag;
 
     return {
       reference: row.refCode,
       description: row.description,
       subLinea: mapLineToSubLinea(row.line),
-      subGrupo: rawSubgrupoSag ?? inferProductType(row.description),
+      subGrupo: row.subgrupoSag ?? inferProductType(row.description),
       subGrupoInferred,
       bodega: "01+04+14+15",  // SAG-DATAFLOW-FIX-01: expanded commercial bodegas
       inventarioBodega,
@@ -111,7 +90,7 @@ export async function loadAvailabilityRecords(
 
   return {
     records,
-    snapshotAt: latest.snapshotAt.toISOString(),
+    snapshotAt: batch.snapshotAt,
   };
 }
 

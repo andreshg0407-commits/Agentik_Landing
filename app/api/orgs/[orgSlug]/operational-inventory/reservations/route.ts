@@ -16,6 +16,7 @@
 import { NextResponse }           from "next/server";
 import { requireOrgAccess }       from "@/lib/auth/org-access";
 import { prisma }                 from "@/lib/prisma";
+import { loadLatestCCSBatch }     from "@/lib/commercial-intelligence/ccs-reader";
 import { createReservations }     from "@/lib/operational-inventory/operational-reservation-engine";
 import { mapSagInventoryToOperational } from "@/lib/operational-inventory/sag-to-operational-mapper";
 import type { CreateReservationInput }  from "@/lib/operational-inventory/operational-reservation-engine";
@@ -166,37 +167,21 @@ export async function POST(
 // ─── Inventory snapshot loader ────────────────────────────────────────────────
 
 /**
- * V1: loads the most recent CommercialCoverageSnapshot rows (one per reference)
- * and maps to OperationalInventoryItem[]. Returns empty array if none found.
- *
- * V2: will query SAG ODBC directly via dedicated InventorySnapshot model.
+ * Loads the most recent CCS batch and maps to OperationalInventoryItem[].
+ * Delegates batch loading to the canonical ccs-reader.
  */
 async function _loadInventorySnapshot(organizationId: string) {
   try {
-    // Find latest snapshotAt date
-    const latest = await prisma.commercialCoverageSnapshot.findFirst({
-      where:   { organizationId },
-      orderBy: { snapshotAt: "desc" },
-      select:  { snapshotAt: true },
-    });
-    if (!latest) return [];
-
-    // Load all refs from that snapshot
-    const rows = await prisma.commercialCoverageSnapshot.findMany({
-      where: { organizationId, snapshotAt: latest.snapshotAt },
-    });
-
-    const snapshotAt = latest.snapshotAt.toISOString();
+    const batch = await loadLatestCCSBatch(organizationId);
+    if (batch.rows.length === 0) return [];
 
     return mapSagInventoryToOperational(
-      rows.map(r => ({
+      batch.rows.map(r => ({
         reference:            r.refCode.toUpperCase(),
         description:          r.description,
         line:                 r.line as "LT" | "CS",
-        category:             "",   // V1: not stored in coverage snapshot
-        productType:          "",   // V1: not stored
-        // V1 derivation: disponible = availableForCases (SAG disponible proxy)
-        // physicalQty = disponible + pendingPD (best V1 approximation)
+        category:             "",
+        productType:          "",
         initialWarehouseQty:  r.disponible + (r.pendingOrdersQty ?? 0),
         reservedQty:          r.pendingOrdersQty ?? 0,
         availableForCases:    r.disponible,
@@ -204,7 +189,7 @@ async function _loadInventorySnapshot(organizationId: string) {
         apCleanupQty:         0,
       })),
       "sag_excel_import",
-      snapshotAt,
+      batch.snapshotAt ?? undefined,
     );
   } catch {
     return [];

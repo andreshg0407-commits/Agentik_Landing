@@ -27,6 +27,7 @@
 import { NextResponse }                  from "next/server";
 import { requireOrgAccess }              from "@/lib/auth/org-access";
 import { prisma }                        from "@/lib/prisma";
+import { loadLatestCCSBatch }            from "@/lib/commercial-intelligence/ccs-reader";
 import { mapSagInventoryToOperational }  from "@/lib/operational-inventory/sag-to-operational-mapper";
 import { applyReservationsToInventory }  from "@/lib/operational-inventory/operational-reservation-engine";
 import type { OperationalReservation }   from "@/lib/operational-inventory/operational-reservation-types";
@@ -52,25 +53,14 @@ export async function GET(
     let refCount = 0;
 
     try {
-      // Find the most recent snapshot timestamp for this org
-      const latest = await prisma.commercialCoverageSnapshot.findFirst({
-        where:   { organizationId: orgId },
-        orderBy: { snapshotAt: "desc" },
-        select:  { snapshotAt: true },
-      });
+      const batch = await loadLatestCCSBatch(orgId);
+      snapshotAt = batch.snapshotAt;
 
-      if (latest) {
-        snapshotAt = latest.snapshotAt.toISOString();
-
-        // Load all rows from that snapshot batch
-        const rows = await prisma.commercialCoverageSnapshot.findMany({
-          where: { organizationId: orgId, snapshotAt: latest.snapshotAt },
-        });
-
-        refCount = rows.length;
+      if (batch.rows.length > 0) {
+        refCount = batch.rows.length;
 
         // Map to SagInventoryItem shape with inferred category/productType
-        const sagItems = rows.map(r => ({
+        const sagItems = batch.rows.map(r => ({
           reference:           r.refCode.toUpperCase(),
           description:         r.description,
           line:                r.line as "LT" | "CS",
@@ -83,7 +73,7 @@ export async function GET(
           apCleanupQty:        0,
         }));
 
-        items = mapSagInventoryToOperational(sagItems, "sag_excel_import", snapshotAt);
+        items = mapSagInventoryToOperational(sagItems, "sag_excel_import", snapshotAt ?? undefined);
       }
     } catch {
       // Non-critical — returns empty array with appropriate source

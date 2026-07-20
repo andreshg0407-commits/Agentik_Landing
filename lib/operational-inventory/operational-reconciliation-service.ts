@@ -22,13 +22,14 @@
 
 import { prisma }                              from "@/lib/prisma";
 import { getCrmCommercialProvider }            from "@/lib/operational-data/providers/crm-commercial-provider";
+import { loadLatestCCSBatch }                  from "@/lib/commercial-intelligence/ccs-reader";
 import { applyReservationsToInventory }        from "./operational-reservation-engine";
 import { buildOperationalReconciliationReport, type ReconciliationEngineInput }
                                                from "./operational-reconciliation-engine";
 import { buildReconciliationRepairPlan }       from "./operational-reconciliation-repair-planner";
 import type { OperationalReservation }         from "./operational-reservation-types";
 import type { OperationalInventoryItem }       from "./operational-inventory-types";
-import { _loadInventorySnapshot }              from "./order-reservation-bridge";
+import { mapSagInventoryToOperational }        from "./sag-to-operational-mapper";
 import type {
   OperationalReconciliationReport,
   OperationalReconciliationRepairPlan,
@@ -73,19 +74,27 @@ export async function runOperationalInventoryReconciliation(
   const now = new Date().toISOString();
 
   // ── 1. Load SAG inventory snapshot ──────────────────────────────────────────
-  const rawSnapshot = await _loadInventorySnapshot(organizationId);
+  const batch = await loadLatestCCSBatch(organizationId);
+  const snapshotAt = batch.snapshotAt ?? undefined;
 
-  // Determine snapshot age
-  let snapshotAt: string | undefined;
-  try {
-    const latest = await prisma.commercialCoverageSnapshot.findFirst({
-      where:   { organizationId },
-      orderBy: { snapshotAt: "desc" },
-      select:  { snapshotAt: true },
-    });
-    snapshotAt = latest?.snapshotAt.toISOString();
-  } catch {
-    // non-critical — snapshotAt will be undefined, stale check skipped
+  let rawSnapshot: OperationalInventoryItem[] = [];
+  if (batch.rows.length > 0) {
+    rawSnapshot = mapSagInventoryToOperational(
+      batch.rows.map(r => ({
+        reference:           r.refCode.toUpperCase(),
+        description:         r.description,
+        line:                r.line as "LT" | "CS",
+        category:            "",
+        productType:         "",
+        initialWarehouseQty: r.disponible + (r.pendingOrdersQty ?? 0),
+        reservedQty:         r.pendingOrdersQty ?? 0,
+        availableForCases:   r.disponible,
+        pendingPDQty:        r.pendingOrdersQty ?? 0,
+        apCleanupQty:        0,
+      })),
+      "sag_excel_import",
+      batch.snapshotAt ?? undefined,
+    );
   }
 
   // ── 2. Load all reservations from Prisma ────────────────────────────────────

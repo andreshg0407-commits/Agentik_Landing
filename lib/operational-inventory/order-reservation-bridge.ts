@@ -39,6 +39,7 @@
  */
 
 import { prisma }                      from "@/lib/prisma";
+import { loadLatestCCSBatch }          from "@/lib/commercial-intelligence/ccs-reader";
 import type { OperationalOrder,
               OperationalOrderLine }   from "@/lib/operational-data/operational-entities";
 import type { OperationalInventoryItem } from "./operational-inventory-types";
@@ -479,26 +480,18 @@ async function _loadAllActiveReservations(
 }
 
 /**
- * Loads the most recent CommercialCoverageSnapshot for inventory math.
- * Returns [] if no snapshot is present — engine will warn on missing refs.
+ * Loads the most recent CCS batch and maps to OperationalInventoryItem[].
+ * Delegates batch loading to the canonical ccs-reader.
  */
 export async function _loadInventorySnapshot(
   organizationId: string,
 ): Promise<OperationalInventoryItem[]> {
   try {
-    const latest = await prisma.commercialCoverageSnapshot.findFirst({
-      where:   { organizationId },
-      orderBy: { snapshotAt: "desc" },
-      select:  { snapshotAt: true },
-    });
-    if (!latest) return [];
-
-    const rows = await prisma.commercialCoverageSnapshot.findMany({
-      where: { organizationId, snapshotAt: latest.snapshotAt },
-    });
+    const batch = await loadLatestCCSBatch(organizationId);
+    if (batch.rows.length === 0) return [];
 
     return mapSagInventoryToOperational(
-      rows.map(r => ({
+      batch.rows.map(r => ({
         reference:           r.refCode.toUpperCase(),
         description:         r.description,
         line:                r.line as "LT" | "CS",
@@ -511,7 +504,7 @@ export async function _loadInventorySnapshot(
         apCleanupQty:        0,
       })),
       "sag_excel_import",
-      latest.snapshotAt.toISOString(),
+      batch.snapshotAt ?? undefined,
     );
   } catch {
     return [];
