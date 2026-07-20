@@ -30,6 +30,7 @@ import type { VendorSampleRef, VendorSampleSnapshot } from "./vendor-sample-type
 export interface AssortmentGroupEval {
   groupCode: string;
   groupName: string;
+  sagGrupo: string | null;
   entries: AssortmentEntryEval[];
   completeEntries: number;
   missingEntries: number;
@@ -40,6 +41,7 @@ export interface AssortmentGroupEval {
 export interface AssortmentEntryEval {
   subgroupCode: string | null;
   subgroupName: string;
+  sagSubgrupos: string[];     // SAG sc_detalle_subgrupo values for matching
   targetUnits: number;        // idealEffective (customIdeal ?? officialIdeal)
   officialIdeal: number;      // original value from catalog code
   isCustomIdeal: boolean;     // true when a custom override is active
@@ -211,6 +213,9 @@ function evaluateCatalog(
       entryResults.push({
         subgroupCode: entry.subgroupCode,
         subgroupName: entry.subgroupName,
+        sagSubgrupos: entry.sagSubgrupo
+          ? (Array.isArray(entry.sagSubgrupo) ? entry.sagSubgrupo : [entry.sagSubgrupo])
+          : [],
         targetUnits: idealEffective,
         officialIdeal: entry.targetUnits,
         isCustomIdeal: idealEffective !== entry.targetUnits,
@@ -235,6 +240,7 @@ function evaluateCatalog(
     groups.push({
       groupCode: group.groupCode,
       groupName: group.groupName,
+      sagGrupo: group.sagGrupo ?? null,
       entries: entryResults,
       completeEntries: gc,
       missingEntries: gm,
@@ -651,29 +657,114 @@ export function evaluateImportRefs(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 4. COVERAGE OPPORTUNITIES — derived from derrotero faltantes
+// 4. COVERAGE THRESHOLDS & OPPORTUNITIES — derived from derrotero faltantes
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── MALETA EXIT THRESHOLDS ──────────────────────────────────────────────────
+// Determine when a reference currently in a maleta is at risk of leaving.
+// A ref with disponible <= exit threshold is "agotada o proxima a salir".
+//
+// Contract: MALETA_EXIT_THRESHOLDS
+// Castillitos (CS) = 30 | Latin Kids (LT) = 20 | Importacion/Accesorios = 10
+
+export const MALETA_EXIT_THRESHOLDS: Readonly<Record<string, number>> = {
+  Castillitos: 30,
+  "Latin Kids": 20,
+  IMPORTACION: 10,
+};
+
+// ── COVERAGE ELIGIBILITY THRESHOLDS ─────────────────────────────────────────
+// Determine if a substitute reference has enough stock to sell with confidence.
+// A candidate must have disponible STRICTLY GREATER than the threshold.
+//
+// Contract: COVERAGE_ELIGIBILITY_THRESHOLDS
+// Castillitos (CS) > 100 | Latin Kids (LT) > 200 | Importacion/Accesorios > 10
+
+export const COVERAGE_ELIGIBILITY_THRESHOLDS: Readonly<Record<string, number>> = {
+  Castillitos: 100,
+  "Latin Kids": 200,
+  IMPORTACION: 10,
+};
+
+// ── Coverage Engine Types ────────────────────────────────────────────────────
+
+export type CoverageSource = "BODEGA" | "OP_ACTIVA" | "PRODUCCION_URGENTE";
+
 export interface CoverageOpportunity {
-  /** What gap this resolves */
+  // Gap context
+  vendorId: string;
   catalogName: string;
   groupName: string;
   subgroupName: string;
   sizeClass: string | null;
   faltante: number;
-  /** Suggested ref */
+
+  // Resolution
+  source: CoverageSource;
+  replacementReference: string;
+  replacementDescription: string;
+  line: string;
+  catalog: string;
+  group: string | null;
+  subgroup: string;
+
+  // Bodega-specific
+  availableNow: number | null;
+
+  // OP-specific
+  incomingUnits: number | null;
+  opNumber: string | null;
+  eta: string | null;
+
+  // Quality
+  confidence: "ALTA" | "MEDIA" | "BAJA";
+  reason: string;
+}
+
+/** OP candidate passed to the coverage engine from vendor-sample-loader */
+export interface OpCoverageCandidate {
   reference: string;
   description: string;
-  group: string | null;
+  line: string;
   subgrupoSag: string;
-  disponible: number;
-  cantidadSugerida: number;
-  explicacion: string;
+  grupoSag: string | null;
+  pendingQty: number;
+  opNumber: string;
+  createdAt: string;
+}
+
+// ── Matching helpers ────────────────────────────────────────────────────────
+
+/** Check if a ref matches an entry's SAG values for textil */
+function matchesTextilEntry(
+  candidateLine: string,
+  candidateSubgrupoSag: string | null,
+  candidateGrupoSag: string | null,
+  requiredLine: string,
+  sagGrupo: string | null,
+  sagSubgrupos: string[],
+): boolean {
+  if (candidateLine !== requiredLine) return false;
+  if (!candidateSubgrupoSag) return false;
+  if (!sagSubgrupos.includes(candidateSubgrupoSag)) return false;
+  // Castillitos: grupo must also match when sagGrupo is defined
+  if (sagGrupo && candidateGrupoSag !== sagGrupo) return false;
+  return true;
 }
 
 /**
- * Find coverage opportunities by looking at derrotero faltantes
- * and searching for available refs that match the missing slots.
+ * Unified Coverage Engine — COMERCIAL-MALETAS-COVERAGE-ENGINE-05
+ *
+ * Waterfall per derrotero gap:
+ *   1. Bodega Principal → candidate with disponible > threshold
+ *   2. OP Activa        → candidate with pendingQty > threshold
+ *   3. Produccion Urgente → no candidate found
+ *
+ * Matching:
+ *   Textil: line + grupoSag (CS only) + subgrupoSag (via sagSubgrupos)
+ *   Import: sizeClass
+ *
+ * Never consults OP before bodega. Each opportunity has exactly one source.
  */
 export function findCoverageOpportunities(
   evaluations: VendorAssortmentResult[],
@@ -681,66 +772,186 @@ export function findCoverageOpportunities(
     reference: string;
     description: string;
     line: string;
-    group: string | null;
+    grupoSag: string | null;
     subgrupoSag: string | null;
     sizeClass: string | null;
     disponible: number;
   }>,
+  opCandidates: OpCoverageCandidate[],
   vendorRefSets: Map<string, Set<string>>,
 ): CoverageOpportunity[] {
   const opportunities: CoverageOpportunity[] = [];
+  const isDev = process.env.NODE_ENV === "development";
+
+  // Diagnostics
+  let totalSlots = 0;
+  let resolvedBodega = 0;
+  let resolvedOp = 0;
+  let resolvedProduccion = 0;
+  let filteredBodegaCS = 0;
+  let filteredBodegaLT = 0;
+  let filteredBodegaImport = 0;
+  let filteredOpCS = 0;
+  let filteredOpLT = 0;
 
   for (const vendorEval of evaluations) {
     const vendorRefs = vendorRefSets.get(vendorEval.vendorId) ?? new Set<string>();
 
     for (const catalog of vendorEval.catalogs) {
+      const isImport = catalog.commercialWorld === "IMPORTACION";
+
+      // Resolve eligibility threshold
+      const threshold = isImport
+        ? COVERAGE_ELIGIBILITY_THRESHOLDS.IMPORTACION
+        : (catalog.brand ? COVERAGE_ELIGIBILITY_THRESHOLDS[catalog.brand] : undefined);
+      if (threshold === undefined) continue;
+
+      // For textil, determine required candidate line
+      const requiredLine = isImport ? null : (
+        catalog.brand === "Castillitos" ? "CS" :
+        catalog.brand === "Latin Kids" ? "LT" : null
+      );
+
       for (const group of catalog.groups) {
         for (const entry of group.entries) {
           if (entry.complete) continue;
           const needed = entry.targetUnits - entry.currentUnits;
           if (needed <= 0) continue;
+          totalSlots++;
 
-          // Find candidates from central refs
-          const candidates = allCentralRefs.filter((r) => {
+          const baseOpp = {
+            vendorId: vendorEval.vendorId,
+            catalogName: catalog.catalogName,
+            groupName: group.groupName,
+            subgroupName: entry.subgroupName,
+            sizeClass: isImport ? entry.subgroupCode : null,
+            faltante: needed,
+            catalog: catalog.catalogName,
+            group: group.groupName,
+            subgroup: entry.subgroupName,
+          };
+
+          // ── STEP 1: Search Bodega Principal ────────────────────────────
+          const bodegaCandidates = allCentralRefs.filter((r) => {
+            if (vendorRefs.has(r.reference)) return false;
             if (r.disponible <= 0) return false;
-            if (vendorRefs.has(r.reference)) return false; // already in vendor
 
-            if (catalog.commercialWorld === "IMPORTACION") {
-              return r.sizeClass === entry.subgroupCode;
+            if (isImport) {
+              if (r.sizeClass !== entry.subgroupCode) return false;
+            } else {
+              if (!requiredLine) return false;
+              if (!matchesTextilEntry(
+                r.line, r.subgrupoSag, r.grupoSag,
+                requiredLine, group.sagGrupo, entry.sagSubgrupos,
+              )) return false;
             }
-            // Textil: match by subgrupoSag
-            return r.subgrupoSag === entry.subgroupCode;
+
+            // Apply coverage eligibility threshold (strictly greater)
+            if (!(r.disponible > threshold)) {
+              if (isImport) filteredBodegaImport++;
+              else if (requiredLine === "CS") filteredBodegaCS++;
+              else if (requiredLine === "LT") filteredBodegaLT++;
+              return false;
+            }
+            return true;
           });
 
-          // Sort by disponible desc, take top
-          candidates.sort((a, b) => b.disponible - a.disponible);
+          bodegaCandidates.sort((a, b) => b.disponible - a.disponible);
 
-          let remaining = needed;
-          for (const c of candidates.slice(0, 3)) {
-            if (remaining <= 0) break;
-            const qty = Math.min(remaining, 1); // 1 ref per slot
-            opportunities.push({
-              catalogName: catalog.catalogName,
-              groupName: group.groupName,
-              subgroupName: entry.subgroupName,
-              sizeClass: catalog.commercialWorld === "IMPORTACION" ? entry.subgroupCode : null,
-              faltante: needed,
-              reference: c.reference,
-              description: c.description,
-              group: c.group,
-              subgrupoSag: c.subgrupoSag ?? "",
-              disponible: c.disponible,
-              cantidadSugerida: qty,
-              explicacion: `Completa ${entry.subgroupName} en ${group.groupName} (faltan ${needed})`,
-            });
-            remaining -= qty;
+          if (bodegaCandidates.length > 0) {
+            // Best bodega candidate
+            let remaining = needed;
+            for (const c of bodegaCandidates.slice(0, 3)) {
+              if (remaining <= 0) break;
+              resolvedBodega++;
+              const ratio = c.disponible / threshold;
+              opportunities.push({
+                ...baseOpp,
+                source: "BODEGA",
+                replacementReference: c.reference,
+                replacementDescription: c.description,
+                line: c.line,
+                availableNow: c.disponible,
+                incomingUnits: null,
+                opNumber: null,
+                eta: null,
+                confidence: ratio > 3 ? "ALTA" : ratio > 1.5 ? "MEDIA" : "BAJA",
+                reason: `Disponible en bodega principal: ${c.disponible} unidades (umbral: >${threshold})`,
+              });
+              remaining--;
+            }
+            continue; // slot resolved — never consult OP
           }
+
+          // ── STEP 2: Search OP Activa (only if bodega found nothing) ────
+          if (!isImport && requiredLine) {
+            const opMatches = opCandidates.filter((op) => {
+              if (vendorRefs.has(op.reference)) return false;
+              if (!matchesTextilEntry(
+                op.line, op.subgrupoSag, op.grupoSag,
+                requiredLine, group.sagGrupo, entry.sagSubgrupos,
+              )) return false;
+
+              if (!(op.pendingQty > threshold)) {
+                if (requiredLine === "CS") filteredOpCS++;
+                else if (requiredLine === "LT") filteredOpLT++;
+                return false;
+              }
+              return true;
+            });
+
+            opMatches.sort((a, b) => b.pendingQty - a.pendingQty);
+
+            if (opMatches.length > 0) {
+              const best = opMatches[0];
+              resolvedOp++;
+              opportunities.push({
+                ...baseOpp,
+                source: "OP_ACTIVA",
+                replacementReference: best.reference,
+                replacementDescription: best.description,
+                line: best.line,
+                availableNow: null,
+                incomingUnits: best.pendingQty,
+                opNumber: best.opNumber,
+                eta: null, // requires production timeline integration
+                confidence: "MEDIA",
+                reason: `OP ${best.opNumber}: ${best.pendingQty} unidades pendientes (umbral: >${threshold})`,
+              });
+              continue; // slot resolved
+            }
+          }
+
+          // ── STEP 3: Produccion Urgente ─────────────────────────────────
+          resolvedProduccion++;
+          opportunities.push({
+            ...baseOpp,
+            source: "PRODUCCION_URGENTE",
+            replacementReference: "",
+            replacementDescription: "",
+            line: requiredLine ?? "IMPORT",
+            availableNow: null,
+            incomingUnits: null,
+            opNumber: null,
+            eta: null,
+            confidence: "BAJA",
+            reason: `Sin cobertura en bodega ni OP activa para ${entry.subgroupName}`,
+          });
         }
       }
     }
   }
 
-  return opportunities.slice(0, 30);
+  if (isDev) {
+    console.log(
+      `[COVERAGE-ENGINE] slots=${totalSlots}`,
+      `| bodega=${resolvedBodega} op=${resolvedOp} produccion=${resolvedProduccion}`,
+      `| filtered bodega: CS(<=100)=${filteredBodegaCS} LT(<=200)=${filteredBodegaLT} Import(<=10)=${filteredBodegaImport}`,
+      `| filtered OP: CS(<=100)=${filteredOpCS} LT(<=200)=${filteredOpLT}`,
+    );
+  }
+
+  return opportunities;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

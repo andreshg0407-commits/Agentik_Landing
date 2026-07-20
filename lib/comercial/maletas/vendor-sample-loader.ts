@@ -74,6 +74,7 @@ import type {
   SubgroupProductionEval,
   ImportEvaluationResult,
   CoverageOpportunity,
+  OpCoverageCandidate,
   IdealOverrideMap,
 } from "./maletas-functional-evaluation";
 
@@ -493,14 +494,36 @@ export async function loadVendorSampleData(
     reference: cr.reference,
     description: cr.description,
     line: cr.line,
-    group: productEnrichmentMap.get(cr.reference)?.group ?? null,
+    grupoSag: cr.grupoSag,
     subgrupoSag: cr.subgrupoSag,
     sizeClass: productEnrichmentMap.get(cr.reference)?.sizeClass ?? null,
     disponible: cr.available,
   }));
+
+  // Build flat OP candidate list for unified coverage engine
+  const opCovCandidates: OpCoverageCandidate[] = [];
+  for (const [subgrupoId, options] of opOptionsBySubgrupoId) {
+    const sg = subgrupoLookup.get(subgrupoId) ?? options[0]?.subgrupoSag;
+    const grupoSag = subgrupoToGrupoLookup.get(subgrupoId) ?? null;
+    if (!sg) continue;
+    for (const opt of options) {
+      opCovCandidates.push({
+        reference: opt.reference,
+        description: opt.description,
+        line: opt.line,
+        subgrupoSag: sg,
+        grupoSag,
+        pendingQty: opt.pendingQty,
+        opNumber: opt.opNumber,
+        createdAt: opt.createdAt,
+      });
+    }
+  }
+
   const coverageOpportunities = findCoverageOpportunities(
     assortmentEvaluations,
     allCentralRefs,
+    opCovCandidates,
     vendorRefSets,
   );
 

@@ -38,34 +38,15 @@ import type {
   VendorCommercialIntelligence,
 } from "@/lib/comercial/maletas/maletas-commercial-intelligence-types";
 import type {
-  MaletaCandidate,
-  MaletaSurtidoGuide,
-} from "@/lib/comercial/maletas/maleta-surtido-types";
-import {
-  RESERVATION_STATUS_LABEL,
-} from "@/lib/comercial/maletas/maleta-surtido-types";
-import type {
-  MaletaReplenishmentPlan,
-  ReplenishmentPlanStatus,
-} from "@/lib/comercial/maletas/replenishment-plan-types";
-import {
-  computeCoverageRecovery,
-  PLAN_STATUS_LABEL,
-} from "@/lib/comercial/maletas/replenishment-plan-types";
-import type {
   VendorAssortmentResult,
   SubgroupProductionEval,
   ProductionDecision,
-  ImportEvaluationResult,
-  ImportRefDecision,
   CoverageOpportunity,
   UnresolvedRef as UnresolvedRefType,
   UnresolvedSummary,
   VendorMalletBaseMetrics,
 } from "@/lib/comercial/maletas/maletas-functional-evaluation";
 import { getVendorMalletBaseMetrics } from "@/lib/comercial/maletas/maletas-functional-evaluation";
-import { MaletaPortfolioBuilder } from "@/components/comercial/maletas/maleta-portfolio-builder";
-import type { MaletaSelectionItem } from "@/lib/comercial/maletas/vendor-bag-types";
 
 // ── Props ────────────────────────────────────────────────────────────────────
 
@@ -82,7 +63,6 @@ interface MaletasClientProps {
   // MALLETS-FUNCTIONAL-RECOVERY-01
   assortmentEvaluations: VendorAssortmentResult[];
   productionThresholds: SubgroupProductionEval[];
-  importEvaluation: ImportEvaluationResult;
   coverageOpportunities: CoverageOpportunity[];
 }
 
@@ -170,7 +150,6 @@ export function MaletasClient({
   loadedAt,
   assortmentEvaluations,
   productionThresholds,
-  importEvaluation,
   coverageOpportunities,
 }: MaletasClientProps) {
   const [selectedVendor, setSelectedVendor] = useState<VendorSampleSnapshot | null>(null);
@@ -179,7 +158,6 @@ export function MaletasClient({
   const [searchQuery, setSearchQuery] = useState("");
   const [lineVisibleCounts, setLineVisibleCounts] = useState<Record<string, number>>({});
   const [showAllGaps, setShowAllGaps] = useState(false);
-  const [showAllImport, setShowAllImport] = useState(false);
   const [expandedRef, setExpandedRef] = useState<string | null>(null);
 
   // Mutable copy of assortmentEvaluations for optimistic ideal updates
@@ -193,87 +171,9 @@ export function MaletasClient({
   const [prodDetailOpen, setProdDetailOpen] = useState(false);
   const [prodDetailItem, setProdDetailItem] = useState<ProductionSuggestion | null>(null);
 
-  // ── Coverage gap action drawer (now feeds into replenishment plans) ─────
-  const [gapActionOpen, setGapActionOpen] = useState(false);
-  const [gapActionItem, setGapActionItem] = useState<CoverageGapRef | null>(null);
-  const [gapStep, setGapStep] = useState<"select_maleta" | "select_ref_out" | "confirm" | "done">("select_maleta");
-  const [gapSelectedVendor, setGapSelectedVendor] = useState<string | null>(null);
-  const [gapSelectedRefOut, setGapSelectedRefOut] = useState<string | null>(null);
-  const [gapQty, setGapQty] = useState(1);
-
-  // ── Surtido guides (legacy, kept for backward compat) ───────────────────
-  const [guides, setGuides] = useState<MaletaSurtidoGuide[]>([]);
-  const [printGuide, setPrintGuide] = useState<MaletaSurtidoGuide | null>(null);
-
-  // ── Drawer inline replacement flow (MALETAS-DRAWER-UX-AND-PLAN-FLOW-01) ──
-  const [drawerReplacingRef, setDrawerReplacingRef] = useState<string | null>(null);
-  const [drawerFeedback, setDrawerFeedback] = useState<string | null>(null);
-
-  // ── Replenishment plans (MALETAS-BULK-REPLENISHMENT-PERSISTENCE-01) ─────
-  const [plans, setPlans] = useState<MaletaReplenishmentPlan[]>([]);
-  const [plansLoading, setPlansLoading] = useState(true);
-  const [planSaving, setPlanSaving] = useState(false);
-  const [planError, setPlanError] = useState<string | null>(null);
-  const [planDrawerOpen, setPlanDrawerOpen] = useState(false);
-  const [planDrawerVendor, setPlanDrawerVendor] = useState<string | null>(null);
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [historyFilter, setHistoryFilter] = useState<ReplenishmentPlanStatus | "all">("all");
-  const [historyVendorFilter, setHistoryVendorFilter] = useState<string | null>(null);
-  const [printPlan, setPrintPlan] = useState<MaletaReplenishmentPlan | null>(null);
-
   // ── Derrotero rules lifted to drawer level (GO-LIVE-MALETAS-DERROTERO-POR-LINEA-01) ──
   const [derroteroRules, setDerroteroRules] = useState<IdealRouteRule[]>([]);
   const [derroteroLoading, setDerroteroLoading] = useState(false);
-
-  // ── Portfolio builder (COMERCIAL-MALETAS-CANONICAL-INVENTORY-INTEGRATION-01) ──
-  const [builderOpen, setBuilderOpen] = useState(false);
-  const [builderSelection, setBuilderSelection] = useState<MaletaSelectionItem[]>([]);
-
-  // ── API helpers ───────────────────────────────────────────────────────────
-  const planApiUrl = `/api/orgs/${orgSlug}/comercial/maletas/replenishment-plans`;
-
-  const fetchPlans = useCallback(async () => {
-    try {
-      setPlansLoading(true);
-      setPlanError(null);
-      const res = await fetch(planApiUrl);
-      const data = await res.json();
-      if (data.ok) setPlans(data.plans ?? []);
-      else setPlanError(data.error ?? "Error al cargar planes");
-    } catch {
-      setPlanError("Error de conexion al cargar planes");
-    } finally {
-      setPlansLoading(false);
-    }
-  }, [planApiUrl]);
-
-  const planApiPost = useCallback(async (body: Record<string, unknown>) => {
-    setPlanSaving(true);
-    setPlanError(null);
-    try {
-      const res = await fetch(planApiUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      if (!data.ok) {
-        setPlanError(data.error ?? "Error al guardar");
-        return null;
-      }
-      // Refresh plans after mutation
-      await fetchPlans();
-      return data;
-    } catch {
-      setPlanError("Error de conexion al guardar");
-      return null;
-    } finally {
-      setPlanSaving(false);
-    }
-  }, [planApiUrl, fetchPlans]);
-
-  // Load plans on mount
-  useEffect(() => { fetchPlans(); }, [fetchPlans]);
 
   // Intelligence lookup
   const intelMap = useMemo(() => {
@@ -311,8 +211,6 @@ export function MaletasClient({
     setLineExpanded({});
     setExpandedRef(null);
     setDrawerTab("referencias");
-    setDrawerReplacingRef(null);
-    setDrawerFeedback(null);
     setDrawerOpen(true);
     fetchDerroteroRules(v.vendorId);
   };
@@ -322,160 +220,6 @@ export function MaletasClient({
     setProdDetailItem(item);
     setProdDetailOpen(true);
   };
-
-  // ── Coverage gap action handlers ──────────────────────────────────────
-  const openGapAction = (gap: CoverageGapRef) => {
-    setGapActionItem(gap);
-    setGapStep("select_maleta");
-    setGapSelectedVendor(null);
-    setGapSelectedRefOut(null);
-    setGapQty(1);
-    setGapActionOpen(true);
-  };
-
-  const buildMaletaCandidates = useCallback((): MaletaCandidate[] => {
-    return vendors.map(v => {
-      const replaceableRefs = v.refs
-        .filter(r => r.state === "reemplazar" || r.centralAvailable <= 0)
-        .map(r => ({
-          reference: r.reference,
-          description: r.description,
-          reason: r.centralAvailable <= 0 ? "Agotada en bodega central" : "Marcada para reemplazo",
-        }));
-      return {
-        vendorId: v.vendorId,
-        vendorName: v.vendorName,
-        warehouseCode: v.warehouseCode,
-        city: "",
-        currentCoverage: v.totalRefs > 0 ? Math.round((v.healthyRefs / v.totalRefs) * 100) : 0,
-        refsAtRisk: v.replaceRefs,
-        replaceableRefs,
-      };
-    });
-  }, [vendors]);
-
-  // ── Plan helpers (API-backed, PERSISTENCE-01) ────────────────────────────
-
-  const getDraftPlan = useCallback((vendorId: string): MaletaReplenishmentPlan | undefined => {
-    return plans.find(p => p.vendorId === vendorId && p.status === "draft");
-  }, [plans]);
-
-  const planCounts = useMemo(() => {
-    const draft = plans.filter(p => p.status === "draft").length;
-    const pending = plans.filter(p => p.status === "pending_warehouse").length;
-    const shipped = plans.filter(p => p.status === "shipped").length;
-    const received = plans.filter(p => p.status === "received").length;
-    return { draft, pending, shipped, received };
-  }, [plans]);
-
-  const addItemToPlanApi = useCallback(async (
-    vendorId: string,
-    addedRef: string,
-    addedDesc: string,
-    removedRef: string | null,
-    removedDesc: string | null,
-    qty: number,
-    subgroupSag: string,
-    reason: string,
-  ) => {
-    const vendor = vendors.find(v => v.vendorId === vendorId);
-    if (!vendor) return;
-
-    // Ensure draft plan exists via API
-    const draftRes = await planApiPost({
-      action: "create_or_get_draft",
-      vendorId: vendor.vendorId,
-      vendorName: vendor.vendorName,
-      warehouseCode: vendor.warehouseCode,
-    });
-    if (!draftRes?.plan) return;
-
-    // Add item via API
-    await planApiPost({
-      action: "add_item",
-      planId: draftRes.plan.id,
-      item: {
-        subgroupSag,
-        removedReference: removedRef || null,
-        removedDescription: removedDesc || null,
-        addedReference: addedRef,
-        addedDescription: addedDesc,
-        quantity: qty,
-        reason,
-      },
-    });
-  }, [vendors, planApiPost]);
-
-  const removeItemFromPlan = useCallback(async (planId: string, itemId: string) => {
-    await planApiPost({ action: "remove_item", planId, itemId });
-  }, [planApiPost]);
-
-  const generatePlanDocument = useCallback(async (planId: string) => {
-    await planApiPost({ action: "generate_document", planId });
-  }, [planApiPost]);
-
-  const updatePlanStatus = useCallback(async (planId: string, newStatus: ReplenishmentPlanStatus) => {
-    await planApiPost({ action: "update_status", planId, status: newStatus });
-  }, [planApiPost]);
-
-  const openPlanDrawer = useCallback((vendorId: string) => {
-    setPlanDrawerVendor(vendorId);
-    setPlanDrawerOpen(true);
-  }, []);
-
-  const confirmGapReservation = useCallback(async () => {
-    if (!gapActionItem || !gapSelectedVendor) return;
-    const vendor = vendors.find(v => v.vendorId === gapSelectedVendor);
-    if (!vendor) return;
-
-    const refOutData = gapSelectedRefOut
-      ? vendor.refs.find(r => r.reference === gapSelectedRefOut)
-      : null;
-
-    // Add to replenishment plan via API
-    await addItemToPlanApi(
-      gapSelectedVendor,
-      gapActionItem.reference,
-      gapActionItem.description,
-      gapSelectedRefOut || null,
-      refOutData?.description ?? null,
-      gapQty,
-      gapActionItem.subgrupoSag ?? gapActionItem.line ?? "SIN_SUBGRUPO",
-      `Oportunidad de cobertura: ${gapActionItem.subgrupoSag ?? gapActionItem.line}`,
-    );
-
-    setGapStep("done");
-  }, [gapActionItem, gapSelectedVendor, gapSelectedRefOut, gapQty, vendors, addItemToPlanApi]);
-
-  // ── Add replacement from vendor drawer (MALETAS-DRAWER-UX-AND-PLAN-FLOW-01) ──
-  const addReplacementFromDrawer = useCallback(async (
-    vendor: VendorSampleSnapshot,
-    removedRef: VendorSampleRef,
-    candidate: { reference: string; description: string; subgrupoSag: string; available: number },
-  ) => {
-    // Duplicate check: same removedReference already in draft
-    const draft = plans.find(p => p.vendorId === vendor.vendorId && p.status === "draft");
-    if (draft?.items.some(i => i.removedReference === removedRef.reference)) {
-      setDrawerFeedback(`Esta referencia ya esta incluida en el plan de surtido.`);
-      setTimeout(() => setDrawerFeedback(null), 4000);
-      return;
-    }
-
-    await addItemToPlanApi(
-      vendor.vendorId,
-      candidate.reference,
-      candidate.description,
-      removedRef.reference,
-      removedRef.description,
-      1,
-      removedRef.subgrupoSag,
-      "Reemplazo desde drawer de maleta",
-    );
-
-    setDrawerReplacingRef(null);
-    setDrawerFeedback(`Agregado al plan de surtido de ${vendor.vendorName}`);
-    setTimeout(() => setDrawerFeedback(null), 4000);
-  }, [plans, addItemToPlanApi]);
 
   const toggleRefDetail = useCallback((refCode: string) => {
     setExpandedRef((prev) => (prev === refCode ? null : refCode));
@@ -589,12 +333,10 @@ export function MaletasClient({
   // ── Section refs + collapse state (GO-LIVE-MALETAS-HOME-NAV-COLLAPSIBLE-01) ──
   const productionSectionRef = useRef<HTMLDivElement>(null);
   const pendingClassSectionRef = useRef<HTMLDivElement>(null);
-  const recompraSectionRef = useRef<HTMLDivElement>(null);
   const coverageSectionRef = useRef<HTMLDivElement>(null);
   const [sectionOpen, setSectionOpen] = useState<Record<string, boolean>>({
     produccion: true,
     pendientesClasificacion: false,
-    recompra: false,
     cobertura: false,
   });
   const toggleSection = useCallback((key: string) => {
@@ -607,16 +349,15 @@ export function MaletasClient({
 
   // Consolidated supply action counts across ALL vendors
   const homeActionCounts = useMemo(() => {
-    let produccion = 0, recompra = 0, bodega = 0, op = 0;
+    let produccion = 0, bodega = 0, op = 0;
     for (const v of vendors) {
       for (const ref of v.refs) {
         if (ref.supplyAction === "PRODUCCION_SUGERIDA") produccion++;
-        else if (ref.supplyAction === "RECOMPRA_SUGERIDA") recompra++;
         else if (ref.supplyAction === "REEMPLAZAR_BODEGA") bodega++;
         else if (ref.supplyAction === "COMPLETAR_DESDE_OP") op++;
       }
     }
-    return { produccion, recompra, bodega, op, total: produccion + recompra + bodega + op };
+    return { produccion, bodega, op, total: produccion + bodega + op };
   }, [vendors]);
 
   // MALLETS-FUNCTIONAL-RECOVERY-01: threshold-based production evaluation
@@ -646,16 +387,6 @@ export function MaletasClient({
   const prodThresholdEsperar = useMemo(
     () => productionValid.filter((p) => p.decision === "ESPERAR_OP"),
     [productionValid],
-  );
-
-  // Import evaluation summaries
-  const importRebuy = useMemo(
-    () => importEvaluation.evaluations.filter((e) => e.decision === "REBUY"),
-    [importEvaluation],
-  );
-  const importLowRotation = useMemo(
-    () => importEvaluation.evaluations.filter((e) => e.decision === "LOW_ROTATION"),
-    [importEvaluation],
   );
 
   // Drawer: state counts for action cards (uses activeRefs for main panel)
@@ -698,24 +429,9 @@ export function MaletasClient({
           }}>
             Ir a:
           </span>
-          {/* COMERCIAL-MALETAS-CANONICAL-INVENTORY-INTEGRATION-01: Builder entry */}
-          <button
-            onClick={() => setBuilderOpen(true)}
-            className="ag-action-primary"
-            style={{
-              fontFamily: T.mono, fontSize: 9, fontWeight: 600,
-              color: C.white, background: C.blueDark,
-              border: "none", borderRadius: R.pill,
-              padding: "4px 12px", cursor: "pointer",
-              display: "inline-flex", alignItems: "center", gap: S[1],
-            }}
-          >
-            + Nueva maleta
-          </button>
           {[
             { label: "Produccion", ref: productionSectionRef, key: "produccion", count: prodThresholdProducir.length },
             { label: "Pendientes", ref: pendingClassSectionRef, key: "pendientesClasificacion", count: productionPending.length },
-            { label: "Recompra / Baja rotacion", ref: recompraSectionRef, key: "recompra", count: importRebuy.length + importLowRotation.length },
             { label: "Oportunidades", ref: coverageSectionRef, key: "cobertura", count: coverageOpportunities.length },
           ].map(({ label, ref, key, count }) => (
             <button
@@ -796,11 +512,6 @@ export function MaletasClient({
                   Produccion: {homeActionCounts.produccion}
                 </span>
               )}
-              {homeActionCounts.recompra > 0 && (
-                <span style={{ fontFamily: T.mono, fontSize: 9, color: C.blueDark }}>
-                  Recompra: {homeActionCounts.recompra}
-                </span>
-              )}
               {homeActionCounts.bodega > 0 && (
                 <span style={{ fontFamily: T.mono, fontSize: 9, color: C.green }}>
                   Bodega: {homeActionCounts.bodega}
@@ -814,32 +525,6 @@ export function MaletasClient({
             </div>
           )}
         </div>
-
-        {/* ── Plan save status (PERSISTENCE-01) ──────────────────── */}
-        {(planSaving || planError) && (
-          <div style={{
-            padding: `${S[2]} ${S[4]}`,
-            marginBottom: S[3],
-            background: planError ? C.redLight : C.blueLight,
-            borderRadius: R.md,
-            border: `1px solid ${planError ? C.redBorder : C.blueBorder}`,
-            fontFamily: T.mono, fontSize: T.sz.xs,
-            color: planError ? C.red : C.blueDark,
-            display: "flex", alignItems: "center", gap: S[2],
-          }}>
-            {planSaving && <span>Guardando...</span>}
-            {planError && <span>Error: {planError}</span>}
-            {planError && (
-              <button onClick={() => setPlanError(null)} style={{
-                fontFamily: T.mono, fontSize: 9, color: C.red,
-                background: "transparent", border: "none", cursor: "pointer",
-                marginLeft: "auto",
-              }}>
-                Cerrar
-              </button>
-            )}
-          </div>
-        )}
 
         {/* ── Maletas activas (GO-LIVE-MALETAS-HOME-PRODUCTION-01) ── */}
         <div style={{
@@ -862,22 +547,17 @@ export function MaletasClient({
           gap: S[4],
           marginBottom: S[6],
         }}>
-          {activeVendors.map((vendor) => {
-            const vendorDraft = getDraftPlan(vendor.vendorId);
-            return (
+          {activeVendors.map((vendor) => (
               <VendorCard
                 key={vendor.vendorId}
                 vendor={vendor}
                 intel={intelMap.get(vendor.vendorId)}
                 baseMetrics={baseMetricsMap.get(vendor.vendorId)}
-                draftPlan={vendorDraft}
                 onClick={() => openVendor(vendor)}
-                onOpenPlan={() => openPlanDrawer(vendor.vendorId)}
                 onToggleActivation={toggleVendorActivation}
                 activationLoading={activationLoading}
               />
-            );
-          })}
+          ))}
         </div>
 
         {/* ── Maletas inactivas (collapsible) ── */}
@@ -916,37 +596,13 @@ export function MaletasClient({
                     vendor={vendor}
                     intel={intelMap.get(vendor.vendorId)}
                     baseMetrics={baseMetricsMap.get(vendor.vendorId)}
-                    draftPlan={getDraftPlan(vendor.vendorId)}
                     onClick={() => openVendor(vendor)}
-                    onOpenPlan={() => openPlanDrawer(vendor.vendorId)}
                     onToggleActivation={toggleVendorActivation}
                     activationLoading={activationLoading}
                   />
                 ))}
               </div>
             )}
-          </div>
-        )}
-
-        {/* ── Historial de surtidos ────────────────────────────── */}
-        {plans.length > 0 && (
-          <div style={{ marginBottom: S[6] }}>
-            <button onClick={() => setHistoryOpen(true)} style={{
-              fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 700,
-              color: C.blueDark, background: C.blueLight,
-              border: `1px solid ${C.blueBorder}`, borderRadius: R.lg,
-              cursor: "pointer", padding: `${S[3]} ${S[4]}`,
-              display: "flex", alignItems: "center", gap: S[2],
-            }}>
-              Historial de surtidos
-              <span style={{
-                fontFamily: T.mono, fontSize: 9, fontWeight: 700,
-                color: C.white, background: C.blueDark,
-                padding: "1px 8px", borderRadius: R.pill,
-              }}>
-                {plans.length}
-              </span>
-            </button>
           </div>
         )}
 
@@ -1121,91 +777,6 @@ export function MaletasClient({
           )}
         </SectionHeader>
 
-        {/* ── Recompra / Baja Rotacion (MALLETS-FUNCTIONAL-RECOVERY-01 Phase 6) ── */}
-        <SectionHeader
-          title="Recompra / Baja rotacion"
-          subtitle="Evaluacion de referencias import por rotacion y nivel de inventario"
-          count={(importRebuy.length + importLowRotation.length) > 0 ? importRebuy.length + importLowRotation.length : undefined}
-          open={sectionOpen.recompra}
-          onToggle={() => toggleSection("recompra")}
-          sectionRef={recompraSectionRef}
-          statusHint={importRebuy.length > 0 ? `${importRebuy.length} REBUY` : importLowRotation.length > 0 ? `${importLowRotation.length} baja rotacion` : "sin alertas"}
-        >
-          {importEvaluation.evaluations.length > 0 ? (
-            <div style={{
-              background: C.white, borderRadius: R.lg,
-              border: `1px solid ${C.line}`, boxShadow: `0 1px 3px ${C.ink}06`,
-              overflow: "hidden", overflowX: "auto", minWidth: 0,
-            }}>
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: "80px minmax(100px,1.2fr) 70px 60px 80px minmax(120px,1fr) 100px",
-                padding: `10px 16px`, background: C.surfaceAlt,
-                borderBottom: `1px solid ${C.line}`, gap: S[2], alignItems: "center",
-              }}>
-                {["Referencia", "Descripcion", "Tamano", "Inventario", "Meses s/ing.", "Motivo", "Decision"].map((h) => (
-                  <div key={h} style={{
-                    ...listHeaderCell,
-                    textAlign: h === "Inventario" || h === "Meses s/ing." ? "right" as const : h === "Decision" ? "center" as const : undefined,
-                  }}>{h}</div>
-                ))}
-              </div>
-              {importEvaluation.evaluations.slice(0, showAllImport ? 100 : 15).map((ev, i) => {
-                const decColor: Record<ImportRefDecision, string> = {
-                  REBUY: C.red, LOW_ROTATION: C.amber, WATCH: C.blueDark, INSUFFICIENT_DATA: C.inkFaint, DO_NOT_REBUY: C.green,
-                };
-                const decLabel: Record<ImportRefDecision, string> = {
-                  REBUY: "RECOMPRAR", LOW_ROTATION: "BAJA ROTACION", WATCH: "VIGILAR", INSUFFICIENT_DATA: "SIN DATOS", DO_NOT_REBUY: "OK",
-                };
-                return (
-                  <div key={ev.reference} style={{
-                    display: "grid",
-                    gridTemplateColumns: "80px minmax(100px,1.2fr) 70px 60px 80px minmax(120px,1fr) 100px",
-                    padding: ROW_PAD,
-                    borderBottom: i === Math.min(importEvaluation.evaluations.length, showAllImport ? 100 : 15) - 1 ? "none" : `1px solid ${C.lineSubtle}`,
-                    gap: S[2], alignItems: "center",
-                  }}>
-                    <div style={{ ...listCell, fontWeight: 700, color: C.titleDeep }}>{ev.reference}</div>
-                    <div style={{ ...listCell, color: C.ink }}>{ev.description}</div>
-                    <div style={{ ...listCell, color: C.inkMid }}>{ev.sizeClass ?? "\u2014"}</div>
-                    <div style={{ ...listCell, fontWeight: 700, color: ev.inventario <= 5 ? C.red : C.ink, textAlign: "right" as const }}>{ev.inventario}</div>
-                    <div style={{ ...listCell, color: ev.mesesSinIngreso !== null && ev.mesesSinIngreso >= 8 ? C.amber : C.inkFaint, textAlign: "right" as const }}>{ev.mesesSinIngreso ?? "\u2014"}</div>
-                    <div style={{ ...listCell, fontSize: 10, color: C.inkMid }}>{ev.motivo}</div>
-                    <div style={{
-                      fontFamily: T.mono, fontSize: 10, fontWeight: 700,
-                      color: C.white, background: decColor[ev.decision],
-                      padding: "2px 8px", borderRadius: R.pill,
-                      textAlign: "center" as const, whiteSpace: "nowrap" as const,
-                    }}>
-                      {decLabel[ev.decision]}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div style={{
-              padding: S[5], background: C.white, borderRadius: R.lg,
-              border: `1px solid ${C.line}`,
-            }}>
-              <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, color: C.green, marginBottom: S[2] }}>
-                Sin evaluaciones de recompra
-              </div>
-              <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint }}>
-                Diagnostico: {importEvaluation.diagnostic.evaluadas} refs evaluadas,
-                {importEvaluation.diagnostic.sinFechaIngreso} sin fecha de ingreso,
-                {importEvaluation.diagnostic.sinTamano} sin tamano,
-                {importEvaluation.diagnostic.sinInventario} sin inventario
-              </div>
-            </div>
-          )}
-          {importEvaluation.evaluations.length > 15 && !showAllImport && (
-            <button onClick={() => setShowAllImport(true)} style={showMoreBtnStyle}>
-              Ver todas ({importEvaluation.evaluations.length})
-            </button>
-          )}
-        </SectionHeader>
-
         {/* ── Oportunidades de cobertura (MALLETS-FUNCTIONAL-RECOVERY-01 Phase 7) ── */}
         <SectionHeader
           title="Oportunidades de cobertura"
@@ -1224,21 +795,31 @@ export function MaletasClient({
             }}>
               <div style={{
                 display: "grid",
-                gridTemplateColumns: "minmax(100px,1fr) minmax(80px,0.8fr) 80px minmax(80px,1fr) 60px minmax(120px,1.2fr)",
+                gridTemplateColumns: "minmax(100px,1fr) minmax(70px,0.7fr) 55px 90px minmax(80px,1fr) 70px minmax(100px,1fr)",
                 padding: `10px 16px`, background: C.surfaceAlt,
                 borderBottom: `1px solid ${C.line}`, gap: S[2], alignItems: "center",
               }}>
-                {["Catalogo / Grupo", "Subgrupo faltante", "Faltan", "Ref. sugerida", "Disp.", "Explicacion"].map((h) => (
+                {["Catalogo / Grupo", "Subgrupo", "Faltan", "Origen", "Ref. sugerida", "Cant.", "Detalle"].map((h) => (
                   <div key={h} style={{
                     ...listHeaderCell,
-                    textAlign: h === "Faltan" || h === "Disp." ? "right" as const : undefined,
+                    textAlign: h === "Faltan" || h === "Cant." ? "right" as const : undefined,
                   }}>{h}</div>
                 ))}
               </div>
-              {coverageOpportunities.slice(0, showAllGaps ? 100 : 10).map((opp, i) => (
-                <div key={`${opp.reference}-${opp.subgroupName}-${i}`} style={{
+              {coverageOpportunities.slice(0, showAllGaps ? 100 : 10).map((opp, i) => {
+                const sourceLabel = opp.source === "BODEGA" ? "Bodega"
+                  : opp.source === "OP_ACTIVA" ? "OP Activa"
+                  : "Produccion";
+                const sourceColor = opp.source === "BODEGA" ? C.green
+                  : opp.source === "OP_ACTIVA" ? C.blueDark
+                  : C.red;
+                const qty = opp.source === "BODEGA" ? opp.availableNow
+                  : opp.source === "OP_ACTIVA" ? opp.incomingUnits
+                  : null;
+                return (
+                <div key={`${opp.replacementReference || "prod"}-${opp.subgroupName}-${i}`} style={{
                   display: "grid",
-                  gridTemplateColumns: "minmax(100px,1fr) minmax(80px,0.8fr) 80px minmax(80px,1fr) 60px minmax(120px,1.2fr)",
+                  gridTemplateColumns: "minmax(100px,1fr) minmax(70px,0.7fr) 55px 90px minmax(80px,1fr) 70px minmax(100px,1fr)",
                   padding: ROW_PAD,
                   borderBottom: i === Math.min(coverageOpportunities.length, showAllGaps ? 100 : 10) - 1 ? "none" : `1px solid ${C.lineSubtle}`,
                   gap: S[2], alignItems: "center",
@@ -1249,11 +830,25 @@ export function MaletasClient({
                   </div>
                   <div style={{ ...listCell, color: C.inkMid }}>{opp.subgroupName}</div>
                   <div style={{ ...listCell, fontWeight: 700, color: C.red, textAlign: "right" as const }}>{opp.faltante}</div>
-                  <div style={{ ...listCell, fontWeight: 700, color: C.titleDeep }}>{opp.reference}</div>
-                  <div style={{ ...listCell, fontWeight: 700, color: C.green, textAlign: "right" as const }}>{opp.disponible}</div>
-                  <div style={{ ...listCell, fontSize: 10, color: C.inkMid }}>{opp.explicacion}</div>
+                  <div style={{ ...listCell }}>
+                    <span style={{
+                      fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: sourceColor,
+                      padding: "2px 6px", borderRadius: R.sm,
+                      background: opp.source === "BODEGA" ? `${C.green}12`
+                        : opp.source === "OP_ACTIVA" ? `${C.blueDark}12`
+                        : `${C.red}12`,
+                    }}>{sourceLabel}</span>
+                  </div>
+                  <div style={{ ...listCell, fontWeight: 700, color: opp.replacementReference ? C.titleDeep : C.inkFaint }}>
+                    {opp.replacementReference || "\u2014"}
+                  </div>
+                  <div style={{ ...listCell, fontWeight: 700, color: sourceColor, textAlign: "right" as const }}>
+                    {qty != null ? qty : "\u2014"}
+                  </div>
+                  <div style={{ ...listCell, fontSize: 10, color: C.inkMid }}>{opp.reason}</div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div style={{
@@ -1334,61 +929,8 @@ export function MaletasClient({
                 })}
               </div>
 
-              {/* Row 2: Plan bar + Tab switcher */}
+              {/* Row 2: Tab switcher */}
               <div style={{ display: "flex", gap: S[2], alignItems: "center" }}>
-                {/* Plan bar — compact */}
-                {(() => {
-                  const activeDraft = getDraftPlan(selectedVendor.vendorId);
-                  if (!activeDraft) return (
-                    <span style={{
-                      fontFamily: T.mono, fontSize: 9, color: C.inkFaint,
-                      padding: "2px 8px", background: C.surfaceAlt,
-                      borderRadius: R.sm, border: `1px solid ${C.line}`,
-                    }}>
-                      Sin plan activo
-                    </span>
-                  );
-                  return (
-                    <div style={{
-                      display: "flex", alignItems: "center", gap: S[2],
-                      padding: "2px 8px",
-                      background: C.blueLight, borderRadius: R.sm,
-                      border: `1px solid ${C.blueBorder}`,
-                    }}>
-                      <span style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: C.blueDark }}>
-                        Plan: {activeDraft.items.length} cambio{activeDraft.items.length !== 1 ? "s" : ""}
-                      </span>
-                      <button
-                        onClick={() => openPlanDrawer(selectedVendor.vendorId)}
-                        style={{
-                          fontFamily: T.mono, fontSize: 8, fontWeight: 600,
-                          color: C.blueDark, background: C.white,
-                          border: `1px solid ${C.blueBorder}`, borderRadius: R.sm,
-                          padding: "1px 6px", cursor: "pointer", lineHeight: 1,
-                        }}
-                      >
-                        Ver
-                      </button>
-                      {activeDraft.items.length > 0 && (
-                        <button
-                          onClick={() => generatePlanDocument(activeDraft.id)}
-                          disabled={planSaving}
-                          style={{
-                            fontFamily: T.mono, fontSize: 8, fontWeight: 700,
-                            color: C.white, background: C.blueDark,
-                            border: "none", borderRadius: R.sm,
-                            padding: "1px 6px", cursor: planSaving ? "wait" : "pointer",
-                            opacity: planSaving ? 0.6 : 1, lineHeight: 1,
-                          }}
-                        >
-                          Guia
-                        </button>
-                      )}
-                    </div>
-                  );
-                })()}
-
-                {/* Tab switcher — real tabs with bottom border */}
                 <div style={{ marginLeft: "auto", display: "flex", gap: 0 }}>
                   {(["referencias", "inteligencia", "derrotero"] as const).map((tab) => {
                     const isActive = drawerTab === tab;
@@ -1415,29 +957,6 @@ export function MaletasClient({
                 </div>
               </div>
             </div>
-
-            {/* ── Feedback toast ── */}
-            {drawerFeedback && (
-              <div style={{
-                padding: `3px ${S[3]}px`,
-                marginTop: S[1],
-                background: drawerFeedback.includes("ya esta incluida") ? C.amberLight : C.greenLight,
-                borderRadius: R.sm,
-                border: `1px solid ${drawerFeedback.includes("ya esta incluida") ? C.amberBorder : C.greenBorder}`,
-                fontFamily: T.mono, fontSize: 10, fontWeight: 600,
-                color: drawerFeedback.includes("ya esta incluida") ? C.amber : C.green,
-                display: "flex", alignItems: "center", gap: S[2],
-                flexShrink: 0,
-              }}>
-                <span>{drawerFeedback}</span>
-                <button onClick={() => setDrawerFeedback(null)} style={{
-                  fontFamily: T.mono, fontSize: 9, color: "inherit",
-                  background: "transparent", border: "none", cursor: "pointer", marginLeft: "auto",
-                }}>
-                  x
-                </button>
-              </div>
-            )}
 
             {/* ── Tab: Referencias — search bar (GO-LIVE-MALETAS-REFERENCIAS-POR-LINEA-01) ── */}
             {drawerTab === "referencias" && (
@@ -1502,7 +1021,6 @@ export function MaletasClient({
                     const saludables = lineRefs.filter((r) => r.state === "saludable").length;
                     const agotado = lineRefs.filter((r) => r.commercialHealth === "OUT_OF_STOCK").length;
                     const stockBajo = lineRefs.filter((r) => r.commercialHealth === "LOW_STOCK").length;
-                    const recompra = lineRefs.filter((r) => r.supplyAction === "RECOMPRA_SUGERIDA").length;
 
                     // Filter lineRefs by local filter
                     let filtered = lineRefs;
@@ -1548,7 +1066,6 @@ export function MaletasClient({
                             <span style={{ fontFamily: T.mono, fontSize: 9, color: C.green }}>{saludables} saludables</span>
                             {agotado > 0 && <span style={{ fontFamily: T.mono, fontSize: 9, color: C.red }}>{agotado} agotado</span>}
                             {stockBajo > 0 && <span style={{ fontFamily: T.mono, fontSize: 9, color: C.amber }}>{stockBajo} stock bajo</span>}
-                            {recompra > 0 && <span style={{ fontFamily: T.mono, fontSize: 9, color: C.blueDark }}>{recompra} recompra</span>}
                           </span>
                         </button>
 
@@ -1748,18 +1265,7 @@ export function MaletasClient({
 
                                     {/* Expanded replacement detail panel */}
                                     {isRefExpanded && (
-                                      <>
-                                        <ReplacementDetailPanel ref_={ref} />
-                                        {drawerReplacingRef === ref.reference && selectedVendor && !ref.isAccessory && (
-                                          <DrawerCandidateSelector
-                                            ref_={ref}
-                                            vendor={selectedVendor}
-                                            draftPlan={getDraftPlan(selectedVendor.vendorId)}
-                                            onSelect={(candidate) => addReplacementFromDrawer(selectedVendor, ref, candidate)}
-                                            saving={planSaving}
-                                          />
-                                        )}
-                                      </>
+                                      <ReplacementDetailPanel ref_={ref} />
                                     )}
                                   </div>
                                 );
@@ -1832,103 +1338,6 @@ export function MaletasClient({
         {prodDetailItem && <ProductionDetailDrawer item={prodDetailItem} vendors={vendors} />}
       </OperationalSideDrawer>
 
-      {/* ── Coverage Gap Action Drawer ───────────────────────────── */}
-      <OperationalSideDrawer
-        open={gapActionOpen}
-        onClose={() => setGapActionOpen(false)}
-        title={gapActionItem ? `Agregar al plan de surtido · ${gapActionItem.reference}` : ""}
-        size="wide"
-      >
-        {gapActionItem && (
-          <GapActionDrawer
-            gap={gapActionItem}
-            candidates={buildMaletaCandidates()}
-            step={gapStep}
-            selectedVendor={gapSelectedVendor}
-            selectedRefOut={gapSelectedRefOut}
-            qty={gapQty}
-            onSelectVendor={(id) => { setGapSelectedVendor(id); setGapStep("select_ref_out"); }}
-            onSelectRefOut={(ref) => { setGapSelectedRefOut(ref); setGapStep("confirm"); }}
-            onChangeQty={setGapQty}
-            onConfirm={confirmGapReservation}
-            onPrint={(guide) => { setPrintGuide(guide); }}
-            onClose={() => setGapActionOpen(false)}
-            guides={guides}
-          />
-        )}
-      </OperationalSideDrawer>
-
-      {/* ── Plan Drawer (MALETAS-BULK-REPLENISHMENT-01) ──────────── */}
-      <OperationalSideDrawer
-        open={planDrawerOpen}
-        onClose={() => setPlanDrawerOpen(false)}
-        title={(() => {
-          const v = vendors.find(v => v.vendorId === planDrawerVendor);
-          return v ? `Plan de surtido · ${v.vendorName}` : "Plan de surtido";
-        })()}
-        size="wide"
-      >
-        {planDrawerVendor && (
-          <PlanDrawerContent
-            vendorId={planDrawerVendor}
-            plans={plans}
-            vendors={vendors}
-            onRemoveItem={removeItemFromPlan}
-            onGenerateDocument={generatePlanDocument}
-            onUpdateStatus={updatePlanStatus}
-            onPrint={(plan) => setPrintPlan(plan)}
-          />
-        )}
-      </OperationalSideDrawer>
-
-      {/* ── History Drawer ────────────────────────────────────────── */}
-      <OperationalSideDrawer
-        open={historyOpen}
-        onClose={() => setHistoryOpen(false)}
-        title="Historial de surtidos"
-        size="wide"
-      >
-        <HistoryDrawerContent
-          plans={plans}
-          statusFilter={historyFilter}
-          vendorFilter={historyVendorFilter}
-          vendors={vendors}
-          onStatusFilter={setHistoryFilter}
-          onVendorFilter={setHistoryVendorFilter}
-          onOpenPlan={(planId) => {
-            const plan = plans.find(p => p.id === planId);
-            if (plan) {
-              setPlanDrawerVendor(plan.vendorId);
-              setPlanDrawerOpen(true);
-            }
-          }}
-          onPrint={(plan) => setPrintPlan(plan)}
-        />
-      </OperationalSideDrawer>
-
-      {/* ── Print View (full-screen overlay) ─────────────────────── */}
-      {printGuide && (
-        <PrintGuideOverlay guide={printGuide} onClose={() => setPrintGuide(null)} />
-      )}
-      {printPlan && (
-        <PrintPlanOverlay plan={printPlan} onClose={() => setPrintPlan(null)} />
-      )}
-
-      {/* ── Portfolio Builder Drawer (COMERCIAL-MALETAS-CANONICAL-INVENTORY-INTEGRATION-01) ── */}
-      <OperationalSideDrawer
-        open={builderOpen}
-        onClose={() => setBuilderOpen(false)}
-        title="Constructor de maleta"
-        subtitle={`${builderSelection.length} refs · ${builderSelection.reduce<number>((s, i) => s + i.assignedQty, 0)} uds`}
-        severity="info"
-        size="wide"
-      >
-        <MaletaPortfolioBuilder
-          orgSlug={orgSlug}
-          onSelectionChange={setBuilderSelection}
-          onClose={() => setBuilderOpen(false)}
-        />
-      </OperationalSideDrawer>
     </div>
   );
 }
@@ -2183,119 +1592,7 @@ function ReplacementDetailPanel({ ref_ }: { ref_: VendorSampleRef }) {
   );
 }
 
-// ── Drawer Candidate Selector (MALETAS-DRAWER-UX-AND-PLAN-FLOW-01) ──────────
-
-function DrawerCandidateSelector({
-  ref_,
-  vendor,
-  draftPlan,
-  onSelect,
-  saving,
-}: {
-  ref_: VendorSampleRef;
-  vendor: VendorSampleSnapshot;
-  draftPlan?: MaletaReplenishmentPlan;
-  onSelect: (candidate: { reference: string; description: string; subgrupoSag: string; available: number }) => void;
-  saving: boolean;
-}) {
-  // Build candidates: same subgrupo, available in bodega, not already in maleta
-  const bodegaOptions = ref_.replacementOptions ?? [];
-  const vendorRefs = new Set(vendor.refs.map(r => r.reference));
-  const alreadyInPlan = new Set(draftPlan?.items.map(i => i.addedReference) ?? []);
-  const alreadyRemovedInPlan = draftPlan?.items.some(i => i.removedReference === ref_.reference);
-
-  // Filter: same subgrupo, available > 0, not already in maleta, not already in plan
-  const candidates = bodegaOptions
-    .filter(opt => opt.available > 0 && !vendorRefs.has(opt.reference) && !alreadyInPlan.has(opt.reference))
-    .sort((a, b) => b.available - a.available);
-
-  if (alreadyRemovedInPlan) {
-    return (
-      <div style={{
-        padding: S[3],
-        background: C.amberLight,
-        borderBottom: `1px solid ${C.line}`,
-        fontFamily: T.mono, fontSize: T.sz.xs, color: C.amber, fontWeight: 600,
-      }}>
-        Esta referencia ya esta incluida en el plan de surtido.
-      </div>
-    );
-  }
-
-  if (candidates.length === 0) {
-    return (
-      <div style={{
-        padding: S[3],
-        background: C.surfaceAlt,
-        borderBottom: `1px solid ${C.line}`,
-        fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint,
-      }}>
-        Sin candidatos disponibles para reemplazo
-      </div>
-    );
-  }
-
-  return (
-    <div style={{
-      background: C.blueDark + "08",
-      borderBottom: `1px solid ${C.line}`,
-      padding: `${S[3]}px ${S[4]}px`,
-    }}>
-      <div style={{
-        fontFamily: T.mono, fontSize: 10, fontWeight: 700,
-        color: C.blueDark, textTransform: "uppercase" as const,
-        letterSpacing: "0.05em", marginBottom: S[2],
-      }}>
-        Elegir reemplazo para {ref_.reference}
-      </div>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: S[1] }}>
-        {candidates.slice(0, 8).map((opt) => (
-          <div key={opt.reference} style={{
-            display: "flex", alignItems: "center", gap: S[2],
-            padding: `${S[2]}px ${S[3]}px`,
-            background: C.white,
-            borderRadius: R.md,
-            border: `1px solid ${C.line}`,
-          }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 700, color: C.titleDeep }}>
-                {opt.reference}
-              </div>
-              <div style={{
-                fontFamily: T.mono, fontSize: 10, color: C.ink,
-                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
-              }}>
-                {opt.description}
-              </div>
-              <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint }}>
-                {opt.subgrupoSag} · Disponible: {opt.available}
-              </div>
-            </div>
-            <button
-              onClick={() => onSelect({
-                reference: opt.reference,
-                description: opt.description,
-                subgrupoSag: opt.subgrupoSag,
-                available: opt.available,
-              })}
-              disabled={saving}
-              style={{
-                fontFamily: T.mono, fontSize: 9, fontWeight: 700,
-                color: C.white, background: C.blueDark,
-                border: "none", borderRadius: R.sm,
-                padding: "4px 10px", cursor: saving ? "wait" : "pointer",
-                flexShrink: 0, opacity: saving ? 0.6 : 1,
-              }}
-            >
-              Elegir
-            </button>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+// ── Detail Field ─────────────────────────────────────────────────────────────
 
 function DetailField({
   label,
@@ -2513,7 +1810,7 @@ function AccessoryScarcityPanel({ ref_ }: { ref_: VendorSampleRef }) {
 
 // ── Vendor Card ──────────────────────────────────────────────────────────────
 
-function VendorCard({ vendor, intel, baseMetrics, draftPlan, onClick, onOpenPlan, onToggleActivation, activationLoading }: { vendor: VendorSampleSnapshot; intel?: VendorCommercialIntelligence; baseMetrics?: VendorMalletBaseMetrics; draftPlan?: MaletaReplenishmentPlan; onClick: () => void; onOpenPlan: () => void; onToggleActivation?: (vendorId: string, currentActive: boolean) => void; activationLoading?: string | null }) {
+function VendorCard({ vendor, intel, baseMetrics, onClick, onToggleActivation, activationLoading }: { vendor: VendorSampleSnapshot; intel?: VendorCommercialIntelligence; baseMetrics?: VendorMalletBaseMetrics; onClick: () => void; onToggleActivation?: (vendorId: string, currentActive: boolean) => void; activationLoading?: string | null }) {
   const hasIssues = vendor.outOfStockCommercialRefs > 0 || vendor.lowStockCommercialRefs > 0;
   const isEmpty = vendor.totalRefs === 0;
 
@@ -2589,33 +1886,8 @@ function VendorCard({ vendor, intel, baseMetrics, draftPlan, onClick, onOpenPlan
               </div>
             )}
 
-            {/* Draft plan badge */}
-            {draftPlan && (
-              <button
-                onClick={(e) => { e.stopPropagation(); onOpenPlan(); }}
-                style={{
-                  fontFamily: T.mono, fontSize: 10, fontWeight: 700,
-                  color: C.blueDark, background: C.blueLight,
-                  border: `1px solid ${C.blueBorder}`, borderRadius: R.md,
-                  padding: `${S[2]} ${S[3]}`,
-                  cursor: "pointer", width: "100%", textAlign: "center",
-                  marginTop: 8,
-                  display: "flex", alignItems: "center", justifyContent: "center", gap: S[2],
-                }}
-              >
-                Plan draft: {draftPlan.items.length} cambio{draftPlan.items.length !== 1 ? "s" : ""}
-                <span style={{
-                  fontFamily: T.mono, fontSize: 8, fontWeight: 700,
-                  color: C.white, background: C.blueDark,
-                  padding: "1px 6px", borderRadius: R.pill,
-                }}>
-                  ver
-                </span>
-              </button>
-            )}
-
             {/* CTA row */}
-            <div style={{ display: "flex", gap: S[2], marginTop: draftPlan ? 4 : 8 }}>
+            <div style={{ display: "flex", gap: S[2], marginTop: 8 }}>
               <div style={{
                 fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 700,
                 color: C.blueDark, textAlign: "center",
@@ -3692,1014 +2964,6 @@ function ProductionDetailDrawer({
         <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink, lineHeight: 1.6 }}>
           No hay suficiente inventario central del subgrupo para reemplazar referencias agotadas o en riesgo dentro de maletas.
           La produccion cubre el deficit de <strong>{item.shortfall}</strong> unidades que no pueden ser surtidas desde bodega central.
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Gap Action Drawer Content ────────────────────────────────────────────────
-
-function GapActionDrawer({
-  gap,
-  candidates,
-  step,
-  selectedVendor,
-  selectedRefOut,
-  qty,
-  onSelectVendor,
-  onSelectRefOut,
-  onChangeQty,
-  onConfirm,
-  onPrint,
-  onClose,
-  guides,
-}: {
-  gap: CoverageGapRef;
-  candidates: MaletaCandidate[];
-  step: "select_maleta" | "select_ref_out" | "confirm" | "done";
-  selectedVendor: string | null;
-  selectedRefOut: string | null;
-  qty: number;
-  onSelectVendor: (id: string) => void;
-  onSelectRefOut: (ref: string) => void;
-  onChangeQty: (q: number) => void;
-  onConfirm: () => void;
-  onPrint: (guide: MaletaSurtidoGuide) => void;
-  onClose: () => void;
-  guides: MaletaSurtidoGuide[];
-}) {
-  const selected = candidates.find(c => c.vendorId === selectedVendor);
-  const latestGuide = guides.length > 0 ? guides[guides.length - 1] : null;
-
-  const inputStyle: React.CSSProperties = {
-    fontFamily: T.mono, fontSize: T.sz.xs, padding: `${S[1]}px ${S[2]}px`,
-    border: `1px solid ${C.line}`, borderRadius: R.sm, background: C.white,
-    color: C.ink, width: 60, textAlign: "center",
-  };
-
-  return (
-    <div style={{ padding: S[4], display: "flex", flexDirection: "column", gap: S[4] }}>
-      {/* Reference info */}
-      <div style={{ background: C.blueLight, borderRadius: R.md, padding: S[3], border: `1px solid ${C.blueBorder}` }}>
-        <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: 700, color: C.blueDark }}>{gap.reference}</div>
-        <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink, marginTop: 2 }}>{gap.description}</div>
-        <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight, marginTop: 2 }}>
-          {gap.subgrupoSag ?? gap.line} · Disponible: {gap.centralAvailable}
-        </div>
-      </div>
-
-      {/* Step 1: Select maleta */}
-      {(step === "select_maleta" || step === "select_ref_out" || step === "confirm") && (
-        <div>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 700, color: C.ink, marginBottom: S[2] }}>
-            1. Elegir maleta / vendedor
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: S[1] }}>
-            {candidates.map(c => (
-              <button key={c.vendorId} onClick={() => onSelectVendor(c.vendorId)} style={{
-                display: "flex", justifyContent: "space-between", alignItems: "center",
-                padding: S[2], borderRadius: R.sm, cursor: "pointer",
-                background: c.vendorId === selectedVendor ? C.blueLight : C.white,
-                border: `1px solid ${c.vendorId === selectedVendor ? C.blueBorder : C.line}`,
-                textAlign: "left" as const,
-              }}>
-                <div>
-                  <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 600, color: C.ink }}>{c.vendorName}</div>
-                  <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint }}>
-                    Bodega: {c.warehouseCode} · Cobertura: {c.currentCoverage}% · Riesgo: {c.refsAtRisk}
-                  </div>
-                </div>
-                {c.replaceableRefs.length > 0 && (
-                  <span style={{
-                    fontFamily: T.mono, fontSize: 9, fontWeight: 600,
-                    color: C.amber, background: C.amberLight,
-                    padding: "1px 6px", borderRadius: R.pill,
-                    border: `1px solid ${C.amberBorder}`,
-                  }}>
-                    {c.replaceableRefs.length} reemplazables
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Step 2: Select ref out */}
-      {selected && (step === "select_ref_out" || step === "confirm") && (
-        <div>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 700, color: C.ink, marginBottom: S[2] }}>
-            2. Referencia que sale (opcional)
-          </div>
-          {selected.replaceableRefs.length === 0 ? (
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, padding: S[2] }}>
-              Sin referencias reemplazables. Se agregara sin retirar otra.
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: S[1] }}>
-              <button onClick={() => onSelectRefOut("")} style={{
-                padding: S[2], borderRadius: R.sm, cursor: "pointer",
-                background: selectedRefOut === "" ? C.blueLight : C.white,
-                border: `1px solid ${selectedRefOut === "" ? C.blueBorder : C.line}`,
-                fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight, textAlign: "left" as const,
-              }}>
-                Ninguna (agregar sin retirar)
-              </button>
-              {selected.replaceableRefs.map(r => (
-                <button key={r.reference} onClick={() => onSelectRefOut(r.reference)} style={{
-                  padding: S[2], borderRadius: R.sm, cursor: "pointer",
-                  background: selectedRefOut === r.reference ? C.blueLight : C.white,
-                  border: `1px solid ${selectedRefOut === r.reference ? C.blueBorder : C.line}`,
-                  textAlign: "left" as const,
-                }}>
-                  <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 600, color: C.ink }}>{r.reference}</div>
-                  <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint }}>{r.description} · {r.reason}</div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Step 3: Confirm */}
-      {step === "confirm" && (
-        <div>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 700, color: C.ink, marginBottom: S[2] }}>
-            3. Confirmar
-          </div>
-          <div style={{ background: C.surface, borderRadius: R.md, padding: S[3], border: `1px solid ${C.line}`, marginBottom: S[2] }}>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink }}>
-              <strong>Entra:</strong> {gap.reference} ({gap.description})
-            </div>
-            {selectedRefOut && (
-              <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink, marginTop: 4 }}>
-                <strong>Sale:</strong> {selectedRefOut}
-              </div>
-            )}
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink, marginTop: 4 }}>
-              <strong>Maleta:</strong> {selected?.vendorName}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: S[2], marginTop: S[2] }}>
-              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight }}>Cantidad:</span>
-              <input type="number" value={qty} onChange={e => onChangeQty(Math.max(1, Number(e.target.value)))} min={1} style={inputStyle} />
-            </div>
-          </div>
-          <button onClick={onConfirm} style={{
-            fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 700,
-            color: C.white, background: C.blueDark,
-            border: "none", borderRadius: R.sm,
-            padding: `${S[2]}px ${S[4]}px`, cursor: "pointer", width: "100%",
-          }}>
-            Agregar al plan de surtido
-          </button>
-        </div>
-      )}
-
-      {/* Step 4: Done — added to plan */}
-      {step === "done" && (
-        <div>
-          <div style={{ background: C.greenLight, borderRadius: R.md, padding: S[3], border: `1px solid ${C.greenBorder}`, marginBottom: S[3] }}>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: 700, color: C.green }}>
-              Agregado al plan de surtido
-            </div>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink, marginTop: 4 }}>
-              {selectedVendor ? `Maleta: ${candidates.find(c => c.vendorId === selectedVendor)?.vendorName ?? selectedVendor}` : ""}
-            </div>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginTop: 2 }}>
-              Puedes seguir agregando oportunidades al mismo plan antes de generar el documento.
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: S[2] }}>
-            <button onClick={onClose} style={{
-              fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 700,
-              color: C.blueDark, background: C.blueLight,
-              border: `1px solid ${C.blueBorder}`, borderRadius: R.sm,
-              padding: `${S[2]}px ${S[3]}px`, cursor: "pointer", flex: 1,
-            }}>
-              Seguir agregando
-            </button>
-            <button onClick={onClose} style={{
-              fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 600,
-              color: C.inkLight, background: "transparent",
-              border: `1px solid ${C.line}`, borderRadius: R.sm,
-              padding: `${S[2]}px ${S[3]}px`, cursor: "pointer", flex: 1,
-            }}>
-              Cerrar
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Print Guide Overlay ──────────────────────────────────────────────────────
-
-function PrintGuideOverlay({
-  guide,
-  onClose,
-}: {
-  guide: MaletaSurtidoGuide;
-  onClose: () => void;
-}) {
-  const printRef = useRef<HTMLDivElement>(null);
-
-  const handlePrint = () => {
-    if (printRef.current) {
-      const w = window.open("", "_blank");
-      if (!w) return;
-      w.document.write(`
-        <html><head><title>Guia de Surtido ${guide.documentNumber}</title>
-        <style>
-          * { margin: 0; padding: 0; box-sizing: border-box; }
-          body { font-family: monospace; font-size: 12px; padding: 24px; color: #111; }
-          h1 { font-size: 16px; margin-bottom: 4px; }
-          h2 { font-size: 13px; margin: 16px 0 8px; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
-          table { width: 100%; border-collapse: collapse; margin: 8px 0; }
-          th, td { border: 1px solid #ccc; padding: 4px 8px; text-align: left; font-size: 11px; }
-          th { background: #f5f5f5; font-weight: 700; }
-          .sig { margin-top: 40px; display: flex; gap: 40px; }
-          .sig-box { flex: 1; border-top: 1px solid #111; padding-top: 4px; text-align: center; font-size: 11px; }
-          @media print { body { padding: 12px; } }
-        </style></head><body>
-        ${printRef.current.innerHTML}
-        </body></html>
-      `);
-      w.document.close();
-      w.print();
-    }
-  };
-
-  const refsIn = guide.reservations.filter(r => r.refIn);
-  const refsOut = guide.reservations.filter(r => r.refOut);
-
-  return (
-    <div style={{
-      position: "fixed", inset: 0, zIndex: 9999,
-      background: "rgba(0,0,0,0.5)",
-      display: "flex", alignItems: "center", justifyContent: "center",
-    }}>
-      <div style={{
-        background: C.white, borderRadius: R.lg,
-        width: "90%", maxWidth: 700, maxHeight: "90vh",
-        overflow: "auto", padding: S[6],
-        boxShadow: `0 16px 48px rgba(0,0,0,0.2)`,
-      }}>
-        {/* Actions */}
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: S[4] }}>
-          <button onClick={handlePrint} style={{
-            fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 700,
-            color: C.white, background: C.blueDark,
-            border: "none", borderRadius: R.sm,
-            padding: `${S[2]}px ${S[4]}px`, cursor: "pointer",
-          }}>
-            Imprimir
-          </button>
-          <button onClick={onClose} style={{
-            fontFamily: T.mono, fontSize: T.sz.xs,
-            color: C.inkLight, background: "transparent",
-            border: `1px solid ${C.line}`, borderRadius: R.sm,
-            padding: `${S[2]}px ${S[3]}px`, cursor: "pointer",
-          }}>
-            Cerrar
-          </button>
-        </div>
-
-        {/* Printable content */}
-        <div ref={printRef}>
-          <h1 style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: 700, color: C.titleDeep }}>
-            Guia de Surtido de Maleta
-          </h1>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginBottom: S[3] }}>
-            {guide.documentNumber} · {guide.date}
-          </div>
-
-          {/* Vendor data */}
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink, marginBottom: S[3], lineHeight: 1.8 }}>
-            <div><strong>Vendedor:</strong> {guide.vendorName}</div>
-            <div><strong>Bodega:</strong> {guide.warehouseCode}</div>
-            <div><strong>Estado:</strong> {RESERVATION_STATUS_LABEL[guide.status]}</div>
-          </div>
-
-          {/* References to send */}
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: 700, color: C.ink, marginBottom: S[1], borderBottom: `1px solid ${C.line}`, paddingBottom: 4 }}>
-            Referencias a enviar
-          </div>
-          <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: S[4], fontFamily: T.mono, fontSize: T.sz.xs }}>
-            <thead>
-              <tr style={{ background: C.surfaceAlt }}>
-                <th style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "left" }}>Referencia</th>
-                <th style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "left" }}>Descripcion</th>
-                <th style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "center" }}>Cantidad</th>
-              </tr>
-            </thead>
-            <tbody>
-              {refsIn.map(r => (
-                <tr key={r.id}>
-                  <td style={{ border: `1px solid ${C.line}`, padding: "4px 8px", fontWeight: 700 }}>{r.refIn}</td>
-                  <td style={{ border: `1px solid ${C.line}`, padding: "4px 8px" }}>{r.refInDescription}</td>
-                  <td style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "center" }}>{r.refInQty}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          {/* References to withdraw */}
-          {refsOut.length > 0 && (
-            <>
-              <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: 700, color: C.ink, marginBottom: S[1], borderBottom: `1px solid ${C.line}`, paddingBottom: 4 }}>
-                Referencias a retirar
-              </div>
-              <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: S[4], fontFamily: T.mono, fontSize: T.sz.xs }}>
-                <thead>
-                  <tr style={{ background: C.surfaceAlt }}>
-                    <th style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "left" }}>Referencia</th>
-                    <th style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "left" }}>Descripcion</th>
-                    <th style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "center" }}>Cantidad</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {refsOut.map(r => (
-                    <tr key={r.id}>
-                      <td style={{ border: `1px solid ${C.line}`, padding: "4px 8px", fontWeight: 700 }}>{r.refOut}</td>
-                      <td style={{ border: `1px solid ${C.line}`, padding: "4px 8px" }}>{r.refOutDescription}</td>
-                      <td style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "center" }}>{r.refOutQty}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          )}
-
-          {/* Motivo */}
-          {guide.reservations.length > 0 && (
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink, marginBottom: S[4] }}>
-              <strong>Motivo:</strong> {guide.reservations[0].reason}
-            </div>
-          )}
-
-          {/* Signatures */}
-          <div style={{ display: "flex", gap: 40, marginTop: 48 }}>
-            <div style={{ flex: 1, borderTop: `1px solid ${C.ink}`, paddingTop: 4, textAlign: "center" }}>
-              <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint }}>Firma entrega</div>
-            </div>
-            <div style={{ flex: 1, borderTop: `1px solid ${C.ink}`, paddingTop: 4, textAlign: "center" }}>
-              <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint }}>Firma recibe</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Plan Drawer Content (MALETAS-BULK-REPLENISHMENT-01) ──────────────────────
-
-function PlanDrawerContent({
-  vendorId,
-  plans,
-  vendors,
-  onRemoveItem,
-  onGenerateDocument,
-  onUpdateStatus,
-  onPrint,
-}: {
-  vendorId: string;
-  plans: MaletaReplenishmentPlan[];
-  vendors: VendorSampleSnapshot[];
-  onRemoveItem: (planId: string, itemId: string) => void;
-  onGenerateDocument: (planId: string) => void;
-  onUpdateStatus: (planId: string, status: ReplenishmentPlanStatus) => void;
-  onPrint: (plan: MaletaReplenishmentPlan) => void;
-}) {
-  const vendor = vendors.find(v => v.vendorId === vendorId);
-  const vendorPlans = plans.filter(p => p.vendorId === vendorId).sort((a, b) =>
-    new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-  );
-  const draftPlan = vendorPlans.find(p => p.status === "draft");
-  const otherPlans = vendorPlans.filter(p => p.status !== "draft");
-
-  const planStatusBadge = (status: ReplenishmentPlanStatus) => {
-    const c = status === "draft" ? C.blueDark
-      : status === "pending_warehouse" ? C.amber
-      : status === "shipped" ? C.blueDark
-      : status === "received" ? C.green
-      : status === "cancelled" ? C.inkFaint
-      : C.inkFaint;
-    const bg = status === "draft" ? C.blueLight
-      : status === "pending_warehouse" ? C.amberLight
-      : status === "shipped" ? C.blueLight
-      : status === "received" ? C.greenLight
-      : C.surfaceAlt;
-    return (
-      <span style={{
-        fontFamily: T.mono, fontSize: 9, fontWeight: 700,
-        color: c, background: bg,
-        padding: "2px 10px", borderRadius: R.pill,
-        textTransform: "uppercase" as const,
-        display: "inline-flex", alignItems: "center",
-      }}>
-        {PLAN_STATUS_LABEL[status]}
-      </span>
-    );
-  };
-
-  const renderPlanSection = (plan: MaletaReplenishmentPlan) => {
-    const recovery = computeCoverageRecovery(plan.items);
-    const subgroups = [...new Set(plan.items.map(i => i.subgroupSag))];
-    const isDraft = plan.status === "draft";
-    const canGenerate = isDraft && plan.items.length > 0;
-    const canShip = plan.status === "pending_warehouse";
-    const canReceive = plan.status === "shipped";
-
-    return (
-      <div key={plan.id} style={{
-        background: C.white,
-        borderRadius: R.lg,
-        border: `1px solid ${isDraft ? C.blueBorder : C.line}`,
-        overflow: "hidden",
-        marginBottom: S[4],
-      }}>
-        {/* Plan header */}
-        <div style={{
-          padding: S[4],
-          background: isDraft ? C.blueLight : C.surfaceAlt,
-          borderBottom: `1px solid ${C.line}`,
-          display: "flex", justifyContent: "space-between", alignItems: "center",
-        }}>
-          <div>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: 700, color: C.titleDeep }}>
-              {isDraft ? "Plan activo" : plan.documentNumber ?? plan.id.slice(0, 12)}
-            </div>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginTop: 2 }}>
-              {plan.items.length} cambio{plan.items.length !== 1 ? "s" : ""} · {formatDate(plan.updatedAt)}
-            </div>
-          </div>
-          {planStatusBadge(plan.status)}
-        </div>
-
-        {/* Summary strip */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: S[2], padding: S[3] }}>
-          <div style={{ textAlign: "center" }}>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: 700, color: C.green }}>{recovery.addedRefs}</div>
-            <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint }}>Entran</div>
-          </div>
-          <div style={{ textAlign: "center" }}>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: 700, color: C.red }}>{recovery.removedRefs}</div>
-            <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint }}>Salen</div>
-          </div>
-          <div style={{ textAlign: "center" }}>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: 700, color: C.blueDark }}>{subgroups.length}</div>
-            <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint }}>Subgrupos</div>
-          </div>
-          <div style={{ textAlign: "center" }}>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: 700, color: C.green }}>+{recovery.estimatedCoverageGain}</div>
-            <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint }}>Cobertura</div>
-          </div>
-        </div>
-
-        {/* Items table */}
-        {plan.items.length > 0 && (
-          <div style={{ padding: `0 ${S[3]} ${S[3]}` }}>
-            <div style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.inkFaint, textTransform: "uppercase" as const, letterSpacing: "0.05em", marginBottom: S[2] }}>
-              Detalle de cambios
-            </div>
-
-            {/* Entran */}
-            <div style={{
-              fontFamily: T.mono, fontSize: 10, fontWeight: 600,
-              color: C.green, marginBottom: S[1],
-              display: "flex", alignItems: "center", gap: S[1],
-            }}>
-              <span style={{ width: 6, height: 6, borderRadius: R.pill, background: C.green, display: "inline-block" }} />
-              Referencias que entran
-            </div>
-            <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: S[3], fontFamily: T.mono, fontSize: T.sz.xs }}>
-              <thead>
-                <tr style={{ background: C.surfaceAlt }}>
-                  <th style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "left" }}>Referencia</th>
-                  <th style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "left" }}>Descripcion</th>
-                  <th style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "left" }}>Subgrupo</th>
-                  <th style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "center" }}>Cant</th>
-                  {isDraft && <th style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "center" }}></th>}
-                </tr>
-              </thead>
-              <tbody>
-                {plan.items.map(item => (
-                  <tr key={item.id}>
-                    <td style={{ border: `1px solid ${C.line}`, padding: "4px 8px", fontWeight: 700 }}>{item.addedReference}</td>
-                    <td style={{ border: `1px solid ${C.line}`, padding: "4px 8px" }}>{item.addedDescription}</td>
-                    <td style={{ border: `1px solid ${C.line}`, padding: "4px 8px", color: C.inkFaint }}>{item.subgroupSag}</td>
-                    <td style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "center" }}>{item.quantity}</td>
-                    {isDraft && (
-                      <td style={{ border: `1px solid ${C.line}`, padding: "4px 4px", textAlign: "center" }}>
-                        <button onClick={() => onRemoveItem(plan.id, item.id)} style={{
-                          fontFamily: T.mono, fontSize: 9, color: C.red, background: "transparent",
-                          border: "none", cursor: "pointer", padding: 2,
-                        }}>
-                          Quitar
-                        </button>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            {/* Salen */}
-            {plan.items.some(i => i.removedReference) && (
-              <>
-                <div style={{
-                  fontFamily: T.mono, fontSize: 10, fontWeight: 600,
-                  color: C.red, marginBottom: S[1],
-                  display: "flex", alignItems: "center", gap: S[1],
-                }}>
-                  <span style={{ width: 6, height: 6, borderRadius: R.pill, background: C.red, display: "inline-block" }} />
-                  Referencias que salen
-                </div>
-                <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: S[3], fontFamily: T.mono, fontSize: T.sz.xs }}>
-                  <thead>
-                    <tr style={{ background: C.surfaceAlt }}>
-                      <th style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "left" }}>Referencia</th>
-                      <th style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "left" }}>Descripcion</th>
-                      <th style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "center" }}>Cant</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {plan.items.filter(i => i.removedReference).map(item => (
-                      <tr key={item.id}>
-                        <td style={{ border: `1px solid ${C.line}`, padding: "4px 8px", fontWeight: 700 }}>{item.removedReference}</td>
-                        <td style={{ border: `1px solid ${C.line}`, padding: "4px 8px" }}>{item.removedDescription ?? "\u2014"}</td>
-                        <td style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "center" }}>{item.quantity}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* Actions */}
-        <div style={{ padding: `0 ${S[3]} ${S[3]}`, display: "flex", gap: S[2], flexWrap: "wrap" }}>
-          {canGenerate && (
-            <button onClick={() => onGenerateDocument(plan.id)} style={{
-              fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 700,
-              color: C.white, background: C.blueDark,
-              border: "none", borderRadius: R.sm,
-              padding: `${S[2]}px ${S[4]}px`, cursor: "pointer",
-            }}>
-              Generar documento de surtido
-            </button>
-          )}
-          {canShip && (
-            <button onClick={() => onUpdateStatus(plan.id, "shipped")} style={{
-              fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 700,
-              color: C.white, background: C.blueDark,
-              border: "none", borderRadius: R.sm,
-              padding: `${S[2]}px ${S[4]}px`, cursor: "pointer",
-            }}>
-              Marcar como enviado
-            </button>
-          )}
-          {canReceive && (
-            <button onClick={() => onUpdateStatus(plan.id, "received")} style={{
-              fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 700,
-              color: C.white, background: C.green,
-              border: "none", borderRadius: R.sm,
-              padding: `${S[2]}px ${S[4]}px`, cursor: "pointer",
-            }}>
-              Marcar como recibido
-            </button>
-          )}
-          {plan.documentNumber && (
-            <button onClick={() => onPrint(plan)} style={{
-              fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 600,
-              color: C.blueDark, background: C.blueLight,
-              border: `1px solid ${C.blueBorder}`, borderRadius: R.sm,
-              padding: `${S[2]}px ${S[3]}px`, cursor: "pointer",
-            }}>
-              Imprimir
-            </button>
-          )}
-          {isDraft && plan.items.length > 0 && (
-            <button onClick={() => onUpdateStatus(plan.id, "cancelled")} style={{
-              fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 600,
-              color: C.red, background: "transparent",
-              border: `1px solid ${C.redBorder}`, borderRadius: R.sm,
-              padding: `${S[2]}px ${S[3]}px`, cursor: "pointer",
-            }}>
-              Cancelar plan
-            </button>
-          )}
-        </div>
-
-        {/* Events / traceability */}
-        {plan.events.length > 0 && (
-          <div style={{ padding: `${S[2]} ${S[3]} ${S[3]}`, borderTop: `1px solid ${C.line}` }}>
-            <div style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.inkFaint, textTransform: "uppercase" as const, letterSpacing: "0.05em", marginBottom: S[2] }}>
-              Trazabilidad
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              {plan.events.map(evt => (
-                <div key={evt.id} style={{
-                  display: "flex", justifyContent: "space-between", alignItems: "center",
-                  padding: `2px ${S[2]}`, background: C.surfaceAlt, borderRadius: R.sm,
-                }}>
-                  <span style={{ fontFamily: T.mono, fontSize: 10, color: C.ink }}>{evt.description}</span>
-                  <span style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint }}>{formatTime(evt.timestamp)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  return (
-    <div style={{ padding: S[4], display: "flex", flexDirection: "column", gap: S[4] }}>
-      {/* Vendor header */}
-      <div style={{
-        padding: S[3], background: C.blueLight, borderRadius: R.md,
-        border: `1px solid ${C.blueBorder}`,
-      }}>
-        <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: 700, color: C.blueDark }}>
-          {vendor?.vendorName ?? vendorId}
-        </div>
-        <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginTop: 2 }}>
-          Bodega B{vendor?.warehouseCode ?? "?"} · {vendor?.totalRefs ?? 0} referencias
-        </div>
-      </div>
-
-      {/* Draft plan */}
-      {draftPlan && renderPlanSection(draftPlan)}
-
-      {/* Empty state */}
-      {!draftPlan && otherPlans.length === 0 && (
-        <div style={{
-          padding: S[5], textAlign: "center",
-          fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint,
-          background: C.surfaceAlt, borderRadius: R.md,
-        }}>
-          Sin planes de surtido. Agrega oportunidades desde la tabla de cobertura.
-        </div>
-      )}
-
-      {/* Other plans */}
-      {otherPlans.length > 0 && (
-        <div>
-          <div style={{
-            fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.inkFaint,
-            textTransform: "uppercase" as const, letterSpacing: "0.08em",
-            marginBottom: S[3], paddingBottom: S[2], borderBottom: `1px solid ${C.line}`,
-          }}>
-            Planes anteriores ({otherPlans.length})
-          </div>
-          {otherPlans.map(p => renderPlanSection(p))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── History Drawer Content ───────────────────────────────────────────────────
-
-function HistoryDrawerContent({
-  plans,
-  statusFilter,
-  vendorFilter,
-  vendors,
-  onStatusFilter,
-  onVendorFilter,
-  onOpenPlan,
-  onPrint,
-}: {
-  plans: MaletaReplenishmentPlan[];
-  statusFilter: ReplenishmentPlanStatus | "all";
-  vendorFilter: string | null;
-  vendors: VendorSampleSnapshot[];
-  onStatusFilter: (f: ReplenishmentPlanStatus | "all") => void;
-  onVendorFilter: (v: string | null) => void;
-  onOpenPlan: (planId: string) => void;
-  onPrint: (plan: MaletaReplenishmentPlan) => void;
-}) {
-  const filtered = plans
-    .filter(p => statusFilter === "all" || p.status === statusFilter)
-    .filter(p => !vendorFilter || p.vendorId === vendorFilter)
-    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-
-  const allStatuses: (ReplenishmentPlanStatus | "all")[] = ["all", "draft", "pending_warehouse", "prepared", "shipped", "received", "cancelled"];
-  const statusLabels: Record<string, string> = { all: "Todos", ...PLAN_STATUS_LABEL };
-
-  return (
-    <div style={{ padding: S[4], display: "flex", flexDirection: "column", gap: S[4] }}>
-      {/* Filters */}
-      <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
-        {allStatuses.map(s => {
-          const count = s === "all" ? plans.length : plans.filter(p => p.status === s).length;
-          if (s !== "all" && count === 0) return null;
-          const active = statusFilter === s;
-          return (
-            <button key={s} onClick={() => onStatusFilter(s)} style={{
-              fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: active ? 700 : 500,
-              padding: "0 12px", height: 28, lineHeight: 1,
-              display: "inline-flex", alignItems: "center", justifyContent: "center",
-              background: active ? C.blueDark : C.white,
-              color: active ? C.white : C.ink,
-              border: `1px solid ${active ? C.blueDark : C.line}`,
-              borderRadius: R.pill, cursor: "pointer",
-              whiteSpace: "nowrap" as const,
-            }}>
-              {statusLabels[s]} ({count})
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Vendor filter */}
-      <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
-        <button onClick={() => onVendorFilter(null)} style={{
-          fontFamily: T.mono, fontSize: 10, fontWeight: !vendorFilter ? 700 : 500,
-          padding: "0 8px", height: 24,
-          background: !vendorFilter ? C.blueDark : C.white,
-          color: !vendorFilter ? C.white : C.inkFaint,
-          border: `1px solid ${!vendorFilter ? C.blueDark : C.line}`,
-          borderRadius: R.pill, cursor: "pointer",
-        }}>
-          Todos
-        </button>
-        {vendors.filter(v => v.totalRefs > 0).map(v => {
-          const active = vendorFilter === v.vendorId;
-          return (
-            <button key={v.vendorId} onClick={() => onVendorFilter(v.vendorId)} style={{
-              fontFamily: T.mono, fontSize: 10, fontWeight: active ? 700 : 500,
-              padding: "0 8px", height: 24,
-              background: active ? C.blueDark : C.white,
-              color: active ? C.white : C.inkFaint,
-              border: `1px solid ${active ? C.blueDark : C.line}`,
-              borderRadius: R.pill, cursor: "pointer",
-            }}>
-              {v.vendorName}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Results */}
-      {filtered.length === 0 ? (
-        <div style={{
-          padding: S[5], textAlign: "center",
-          fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint,
-          background: C.surfaceAlt, borderRadius: R.md,
-        }}>
-          Sin planes para estos filtros
-        </div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
-          {filtered.map(plan => {
-            const statusC = plan.status === "received" ? C.green
-              : plan.status === "shipped" ? C.blueDark
-              : plan.status === "pending_warehouse" ? C.amber
-              : plan.status === "cancelled" ? C.inkFaint
-              : C.blueDark;
-            const statusBg = plan.status === "received" ? C.greenLight
-              : plan.status === "shipped" ? C.blueLight
-              : plan.status === "pending_warehouse" ? C.amberLight
-              : C.surfaceAlt;
-
-            return (
-              <div key={plan.id} style={{
-                display: "flex", justifyContent: "space-between", alignItems: "center",
-                padding: S[3], background: C.white, borderRadius: R.md,
-                border: `1px solid ${C.line}`, cursor: "pointer",
-              }} onClick={() => onOpenPlan(plan.id)}>
-                <div>
-                  <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 700, color: C.titleDeep }}>
-                    {plan.documentNumber ?? "Draft"} · {plan.vendorName}
-                  </div>
-                  <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint, marginTop: 2 }}>
-                    {plan.items.length} cambio{plan.items.length !== 1 ? "s" : ""} · {formatDate(plan.updatedAt)}
-                  </div>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
-                  <span style={{
-                    fontFamily: T.mono, fontSize: 9, fontWeight: 700,
-                    color: statusC, background: statusBg,
-                    padding: "2px 10px", borderRadius: R.pill,
-                    textTransform: "uppercase" as const,
-                  }}>
-                    {PLAN_STATUS_LABEL[plan.status]}
-                  </span>
-                  {plan.documentNumber && (
-                    <button onClick={(e) => { e.stopPropagation(); onPrint(plan); }} style={{
-                      fontFamily: T.mono, fontSize: 9, color: C.blueDark, background: "transparent",
-                      border: "none", cursor: "pointer", padding: 2,
-                    }}>
-                      PDF
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Print Plan Overlay (MALETAS-BULK-REPLENISHMENT-01) ───────────────────────
-
-function PrintPlanOverlay({
-  plan,
-  onClose,
-}: {
-  plan: MaletaReplenishmentPlan;
-  onClose: () => void;
-}) {
-  const printRef = useRef<HTMLDivElement>(null);
-
-  const handlePrint = () => {
-    if (printRef.current) {
-      const w = window.open("", "_blank");
-      if (!w) return;
-      w.document.write(`
-        <html><head><title>Plan de Surtido ${plan.documentNumber ?? plan.id.slice(0, 12)}</title>
-        <style>
-          * { margin: 0; padding: 0; box-sizing: border-box; }
-          body { font-family: monospace; font-size: 12px; padding: 24px; color: #111; }
-          h1 { font-size: 16px; margin-bottom: 4px; }
-          h2 { font-size: 13px; margin: 16px 0 8px; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
-          table { width: 100%; border-collapse: collapse; margin: 8px 0; }
-          th, td { border: 1px solid #ccc; padding: 4px 8px; text-align: left; font-size: 11px; }
-          th { background: #f5f5f5; font-weight: 700; }
-          .summary { display: flex; gap: 32px; margin: 12px 0; }
-          .summary-item { text-align: center; }
-          .summary-value { font-size: 18px; font-weight: 700; }
-          .summary-label { font-size: 10px; color: #666; }
-          .sig { margin-top: 40px; display: flex; gap: 40px; }
-          .sig-box { flex: 1; border-top: 1px solid #111; padding-top: 4px; text-align: center; font-size: 11px; }
-          @media print { body { padding: 12px; } }
-        </style></head><body>
-        ${printRef.current.innerHTML}
-        </body></html>
-      `);
-      w.document.close();
-      w.print();
-    }
-  };
-
-  const itemsIn = plan.items;
-  const itemsOut = plan.items.filter(i => i.removedReference);
-  const recovery = computeCoverageRecovery(plan.items);
-  const subgroups = [...new Set(plan.items.map(i => i.subgroupSag))];
-
-  return (
-    <div style={{
-      position: "fixed", inset: 0, zIndex: 9999,
-      background: "rgba(0,0,0,0.5)",
-      display: "flex", alignItems: "center", justifyContent: "center",
-    }}>
-      <div style={{
-        background: C.white, borderRadius: R.lg,
-        width: "90%", maxWidth: 700, maxHeight: "90vh",
-        overflow: "auto", padding: S[6],
-        boxShadow: `0 16px 48px rgba(0,0,0,0.2)`,
-      }}>
-        {/* Actions */}
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: S[4] }}>
-          <button onClick={handlePrint} style={{
-            fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 700,
-            color: C.white, background: C.blueDark,
-            border: "none", borderRadius: R.sm,
-            padding: `${S[2]}px ${S[4]}px`, cursor: "pointer",
-          }}>
-            Imprimir
-          </button>
-          <button onClick={onClose} style={{
-            fontFamily: T.mono, fontSize: T.sz.xs,
-            color: C.inkLight, background: "transparent",
-            border: `1px solid ${C.line}`, borderRadius: R.sm,
-            padding: `${S[2]}px ${S[3]}px`, cursor: "pointer",
-          }}>
-            Cerrar
-          </button>
-        </div>
-
-        {/* Printable content */}
-        <div ref={printRef}>
-          <h1 style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: 700, color: C.titleDeep }}>
-            Guia de Surtido de Maleta
-          </h1>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginBottom: S[3] }}>
-            {plan.documentNumber ?? "Sin documento"} · {formatDate(plan.updatedAt)}
-          </div>
-
-          {/* Header data */}
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink, marginBottom: S[3], lineHeight: 1.8 }}>
-            <div><strong>Vendedor:</strong> {plan.vendorName}</div>
-            <div><strong>Bodega:</strong> B{plan.warehouseCode}</div>
-            <div><strong>Estado:</strong> {PLAN_STATUS_LABEL[plan.status]}</div>
-            <div><strong>Creado:</strong> {formatDate(plan.createdAt)}</div>
-          </div>
-
-          {/* Summary */}
-          <div style={{
-            display: "flex", gap: 32, marginBottom: S[4],
-            padding: S[3], background: C.surfaceAlt, borderRadius: R.md,
-          }}>
-            <div style={{ textAlign: "center" }}>
-              <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: 700, color: C.green }}>{recovery.addedRefs}</div>
-              <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint }}>Refs agregadas</div>
-            </div>
-            <div style={{ textAlign: "center" }}>
-              <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: 700, color: C.red }}>{recovery.removedRefs}</div>
-              <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint }}>Refs retiradas</div>
-            </div>
-            <div style={{ textAlign: "center" }}>
-              <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: 700, color: C.blueDark }}>{subgroups.length}</div>
-              <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint }}>Subgrupos</div>
-            </div>
-            <div style={{ textAlign: "center" }}>
-              <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: 700, color: C.green }}>+{recovery.estimatedCoverageGain}</div>
-              <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint }}>Cobertura recuperada</div>
-            </div>
-          </div>
-
-          {/* Agregar section */}
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: 700, color: C.ink, marginBottom: S[1], borderBottom: `1px solid ${C.line}`, paddingBottom: 4 }}>
-            Referencias a agregar
-          </div>
-          <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: S[4], fontFamily: T.mono, fontSize: T.sz.xs }}>
-            <thead>
-              <tr style={{ background: C.surfaceAlt }}>
-                <th style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "left" }}>Referencia</th>
-                <th style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "left" }}>Descripcion</th>
-                <th style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "left" }}>Subgrupo</th>
-                <th style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "center" }}>Cantidad</th>
-              </tr>
-            </thead>
-            <tbody>
-              {itemsIn.map(item => (
-                <tr key={item.id}>
-                  <td style={{ border: `1px solid ${C.line}`, padding: "4px 8px", fontWeight: 700 }}>{item.addedReference}</td>
-                  <td style={{ border: `1px solid ${C.line}`, padding: "4px 8px" }}>{item.addedDescription}</td>
-                  <td style={{ border: `1px solid ${C.line}`, padding: "4px 8px", color: C.inkFaint }}>{item.subgroupSag}</td>
-                  <td style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "center" }}>{item.quantity}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          {/* Retirar section */}
-          {itemsOut.length > 0 && (
-            <>
-              <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: 700, color: C.ink, marginBottom: S[1], borderBottom: `1px solid ${C.line}`, paddingBottom: 4 }}>
-                Referencias a retirar
-              </div>
-              <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: S[4], fontFamily: T.mono, fontSize: T.sz.xs }}>
-                <thead>
-                  <tr style={{ background: C.surfaceAlt }}>
-                    <th style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "left" }}>Referencia</th>
-                    <th style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "left" }}>Descripcion</th>
-                    <th style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "center" }}>Cantidad</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {itemsOut.map(item => (
-                    <tr key={item.id}>
-                      <td style={{ border: `1px solid ${C.line}`, padding: "4px 8px", fontWeight: 700 }}>{item.removedReference}</td>
-                      <td style={{ border: `1px solid ${C.line}`, padding: "4px 8px" }}>{item.removedDescription ?? "\u2014"}</td>
-                      <td style={{ border: `1px solid ${C.line}`, padding: "4px 8px", textAlign: "center" }}>{item.quantity}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          )}
-
-          {/* Signatures */}
-          <div style={{ display: "flex", gap: 40, marginTop: 48 }}>
-            <div style={{ flex: 1, borderTop: `1px solid ${C.ink}`, paddingTop: 4, textAlign: "center" }}>
-              <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint }}>Preparo</div>
-            </div>
-            <div style={{ flex: 1, borderTop: `1px solid ${C.ink}`, paddingTop: 4, textAlign: "center" }}>
-              <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint }}>Despacho</div>
-            </div>
-            <div style={{ flex: 1, borderTop: `1px solid ${C.ink}`, paddingTop: 4, textAlign: "center" }}>
-              <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint }}>Recibio</div>
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 40, marginTop: 32 }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint }}>Fecha entrega: _______________</div>
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint }}>Fecha recepcion: _______________</div>
-            </div>
-          </div>
         </div>
       </div>
     </div>
