@@ -588,10 +588,12 @@ export function MaletasClient({
 
   // ── Section refs + collapse state (GO-LIVE-MALETAS-HOME-NAV-COLLAPSIBLE-01) ──
   const productionSectionRef = useRef<HTMLDivElement>(null);
+  const pendingClassSectionRef = useRef<HTMLDivElement>(null);
   const recompraSectionRef = useRef<HTMLDivElement>(null);
   const coverageSectionRef = useRef<HTMLDivElement>(null);
   const [sectionOpen, setSectionOpen] = useState<Record<string, boolean>>({
     produccion: true,
+    pendientesClasificacion: false,
     recompra: false,
     cobertura: false,
   });
@@ -618,13 +620,32 @@ export function MaletasClient({
   }, [vendors]);
 
   // MALLETS-FUNCTIONAL-RECOVERY-01: threshold-based production evaluation
+  // COMERCIAL-MALETAS-PRODUCTION-CLASSIFICATION-SEPARATION-02:
+  // Split into classified (valid production decisions) vs unclassified (pending classification)
+  const isPendingClassification = useCallback((pt: SubgroupProductionEval) => {
+    if (pt.dataState === "SIN_CORRESPONDENCIA" || pt.dataState === "SIN_DATOS") return true;
+    if (pt.decision === "DATOS_INSUFICIENTES") return true;
+    if (!pt.subgrupoSag || pt.subgrupoSag === "OTRO") return true;
+    if (pt.group === "OTRO") return true;
+    return false;
+  }, []);
+
+  const productionValid = useMemo(
+    () => productionThresholds.filter((p) => !isPendingClassification(p)),
+    [productionThresholds, isPendingClassification],
+  );
+  const productionPending = useMemo(
+    () => productionThresholds.filter((p) => isPendingClassification(p)),
+    [productionThresholds, isPendingClassification],
+  );
+
   const prodThresholdProducir = useMemo(
-    () => productionThresholds.filter((p) => p.decision === "PRODUCIR"),
-    [productionThresholds],
+    () => productionValid.filter((p) => p.decision === "PRODUCIR"),
+    [productionValid],
   );
   const prodThresholdEsperar = useMemo(
-    () => productionThresholds.filter((p) => p.decision === "ESPERAR_OP"),
-    [productionThresholds],
+    () => productionValid.filter((p) => p.decision === "ESPERAR_OP"),
+    [productionValid],
   );
 
   // Import evaluation summaries
@@ -693,6 +714,7 @@ export function MaletasClient({
           </button>
           {[
             { label: "Produccion", ref: productionSectionRef, key: "produccion", count: prodThresholdProducir.length },
+            { label: "Pendientes", ref: pendingClassSectionRef, key: "pendientesClasificacion", count: productionPending.length },
             { label: "Recompra / Baja rotacion", ref: recompraSectionRef, key: "recompra", count: importRebuy.length + importLowRotation.length },
             { label: "Oportunidades", ref: coverageSectionRef, key: "cobertura", count: coverageOpportunities.length },
           ].map(({ label, ref, key, count }) => (
@@ -932,13 +954,13 @@ export function MaletasClient({
         <SectionHeader
           title="Produccion"
           subtitle="Evaluacion por marca + grupo + subgrupo. Umbral: CS \u2264 100, LT \u2264 200"
-          count={productionThresholds.length > 0 ? productionThresholds.length : undefined}
+          count={productionValid.length > 0 ? productionValid.length : undefined}
           open={sectionOpen.produccion}
           onToggle={() => toggleSection("produccion")}
           sectionRef={productionSectionRef}
           statusHint={prodThresholdProducir.length > 0 ? `${prodThresholdProducir.length} PRODUCIR` : "sin alertas"}
         >
-          {productionThresholds.length > 0 ? (
+          {productionValid.length > 0 ? (
             <div style={{
               background: C.white, borderRadius: R.lg,
               border: `1px solid ${C.line}`, boxShadow: `0 1px 3px ${C.ink}06`,
@@ -957,7 +979,7 @@ export function MaletasClient({
                   }}>{h}</div>
                 ))}
               </div>
-              {productionThresholds.map((pt, i) => {
+              {productionValid.map((pt, i) => {
                 const decColor: Record<ProductionDecision, string> = {
                   PRODUCIR: C.red, ESPERAR_OP: C.amber, SIN_ACCION: C.green,
                   DATOS_INSUFICIENTES: C.inkFaint, EN_VALIDACION: C.amber,
@@ -969,30 +991,26 @@ export function MaletasClient({
                 const dataStateLabel: Record<string, string> = {
                   STOCK_REAL_CERO: "Cero real",
                   STOCK_REAL_POSITIVO: "Dato real",
-                  SIN_CORRESPONDENCIA: "Sin cruce",
                   DATO_DESACTUALIZADO: "Desactualizado",
-                  SIN_DATOS: "Sin datos",
                 };
                 const dataStateColor: Record<string, string> = {
                   STOCK_REAL_CERO: C.red,
                   STOCK_REAL_POSITIVO: C.green,
-                  SIN_CORRESPONDENCIA: C.amber,
                   DATO_DESACTUALIZADO: C.amber,
-                  SIN_DATOS: C.inkFaint,
                 };
                 return (
                   <div key={`${pt.brand}|${pt.group ?? ""}|${pt.subgrupoSag}`} style={{
                     display: "grid",
                     gridTemplateColumns: "minmax(80px,0.8fr) minmax(90px,1fr) minmax(100px,1.2fr) 80px 80px 80px 120px 110px",
                     padding: ROW_PAD,
-                    borderBottom: i === productionThresholds.length - 1 ? "none" : `1px solid ${C.lineSubtle}`,
+                    borderBottom: i === productionValid.length - 1 ? "none" : `1px solid ${C.lineSubtle}`,
                     gap: S[2], alignItems: "center",
                   }}>
                     <div style={{ ...listCell, fontWeight: 700, color: C.titleDeep }}>{pt.brand}</div>
                     <div style={{ ...listCell, color: C.ink }}>{pt.group ?? "\u2014"}</div>
                     <div style={{ ...listCell, color: C.ink }}>{pt.subgrupoSag}</div>
-                    <div style={{ ...listCell, fontWeight: 700, color: pt.decision === "EN_VALIDACION" || pt.decision === "DATOS_INSUFICIENTES" ? C.inkFaint : pt.stockDisponible <= pt.umbral ? C.red : C.green, textAlign: "right" as const }}>
-                      {pt.dataState === "SIN_CORRESPONDENCIA" || pt.dataState === "SIN_DATOS" ? "\u2014" : pt.stockDisponible}
+                    <div style={{ ...listCell, fontWeight: 700, color: pt.stockDisponible <= pt.umbral ? C.red : C.green, textAlign: "right" as const }}>
+                      {pt.stockDisponible}
                     </div>
                     <div style={{ ...listCell, color: C.inkFaint, textAlign: "right" as const }}>{pt.umbral || "\u2014"}</div>
                     <div style={{ ...listCell, textAlign: "center" as const, color: pt.tieneOpActiva ? C.amber : C.inkFaint }}>{pt.tieneOpActiva ? "Si" : "No"}</div>
@@ -1022,6 +1040,82 @@ export function MaletasClient({
             }}>
               <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, color: C.green }}>
                 Sin alertas de produccion. Todos los subgrupos superan el umbral.
+              </div>
+            </div>
+          )}
+        </SectionHeader>
+
+        {/* ── Pendientes de clasificacion (COMERCIAL-MALETAS-PRODUCTION-CLASSIFICATION-SEPARATION-02) ── */}
+        <SectionHeader
+          title="Pendientes de clasificacion"
+          subtitle="Referencias sin grupo, sin subgrupo, OTRO o sin cruce con inventario central"
+          count={productionPending.length > 0 ? productionPending.length : undefined}
+          open={sectionOpen.pendientesClasificacion}
+          onToggle={() => toggleSection("pendientesClasificacion")}
+          sectionRef={pendingClassSectionRef}
+          statusHint={productionPending.length > 0 ? `${productionPending.length} pendientes` : "sin pendientes"}
+        >
+          {productionPending.length > 0 ? (
+            <div style={{
+              background: C.white, borderRadius: R.lg,
+              border: `1px solid ${C.line}`, boxShadow: `0 1px 3px ${C.ink}06`,
+              overflow: "hidden", overflowX: "auto", minWidth: 0,
+            }}>
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(80px,0.8fr) minmax(90px,1fr) minmax(100px,1.2fr) 80px 120px 1fr",
+                padding: `10px 16px`, background: C.surfaceAlt,
+                borderBottom: `1px solid ${C.line}`, gap: S[2], alignItems: "center",
+              }}>
+                {["Marca", "Grupo", "Subgrupo", "Refs", "Razon", "Ejemplo"].map((h) => (
+                  <div key={h} style={{
+                    ...listHeaderCell,
+                    textAlign: h === "Refs" ? "right" as const : undefined,
+                  }}>{h}</div>
+                ))}
+              </div>
+              {productionPending.map((pt, i) => {
+                const reason =
+                  pt.dataState === "SIN_CORRESPONDENCIA" ? "Sin cruce" :
+                  pt.dataState === "SIN_DATOS" ? "Sin datos" :
+                  !pt.subgrupoSag ? "Sin subgrupo" :
+                  pt.subgrupoSag === "OTRO" ? "Subgrupo OTRO" :
+                  pt.group === "OTRO" ? "Grupo OTRO" :
+                  "Datos insuficientes";
+                const exampleRef = pt.evidenceRefs[0];
+                return (
+                  <div key={`pend|${pt.brand}|${pt.group ?? ""}|${pt.subgrupoSag}`} style={{
+                    display: "grid",
+                    gridTemplateColumns: "minmax(80px,0.8fr) minmax(90px,1fr) minmax(100px,1.2fr) 80px 120px 1fr",
+                    padding: ROW_PAD,
+                    borderBottom: i === productionPending.length - 1 ? "none" : `1px solid ${C.lineSubtle}`,
+                    gap: S[2], alignItems: "center",
+                  }}>
+                    <div style={{ ...listCell, fontWeight: 700, color: C.titleDeep }}>{pt.brand}</div>
+                    <div style={{ ...listCell, color: C.inkFaint }}>{pt.group ?? "\u2014"}</div>
+                    <div style={{ ...listCell, color: C.inkFaint }}>{pt.subgrupoSag || "\u2014"}</div>
+                    <div style={{ ...listCell, fontWeight: 600, color: C.ink, textAlign: "right" as const }}>{pt.evidenceRefs.length}</div>
+                    <div style={{
+                      fontFamily: T.mono, fontSize: 9, fontWeight: 600,
+                      color: C.amber,
+                      whiteSpace: "nowrap" as const,
+                    }}>
+                      {reason}
+                    </div>
+                    <div style={{ ...listCell, color: C.inkFaint, fontSize: 10 }}>
+                      {exampleRef ? `${exampleRef.reference} — ${exampleRef.description}` : "\u2014"}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div style={{
+              padding: S[5], background: C.white, borderRadius: R.lg,
+              border: `1px solid ${C.line}`,
+            }}>
+              <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, color: C.green }}>
+                Todas las referencias tienen clasificacion valida.
               </div>
             </div>
           )}
