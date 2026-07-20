@@ -332,11 +332,9 @@ export function MaletasClient({
 
   // ── Section refs + collapse state (GO-LIVE-MALETAS-HOME-NAV-COLLAPSIBLE-01) ──
   const productionSectionRef = useRef<HTMLDivElement>(null);
-  const pendingClassSectionRef = useRef<HTMLDivElement>(null);
   const coverageSectionRef = useRef<HTMLDivElement>(null);
   const [sectionOpen, setSectionOpen] = useState<Record<string, boolean>>({
     produccion: true,
-    pendientesClasificacion: false,
     cobertura: false,
   });
   const toggleSection = useCallback((key: string) => {
@@ -375,11 +373,6 @@ export function MaletasClient({
     () => productionThresholds.filter((p) => !isPendingClassification(p)),
     [productionThresholds, isPendingClassification],
   );
-  const productionPending = useMemo(
-    () => productionThresholds.filter((p) => isPendingClassification(p)),
-    [productionThresholds, isPendingClassification],
-  );
-
   const prodThresholdProducir = useMemo(
     () => productionValid.filter((p) => p.decision === "PRODUCIR"),
     [productionValid],
@@ -431,7 +424,6 @@ export function MaletasClient({
           </span>
           {[
             { label: "Produccion", ref: productionSectionRef, key: "produccion", count: prodThresholdProducir.length },
-            { label: "Pendientes", ref: pendingClassSectionRef, key: "pendientesClasificacion", count: productionPending.length },
             { label: "Oportunidades", ref: coverageSectionRef, key: "cobertura", count: coverageOpportunities.length },
           ].map(({ label, ref, key, count }) => (
             <button
@@ -696,82 +688,6 @@ export function MaletasClient({
             }}>
               <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, color: C.green }}>
                 Sin alertas de produccion. Todos los subgrupos superan el umbral.
-              </div>
-            </div>
-          )}
-        </SectionHeader>
-
-        {/* ── Pendientes de clasificacion (COMERCIAL-MALETAS-PRODUCTION-CLASSIFICATION-SEPARATION-02) ── */}
-        <SectionHeader
-          title="Pendientes de clasificacion"
-          subtitle="Referencias sin grupo, sin subgrupo, OTRO o sin cruce con inventario central"
-          count={productionPending.length > 0 ? productionPending.length : undefined}
-          open={sectionOpen.pendientesClasificacion}
-          onToggle={() => toggleSection("pendientesClasificacion")}
-          sectionRef={pendingClassSectionRef}
-          statusHint={productionPending.length > 0 ? `${productionPending.length} pendientes` : "sin pendientes"}
-        >
-          {productionPending.length > 0 ? (
-            <div style={{
-              background: C.white, borderRadius: R.lg,
-              border: `1px solid ${C.line}`, boxShadow: `0 1px 3px ${C.ink}06`,
-              overflow: "hidden", overflowX: "auto", minWidth: 0,
-            }}>
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: "minmax(80px,0.8fr) minmax(90px,1fr) minmax(100px,1.2fr) 80px 120px 1fr",
-                padding: `10px 16px`, background: C.surfaceAlt,
-                borderBottom: `1px solid ${C.line}`, gap: S[2], alignItems: "center",
-              }}>
-                {["Marca", "Grupo", "Subgrupo", "Refs", "Razon", "Ejemplo"].map((h) => (
-                  <div key={h} style={{
-                    ...listHeaderCell,
-                    textAlign: h === "Refs" ? "right" as const : undefined,
-                  }}>{h}</div>
-                ))}
-              </div>
-              {productionPending.map((pt, i) => {
-                const reason =
-                  pt.dataState === "SIN_CORRESPONDENCIA" ? "Sin cruce" :
-                  pt.dataState === "SIN_DATOS" ? "Sin datos" :
-                  !pt.subgrupoSag ? "Sin subgrupo" :
-                  pt.subgrupoSag === "OTRO" ? "Subgrupo OTRO" :
-                  pt.group === "OTRO" ? "Grupo OTRO" :
-                  "Datos insuficientes";
-                const exampleRef = pt.evidenceRefs[0];
-                return (
-                  <div key={`pend|${pt.brand}|${pt.group ?? ""}|${pt.subgrupoSag}`} style={{
-                    display: "grid",
-                    gridTemplateColumns: "minmax(80px,0.8fr) minmax(90px,1fr) minmax(100px,1.2fr) 80px 120px 1fr",
-                    padding: ROW_PAD,
-                    borderBottom: i === productionPending.length - 1 ? "none" : `1px solid ${C.lineSubtle}`,
-                    gap: S[2], alignItems: "center",
-                  }}>
-                    <div style={{ ...listCell, fontWeight: 700, color: C.titleDeep }}>{pt.brand}</div>
-                    <div style={{ ...listCell, color: C.inkFaint }}>{pt.group ?? "\u2014"}</div>
-                    <div style={{ ...listCell, color: C.inkFaint }}>{pt.subgrupoSag || "\u2014"}</div>
-                    <div style={{ ...listCell, fontWeight: 600, color: C.ink, textAlign: "right" as const }}>{pt.evidenceRefs.length}</div>
-                    <div style={{
-                      fontFamily: T.mono, fontSize: 9, fontWeight: 600,
-                      color: C.amber,
-                      whiteSpace: "nowrap" as const,
-                    }}>
-                      {reason}
-                    </div>
-                    <div style={{ ...listCell, color: C.inkFaint, fontSize: 10 }}>
-                      {exampleRef ? `${exampleRef.reference} — ${exampleRef.description}` : "\u2014"}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div style={{
-              padding: S[5], background: C.white, borderRadius: R.lg,
-              border: `1px solid ${C.line}`,
-            }}>
-              <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, color: C.green }}>
-                Todas las referencias tienen clasificacion valida.
               </div>
             </div>
           )}

@@ -33,7 +33,6 @@ export default async function MaletasPage({
       loadedAt={data.loadedAt}
       assortmentEvaluations={data.assortmentEvaluations}
       productionThresholds={data.productionThresholds}
-      importEvaluation={data.importEvaluation}
       coverageOpportunities={data.coverageOpportunities}
     />
   );
