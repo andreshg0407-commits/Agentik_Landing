@@ -27,6 +27,7 @@
  */
 
 import { prisma }                       from "@/lib/prisma";
+import { loadLatestCCSBatch }           from "@/lib/commercial-intelligence/ccs-reader";
 import {
   getVendorRegistry,
   normalizeAvailabilityRecord,
@@ -118,29 +119,13 @@ export async function readSagSnapshotFromPrisma(
     return null;
   }
 
-  // ── 1. Read CommercialCoverageSnapshot (latest per refCode) ─────────────────
-  let allCovSnapshots: Awaited<ReturnType<typeof prisma.commercialCoverageSnapshot.findMany<{
-    select: {
-      refCode: true; description: true; line: true;
-      disponible: true; pendingOrdersQty: true; snapshotAt: true;
-    };
-  }>>>;
+  // ── 1. Read CommercialCoverageSnapshot (latest batch via canonical reader) ───
+  let batch: Awaited<ReturnType<typeof loadLatestCCSBatch>>;
 
   try {
-    allCovSnapshots = await prisma.commercialCoverageSnapshot.findMany({
-      where:   { organizationId: orgId },
-      orderBy: { snapshotAt: "desc" },
-      select: {
-        refCode:          true,
-        description:      true,
-        line:             true,
-        disponible:       true,
-        pendingOrdersQty: true, // SAG PD — commercial demand pressure (AGENTIK-SAG-PD-DEMAND-LAYER-01)
-        snapshotAt:       true,
-      },
-    });
+    batch = await loadLatestCCSBatch(orgId);
     if (isDev) {
-      console.log("[sag-prisma-reader] CommercialCoverageSnapshot count:", allCovSnapshots.length, "| orgId:", orgId);
+      console.log("[sag-prisma-reader] CommercialCoverageSnapshot count:", batch.rows.length, "| orgId:", orgId);
     }
   } catch (err) {
     if (isDev) {
@@ -150,22 +135,14 @@ export async function readSagSnapshotFromPrisma(
     return null;
   }
 
-  if (allCovSnapshots.length === 0) {
+  if (batch.rows.length === 0) {
     if (isDev) {
       console.log("[sag-prisma-reader] CommercialCoverageSnapshot.count=0 for orgId:", orgId, "— table exists but no rows yet. Run maletas sync.");
     }
     return null;
   }
 
-  // Deduplicate: first occurrence per refCode is most recent (sorted desc)
-  const latestCovByRef = new Map<string, typeof allCovSnapshots[number]>();
-  for (const snap of allCovSnapshots) {
-    const key = snap.refCode.toUpperCase();
-    if (!latestCovByRef.has(key)) latestCovByRef.set(key, snap);
-  }
-
-  // ISO timestamp of the most recent snapshot in the set
-  const snapshotAt = allCovSnapshots[0]!.snapshotAt.toISOString();
+  const snapshotAt = batch.snapshotAt!;
 
   // ── 2. Build availability records (coverage snapshot → RawAvailabilityRecord) ──
   //
@@ -179,15 +156,15 @@ export async function readSagSnapshotFromPrisma(
 
   const rawAvailability: RawAvailabilityRecord[] = [];
 
-  for (const snap of latestCovByRef.values()) {
-    const pedidos    = snap.pendingOrdersQty ?? 0; // SAG PD reservas — demand pressure
-    const disponible = Math.max(0, snap.disponible ?? 0);
+  for (const row of batch.rows) {
+    const pedidos    = row.pendingOrdersQty ?? 0; // SAG PD reservas — demand pressure
+    const disponible = Math.max(0, row.disponible ?? 0);
     const inventario = disponible + pedidos; // bodega inicial = disponible + reservas
 
     rawAvailability.push(
       normalizeAvailabilityRecord({
-        refCode:     snap.refCode,
-        description: snap.description,
+        refCode:     row.refCode,
+        description: row.description,
         inventario,
         pedidos,
         disponible,
@@ -277,7 +254,7 @@ export async function readSagSnapshotFromPrisma(
   if (isDev) {
     console.log(
       "[sag-prisma-reader] FUENTE: prisma |",
-      `refs=${latestCovByRef.size} | ltRows=${ltRows.length} | csRows=${csRows.length} |`,
+      `refs=${batch.rows.length} | ltRows=${ltRows.length} | csRows=${csRows.length} |`,
       `snapshotAt=${snapshotAt}`,
     );
   }
@@ -288,7 +265,7 @@ export async function readSagSnapshotFromPrisma(
     availability:    availabilityMap,
     pendingOrdersMap,
     snapshotAt,
-    refCount:        latestCovByRef.size,
+    refCount:        batch.rows.length,
   };
 }
 
