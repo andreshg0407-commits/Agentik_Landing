@@ -48,6 +48,7 @@ import type {
 import {
   isEligibleForProductionSuggestion,
   getMinimumForLine,
+  isCandidateForRemoval,
   IMPORT_SCARCITY_MINIMUM,
   DEFAULT_SUBGROUP_MINIMUM_REFS,
 } from "./vendor-sample-types";
@@ -679,10 +680,17 @@ export async function loadVendorSampleData(
     // Table may not exist yet — proceed with empty overrides
   }
 
-  // 9b. Assortment evaluations per vendor
+  // 9b. Assortment evaluations per vendor (COMERCIAL-MALETAS-DERROTERO-EXCLUDE-RETIRO-01)
+  // RETIRO candidates are excluded: they don't count as coverage, completion, or faltantes.
+  const derroteroFilter = (ref: VendorSampleRef) =>
+    !isCandidateForRemoval({
+      line: ref.line,
+      compatibleCommercialStock: ref.centralAvailable,
+      stockDataState: ref.stockDataState,
+    });
   const assortmentEvaluations: VendorAssortmentResult[] = vendors
     .filter((v) => v.isActive)
-    .map((v) => evaluateVendorAssortment(v, idealOverrides));
+    .map((v) => evaluateVendorAssortment(v, idealOverrides, derroteroFilter));
 
   // 9b. Build central stock map from canonical availability (single source of truth)
   // Names already resolved via live SAG lookup in canonical function.

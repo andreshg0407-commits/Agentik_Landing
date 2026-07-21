@@ -31,6 +31,11 @@ export type SampleCommercialHealth =
   | "OUT_OF_STOCK"     // centralAvailable <= 0
   | "INSUFFICIENT_DATA"; // no coverage data available
 
+/** Whether stock data is a real certified reading vs absent/uncertifiable. */
+export type StockDataState =
+  | "CERTIFIED"        // real data from canonical or CCS — value is trustworthy
+  | "ABSENT";          // no data source — show "—", never "0"
+
 // ── Accessory/import scarcity (IMPORT-SCARCITY-ENGINE-01) ───────────────────
 
 export type AccessoryScarcityState = "saludable" | "escasez";
@@ -67,6 +72,72 @@ export const SAMPLE_MINIMUM_RULES: SampleMinimumRule[] = [
 export function getMinimumForLine(line: string): number {
   const rule = SAMPLE_MINIMUM_RULES.find((r) => r.line === line);
   return rule?.minimumUnits ?? 20; // default CS
+}
+
+// ── RETIRO classification (COMERCIAL-MALETAS-DERROTERO-EXCLUDE-RETIRO-01) ──────
+//
+// Canonical removal classification for maleta references.
+// Single source of truth: thresholds by business domain, no duplicates.
+// A reference is candidate for RETIRO when:
+//   - compatibleCommercialStock <= domain threshold, OR
+//   - stockDataState is not certified (no reading), OR
+//   - domain is unknown/external
+
+/** Business domain as resolved by the canonical inventory system. */
+export type RemovalBusinessDomain =
+  | "CASTILLITOS_TEXTILE"
+  | "LATIN_KIDS_TEXTILE"
+  | "CASTILLITOS_IMPORT"
+  | "UNKNOWN";
+
+/** Thresholds by business domain. Change here to adjust policy. */
+export const RETIRO_THRESHOLDS: Record<RemovalBusinessDomain, number> = {
+  CASTILLITOS_TEXTILE: 20,
+  LATIN_KIDS_TEXTILE: 30,
+  CASTILLITOS_IMPORT: 10,
+  UNKNOWN: 0,
+};
+
+/** Map drawer line → business domain */
+const LINE_TO_DOMAIN: Record<string, RemovalBusinessDomain> = {
+  CS: "CASTILLITOS_TEXTILE",
+  LT: "LATIN_KIDS_TEXTILE",
+  IMPORT: "CASTILLITOS_IMPORT",
+};
+
+export interface RemovalInput {
+  businessDomain?: RemovalBusinessDomain;
+  /** Drawer line — used as fallback when businessDomain is not available */
+  line?: string;
+  compatibleCommercialStock: number;
+  stockDataState: StockDataState;
+}
+
+/**
+ * Pure classification: is this reference a candidate for RETIRO?
+ *
+ * Consumes exclusively:
+ *   - businessDomain (or line as fallback)
+ *   - compatibleCommercialStock (from canonical resolver)
+ *   - stockDataState (certified or absent)
+ *   - RETIRO_THRESHOLDS (configurable per domain)
+ *
+ * Does NOT depend on: badges, UI state, centralAvailable, colors.
+ */
+export function isCandidateForRemoval(input: RemovalInput): boolean {
+  // No certified reading → retiro for audit
+  if (input.stockDataState !== "CERTIFIED") return true;
+
+  // Resolve domain
+  const domain: RemovalBusinessDomain = input.businessDomain
+    ?? LINE_TO_DOMAIN[input.line ?? ""]
+    ?? "UNKNOWN";
+
+  // Unknown/external domain → retiro
+  if (domain === "UNKNOWN") return true;
+
+  const threshold = RETIRO_THRESHOLDS[domain];
+  return input.compatibleCommercialStock <= threshold;
 }
 
 // ── Replacement option ─────────────────────────────────────────────────────
@@ -128,10 +199,11 @@ export interface VendorSampleRef {
   brand: string | null;             // "Castillitos" | "Latin Kids" resolved from productLine
   sizeClass: string | null;         // IMPORT only: "PEQUENO" | "MEDIANO" | "GRANDE"
   present: boolean;                  // F34 net balance > 0
-  centralAvailable: number;          // textil: B01, accessories: B36+B37
+  centralAvailable: number;          // textil: B01+B04 (CCS), import: B24 (canonical)
   minimumRequired: number;           // from business rules
   state: SampleState;                // "saludable" | "reemplazar" (central stock vs minimum)
   commercialHealth: SampleCommercialHealth; // MAIN warehouse health (independent of presence)
+  stockDataState: StockDataState;    // CERTIFIED = real reading, ABSENT = no data (show "—")
   riesgoAgotamiento: boolean;        // saludable but disponible <= minimo + 10
   suggestedAction: string | null;    // "Reemplazar referencia" | "Sugerir produccion" | null
   /** @deprecated Use replacementOptions instead */

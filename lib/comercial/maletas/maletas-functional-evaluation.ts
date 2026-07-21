@@ -113,14 +113,15 @@ export function idealOverrideKey(catalogId: string, groupCode: string, subgroupC
 export function evaluateVendorAssortment(
   vendor: VendorSampleSnapshot,
   idealOverrides?: IdealOverrideMap,
+  /** COMERCIAL-MALETAS-DERROTERO-EXCLUDE-RETIRO-01: optional filter to exclude RETIRO refs */
+  refFilter?: (ref: VendorSampleRef) => boolean,
 ): VendorAssortmentResult {
   const catalogs: CatalogEvaluation[] = [];
   const unresolvedRefs: UnresolvedRef[] = [];
 
-  // MALLETS-OPERATIONAL-LOGIC-ALIGNMENT-01: ALL present refs count toward derrotero.
-  // Vendor presence (from SAG F34 net_qty > 0) is independent of central stock health.
-  // A ref in the vendor mallet counts as "Actual" regardless of its commercialHealth.
-  const presentRefs = vendor.refs;
+  // COMERCIAL-MALETAS-DERROTERO-EXCLUDE-RETIRO-01: only derrotero-eligible refs.
+  // RETIRO candidates are excluded from coverage, completion, and faltantes.
+  const presentRefs = refFilter ? vendor.refs.filter(refFilter) : vendor.refs;
 
   // Castillitos Textil
   const csRefs = presentRefs.filter((r) => r.brand === "Castillitos" && r.line !== "IMPORT");

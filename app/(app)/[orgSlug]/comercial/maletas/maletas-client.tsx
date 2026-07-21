@@ -27,12 +27,14 @@ import type {
   VendorHealth,
   SampleState,
   SampleCommercialHealth,
+  StockDataState,
   MaletasExecutiveSummary,
   CoverageGapRef,
   ProductionSuggestion,
   VendorOpReplacementOption,
   AccessorySummary,
 } from "@/lib/comercial/maletas/vendor-sample-types";
+import { isCandidateForRemoval, type RemovalInput } from "@/lib/comercial/maletas/vendor-sample-types";
 import type {
   MaletasCommercialIntelligenceResult,
   VendorCommercialIntelligence,
@@ -108,9 +110,9 @@ const COMMERCIAL_HEALTH_COLOR: Record<SampleCommercialHealth, string> = {
   INSUFFICIENT_DATA: C.inkFaint,
 };
 const COMMERCIAL_HEALTH_LABEL: Record<SampleCommercialHealth, string> = {
-  HEALTHY: "Saludable",
+  HEALTHY: "Disponible",
   LOW_STOCK: "Stock bajo",
-  OUT_OF_STOCK: "Agotado",
+  OUT_OF_STOCK: "Sin disponibilidad",
   INSUFFICIENT_DATA: "Sin datos",
 };
 
@@ -123,12 +125,21 @@ const URGENCY_COLOR: Record<string, string> = {
 
 const PAGE_SIZE = 50;
 
+/** Build RemovalInput from VendorSampleRef (COMERCIAL-MALETAS-DERROTERO-EXCLUDE-RETIRO-01) */
+function refToRemovalInput(ref: VendorSampleRef): RemovalInput {
+  return {
+    line: ref.line,
+    compatibleCommercialStock: ref.centralAvailable,
+    stockDataState: ref.stockDataState,
+  };
+}
+
 // ── Drawer filter type ───────────────────────────────────────────────────────
 
 type DrawerFilter = SampleState | "all";
 
 const FILTER_ORDER: DrawerFilter[] = [
-  "all", "saludable",
+  "all", "saludable", "reemplazar", "sin_datos",
 ];
 
 const FILTER_LABEL: Record<DrawerFilter, string> = {
@@ -225,7 +236,14 @@ export function MaletasClient({
     setExpandedRef((prev) => (prev === refCode ? null : refCode));
   }, []);
 
-  // Separate active refs from depleted/agotados (GO-LIVE-MALETAS-AGOTADOS-VAULT-01)
+  // PRESENCE-VS-COMMERCIAL-SCOPE-FIX-01:
+  // allPresenceRefs = ALL F34-present refs (drawer shows the full physical inventory).
+  // activeRefs/depletedRefs = commercial split (used by decision engines, NOT for hiding rows).
+  const allPresenceRefs = useMemo(() => {
+    if (!selectedVendor) return [];
+    return selectedVendor.refs;
+  }, [selectedVendor]);
+
   const activeRefs = useMemo(() => {
     if (!selectedVendor) return [];
     return selectedVendor.refs.filter((r) => r.state !== "reemplazar");
@@ -234,6 +252,17 @@ export function MaletasClient({
   const depletedRefs = useMemo(() => {
     if (!selectedVendor) return [];
     return selectedVendor.refs.filter((r) => r.state === "reemplazar");
+  }, [selectedVendor]);
+
+  // COMERCIAL-MALETAS-DERROTERO-EXCLUDE-RETIRO-01: RETIRO vs commercial split
+  const retiroRefs = useMemo(() => {
+    if (!selectedVendor) return [];
+    return selectedVendor.refs.filter((r) => isCandidateForRemoval(refToRemovalInput(r)));
+  }, [selectedVendor]);
+
+  const commercialRefs = useMemo(() => {
+    if (!selectedVendor) return [];
+    return selectedVendor.refs.filter((r) => !isCandidateForRemoval(refToRemovalInput(r)));
   }, [selectedVendor]);
 
   // Coverage per catalog from assortmentEvaluations (MALETAS-DERROTERO-METRICS-CONSISTENCY-01)
@@ -261,10 +290,11 @@ export function MaletasClient({
     return lineMap;
   }, [selectedVendor, liveAssortmentEvals]);
 
-  // Drawer: group activeRefs by line (GO-LIVE-MALETAS-REFERENCIAS-POR-LINEA-01)
-  const searchedActiveRefs = useMemo(() => {
+  // PRESENCE-VS-COMMERCIAL-SCOPE-FIX-01: group ALL presence refs by line.
+  // The references tab shows every F34-present ref, not just commercially active ones.
+  const searchedPresenceRefs = useMemo(() => {
     if (!selectedVendor) return [];
-    let refs = activeRefs;
+    let refs = allPresenceRefs;
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       refs = refs.filter(
@@ -277,18 +307,31 @@ export function MaletasClient({
       );
     }
     return refs;
-  }, [selectedVendor, activeRefs, searchQuery]);
+  }, [selectedVendor, allPresenceRefs, searchQuery]);
 
+  // COMERCIAL-MALETAS-DERROTERO-EXCLUDE-RETIRO-01: Refs keep their structural line.
+  // RETIRO is a transversal view — refs stay in CS/LT/IMPORT but are tagged.
+  // OTRO refs get grouped under RETIRO (transversal).
   const lineGroups = useMemo(() => {
     const map = new Map<string, VendorSampleRef[]>();
-    for (const ref of searchedActiveRefs) {
-      const arr = map.get(ref.line) ?? [];
-      arr.push(ref);
-      map.set(ref.line, arr);
+    const retiroList: VendorSampleRef[] = [];
+    for (const ref of searchedPresenceRefs) {
+      // Structural group: original line (OTRO → skip, goes only to RETIRO)
+      if (ref.line !== "OTRO") {
+        const arr = map.get(ref.line) ?? [];
+        arr.push(ref);
+        map.set(ref.line, arr);
+      }
+      // Transversal: candidates for removal appear in RETIRO
+      if (isCandidateForRemoval(refToRemovalInput(ref))) {
+        retiroList.push(ref);
+      }
     }
-    // Stable order: sorted by first appearance then alphabetical
-    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [searchedActiveRefs]);
+    // CS, IMPORT, LT (alphabetical), then RETIRO last
+    const sorted = [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
+    if (retiroList.length > 0) sorted.push(["RETIRO", retiroList]);
+    return sorted;
+  }, [searchedPresenceRefs]);
 
   const sortedVendors = useMemo(
     () => [...vendors].sort((a, b) => b.totalRefs - a.totalRefs),
@@ -937,7 +980,7 @@ export function MaletasClient({
           : "info"
         }
         statusLabel={selectedVendor ? HEALTH_LABEL[selectedVendor.health] : undefined}
-        size="wide"
+        size="extra-wide"
       >
         {selectedVendor && (() => {
           return (
@@ -953,54 +996,54 @@ export function MaletasClient({
               background: C.white,
               position: "sticky" as const, top: 0, zIndex: 3,
             }}>
-              {/* Row 1: Per-line derrotero KPIs (GO-LIVE-MALETAS-DERROTERO-POR-LINEA-01) */}
+              {/* Row 1: Operational KPIs (COMERCIAL-MALETAS-DRAWER-OPERATIONAL-UX-02) */}
               <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
                 <DrawerKpiCard
-                  label="Referencias activas"
-                  value={activeRefs.length}
-                  sub="en mostrario"
-                  tooltip={`${selectedVendor.totalRefs} en maleta total. ${activeRefs.length} con stock saludable en bodega central. ${depletedRefs.length} marcadas para reemplazo.`}
+                  label="Referencias fisicas"
+                  value={allPresenceRefs.length}
+                  sub={`${commercialRefs.length} comerciales · ${retiroRefs.length} retiro`}
+                  tooltip={`${allPresenceRefs.length} referencias presentes en maleta (F34). ${commercialRefs.length} comercialmente vigentes. ${retiroRefs.length} candidatas a retiro.`}
                 />
-                {[...coverageByLine.entries()].map(([line, cov]) => {
-                  const lineLabel = DERROTERO_LINE_LABEL[line] ?? line;
-                  return (
-                    <DrawerKpiCard
-                      key={line}
-                      label={`Derrotero ${lineLabel}`}
-                      value={`${cov.pct}%`}
-                      sub={`${cov.complete} de ${cov.total} completos`}
-                      color={cov.pct < 80 ? C.amber : C.green}
-                    />
-                  );
-                })}
+                <DrawerKpiCard
+                  label="Comerciales"
+                  value={commercialRefs.length}
+                  sub="vigentes"
+                  color={C.green}
+                />
+                <DrawerKpiCard
+                  label="Retiro"
+                  value={retiroRefs.length}
+                  sub="cierre anual"
+                  color={retiroRefs.length > 0 ? C.red : C.inkFaint}
+                />
               </div>
 
-              {/* Row 2: Tab switcher */}
-              <div style={{ display: "flex", gap: S[2], alignItems: "center" }}>
-                <div style={{ marginLeft: "auto", display: "flex", gap: 0 }}>
-                  {(["referencias", "inteligencia", "derrotero"] as const).map((tab) => {
-                    const isActive = drawerTab === tab;
-                    const label = tab === "referencias" ? "Referencias" : tab === "inteligencia" ? "Inteligencia" : "Derrotero";
-                    return (
-                      <button
-                        key={tab}
-                        onClick={() => setDrawerTab(tab)}
-                        style={{
-                          fontFamily: T.mono, fontSize: 9, fontWeight: isActive ? 700 : 500,
-                          color: isActive ? C.blueDark : C.inkFaint,
-                          background: isActive ? C.blueLight : "transparent",
-                          border: "none",
-                          borderBottom: `2px solid ${isActive ? C.blueDark : "transparent"}`,
-                          cursor: "pointer",
-                          padding: "4px 10px 3px",
-                          transition: "all 0.12s",
-                        }}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
+              {/* Row 2: Tab switcher (COMERCIAL-MALETAS-DRAWER-OPERATIONAL-UX-02 — Phase 5) */}
+              <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${C.line}` }}>
+                {(["referencias", "inteligencia", "derrotero"] as const).map((tab) => {
+                  const isActive = drawerTab === tab;
+                  const label = tab === "referencias" ? "Referencias" : tab === "inteligencia" ? "Inteligencia" : "Derrotero";
+                  return (
+                    <button
+                      key={tab}
+                      onClick={() => setDrawerTab(tab)}
+                      style={{
+                        fontFamily: T.mono, fontSize: 11, fontWeight: isActive ? 800 : 600,
+                        color: isActive ? C.blueDark : C.inkFaint,
+                        background: isActive ? C.blueLight : "transparent",
+                        border: "none",
+                        borderBottom: `3px solid ${isActive ? C.blueDark : "transparent"}`,
+                        cursor: "pointer",
+                        padding: "10px 16px 8px",
+                        transition: "all 0.12s",
+                        flex: 1,
+                        textAlign: "center" as const,
+                      }}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -1059,14 +1102,16 @@ export function MaletasClient({
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
                   {lineGroups.map(([lineName, lineRefs]) => {
-                    const isExpanded_ = lineExpanded[lineName] !== false; // default open
+                    const isExpanded_ = lineExpanded[lineName] === true; // default closed (COMERCIAL-MALETAS-DRAWER-OPERATIONAL-UX-02)
                     const localFilter = lineFilters[lineName] ?? "all";
                     const localVisibleCount = lineVisibleCounts[lineName] ?? PAGE_SIZE;
 
-                    // Line-level stats (computed from full lineRefs, not filtered)
-                    const saludables = lineRefs.filter((r) => r.state === "saludable").length;
-                    const agotado = lineRefs.filter((r) => r.commercialHealth === "OUT_OF_STOCK").length;
-                    const stockBajo = lineRefs.filter((r) => r.commercialHealth === "LOW_STOCK").length;
+                    // Line-level stats (COMERCIAL-MALETAS-DERROTERO-EXCLUDE-RETIRO-01)
+                    // For RETIRO tab: all refs are retiro. For CS/LT/IMPORT: split.
+                    const lineRetiro = lineName === "RETIRO"
+                      ? lineRefs.length
+                      : lineRefs.filter((r) => isCandidateForRemoval(refToRemovalInput(r))).length;
+                    const lineCommercial = lineRefs.length - lineRetiro;
 
                     // Filter lineRefs by local filter
                     let filtered = lineRefs;
@@ -1107,11 +1152,10 @@ export function MaletasClient({
                           }}>
                             {lineName} ({lineRefs.length})
                           </span>
-                          {/* Inline summary chips */}
+                          {/* Inline summary chips (COMERCIAL-MALETAS-DRAWER-OPERATIONAL-UX-02 — Phase 8) */}
                           <span style={{ display: "flex", gap: S[2], flexWrap: "wrap", justifyContent: "flex-end" }}>
-                            <span style={{ fontFamily: T.mono, fontSize: 9, color: C.green }}>{saludables} saludables</span>
-                            {agotado > 0 && <span style={{ fontFamily: T.mono, fontSize: 9, color: C.red }}>{agotado} agotado</span>}
-                            {stockBajo > 0 && <span style={{ fontFamily: T.mono, fontSize: 9, color: C.amber }}>{stockBajo} stock bajo</span>}
+                            {lineCommercial > 0 && <span style={{ fontFamily: T.mono, fontSize: 9, color: C.green }}>{lineCommercial} comerciales</span>}
+                            {lineRetiro > 0 && <span style={{ fontFamily: T.mono, fontSize: 9, color: C.red }}>{lineRetiro} retiro</span>}
                           </span>
                         </button>
 
@@ -1285,11 +1329,12 @@ export function MaletasClient({
                                       <div style={{
                                         fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 600,
                                         textAlign: "right" as const,
-                                        color: ref.centralAvailable <= 0 ? C.red
+                                        color: ref.stockDataState === "ABSENT" ? C.inkFaint
+                                          : ref.centralAvailable <= 0 ? C.red
                                           : ref.centralAvailable <= ref.minimumRequired ? C.amber
                                           : C.ink,
                                       }}>
-                                        {ref.centralAvailable <= 0 ? "\u2014" : ref.centralAvailable}
+                                        {ref.stockDataState === "ABSENT" ? "\u2014" : ref.centralAvailable}
                                       </div>
 
                                       {/* Commercial health badge + affordance */}
@@ -1335,16 +1380,35 @@ export function MaletasClient({
                 </div>
               )}
 
-              {/* ── Vault: Historico de referencias retiradas (GO-LIVE-MALETAS-DRAWER-PRODUCTION-01) ── */}
-              {depletedRefs.length > 0 && (
-                <DepletedVault refs={depletedRefs} />
-              )}
+              {/* PRESENCE-VS-COMMERCIAL-SCOPE-FIX-01: DepletedVault removed —
+                 all F34-present refs now appear inline in lineGroups above.
+                 Depleted refs are distinguished by state badge, not hidden. */}
             </div>
             )}
 
-            {/* ── Tab: Inteligencia — Centro de Decisiones Comerciales (GO-LIVE-MALETAS-INTELIGENCIA-V2-01) ── */}
+            {/* ── Tab: Inteligencia (COMERCIAL-MALETAS-DRAWER-OPERATIONAL-UX-02 — Phase 7) ── */}
             {drawerTab === "inteligencia" && selectedVendor && (
               <div style={{ flex: 1, overflowY: "auto" as const, minHeight: 0, paddingTop: S[2] }}>
+                {/* Phase 7: Operational indicators strip */}
+                <div style={{
+                  display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: S[2],
+                  marginBottom: S[3],
+                }}>
+                  {(() => {
+                    const allRefs = selectedVendor.refs;
+                    const outOfStock = allRefs.filter((r) => r.commercialHealth === "OUT_OF_STOCK").length;
+                    const lowStock = allRefs.filter((r) => r.commercialHealth === "LOW_STOCK").length;
+                    const noData = allRefs.filter((r) => r.stockDataState === "ABSENT").length;
+                    return (
+                      <>
+                        <DrawerKpiCard label="Comerciales" value={commercialRefs.length} sub="vigentes" color={C.green} />
+                        <DrawerKpiCard label="Retiro" value={retiroRefs.length} sub="cierre anual" color={retiroRefs.length > 0 ? C.red : C.inkFaint} />
+                        <DrawerKpiCard label="Stock bajo" value={lowStock} sub="riesgo" color={lowStock > 0 ? C.amber : C.inkFaint} />
+                        <DrawerKpiCard label="Sin disponibilidad" value={outOfStock + noData} sub={`${outOfStock} agotadas · ${noData} sin datos`} color={outOfStock > 0 ? C.red : C.inkFaint} />
+                      </>
+                    );
+                  })()}
+                </div>
                 <CommercialDecisionCenter
                   activeRefs={activeRefs}
                   depletedRefs={depletedRefs}
@@ -1363,9 +1427,30 @@ export function MaletasClient({
               </div>
             )}
 
-            {/* ── Tab: Derrotero ideal (GO-LIVE-MALETAS-DERROTERO-CONFIG-01) ── */}
+            {/* ── Tab: Derrotero ideal (COMERCIAL-MALETAS-DRAWER-OPERATIONAL-UX-02 — Phase 6) ── */}
             {drawerTab === "derrotero" && selectedVendor && (
               <div style={{ flex: 1, overflowY: "auto" as const, minHeight: 0, paddingTop: S[2] }}>
+                {/* COMERCIAL-MALETAS-DERROTERO-EXCLUDE-RETIRO-01 — Phase 8 */}
+                <div style={{
+                  padding: `${S[3]}px ${S[3]}px`,
+                  background: C.surfaceAlt, borderRadius: R.sm, marginBottom: S[3],
+                  border: `1px solid ${C.line}`,
+                }}>
+                  <div style={{ display: "flex", gap: S[3], marginBottom: S[1] }}>
+                    <div style={{ fontFamily: T.mono, fontSize: 10, color: C.ink }}>
+                      <span style={{ fontWeight: 800 }}>{allPresenceRefs.length}</span> fisicas
+                    </div>
+                    <div style={{ fontFamily: T.mono, fontSize: 10, color: C.red }}>
+                      <span style={{ fontWeight: 800 }}>−{retiroRefs.length}</span> retiro
+                    </div>
+                    <div style={{ fontFamily: T.mono, fontSize: 10, color: C.green, fontWeight: 700 }}>
+                      = {commercialRefs.length} evaluadas
+                    </div>
+                  </div>
+                  <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint }}>
+                    El derrotero se calcula unicamente con referencias vigentes y comercialmente vendibles.
+                  </div>
+                </div>
                 <DerroteroIdealPanel orgSlug={orgSlug} vendor={selectedVendor} externalRules={derroteroRules} onRulesChange={setDerroteroRules} assortmentEval={liveAssortmentEvals.find((e) => e.vendorId === selectedVendor.vendorId)} onEvalChange={(updated) => { setLiveAssortmentEvals((prev) => prev.map((e) => e.vendorId === updated.vendorId ? updated : e)); }} />
               </div>
             )}
@@ -1423,8 +1508,8 @@ function ReplacementDetailPanel({ ref_ }: { ref_: VendorSampleRef }) {
         <DetailField label="Linea" value={ref_.line} />
         <DetailField
           label="Disponible en bodega principal"
-          value={ref_.centralAvailable <= 0 ? "\u2014" : String(ref_.centralAvailable)}
-          color={ref_.centralAvailable <= 0 ? C.red : C.amber}
+          value={ref_.stockDataState === "ABSENT" ? "\u2014" : String(ref_.centralAvailable)}
+          color={ref_.stockDataState === "ABSENT" ? C.inkFaint : ref_.centralAvailable <= 0 ? C.red : C.amber}
         />
         <DetailField label="Minimo requerido" value={String(ref_.minimumRequired)} />
       </div>
@@ -1984,9 +2069,9 @@ function VendorCard({ vendor, intel, baseMetrics, onClick, onToggleActivation, a
 const GAP_GRID  = "40px 80px minmax(120px,1.2fr) minmax(80px,1fr) 50px 56px 100px";
 // Shared grid for all active-ref tables: Img | Ref | Descripcion | Grupo | Subgrupo | Linea | Disponible | Estado/Accion
 // MALETAS-REFERENCIAS-GRUPO-IMAGEN-01: added 36px thumbnail column
-const REF_TABLE_COLS = "36px 80px minmax(100px,1.4fr) minmax(70px,0.6fr) minmax(80px,0.7fr) 52px 60px 88px";
+const REF_TABLE_COLS = "36px 80px minmax(120px,1.4fr) minmax(80px,0.6fr) minmax(90px,0.7fr) 56px 72px 100px";
 // Import adds Tamano column
-const REF_TABLE_COLS_IMPORT = "36px 80px minmax(100px,1.2fr) minmax(60px,0.5fr) minmax(70px,0.6fr) 52px 60px 60px 88px";
+const REF_TABLE_COLS_IMPORT = "36px 80px minmax(120px,1.2fr) minmax(70px,0.5fr) minmax(80px,0.6fr) 56px 64px 72px 100px";
 
 const listHeaderCell: React.CSSProperties = {
   fontFamily: T.mono, fontSize: 10, fontWeight: 600,
@@ -3210,6 +3295,7 @@ const DERROTERO_LINE_LABEL: Record<string, string> = {
   LT: "Latin Kids",
   CS: "Castillitos",
   IMPORT: "Importacion",
+  RETIRO: "Retiro",
 };
 
 type CoverageState = "cubierto" | "en_limite" | "falta_cobertura";
