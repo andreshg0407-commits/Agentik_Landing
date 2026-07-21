@@ -223,6 +223,28 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
     return result;
   }, [panels, activeTab, search]);
 
+  // ── Cross-panel search hint (CANONICAL-INVENTORY-REFERENCE-LOOKUP-01) ──
+  // When search yields 0 results in current tab, check OTHER tabs for an exact
+  // normalized reference match. Partial matches are excluded to avoid false hints.
+  const crossPanelHint = useMemo(() => {
+    if (!search.trim() || panelItems.length > 0) return null;
+    // Normalize: trim, uppercase, collapse whitespace — same as normalizeReferenceCode
+    const q = search.trim().toUpperCase().replace(/\s+/g, " ");
+    if (!q) return null;
+    const TAB_ORDER: PanelDestination[] = [
+      "CASTILLITOS", "LATIN_KIDS", "IMPORTACION", "SIN_CLASIFICAR", "AGOTADOS", "VAULT",
+    ];
+    for (const tab of TAB_ORDER) {
+      if (tab === activeTab || tab === "EXTERNAL_EXCLUDED") continue;
+      const found = panels[tab].find(ci => {
+        const normRef = ci.reference.trim().toUpperCase().replace(/\s+/g, " ");
+        return normRef === q;
+      });
+      if (found) return { tab, label: TAB_LABELS[tab], reference: found.reference };
+    }
+    return null;
+  }, [search, panelItems.length, activeTab, panels]);
+
   // ── Map canonical items to original items for line-based tabs ──────────
   const originalItemsByRef = useMemo(() => {
     const map = new Map<string, InventoryItem>();
@@ -659,13 +681,15 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
             <EmptyState
               message={
                 search.trim()
-                  ? `Sin resultados para "${search.trim()}"`
+                  ? `Sin resultados para "${search.trim()}"${crossPanelHint ? ` en ${TAB_LABELS[activeTab]}` : ""}`
                   : filter !== "todos"
                   ? `Sin referencias con estado "${FILTER_OPTIONS.find(o => o.key === filter)?.label}"`
                   : `Sin datos de inventario para ${TAB_LABELS[activeTab]}`
               }
               hint={
-                dataQuality.freshnessLabel === "SIN_DATOS"
+                crossPanelHint
+                  ? `"${crossPanelHint.reference}" esta en el panel ${crossPanelHint.label}`
+                  : dataQuality.freshnessLabel === "SIN_DATOS"
                   ? "Sincronice inventario desde SAG para ver datos"
                   : "Ajuste los filtros para ver referencias"
               }

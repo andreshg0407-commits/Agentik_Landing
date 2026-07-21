@@ -49,7 +49,6 @@ import {
   isEligibleForProductionSuggestion,
   getMinimumForLine,
   IMPORT_SCARCITY_MINIMUM,
-  IMPORT_SOURCE_WAREHOUSES,
   DEFAULT_SUBGROUP_MINIMUM_REFS,
 } from "./vendor-sample-types";
 import type { AccessoryScarcityState, AccessorySummary } from "./vendor-sample-types";
@@ -89,6 +88,10 @@ import {
   type MaletaSupplyAction,
 } from "./maletas-canonical-inventory";
 import { isReferenceEligibleForMaletasRuntime } from "./maletas-commercial-scope";
+import {
+  loadCanonicalReferencesByReferenceList,
+  type CanonicalReferenceLookupRecord,
+} from "@/lib/inventory/canonical-reference-lookup";
 import type {
   VendorAssortmentResult,
   SubgroupProductionEval,
@@ -327,14 +330,25 @@ export async function loadVendorSampleData(
   // ── 2b. Load open OP data for OP linking ────────────────────────────
   const opOptionsBySubgrupoId = await loadOpBySubgrupo(db, organizationId);
 
-  // ── 2c. Load import availability from PIL (B36+B37) ────────────────
-  const importAvailMap = await loadImportAvailability(db, organizationId);
-
-  // ── 2d. Load import ref identification (productLine=5) ─────────────
+  // ── 2c. Load import ref identification (productLine=5) ─────────────
   const importRefSet = await loadImportRefSet(db, organizationId);
 
-  // ── 2e. Load product enrichment (group, brand, sizeClass) from ProductEntity ──
+  // ── 2d. Load product enrichment (group, brand, sizeClass) from ProductEntity ──
   const productEnrichmentMap = await loadProductEnrichment(db, organizationId);
+
+  // ── 2e. Canonical reference lookup (CANONICAL-INVENTORY-REFERENCE-LOOKUP-01)
+  // Single batch lookup for all vendor refs — replaces loadImportAvailability
+  // and local CCS/PIL queries for commercial stock resolution.
+  const allVendorRefsForLookup = new Set<string>();
+  for (const pr of presenceResults) {
+    for (const item of pr.items) allVendorRefsForLookup.add(item.reference);
+  }
+  const canonicalLookup = await loadCanonicalReferencesByReferenceList(
+    db as any,
+    { organizationId, references: [...allVendorRefsForLookup] },
+  );
+  const canonicalLookupMap = canonicalLookup.records;
+  console.log(`[MALETAS] Canonical lookup: ${canonicalLookup.stats.resolved} resolved, ${canonicalLookup.stats.productNotFound} not found, ${canonicalLookup.stats.queryTimeMs}ms`);
 
   // ── 2f. Canonical classification + commercial scope filter ──────────────
   // COMERCIAL-MALETAS-CANONICAL-ACTIVATION-01
@@ -414,17 +428,30 @@ export async function loadVendorSampleData(
     const refs: VendorSampleRef[] = pr.items.map((item) => {
       allVendorRefs.add(item.reference);
       const coverage = coverageMap.get(item.reference);
-      const isAccessory = importRefSet.has(item.reference);
-      const line = isAccessory ? "IMPORT" : (coverage?.line ?? "OTRO");
       const enrichment = productEnrichmentMap.get(item.reference);
+      const isAccessory = importRefSet.has(item.reference);
+      // PRESENCE-VS-COMMERCIAL-SCOPE-FIX-01: Resolve line with PE productLine fallback.
+      // CCS may be empty — PE productLine is the authoritative source for line identity.
+      const line = isAccessory ? "IMPORT"
+        : coverage?.line
+          ?? (enrichment?.productLine === "1" ? "LT"
+            : enrichment?.productLine === "2" ? "CS"
+            : "OTRO");
       const minimum = getMinimumForLine(line);
-      const importAvailability = isAccessory ? importAvailMap.get(item.reference) : undefined;
-      const hasCentralAvailability = isAccessory
-        ? importAvailability !== undefined
+
+      // CANONICAL-INVENTORY-REFERENCE-LOOKUP-01: Single canonical source for ALL stock data.
+      // No local warehouse sums. No module-specific fallbacks.
+      const can = canonicalMap.get(item.reference);
+      const lookupRec = canonicalLookupMap.get(item.reference);
+      const hasCentralAvailability = lookupRec
+        ? lookupRec.stockDataState === "CERTIFIED"
         : coverage != null;
-      const centralAvailable = isAccessory
-        ? (importAvailability ?? 0)
+      /** @deprecated Use lookupRec.compatibleCommercialStock — alias kept for downstream compatibility */
+      const centralAvailable = lookupRec
+        ? lookupRec.compatibleCommercialStock
         : (coverage?.disponible ?? 0);
+      const stockDataState: import("./vendor-sample-types").StockDataState =
+        hasCentralAvailability ? "CERTIFIED" : "ABSENT";
       const rawState = deriveState(centralAvailable, minimum, hasCentralAvailability);
       const state: SampleState = rawState;
       const commercialHealth = deriveCommercialHealth(centralAvailable, minimum, hasCentralAvailability);
@@ -445,12 +472,9 @@ export async function loadVendorSampleData(
       let accessoryScarcityState: AccessoryScarcityState | null = null;
       let accessorySuggestedAction: "DEJAR_DE_VENDER" | null = null;
       if (isAccessory) {
-        const rawImportAvail = importAvailMap.get(item.reference);
-        // COMERCIAL-INVENTARIO-DATA-SAFETY-LOCK-01 Phase 1:
-        // Only derive scarcity state when PIL data exists.
-        // Absent PIL record ≠ zero stock.
-        if (rawImportAvail !== undefined) {
-          availableB24 = rawImportAvail;
+        // CANONICAL-INVENTORY-REFERENCE-LOOKUP-01: Scarcity from canonical lookup.
+        if (lookupRec && lookupRec.stockDataState === "CERTIFIED") {
+          availableB24 = lookupRec.compatibleCommercialStock;
           accessoryScarcityState = availableB24 > IMPORT_SCARCITY_MINIMUM ? "saludable" : "escasez";
           accessorySuggestedAction = accessoryScarcityState === "escasez" ? "DEJAR_DE_VENDER" : null;
         } else {
@@ -476,6 +500,7 @@ export async function loadVendorSampleData(
         minimumRequired: minimum,
         state,
         commercialHealth,
+        stockDataState,
         riesgoAgotamiento,
         suggestedAction: isAccessory && accessorySuggestedAction === "DEJAR_DE_VENDER"
           ? "Dejar de vender"
@@ -635,7 +660,7 @@ export async function loadVendorSampleData(
 
   // ── 8. Accessory summary (MALETAS-ACCESSORY-LINE-INTELLIGENCE-FIX-01)
   // Accessories appear in F34 vendor presence. Central availability from B36+B37.
-  const accessorySummary = buildAccessorySummary(importRefSet, importAvailMap);
+  const accessorySummary = buildAccessorySummary(importRefSet, canonicalLookupMap);
 
   // ── 9. MALLETS-FUNCTIONAL-RECOVERY-01: Evaluation pipeline ────────────────
 
@@ -1519,11 +1544,11 @@ function emptySummary(): MaletasExecutiveSummary {
 // ── Accessory summary builder (MALETAS-ACCESSORY-LINE-INTELLIGENCE-FIX-01) ──
 //
 // Accessories appear in F34 vendor presence (same bodegas 45-50 as textil).
-// Central availability controlled by B36+B37 import warehouses.
+// Central availability via canonical lookup (domain-specific stock policy).
 
 function buildAccessorySummary(
   importRefSet: Set<string>,
-  importAvailMap: Map<string, number>,
+  lookupMap: Map<string, CanonicalReferenceLookupRecord>,
 ): AccessorySummary {
   const totalRefs = importRefSet.size;
   let availableRefs = 0;
@@ -1532,11 +1557,9 @@ function buildAccessorySummary(
   let zeroStockRefs = 0;
 
   for (const sku of importRefSet) {
-    const rawAvailable = importAvailMap.get(sku);
-    // COMERCIAL-INVENTARIO-DATA-SAFETY-LOCK-01 Phase 1:
-    // Absent PIL record → skip (don't count as zero stock)
-    if (rawAvailable === undefined) continue;
-    const available = rawAvailable;
+    const rec = lookupMap.get(sku);
+    if (!rec || rec.stockDataState === "ABSENT") continue;
+    const available = rec.compatibleCommercialStock;
     if (available <= 0) {
       zeroStockRefs++;
     } else if (available <= IMPORT_SCARCITY_MINIMUM) {
@@ -1562,6 +1585,7 @@ interface ProductEnrichment {
   brand: string | null;
   sizeClass: string | null;
   imageUrl: string | null;  // MALETAS-REFERENCIAS-GRUPO-IMAGEN-01: hero image from ProductAssetLink
+  productLine: string | null; // PRESENCE-VS-COMMERCIAL-SCOPE-FIX-01: PE productLine for line resolution
 }
 
 const BRAND_FROM_LINE: Record<string, string> = {
@@ -1640,6 +1664,7 @@ async function loadProductEnrichment(
         brand,
         sizeClass,
         imageUrl: heroImageMap.get(p.id) ?? null,
+        productLine: p.productLine ?? null,
       });
     }
     console.log(`[MALETAS] Product enrichment: ${result.size} refs enriched (import sizeClass: ${fromHandlingUnit} from SAG, ${unmapped} unmapped, ${fromFallback} without handlingUnit)`);
@@ -1663,36 +1688,6 @@ function isCanonicalSizeClass(value: string): boolean {
 //
 // Aggregates stock from import source warehouses (B36+B37) per SKU.
 // Returns Map<sku, totalAvailable>.
-
-async function loadImportAvailability(
-  db: any,
-  organizationId: string,
-): Promise<Map<string, number>> {
-  const result = new Map<string, number>();
-  try {
-    const whList = IMPORT_SOURCE_WAREHOUSES.map((_, i) => `$${i + 2}`).join(",");
-    const params = [organizationId, ...IMPORT_SOURCE_WAREHOUSES];
-    interface ImportRow { sku: string; available: number }
-    const rows: ImportRow[] = await db.$queryRawUnsafe(`
-      SELECT pe.sku,
-             SUM(GREATEST(pil.quantity, 0))::int AS available
-      FROM "ProductInventoryLevel" pil
-      JOIN "ProductEntity" pe ON pe.id = pil."productId"
-        AND pe."organizationId" = pil."organizationId"
-      WHERE pil."organizationId" = $1
-        AND pil."warehouseId" IN (${whList})
-      GROUP BY pe.sku
-    `, ...params);
-
-    for (const row of rows) {
-      result.set(row.sku, row.available);
-    }
-    console.log(`[MALETAS] Import availability: ${result.size} refs from B${IMPORT_SOURCE_WAREHOUSES.join("+B")}`);
-  } catch (err) {
-    console.error("[MALETAS] Import availability load failed (non-fatal):", err);
-  }
-  return result;
-}
 
 // ── Import ref identification (IMPORT-SCARCITY-ENGINE-01) ───────────────────
 //

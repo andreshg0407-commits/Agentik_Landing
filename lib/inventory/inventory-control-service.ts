@@ -45,12 +45,12 @@ import type {
   AccesorioStockState,
 } from "./inventory-control-types";
 import {
-  IMPORT_SOURCE_WAREHOUSES,
   IMPORT_SCARCITY_MINIMUM,
 } from "@/lib/comercial/maletas/vendor-sample-types";
 import {
   getCommercialTextilePks,
   getCommercialAvailableImportPks,
+  getImportInventoryPks,
 } from "./warehouse-master";
 
 // ── Operational State Derivation (INVENTARIO-KPI-REALIGNMENT-01) ─────────────
@@ -543,29 +543,37 @@ async function loadVariantSummaries(
 
 // ── Accessories (Import) ─────────────────────────────────────────────────────
 
+/**
+ * Load import/accessory availability from COMMERCIAL_AVAILABLE_IMPORT warehouses.
+ *
+ * Uses warehouseId (ka_nl_bodega) from warehouse-master (includeInImportInventory=true).
+ * Currently: B24 (ka_nl=33, ss_codigo=24, IMPORTACION).
+ *
+ * Computes NET per SKU (includes negative quantities), clamped to >= 0.
+ * Excludes IMPORT_STAGING (B26/B27) — those are not commercial inventory.
+ */
 async function loadAccessoryAvailability(
   organizationId: string,
 ): Promise<Map<string, number>> {
   const result = new Map<string, number>();
   try {
-    // SAG-DATAFLOW-FIX-01: use externalRef (bodega code) instead of warehouseId (SAG numeric PK)
-    // warehouseId stores SAG internal PKs (e.g. "36","37") which don't match bodega codes ("26","27")
-    const whList = IMPORT_SOURCE_WAREHOUSES.map((_, i) => `$${i + 2}`).join(",");
-    const params = [organizationId, ...IMPORT_SOURCE_WAREHOUSES];
-    interface ImportRow { sku: string; available: number }
+    const importPks = [...getImportInventoryPks()];
+    const whList = importPks.map((_, i) => `$${i + 2}`).join(",");
+    const params = [organizationId, ...importPks];
+    interface ImportRow { sku: string; net_qty: number }
     const rows: ImportRow[] = await (prisma as any).$queryRawUnsafe(`
       SELECT pe."sku",
-             SUM(GREATEST(pil."quantity", 0))::int AS available
+             SUM(pil."quantity")::float AS net_qty
       FROM "ProductInventoryLevel" pil
       JOIN "ProductEntity" pe ON pe."id" = pil."productId"
         AND pe."organizationId" = pil."organizationId"
       WHERE pe."organizationId" = $1
-        AND pil."externalRef" IN (${whList})
+        AND pil."warehouseId" IN (${whList})
         AND pe."productLine" = '5'
       GROUP BY pe."sku"
     `, ...params);
     for (const r of rows) {
-      if (r.sku) result.set(r.sku, Number(r.available));
+      if (r.sku) result.set(r.sku, Math.max(0, Number(r.net_qty) || 0));
     }
   } catch (err) {
     console.error("[inventory] loadAccessoryAvailability failed:", (err as any)?.message);

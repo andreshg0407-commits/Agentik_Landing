@@ -305,3 +305,62 @@ export function getCommercialTextilePks(): ReadonlySet<string> {
 export function getAllWarehouses(): readonly WarehouseEntry[] {
   return CASTILLITOS_WAREHOUSES;
 }
+
+// ── Commercial Stock Policy ─────────────────────────────────────────────────
+// Defines exactly which warehouses contribute to "compatible commercial stock"
+// for each business domain. This is the canonical commercial availability policy.
+
+export type CommercialStockPolicyName = "TEXTILE" | "IMPORT";
+
+export interface CommercialStockPolicyConfig {
+  policy: CommercialStockPolicyName;
+  /** Authorized warehouse entries for this policy */
+  authorizedWarehouses: readonly WarehouseEntry[];
+  /** ka_nl_bodega set for fast membership check */
+  authorizedPks: ReadonlySet<string>;
+  /** Human-readable description */
+  description: string;
+}
+
+/** TEXTILE policy: only warehouses with includeInCommercialInventory=true */
+const TEXTILE_POLICY: CommercialStockPolicyConfig = {
+  policy: "TEXTILE",
+  authorizedWarehouses: CASTILLITOS_WAREHOUSES.filter(w => w.includeInCommercialInventory),
+  authorizedPks: COMMERCIAL_TEXTILE_PKS,
+  description: "Inventario comercial textil (B01 BODEGA PRINCIPAL, ka_nl=10)",
+};
+
+/** IMPORT policy: only warehouses with includeInImportInventory=true */
+const IMPORT_POLICY: CommercialStockPolicyConfig = {
+  policy: "IMPORT",
+  authorizedWarehouses: CASTILLITOS_WAREHOUSES.filter(w => w.includeInImportInventory),
+  authorizedPks: IMPORT_INVENTORY_PKS,
+  description: "Inventario comercial importacion (B24 IMPORTACIÓN, ka_nl=33)",
+};
+
+/**
+ * Resolve the commercial stock policy for a business domain.
+ * Returns null for domains outside Castillitos commercial scope.
+ */
+export function getCommercialStockPolicy(
+  domain: string,
+): CommercialStockPolicyConfig | null {
+  switch (domain) {
+    case "CASTILLITOS_TEXTILE":
+    case "LATIN_KIDS_TEXTILE":
+      return TEXTILE_POLICY;
+    case "CASTILLITOS_IMPORT":
+      return IMPORT_POLICY;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Check if a CCS record is compatible with a business domain.
+ * CCS is built from bodegas 01+04+14+15 (textile pipeline).
+ * Only TEXTILE domains are compatible with CCS.
+ */
+export function isCcsCompatibleWithDomain(domain: string): boolean {
+  return domain === "CASTILLITOS_TEXTILE" || domain === "LATIN_KIDS_TEXTILE";
+}
