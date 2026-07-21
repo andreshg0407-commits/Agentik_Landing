@@ -91,8 +91,8 @@ const STATE_COLOR: Record<SampleState, string> = {
 };
 
 const STATE_LABEL: Record<SampleState, string> = {
-  saludable: "Saludable",
-  reemplazar: "Reemplazar",
+  saludable: "Disponible",
+  reemplazar: "Retiro",
   sin_datos: "Sin datos",
 };
 
@@ -139,13 +139,13 @@ function refToRemovalInput(ref: VendorSampleRef): RemovalInput {
 type DrawerFilter = SampleState | "all";
 
 const FILTER_ORDER: DrawerFilter[] = [
-  "all", "saludable", "reemplazar", "sin_datos",
+  "saludable", "sin_datos",
 ];
 
 const FILTER_LABEL: Record<DrawerFilter, string> = {
   all: "Todas",
-  saludable: "Saludables",
-  reemplazar: "Reemplazar",
+  saludable: "Disponibles",
+  reemplazar: "Retiro",
   sin_datos: "Sin datos",
 };
 
@@ -174,7 +174,7 @@ export function MaletasClient({
   // Mutable copy of assortmentEvaluations for optimistic ideal updates
   const [liveAssortmentEvals, setLiveAssortmentEvals] = useState(assortmentEvaluations);
   useEffect(() => { setLiveAssortmentEvals(assortmentEvaluations); }, [assortmentEvaluations]);
-  const [drawerTab, setDrawerTab] = useState<"referencias" | "inteligencia" | "derrotero">("referencias");
+  const [drawerTab, setDrawerTab] = useState<"referencias" | "retiro" | "inteligencia" | "derrotero">("referencias");
   const [lineExpanded, setLineExpanded] = useState<Record<string, boolean>>({});
   const tableContainerRef = useRef<HTMLDivElement>(null);
 
@@ -309,28 +309,32 @@ export function MaletasClient({
     return refs;
   }, [selectedVendor, allPresenceRefs, searchQuery]);
 
-  // COMERCIAL-MALETAS-DERROTERO-EXCLUDE-RETIRO-01: Refs keep their structural line.
-  // RETIRO is a transversal view — refs stay in CS/LT/IMPORT but are tagged.
-  // OTRO refs get grouped under RETIRO (transversal).
+  // COMERCIAL-MALETAS-RETIRO-UI-CONSOLIDATION-01:
+  // lineGroups = ONLY vigentes (non-retiro) refs for CS/LT/IMPORT.
+  // retiroLineGroups = ONLY retiro refs, grouped by line (CS/LT/IMPORT/OTRO).
+  // Zero duplication between the two universes.
   const lineGroups = useMemo(() => {
     const map = new Map<string, VendorSampleRef[]>();
-    const retiroList: VendorSampleRef[] = [];
     for (const ref of searchedPresenceRefs) {
-      // Structural group: original line (OTRO → skip, goes only to RETIRO)
-      if (ref.line !== "OTRO") {
-        const arr = map.get(ref.line) ?? [];
-        arr.push(ref);
-        map.set(ref.line, arr);
-      }
-      // Transversal: candidates for removal appear in RETIRO
-      if (isCandidateForRemoval(refToRemovalInput(ref))) {
-        retiroList.push(ref);
-      }
+      if (ref.line === "OTRO") continue;
+      if (isCandidateForRemoval(refToRemovalInput(ref))) continue;
+      const arr = map.get(ref.line) ?? [];
+      arr.push(ref);
+      map.set(ref.line, arr);
     }
-    // CS, IMPORT, LT (alphabetical), then RETIRO last
-    const sorted = [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
-    if (retiroList.length > 0) sorted.push(["RETIRO", retiroList]);
-    return sorted;
+    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [searchedPresenceRefs]);
+
+  const retiroLineGroups = useMemo(() => {
+    const map = new Map<string, VendorSampleRef[]>();
+    for (const ref of searchedPresenceRefs) {
+      if (!isCandidateForRemoval(refToRemovalInput(ref))) continue;
+      const line = ref.line || "OTRO";
+      const arr = map.get(line) ?? [];
+      arr.push(ref);
+      map.set(line, arr);
+    }
+    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
   }, [searchedPresenceRefs]);
 
   const sortedVendors = useMemo(
@@ -999,19 +1003,19 @@ export function MaletasClient({
               {/* Row 1: Operational KPIs (COMERCIAL-MALETAS-DRAWER-OPERATIONAL-UX-02) */}
               <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
                 <DrawerKpiCard
-                  label="Referencias fisicas"
+                  label="Muestras en maleta"
                   value={allPresenceRefs.length}
-                  sub={`${commercialRefs.length} comerciales · ${retiroRefs.length} retiro`}
-                  tooltip={`${allPresenceRefs.length} referencias presentes en maleta (F34). ${commercialRefs.length} comercialmente vigentes. ${retiroRefs.length} candidatas a retiro.`}
+                  sub={`${commercialRefs.length} vigentes · ${retiroRefs.length} para retirar`}
+                  tooltip={`${allPresenceRefs.length} muestras presentes en maleta (F34). ${commercialRefs.length} vigentes. ${retiroRefs.length} para retirar.`}
                 />
                 <DrawerKpiCard
-                  label="Comerciales"
+                  label="Vigentes"
                   value={commercialRefs.length}
-                  sub="vigentes"
+                  sub="referencias activas"
                   color={C.green}
                 />
                 <DrawerKpiCard
-                  label="Retiro"
+                  label="Para retirar"
                   value={retiroRefs.length}
                   sub="cierre anual"
                   color={retiroRefs.length > 0 ? C.red : C.inkFaint}
@@ -1020,9 +1024,11 @@ export function MaletasClient({
 
               {/* Row 2: Tab switcher (COMERCIAL-MALETAS-DRAWER-OPERATIONAL-UX-02 — Phase 5) */}
               <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${C.line}` }}>
-                {(["referencias", "inteligencia", "derrotero"] as const).map((tab) => {
+                {(["referencias", "retiro", "inteligencia", "derrotero"] as const).map((tab) => {
                   const isActive = drawerTab === tab;
-                  const label = tab === "referencias" ? "Referencias" : tab === "inteligencia" ? "Inteligencia" : "Derrotero";
+                  const label = tab === "referencias" ? "Referencias"
+                    : tab === "retiro" ? `Retiro${retiroRefs.length > 0 ? ` (${retiroRefs.length})` : ""}`
+                    : tab === "inteligencia" ? "Inteligencia" : "Derrotero";
                   return (
                     <button
                       key={tab}
@@ -1047,8 +1053,8 @@ export function MaletasClient({
               </div>
             </div>
 
-            {/* ── Tab: Referencias — search bar (GO-LIVE-MALETAS-REFERENCIAS-POR-LINEA-01) ── */}
-            {drawerTab === "referencias" && (
+            {/* ── Tab: Referencias/Retiro — search bar (GO-LIVE-MALETAS-REFERENCIAS-POR-LINEA-01) ── */}
+            {(drawerTab === "referencias" || drawerTab === "retiro") && (
             <div style={{
               flexShrink: 0, display: "flex", flexDirection: "column", gap: S[2],
               padding: `${S[2]}px 0`,
@@ -1106,12 +1112,9 @@ export function MaletasClient({
                     const localFilter = lineFilters[lineName] ?? "all";
                     const localVisibleCount = lineVisibleCounts[lineName] ?? PAGE_SIZE;
 
-                    // Line-level stats (COMERCIAL-MALETAS-DERROTERO-EXCLUDE-RETIRO-01)
-                    // For RETIRO tab: all refs are retiro. For CS/LT/IMPORT: split.
-                    const lineRetiro = lineName === "RETIRO"
-                      ? lineRefs.length
-                      : lineRefs.filter((r) => isCandidateForRemoval(refToRemovalInput(r))).length;
-                    const lineCommercial = lineRefs.length - lineRetiro;
+                    // COMERCIAL-MALETAS-RETIRO-UI-CONSOLIDATION-01:
+                    // Active groups contain ONLY vigentes refs (retiro filtered out upstream).
+                    const lineCommercial = lineRefs.length;
 
                     // Filter lineRefs by local filter
                     let filtered = lineRefs;
@@ -1154,8 +1157,7 @@ export function MaletasClient({
                           </span>
                           {/* Inline summary chips (COMERCIAL-MALETAS-DRAWER-OPERATIONAL-UX-02 — Phase 8) */}
                           <span style={{ display: "flex", gap: S[2], flexWrap: "wrap", justifyContent: "flex-end" }}>
-                            {lineCommercial > 0 && <span style={{ fontFamily: T.mono, fontSize: 9, color: C.green }}>{lineCommercial} comerciales</span>}
-                            {lineRetiro > 0 && <span style={{ fontFamily: T.mono, fontSize: 9, color: C.red }}>{lineRetiro} retiro</span>}
+                            {lineCommercial > 0 && <span style={{ fontFamily: T.mono, fontSize: 9, color: C.green }}>{lineCommercial} vigentes</span>}
                           </span>
                         </button>
 
@@ -1380,9 +1382,169 @@ export function MaletasClient({
                 </div>
               )}
 
-              {/* PRESENCE-VS-COMMERCIAL-SCOPE-FIX-01: DepletedVault removed —
-                 all F34-present refs now appear inline in lineGroups above.
-                 Depleted refs are distinguished by state badge, not hidden. */}
+            </div>
+            )}
+
+            {/* ── Tab: Retiro — transversal, grouped by line (COMERCIAL-MALETAS-RETIRO-UI-CONSOLIDATION-01) ── */}
+            {drawerTab === "retiro" && (
+            <div ref={tableContainerRef} style={{
+              flex: 1,
+              overflowY: "auto" as const,
+              minHeight: 0,
+            }}>
+              {retiroLineGroups.length === 0 ? (
+                <div style={{
+                  padding: S[5], textAlign: "center",
+                  fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkFaint,
+                  background: C.surfaceAlt, borderRadius: R.md,
+                  marginTop: S[2],
+                }}>
+                  Sin referencias para retirar
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
+                  {retiroLineGroups.map(([lineName, lineRefs]) => {
+                    const isExpanded_ = lineExpanded[`RETIRO_${lineName}`] === true;
+                    const localVisibleCount = lineVisibleCounts[`RETIRO_${lineName}`] ?? PAGE_SIZE;
+                    const sorted = [...lineRefs].sort((a, b) => a.centralAvailable - b.centralAvailable);
+                    const visible = sorted.slice(0, localVisibleCount);
+                    const hasMoreLine = localVisibleCount < sorted.length;
+
+                    return (
+                      <div key={lineName} style={{
+                        border: `1px solid ${C.line}`, borderRadius: R.md,
+                        overflow: "hidden",
+                      }}>
+                        {/* Accordion header */}
+                        <button
+                          onClick={() => setLineExpanded((prev) => ({ ...prev, [`RETIRO_${lineName}`]: !isExpanded_ }))}
+                          style={{
+                            display: "flex", alignItems: "center", gap: S[3],
+                            width: "100%",
+                            padding: `${S[3]}px ${S[3]}px`,
+                            background: C.surfaceAlt, border: "none",
+                            cursor: "pointer",
+                            borderBottom: isExpanded_ ? `1px solid ${C.line}` : "none",
+                          }}
+                        >
+                          <span style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint }}>
+                            {isExpanded_ ? "▼" : "▶"}
+                          </span>
+                          <span style={{
+                            fontFamily: T.mono, fontSize: 11, fontWeight: 700,
+                            color: C.titleDeep, flex: 1, textAlign: "left",
+                          }}>
+                            {DERROTERO_LINE_LABEL[lineName] ?? lineName} ({lineRefs.length})
+                          </span>
+                          <span style={{ fontFamily: T.mono, fontSize: 9, color: C.red }}>
+                            {lineRefs.length} para retirar
+                          </span>
+                        </button>
+
+                        {/* Expanded content */}
+                        {isExpanded_ && (
+                          <div>
+                            <div className="ag-op-table">
+                              {/* Table header */}
+                              {(() => {
+                                const isImportLine = lineName === "IMPORT";
+                                const cols = isImportLine ? REF_TABLE_COLS_IMPORT : REF_TABLE_COLS;
+                                const headers = isImportLine
+                                  ? ["", "Ref", "Descripcion", "Grupo", "Subgrupo", "Linea", "Tamano", "Disponible", "Estado"]
+                                  : ["", "Ref", "Descripcion", "Grupo", "Subgrupo", "Linea", "Disponible", "Estado"];
+                                return (
+                                  <div className="ag-op-row" style={{
+                                    display: "grid",
+                                    gridTemplateColumns: cols,
+                                    padding: `${S[2]}px ${S[3]}px`,
+                                    background: C.surfaceAlt,
+                                    borderBottom: `1px solid ${C.line}`,
+                                    gap: S[2],
+                                    position: "sticky" as const, top: 0, zIndex: 2,
+                                  }}>
+                                    {headers.map((h, hi) => (
+                                      <div key={h || `img-${hi}`} style={{
+                                        fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 600,
+                                        color: C.inkFaint, whiteSpace: "nowrap" as const,
+                                        textAlign: h === "Disponible" ? "right" as const : h === "Estado" ? "center" as const : undefined,
+                                      }}>
+                                        {h}
+                                      </div>
+                                    ))}
+                                  </div>
+                                );
+                              })()}
+
+                              {/* Rows */}
+                              {visible.map((ref) => {
+                                const isImportRow = lineName === "IMPORT";
+                                const rowCols = isImportRow ? REF_TABLE_COLS_IMPORT : REF_TABLE_COLS;
+                                return (
+                                  <div key={ref.reference}>
+                                    <div
+                                      className="ag-op-row"
+                                      style={{
+                                        display: "grid",
+                                        gridTemplateColumns: rowCols,
+                                        padding: `${S[2]}px ${S[3]}px`,
+                                        borderBottom: `1px solid ${C.line}`,
+                                        alignItems: "center",
+                                        gap: S[2],
+                                      }}
+                                    >
+                                      <RefThumbnail imageUrl={ref.imageUrl} alt={ref.description} />
+                                      <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 600, color: C.titleDeep, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, minWidth: 0 }}>
+                                        {ref.reference}
+                                      </div>
+                                      <div title={ref.description} style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, minWidth: 0 }}>
+                                        {ref.description}
+                                      </div>
+                                      <div title={ref.grupoSag ?? ""} style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, minWidth: 0 }}>
+                                        {ref.grupoSag ?? "\u2014"}
+                                      </div>
+                                      <div title={ref.subgrupoSag} style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, minWidth: 0 }}>
+                                        {ref.subgrupoSag}
+                                      </div>
+                                      <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint }}>
+                                        {ref.line}
+                                      </div>
+                                      {isImportRow && (
+                                        <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                                          {ref.sizeClass ?? "\u2014"}
+                                        </div>
+                                      )}
+                                      <div style={{
+                                        fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 600,
+                                        textAlign: "right" as const,
+                                        color: ref.stockDataState === "ABSENT" ? C.inkFaint : ref.centralAvailable <= 0 ? C.red : C.amber,
+                                      }}>
+                                        {ref.stockDataState === "ABSENT" ? "\u2014" : ref.centralAvailable}
+                                      </div>
+                                      <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                        <CommercialHealthBadge health={ref.commercialHealth} />
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            {/* Load more */}
+                            {hasMoreLine && (
+                              <button
+                                onClick={() => setLineVisibleCounts((prev) => ({ ...prev, [`RETIRO_${lineName}`]: (prev[`RETIRO_${lineName}`] ?? PAGE_SIZE) + PAGE_SIZE }))}
+                                style={{ ...showMoreBtnStyle, margin: `${S[2]}px ${S[3]}px ${S[3]}px` }}
+                              >
+                                Ver mas ({sorted.length - localVisibleCount} restantes)
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
             )}
 
@@ -1401,8 +1563,8 @@ export function MaletasClient({
                     const noData = allRefs.filter((r) => r.stockDataState === "ABSENT").length;
                     return (
                       <>
-                        <DrawerKpiCard label="Comerciales" value={commercialRefs.length} sub="vigentes" color={C.green} />
-                        <DrawerKpiCard label="Retiro" value={retiroRefs.length} sub="cierre anual" color={retiroRefs.length > 0 ? C.red : C.inkFaint} />
+                        <DrawerKpiCard label="Vigentes" value={commercialRefs.length} sub="referencias activas" color={C.green} />
+                        <DrawerKpiCard label="Para retirar" value={retiroRefs.length} sub="cierre anual" color={retiroRefs.length > 0 ? C.red : C.inkFaint} />
                         <DrawerKpiCard label="Stock bajo" value={lowStock} sub="riesgo" color={lowStock > 0 ? C.amber : C.inkFaint} />
                         <DrawerKpiCard label="Sin disponibilidad" value={outOfStock + noData} sub={`${outOfStock} agotadas · ${noData} sin datos`} color={outOfStock > 0 ? C.red : C.inkFaint} />
                       </>
@@ -1438,17 +1600,17 @@ export function MaletasClient({
                 }}>
                   <div style={{ display: "flex", gap: S[3], marginBottom: S[1] }}>
                     <div style={{ fontFamily: T.mono, fontSize: 10, color: C.ink }}>
-                      <span style={{ fontWeight: 800 }}>{allPresenceRefs.length}</span> fisicas
+                      <span style={{ fontWeight: 800 }}>{allPresenceRefs.length}</span> muestras en maleta
                     </div>
                     <div style={{ fontFamily: T.mono, fontSize: 10, color: C.red }}>
-                      <span style={{ fontWeight: 800 }}>−{retiroRefs.length}</span> retiro
+                      <span style={{ fontWeight: 800 }}>−{retiroRefs.length}</span> para retirar
                     </div>
                     <div style={{ fontFamily: T.mono, fontSize: 10, color: C.green, fontWeight: 700 }}>
                       = {commercialRefs.length} evaluadas
                     </div>
                   </div>
                   <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint }}>
-                    El derrotero se calcula unicamente con referencias vigentes y comercialmente vendibles.
+                    El derrotero se calcula unicamente con referencias vigentes.
                   </div>
                 </div>
                 <DerroteroIdealPanel orgSlug={orgSlug} vendor={selectedVendor} externalRules={derroteroRules} onRulesChange={setDerroteroRules} assortmentEval={liveAssortmentEvals.find((e) => e.vendorId === selectedVendor.vendorId)} onEvalChange={(updated) => { setLiveAssortmentEvals((prev) => prev.map((e) => e.vendorId === updated.vendorId ? updated : e)); }} />
@@ -1918,7 +2080,7 @@ function AccessoryScarcityPanel({ ref_ }: { ref_: VendorSampleRef }) {
         }}>
           {ref_.commercialHealth === "OUT_OF_STOCK" ? "AGOTADO"
             : ref_.commercialHealth === "LOW_STOCK" ? "STOCK BAJO"
-            : "SALUDABLE"}
+            : "DISPONIBLE"}
         </div>
         {isLow ? (
           <>
