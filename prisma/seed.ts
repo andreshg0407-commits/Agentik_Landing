@@ -1,3 +1,26 @@
+/**
+ * prisma/seed.ts
+ *
+ * AUTH-SEED-SAFETY-01
+ *
+ * Idempotent seed for Agentik Enterprise OS.
+ *
+ * CREDENTIALS ARE NEVER HARDCODED. All passwords come from environment variables
+ * that are set only at seed time and never committed to the repository.
+ *
+ * Required env vars (always):
+ *   DIRECT_URL — Prisma direct DB connection string
+ *
+ * Optional env vars (seed-time only):
+ *   SEED_ADMIN_EMAIL    — principal admin email (skip admin user if missing)
+ *   SEED_ADMIN_NAME     — principal admin display name (default: "Admin")
+ *   SEED_ADMIN_PASSWORD — principal admin password (skip credential if missing)
+ *   SEED_ARKETOPS_ADMIN_PASSWORD  — ARKETOPS admin password (skip credential if missing)
+ *   SEED_ARKETOPS_VIEWER_PASSWORD — ARKETOPS viewer password (skip credential if missing)
+ *
+ * DO NOT run this seed in production without reviewing the env vars first.
+ * DO NOT store real passwords in .env files committed to version control.
+ */
 import "dotenv/config";
 import {
   AlertSeverity,
@@ -18,32 +41,59 @@ function mustGetEnv(key: string) {
   return v;
 }
 
-// ✅ Seed usando DIRECT_URL (sin pooler) para evitar sorpresas
 const pool = new Pool({ connectionString: mustGetEnv("DIRECT_URL") });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
-  const OWNER_EMAIL = "hello@agentik.com.co";
+  // ── Seed-time credentials (never hardcoded) ───────────────────────────────
+  const ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL;
+  const ADMIN_NAME = process.env.SEED_ADMIN_NAME || "Admin";
+  const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD;
+  const ARKETOPS_ADMIN_PW = process.env.SEED_ARKETOPS_ADMIN_PASSWORD;
+  const ARKETOPS_VIEWER_PW = process.env.SEED_ARKETOPS_VIEWER_PASSWORD;
+
+  // ── Principal admin user ──────────────────────────────────────────────────
+  // Single consolidated admin. Created only when SEED_ADMIN_EMAIL is provided.
+  // Password set only when SEED_ADMIN_PASSWORD is provided.
+  // An existing password is NEVER overwritten when the variable is absent.
+
+  let adminUser: { id: string; email: string } | null = null;
+
+  if (!ADMIN_EMAIL) {
+    console.warn("WARN: SEED_ADMIN_EMAIL not set — skipping admin user creation/update");
+  } else {
+    adminUser = await prisma.user.upsert({
+      where: { email: ADMIN_EMAIL },
+      update: { name: ADMIN_NAME },
+      create: { email: ADMIN_EMAIL, name: ADMIN_NAME },
+    });
+
+    if (!ADMIN_PASSWORD) {
+      console.warn("WARN: SEED_ADMIN_PASSWORD not set — existing credential preserved (or none created)");
+    } else {
+      const hash = await hashPassword(ADMIN_PASSWORD);
+      await prisma.passwordCredential.upsert({
+        where: { userId: adminUser.id },
+        update: { passwordHash: hash },
+        create: { userId: adminUser.id, passwordHash: hash },
+      });
+    }
+  }
+
+  // ── Agentik org ───────────────────────────────────────────────────────────
+
   const ORG_SLUG = "agentik";
   const ORG_NAME = "Agentik";
   const PROJECT_NAME = "Agentik Main";
   const PROJECT_KEY = "agentik-main";
 
-  // 1) User (owner)
-  const owner = await prisma.user.upsert({
-    where: { email: OWNER_EMAIL },
-    update: { name: "Agentik Owner" },
-    create: { email: OWNER_EMAIL, name: "Agentik Owner" },
-  });
-
-  // 2) Organization
   const orgSettings = {
     timezone: "America/Bogota",
     currency: "COP",
     brand: {
       name: "Agentik",
-      primaryEmail: OWNER_EMAIL,
+      ...(ADMIN_EMAIL ? { primaryEmail: ADMIN_EMAIL } : {}),
     },
   };
 
@@ -64,23 +114,23 @@ async function main() {
     },
   });
 
-  // 3) Membership (owner -> ORG_ADMIN)
-  await prisma.membership.upsert({
-    where: {
-      organizationId_userId: { organizationId: org.id, userId: owner.id },
-    },
-    update: { role: "ORG_ADMIN", status: "ACTIVE", acceptedAt: new Date() },
-    create: {
-      organizationId: org.id,
-      userId: owner.id,
-      role: "ORG_ADMIN",
-      status: "ACTIVE",
-      acceptedAt: new Date(),
-    },
-  });
+  if (adminUser) {
+    await prisma.membership.upsert({
+      where: {
+        organizationId_userId: { organizationId: org.id, userId: adminUser.id },
+      },
+      update: { role: Role.SUPER_ADMIN, status: MembershipStatus.ACTIVE, acceptedAt: new Date() },
+      create: {
+        organizationId: org.id,
+        userId: adminUser.id,
+        role: Role.SUPER_ADMIN,
+        status: MembershipStatus.ACTIVE,
+        acceptedAt: new Date(),
+      },
+    });
+  }
 
-  // 4) Main Project
-  // ✅ FIX: tu schema tiene @@unique([organizationId, key]) => organizationId_key
+  // Agentik main project
   const project = await prisma.project.upsert({
     where: {
       organizationId_key: { organizationId: org.id, key: PROJECT_KEY },
@@ -89,7 +139,7 @@ async function main() {
       name: PROJECT_NAME,
       status: "ACTIVE",
       description:
-        "Proyecto principal (único) para el dashboard Enterprise de Agentik.",
+        "Proyecto principal (unico) para el dashboard Enterprise de Agentik.",
       settingsJson: { isMain: true },
     },
     create: {
@@ -98,12 +148,12 @@ async function main() {
       key: PROJECT_KEY,
       status: "ACTIVE",
       description:
-        "Proyecto principal (único) para el dashboard Enterprise de Agentik.",
+        "Proyecto principal (unico) para el dashboard Enterprise de Agentik.",
       settingsJson: { isMain: true },
     },
   });
 
-  // 5) ProjectModules base
+  // ProjectModules base
   const modules = [
     { code: "CONTROL_CENTER", enabled: true },
     { code: "LUCA_MARKETING", enabled: true },
@@ -127,25 +177,6 @@ async function main() {
     });
   }
 
-  // ── Auth test user ──────────────────────────────────────────────────────────
-
-  const TEST_EMAIL = "andreshg0407@gmail.com";
-  const TEST_PASSWORD = "changeme123"; // change after first login
-
-  const testUser = await prisma.user.upsert({
-    where: { email: TEST_EMAIL },
-    update: { name: "Andres" },
-    create: { email: TEST_EMAIL, name: "Andres" },
-  });
-
-  const passwordHash = await hashPassword(TEST_PASSWORD);
-
-  await prisma.passwordCredential.upsert({
-    where: { userId: testUser.id },
-    update: { passwordHash },
-    create: { userId: testUser.id, passwordHash },
-  });
-
   // ── Castillitos org ─────────────────────────────────────────────────────────
 
   const castillitos = await prisma.organization.upsert({
@@ -159,28 +190,26 @@ async function main() {
     },
   });
 
-  await prisma.membership.upsert({
-    where: {
-      organizationId_userId: {
-        organizationId: castillitos.id,
-        userId: testUser.id,
+  if (adminUser) {
+    await prisma.membership.upsert({
+      where: {
+        organizationId_userId: {
+          organizationId: castillitos.id,
+          userId: adminUser.id,
+        },
       },
-    },
-    update: { role: Role.SUPER_ADMIN, status: MembershipStatus.ACTIVE, acceptedAt: new Date() },
-    create: {
-      organizationId: castillitos.id,
-      userId: testUser.id,
-      role: Role.SUPER_ADMIN,
-      status: MembershipStatus.ACTIVE,
-      acceptedAt: new Date(),
-    },
-  });
+      update: { role: Role.SUPER_ADMIN, status: MembershipStatus.ACTIVE, acceptedAt: new Date() },
+      create: {
+        organizationId: castillitos.id,
+        userId: adminUser.id,
+        role: Role.SUPER_ADMIN,
+        status: MembershipStatus.ACTIVE,
+        acceptedAt: new Date(),
+      },
+    });
+  }
 
-  // ── Castillitos opt-in modules ─────────────────────────────────────────────
-  // Enable opt-in modules that Castillitos needs as a manufacturing tenant.
-  // "production" and "inventory" are opt-in by default in tenant/modules.ts,
-  // so they require explicit TenantModule rows.
-
+  // Castillitos opt-in modules
   const castillitosOptInModules = ["production", "inventory", "marketing_studio", "copilot"];
   for (const moduleKey of castillitosOptInModules) {
     await (prisma as any).tenantModule.upsert({
@@ -199,7 +228,7 @@ async function main() {
     });
   }
 
-  // ── Castillitos branding ─────────────────────────────────────────────────────
+  // Castillitos branding
   await (prisma as any).organizationBranding.upsert({
     where: { organizationId: castillitos.id },
     update: {},
@@ -233,22 +262,24 @@ async function main() {
     },
   });
 
-  await prisma.workspaceMembership.upsert({
-    where: {
-      workspaceId_userId: {
-        workspaceId: petsWorkspace.id,
-        userId: testUser.id,
+  if (adminUser) {
+    await prisma.workspaceMembership.upsert({
+      where: {
+        workspaceId_userId: {
+          workspaceId: petsWorkspace.id,
+          userId: adminUser.id,
+        },
       },
-    },
-    update: { role: Role.ORG_ADMIN, status: MembershipStatus.ACTIVE, acceptedAt: new Date() },
-    create: {
-      workspaceId: petsWorkspace.id,
-      userId: testUser.id,
-      role: Role.ORG_ADMIN,
-      status: MembershipStatus.ACTIVE,
-      acceptedAt: new Date(),
-    },
-  });
+      update: { role: Role.ORG_ADMIN, status: MembershipStatus.ACTIVE, acceptedAt: new Date() },
+      create: {
+        workspaceId: petsWorkspace.id,
+        userId: adminUser.id,
+        role: Role.ORG_ADMIN,
+        status: MembershipStatus.ACTIVE,
+        acceptedAt: new Date(),
+      },
+    });
+  }
 
   // ── ARKETOPS org ─────────────────────────────────────────────────────────────
 
@@ -263,18 +294,23 @@ async function main() {
     },
   });
 
-  // Internal admin — full org access + all client workspaces
+  // ARKETOPS admin — full org access + all client workspaces
   const arketopsAdmin = await prisma.user.upsert({
     where: { email: "admin@arketops.local" },
     update: { name: "ARKETOPS Admin" },
     create: { email: "admin@arketops.local", name: "ARKETOPS Admin" },
   });
 
-  await prisma.passwordCredential.upsert({
-    where: { userId: arketopsAdmin.id },
-    update: { passwordHash: await hashPassword("changeme123") },
-    create: { userId: arketopsAdmin.id, passwordHash: await hashPassword("changeme123") },
-  });
+  if (ARKETOPS_ADMIN_PW) {
+    const hash = await hashPassword(ARKETOPS_ADMIN_PW);
+    await prisma.passwordCredential.upsert({
+      where: { userId: arketopsAdmin.id },
+      update: { passwordHash: hash },
+      create: { userId: arketopsAdmin.id, passwordHash: hash },
+    });
+  } else {
+    console.warn("WARN: SEED_ARKETOPS_ADMIN_PASSWORD not set — credential unchanged");
+  }
 
   await prisma.membership.upsert({
     where: { organizationId_userId: { organizationId: arketops.id, userId: arketopsAdmin.id } },
@@ -333,14 +369,17 @@ async function main() {
     create: { email: "cliente1@arketops.local", name: "Cliente Demo 1" },
   });
 
-  await prisma.passwordCredential.upsert({
-    where: { userId: externalClient.id },
-    update: { passwordHash: await hashPassword("changeme123") },
-    create: { userId: externalClient.id, passwordHash: await hashPassword("changeme123") },
-  });
+  if (ARKETOPS_VIEWER_PW) {
+    const hash = await hashPassword(ARKETOPS_VIEWER_PW);
+    await prisma.passwordCredential.upsert({
+      where: { userId: externalClient.id },
+      update: { passwordHash: hash },
+      create: { userId: externalClient.id, passwordHash: hash },
+    });
+  } else {
+    console.warn("WARN: SEED_ARKETOPS_VIEWER_PASSWORD not set — credential unchanged");
+  }
 
-  // Org-level membership with lowest role so requireOrgAccess passes,
-  // but the client cannot see other workspaces they have no WorkspaceMembership in.
   await prisma.membership.upsert({
     where: { organizationId_userId: { organizationId: arketops.id, userId: externalClient.id } },
     update: { role: Role.VIEWER, status: MembershipStatus.ACTIVE, acceptedAt: new Date() },
@@ -398,7 +437,6 @@ async function main() {
   });
 
   if (existingActivity === 0) {
-    // Runs
     await prisma.run.createMany({
       data: [
         { organizationId: castillitos.id, projectId: castillitosProject.id, type: "marketing.image_export", status: RunStatus.SUCCEEDED, startedAt: new Date(), endedAt: new Date() },
@@ -408,14 +446,12 @@ async function main() {
       ],
     });
 
-    // Alerts — only non-Castillitos demo alerts; Castillitos noise alerts removed (cleanup-seed-alerts.ts)
     await prisma.alert.createMany({
       data: [
         { organizationId: arketops.id, projectId: clienteDemo1Project.id, type: "invoice.overdue", title: "Factura vencida", message: "Cliente Demo 1 tiene facturas por vencer", severity: AlertSeverity.WARNING, status: AlertStatus.OPEN },
       ],
     });
 
-    // Events — only non-Castillitos demo events; Castillitos prototype events removed (cleanup-seed-alerts.ts)
     await prisma.event.createMany({
       data: [
         { organizationId: arketops.id, projectId: arketopsProject.id, type: "report.requested", sourceType: "user", payloadJson: { reportType: "monthly" }, status: EventStatus.PENDING },
@@ -437,32 +473,33 @@ async function main() {
     },
   });
 
-  await prisma.membership.upsert({
-    where: {
-      organizationId_userId: {
-        organizationId: doJeans.id,
-        userId: testUser.id,
+  if (adminUser) {
+    await prisma.membership.upsert({
+      where: {
+        organizationId_userId: {
+          organizationId: doJeans.id,
+          userId: adminUser.id,
+        },
       },
-    },
-    update: { role: Role.SUPER_ADMIN, status: MembershipStatus.ACTIVE, acceptedAt: new Date() },
-    create: {
-      organizationId: doJeans.id,
-      userId: testUser.id,
-      role: Role.SUPER_ADMIN,
-      status: MembershipStatus.ACTIVE,
-      acceptedAt: new Date(),
-    },
-  });
+      update: { role: Role.SUPER_ADMIN, status: MembershipStatus.ACTIVE, acceptedAt: new Date() },
+      create: {
+        organizationId: doJeans.id,
+        userId: adminUser.id,
+        role: Role.SUPER_ADMIN,
+        status: MembershipStatus.ACTIVE,
+        acceptedAt: new Date(),
+      },
+    });
+  }
 
-  // ── Summary ──────────────────────────────────────────────────────────────────
+  // ── Summary (never prints secrets) ────────────────────────────────────────────
 
-  console.log("✅ Seed OK");
+  console.log("Seed OK");
   console.log({
-    owner: { id: owner.id, email: owner.email },
+    adminUser: adminUser ? { id: adminUser.id, email: adminUser.email } : "SKIPPED (SEED_ADMIN_EMAIL not set)",
     org: { id: org.id, slug: org.slug },
     project: { id: project.id, key: project.key },
     modules: modules.map((m) => `${m.code}:${m.enabled ? "on" : "off"}`),
-    testUser: { id: testUser.id, email: testUser.email },
     castillitos: { id: castillitos.id, slug: castillitos.slug },
     petsWorkspace: { id: petsWorkspace.id, slug: petsWorkspace.slug },
     arketops: { id: arketops.id, slug: arketops.slug },
@@ -479,7 +516,7 @@ async function main() {
 
 main()
   .catch((e) => {
-    console.error("❌ Seed failed:", e);
+    console.error("Seed failed:", e);
     process.exitCode = 1;
   })
   .finally(async () => {
