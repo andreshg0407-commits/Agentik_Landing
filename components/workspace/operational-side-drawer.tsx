@@ -29,12 +29,13 @@ const SEV_LBL: Record<DrawerSeverity, string> = {
   info:     "INFO",
 };
 
-export type DrawerSize = "default" | "wide" | "full";
+export type DrawerSize = "default" | "wide" | "extra-wide" | "full";
 
 const SIZE_WIDTH: Record<DrawerSize, number | string> = {
-  default: 420,
-  wide:    680,
-  full:    "min(960px, 92vw)",
+  default:      420,
+  wide:         680,
+  "extra-wide": "min(78vw, 1360px)",
+  full:         "min(960px, 92vw)",
 };
 
 export function OperationalSideDrawer({

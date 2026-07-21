@@ -1548,41 +1548,19 @@ export function MaletasClient({
             </div>
             )}
 
-            {/* ── Tab: Inteligencia (COMERCIAL-MALETAS-DRAWER-OPERATIONAL-UX-02 — Phase 7) ── */}
+            {/* ── Tab: Inteligencia — Centro de decisiones (COMERCIAL-MALETAS-INTELLIGENCE-REDESIGN-01) ── */}
             {drawerTab === "inteligencia" && selectedVendor && (
               <div style={{ flex: 1, overflowY: "auto" as const, minHeight: 0, paddingTop: S[2] }}>
-                {/* Phase 7: Operational indicators strip */}
-                <div style={{
-                  display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: S[2],
-                  marginBottom: S[3],
-                }}>
-                  {(() => {
-                    const allRefs = selectedVendor.refs;
-                    const outOfStock = allRefs.filter((r) => r.commercialHealth === "OUT_OF_STOCK").length;
-                    const lowStock = allRefs.filter((r) => r.commercialHealth === "LOW_STOCK").length;
-                    const noData = allRefs.filter((r) => r.stockDataState === "ABSENT").length;
-                    return (
-                      <>
-                        <DrawerKpiCard label="Vigentes" value={commercialRefs.length} sub="referencias activas" color={C.green} />
-                        <DrawerKpiCard label="Para retirar" value={retiroRefs.length} sub="cierre anual" color={retiroRefs.length > 0 ? C.red : C.inkFaint} />
-                        <DrawerKpiCard label="Stock bajo" value={lowStock} sub="riesgo" color={lowStock > 0 ? C.amber : C.inkFaint} />
-                        <DrawerKpiCard label="Sin disponibilidad" value={outOfStock + noData} sub={`${outOfStock} agotadas · ${noData} sin datos`} color={outOfStock > 0 ? C.red : C.inkFaint} />
-                      </>
-                    );
-                  })()}
-                </div>
-                <CommercialDecisionCenter
-                  activeRefs={activeRefs}
-                  depletedRefs={depletedRefs}
+                <IntelligencePanel
+                  vendor={selectedVendor}
+                  commercialRefs={commercialRefs}
+                  retiroRefs={retiroRefs}
                   coverageByLine={coverageByLine}
                   derroteroRules={derroteroRules}
                   onNavigate={(target) => {
                     setDrawerTab(target.tab);
                     if (target.tab === "referencias" && target.line) {
                       setLineExpanded((prev) => ({ ...prev, [target.line!]: true }));
-                      if (target.filter) {
-                        setLineFilters((prev) => ({ ...prev, [target.line!]: target.filter! }));
-                      }
                     }
                   }}
                 />
@@ -2676,378 +2654,44 @@ function ScoreMetric({ label, value, detail, color }: { label: string; value: st
   );
 }
 
-// ── Commercial Decision Center (GO-LIVE-MALETAS-INTELIGENCIA-V2-01) ──────────
+// ── Intelligence Panel (COMERCIAL-MALETAS-INTELLIGENCE-REDESIGN-01) ──────────
 //
-// Interprets Motor 2 + Derrotero data. No recalculations. No new queries.
-// Sub-components: LineCoverageCard, PriorityActionsCard, PendingSubgroupsCard, OperationalImpactCard, LineActionSummary
+// Centro de decisiones del jefe comercial.
+// No repite datos de Referencias, Derrotero ni Inventario.
+// Responde: ¿Qué decisiones debo tomar hoy sobre esta maleta?
+//
+// Secciones:
+// 1. Salud del derrotero — cobertura por marca (tarjetas grandes)
+// 2. Referencias en riesgo — próximas a retiro pero aún vigentes
+// 3. Riesgo de perder cobertura — proyección si no se actúa
+// 4. Calidad del mostrario — auditoría de la composición
+// 5. Acciones por línea — tarjetas visuales Agregar/Retirar
+// 6. Impacto esperado — simulación post-acciones
 
 type NavigateTarget =
   | { tab: "referencias"; line?: string; filter?: DrawerFilter }
+  | { tab: "retiro"; line?: string }
   | { tab: "derrotero"; line?: string };
 
 type CoverageByLineEntry = { complete: number; total: number; pct: number; missing: number; excess: number; catalogName: string };
 
-interface DecisionCenterProps {
-  activeRefs: VendorSampleRef[];
-  depletedRefs: VendorSampleRef[];
+// ── Risk zone: refs approaching retiro but still vigentes ─────────────────
+const RISK_MARGIN: Record<string, { min: number; max: number }> = {
+  CS: { min: 21, max: 30 },
+  LT: { min: 31, max: 40 },
+  IMPORT: { min: 11, max: 20 },
+};
+
+// ── IntelligencePanel ────────────────────────────────────────────────────────
+
+function IntelligencePanel({ vendor, commercialRefs, retiroRefs, coverageByLine, derroteroRules, onNavigate }: {
+  vendor: VendorSampleSnapshot;
+  commercialRefs: VendorSampleRef[];
+  retiroRefs: VendorSampleRef[];
   coverageByLine: Map<string, CoverageByLineEntry>;
   derroteroRules: IdealRouteRule[];
   onNavigate?: (target: NavigateTarget) => void;
-}
-
-// ── CoverageCircle (replaces LineCoverageCard — GO-LIVE-MALETAS-INTELIGENCIA-NAVEGABLE-01) ──
-
-function CoverageCircle({ line, cov, onClick }: {
-  line: string;
-  cov: { complete: number; total: number; pct: number; missing: number; excess: number; catalogName: string };
-  onClick?: () => void;
 }) {
-  const label = DERROTERO_LINE_LABEL[line] ?? line;
-  const hasDerrotero = cov.total > 0;
-  const pct = hasDerrotero ? cov.pct : 0;
-  const color = hasDerrotero ? (pct >= 80 ? C.green : pct >= 50 ? C.amber : C.red) : C.inkFaint;
-  // SVG circular indicator
-  const size = 56;
-  const stroke = 5;
-  const radius = (size - stroke) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const offset = circumference - (pct / 100) * circumference;
-
-  return (
-    <button
-      onClick={onClick}
-      title={hasDerrotero ? `Ver derrotero de ${label}` : `Configurar derrotero de ${label}`}
-      style={{
-        display: "flex", flexDirection: "column", alignItems: "center", gap: S[1],
-        padding: `${S[2]}px`,
-        background: C.white,
-        border: `1px solid ${C.line}`,
-        borderRadius: R.md,
-        cursor: "pointer",
-        transition: "all 0.12s",
-        minWidth: 80,
-      }}
-      onMouseEnter={(e) => { e.currentTarget.style.borderColor = color; e.currentTarget.style.boxShadow = `0 1px 4px ${color}20`; }}
-      onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.line; e.currentTarget.style.boxShadow = "none"; }}
-    >
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        <circle cx={size / 2} cy={size / 2} r={radius}
-          fill="none" stroke={C.line} strokeWidth={stroke} />
-        {hasDerrotero && (
-          <circle cx={size / 2} cy={size / 2} r={radius}
-            fill="none" stroke={color} strokeWidth={stroke}
-            strokeDasharray={circumference} strokeDashoffset={offset}
-            strokeLinecap="round"
-            transform={`rotate(-90 ${size / 2} ${size / 2})`}
-            style={{ transition: "stroke-dashoffset 0.4s ease" }}
-          />
-        )}
-        <text x={size / 2} y={size / 2} textAnchor="middle" dominantBaseline="central"
-          style={{ fontFamily: T.mono, fontSize: hasDerrotero ? 14 : 10, fontWeight: 800, fill: color }}>
-          {hasDerrotero ? `${pct}%` : "\u2014"}
-        </text>
-      </svg>
-      <span style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: C.titleDeep, textAlign: "center" }}>
-        {label}
-      </span>
-      <span style={{ fontFamily: T.mono, fontSize: 8, color: C.inkFaint, textAlign: "center" }}>
-        {cov.complete}/{cov.total} completos
-      </span>
-    </button>
-  );
-}
-
-// ── PriorityActionsCard ──────────────────────────────────────────────────────
-
-const SUPPLY_ACTION_LABEL: Record<string, string> = {
-  REEMPLAZAR_BODEGA: "Completar desde bodega",
-  COMPLETAR_DESDE_OP: "Esperando OP",
-  PRODUCCION_SUGERIDA: "Produccion sugerida",
-  RECOMPRA_SUGERIDA: "Recompra sugerida",
-  RETIRAR_MOSTRARIO: "Retirar del mostrario",
-};
-
-const SUPPLY_ACTION_COLOR: Record<string, string> = {
-  REEMPLAZAR_BODEGA: C.green,
-  COMPLETAR_DESDE_OP: C.amber,
-  PRODUCCION_SUGERIDA: C.blueDark,
-  RECOMPRA_SUGERIDA: C.blueDark,
-  RETIRAR_MOSTRARIO: C.red,
-};
-
-function PriorityActionsCard({ activeRefs, depletedRefs, onActionClick }: {
-  activeRefs: VendorSampleRef[]; depletedRefs: VendorSampleRef[];
-  onActionClick?: (action: string) => void;
-}) {
-  const allRefs = useMemo(() => [...activeRefs, ...depletedRefs], [activeRefs, depletedRefs]);
-  const groups = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const ref of allRefs) {
-      if (ref.supplyAction) {
-        map.set(ref.supplyAction, (map.get(ref.supplyAction) ?? 0) + 1);
-      }
-    }
-    return [...map.entries()].sort(([, a], [, b]) => b - a);
-  }, [allRefs]);
-
-  if (groups.length === 0) {
-    return (
-      <div style={{
-        padding: `${S[3]}px`, fontFamily: T.mono, fontSize: 10, color: C.inkFaint,
-        background: C.surfaceAlt, borderRadius: R.md, border: `1px solid ${C.line}`,
-      }}>
-        Sin acciones pendientes
-      </div>
-    );
-  }
-
-  return (
-    <div style={{
-      display: "flex", flexDirection: "column", gap: S[2],
-      padding: `${S[3]}px`, background: C.white,
-      border: `1px solid ${C.line}`, borderRadius: R.md,
-    }}>
-      {groups.map(([action, count]) => (
-        <button key={action}
-          onClick={() => onActionClick?.(action)}
-          title={`Ver ${count} referencia${count !== 1 ? "s" : ""} con accion: ${SUPPLY_ACTION_LABEL[action] ?? action}`}
-          style={{
-            display: "flex", alignItems: "center", gap: S[2],
-            padding: `${S[2]}px ${S[2]}px`,
-            background: (SUPPLY_ACTION_COLOR[action] ?? C.inkFaint) + "08",
-            borderRadius: R.sm,
-            border: `1px solid ${(SUPPLY_ACTION_COLOR[action] ?? C.inkFaint)}20`,
-            cursor: "pointer",
-            transition: "all 0.12s",
-            width: "100%",
-            textAlign: "left" as const,
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = (SUPPLY_ACTION_COLOR[action] ?? C.inkFaint) + "14"; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = (SUPPLY_ACTION_COLOR[action] ?? C.inkFaint) + "08"; }}
-        >
-          <span style={{
-            width: 6, height: 6, borderRadius: R.pill, flexShrink: 0,
-            background: SUPPLY_ACTION_COLOR[action] ?? C.inkFaint,
-          }} />
-          <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 600, color: C.ink, flex: 1 }}>
-            {SUPPLY_ACTION_LABEL[action] ?? action}
-          </span>
-          <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 800, color: SUPPLY_ACTION_COLOR[action] ?? C.ink }}>
-            {count}
-          </span>
-          <span style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint }}>
-            referencia{count !== 1 ? "s" : ""} →
-          </span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-// ── PendingSubgroupsCard ─────────────────────────────────────────────────────
-
-function PendingSubgroupsCard({ derroteroRules, activeRefs, onSubgroupClick }: {
-  derroteroRules: IdealRouteRule[]; activeRefs: VendorSampleRef[];
-  onSubgroupClick?: (line: string) => void;
-}) {
-  const pendingByLine = useMemo(() => {
-    const activeRulesAll = derroteroRules.filter((r) => r.isActive);
-    const refCountByKey = new Map<string, number>();
-    for (const ref of activeRefs) {
-      const key = `${ref.line}|${ref.subgrupoSag}`;
-      refCountByKey.set(key, (refCountByKey.get(key) ?? 0) + 1);
-    }
-    const map = new Map<string, { subgrupo: string; actual: number; ideal: number; falta: number }[]>();
-    for (const rule of activeRulesAll) {
-      const actual = refCountByKey.get(`${rule.line}|${rule.subgrupoSag}`) ?? 0;
-      if (actual < rule.minimumRefs) {
-        const arr = map.get(rule.line) ?? [];
-        arr.push({ subgrupo: rule.subgrupoSag, actual, ideal: rule.minimumRefs, falta: rule.minimumRefs - actual });
-        map.set(rule.line, arr);
-      }
-    }
-    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [derroteroRules, activeRefs]);
-
-  if (pendingByLine.length === 0) {
-    return (
-      <div style={{
-        padding: `${S[3]}px`, fontFamily: T.mono, fontSize: 10, color: C.green,
-        background: C.greenLight, borderRadius: R.md, border: `1px solid ${C.greenBorder}`,
-      }}>
-        Todos los subgrupos del derrotero estan completos
-      </div>
-    );
-  }
-
-  return (
-    <div style={{
-      display: "flex", flexDirection: "column", gap: S[3],
-      padding: `${S[3]}px`, background: C.white,
-      border: `1px solid ${C.line}`, borderRadius: R.md,
-    }}>
-      {pendingByLine.map(([line, items]) => (
-        <div key={line}>
-          <button
-            onClick={() => onSubgroupClick?.(line)}
-            title={`Ver derrotero de ${DERROTERO_LINE_LABEL[line] ?? line}`}
-            style={{
-              fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.titleDeep, marginBottom: S[1],
-              background: "none", border: "none", padding: 0, cursor: "pointer",
-              display: "flex", alignItems: "center", gap: S[1],
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = C.blueDark; }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = C.titleDeep; }}
-          >
-            {DERROTERO_LINE_LABEL[line] ?? line} <span style={{ fontSize: 9, color: C.inkFaint }}>→ Derrotero</span>
-          </button>
-          {items.map((item) => (
-            <button key={item.subgrupo}
-              onClick={() => onSubgroupClick?.(line)}
-              title={`Abrir derrotero para resolver ${item.subgrupo}`}
-              style={{
-                display: "flex", alignItems: "center", gap: S[2],
-                padding: `2px 0`, width: "100%", background: "none", border: "none",
-                cursor: "pointer", textAlign: "left" as const,
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = C.surfaceAlt; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
-            >
-              <span style={{ fontFamily: T.mono, fontSize: 9, color: C.amber }}>□</span>
-              <span style={{ fontFamily: T.mono, fontSize: 10, color: C.ink, flex: 1 }}>
-                {item.subgrupo}
-              </span>
-              <span style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 600, color: C.amber }}>
-                {item.falta === 1 ? "falta 1" : `faltan ${item.falta}`}
-              </span>
-            </button>
-          ))}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ── OperationalImpactCard ────────────────────────────────────────────────────
-
-function OperationalImpactCard({ activeRefs, depletedRefs, coverageByLine }: {
-  activeRefs: VendorSampleRef[];
-  depletedRefs: VendorSampleRef[];
-  coverageByLine: Map<string, CoverageByLineEntry>;
-}) {
-  const impacts = useMemo(() => {
-    // Refs at risk: low stock in main warehouse
-    const atRisk = activeRefs.filter((r) => r.commercialHealth === "LOW_STOCK" || r.commercialHealth === "OUT_OF_STOCK");
-    const retirar = [...activeRefs, ...depletedRefs].filter((r) => r.supplyAction === "RETIRAR_MOSTRARIO");
-    // Lines that would lose coverage
-    const linesAtRisk: { line: string; currentPct: number; projectedPct: number }[] = [];
-    for (const [line, cov] of coverageByLine.entries()) {
-      if (cov.total === 0) continue;
-      const atRiskInLine = atRisk.filter((r) => r.line === line).length;
-      if (atRiskInLine > 0 && cov.missing > 0) {
-        const worstCase = Math.max(0, cov.pct - Math.round((atRiskInLine / Math.max(cov.total, 1)) * 100));
-        linesAtRisk.push({ line, currentPct: cov.pct, projectedPct: worstCase });
-      }
-    }
-    return { atRisk: atRisk.length, retirar: retirar.length, linesAtRisk };
-  }, [activeRefs, depletedRefs, coverageByLine]);
-
-  if (impacts.atRisk === 0 && impacts.retirar === 0) {
-    return (
-      <div style={{
-        padding: `${S[3]}px`, fontFamily: T.mono, fontSize: 10, color: C.green,
-        background: C.greenLight, borderRadius: R.md, border: `1px solid ${C.greenBorder}`,
-      }}>
-        Sin riesgo operativo inmediato
-      </div>
-    );
-  }
-
-  return (
-    <div style={{
-      padding: `${S[3]}px`, background: C.redLight,
-      border: `1px solid ${C.redBorder}`, borderRadius: R.md,
-      display: "flex", flexDirection: "column", gap: S[1],
-    }}>
-      <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: C.red, marginBottom: 2 }}>
-        Si no se realizan las acciones pendientes:
-      </div>
-      {impacts.atRisk > 0 && (
-        <div style={{ fontFamily: T.mono, fontSize: 10, color: C.ink }}>
-          • {impacts.atRisk} referencia{impacts.atRisk !== 1 ? "s" : ""} en riesgo de agotamiento
-        </div>
-      )}
-      {impacts.retirar > 0 && (
-        <div style={{ fontFamily: T.mono, fontSize: 10, color: C.ink }}>
-          • {impacts.retirar} referencia{impacts.retirar !== 1 ? "s" : ""} deber{impacts.retirar !== 1 ? "an" : "a"} salir del mostrario
-        </div>
-      )}
-      {impacts.linesAtRisk.map(({ line, currentPct, projectedPct }) => (
-        <div key={line} style={{ fontFamily: T.mono, fontSize: 10, color: C.ink }}>
-          • {DERROTERO_LINE_LABEL[line] ?? line} reducira su cobertura de {currentPct}% a ~{projectedPct}%
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ── LineActionSummary ────────────────────────────────────────────────────────
-
-function LineActionSummary({ activeRefs, depletedRefs }: { activeRefs: VendorSampleRef[]; depletedRefs: VendorSampleRef[] }) {
-  const allRefs = useMemo(() => [...activeRefs, ...depletedRefs], [activeRefs, depletedRefs]);
-  const byLine = useMemo(() => {
-    const map = new Map<string, Map<string, number>>();
-    for (const ref of allRefs) {
-      if (!ref.supplyAction) continue;
-      if (!map.has(ref.line)) map.set(ref.line, new Map());
-      const lineMap = map.get(ref.line)!;
-      lineMap.set(ref.supplyAction, (lineMap.get(ref.supplyAction) ?? 0) + 1);
-    }
-    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [allRefs]);
-
-  if (byLine.length === 0) return null;
-
-  const shortLabel: Record<string, string> = {
-    REEMPLAZAR_BODEGA: "Bodega",
-    COMPLETAR_DESDE_OP: "OP",
-    PRODUCCION_SUGERIDA: "Produccion",
-    RECOMPRA_SUGERIDA: "Recompra",
-    RETIRAR_MOSTRARIO: "Retirar",
-  };
-
-  return (
-    <div style={{
-      display: "flex", flexDirection: "column", gap: S[2],
-      padding: `${S[3]}px`, background: C.white,
-      border: `1px solid ${C.line}`, borderRadius: R.md,
-    }}>
-      {byLine.map(([line, actions]) => (
-        <div key={line}>
-          <div style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.titleDeep, marginBottom: S[1] }}>
-            {DERROTERO_LINE_LABEL[line] ?? line}
-          </div>
-          <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
-            {[...actions.entries()].map(([action, count]) => (
-              <span key={action} style={{
-                fontFamily: T.mono, fontSize: 9, color: SUPPLY_ACTION_COLOR[action] ?? C.ink,
-                padding: "1px 6px",
-                background: (SUPPLY_ACTION_COLOR[action] ?? C.inkFaint) + "10",
-                borderRadius: R.sm,
-              }}>
-                {shortLabel[action] ?? action}: {count}
-              </span>
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ── CommercialDecisionCenter (main) ──────────────────────────────────────────
-
-function CommercialDecisionCenter({ activeRefs, depletedRefs, coverageByLine, derroteroRules, onNavigate }: DecisionCenterProps) {
   const sectionTitle = (title: string) => (
     <div style={{
       fontFamily: T.mono, fontSize: 10, fontWeight: 700,
@@ -3060,55 +2704,436 @@ function CommercialDecisionCenter({ activeRefs, depletedRefs, coverageByLine, de
     </div>
   );
 
-  const handleCoverageClick = useCallback((line: string) => {
-    onNavigate?.({ tab: "derrotero", line });
-  }, [onNavigate]);
+  // ── 1. Salud del derrotero ──────────────────────────────────────────
+  const coverageCards = useMemo(() => {
+    const lineOrder = ["CS", "LT", "IMPORT"];
+    return lineOrder
+      .map((line) => ({ line, cov: coverageByLine.get(line) }))
+      .filter((x): x is { line: string; cov: CoverageByLineEntry } => x.cov != null);
+  }, [coverageByLine]);
 
-  const handleActionClick = useCallback((action: string) => {
-    // Navigate to referencias tab — the action type maps to a state filter
-    // RETIRAR_MOSTRARIO refs are in depletedRefs, others in activeRefs
-    onNavigate?.({ tab: "referencias" });
-  }, [onNavigate]);
+  // ── 2. Referencias en riesgo ────────────────────────────────────────
+  const riskByLine = useMemo(() => {
+    const result: { line: string; label: string; count: number; rangeLabel: string }[] = [];
+    for (const [lineKey, range] of Object.entries(RISK_MARGIN)) {
+      const count = commercialRefs.filter((r) =>
+        r.line === lineKey &&
+        r.stockDataState === "CERTIFIED" &&
+        r.centralAvailable >= range.min &&
+        r.centralAvailable <= range.max,
+      ).length;
+      if (count > 0) {
+        result.push({
+          line: lineKey,
+          label: DERROTERO_LINE_LABEL[lineKey] ?? lineKey,
+          count,
+          rangeLabel: `entre ${range.min} y ${range.max} unidades`,
+        });
+      }
+    }
+    return result;
+  }, [commercialRefs]);
 
-  const handleSubgroupClick = useCallback((line: string) => {
-    onNavigate?.({ tab: "derrotero", line });
-  }, [onNavigate]);
+  // ── 3. Riesgo de perder cobertura ───────────────────────────────────
+  const coverageRisk = useMemo(() => {
+    const result: { line: string; label: string; groups: number; subgroups: number; horizon: string }[] = [];
+    const activeRules = derroteroRules.filter((r) => r.isActive);
+
+    for (const lineKey of ["CS", "LT", "IMPORT"]) {
+      const range = RISK_MARGIN[lineKey];
+      if (!range) continue;
+      const atRiskRefs = commercialRefs.filter((r) =>
+        r.line === lineKey &&
+        r.stockDataState === "CERTIFIED" &&
+        r.centralAvailable >= range.min &&
+        r.centralAvailable <= range.max,
+      );
+      if (atRiskRefs.length === 0) continue;
+
+      // Count groups/subgroups that would be impacted
+      const atRiskSubgroups = new Set(atRiskRefs.map((r) => r.subgrupoSag));
+      const atRiskGroups = new Set(atRiskRefs.map((r) => r.grupoSag).filter(Boolean));
+
+      // Check how many subgroups would lose coverage
+      const rulesByKey = new Map<string, IdealRouteRule>();
+      for (const rule of activeRules) {
+        if (rule.line === lineKey) rulesByKey.set(rule.subgrupoSag, rule);
+      }
+
+      let subgroupsAtRisk = 0;
+      for (const sg of atRiskSubgroups) {
+        const rule = rulesByKey.get(sg);
+        if (rule) {
+          const currentCount = commercialRefs.filter((r) => r.line === lineKey && r.subgrupoSag === sg).length;
+          if (currentCount <= rule.minimumRefs) subgroupsAtRisk++;
+        } else {
+          subgroupsAtRisk++;
+        }
+      }
+
+      if (subgroupsAtRisk > 0 || atRiskGroups.size > 0) {
+        // Estimate horizon based on avg stock position
+        const avgStock = atRiskRefs.reduce((s, r) => s + r.centralAvailable, 0) / atRiskRefs.length;
+        const daysEstimate = avgStock <= range.min + 3 ? 7 : avgStock <= range.min + 5 ? 15 : 30;
+        result.push({
+          line: lineKey,
+          label: DERROTERO_LINE_LABEL[lineKey] ?? lineKey,
+          groups: atRiskGroups.size,
+          subgroups: subgroupsAtRisk,
+          horizon: daysEstimate <= 7 ? "esta semana" : `en ~${daysEstimate} dias`,
+        });
+      }
+    }
+    return result;
+  }, [commercialRefs, derroteroRules]);
+
+  // ── 4. Calidad del mostrario ────────────────────────────────────────
+  const quality = useMemo(() => {
+    const total = vendor.refs.length;
+    const vigentes = commercialRefs.length;
+    const retiro = retiroRefs.length;
+    const retiroUrgente = retiroRefs.filter((r) =>
+      r.stockDataState === "CERTIFIED" && r.centralAvailable <= 0,
+    ).length;
+    const rotacionBaja = commercialRefs.filter((r) => {
+      if (r.stockDataState !== "CERTIFIED") return false;
+      const range = RISK_MARGIN[r.line];
+      return range != null && r.centralAvailable >= range.min && r.centralAvailable <= range.max;
+    }).length;
+    const sinClasificar = vendor.refs.filter((r) =>
+      r.line === "OTRO" || r.subgrupoSag === "OTRO" || r.subgrupoSag === "SIN_SUBGRUPO" ||
+      r.subgrupoSag === "SIN CLASIFICAR" || r.subgrupoSag === "",
+    ).length;
+    return { total, vigentes, retiro, retiroUrgente, rotacionBaja, sinClasificar };
+  }, [vendor, commercialRefs, retiroRefs]);
+
+  // ── 5. Acciones por linea ───────────────────────────────────────────
+  const lineActions = useMemo(() => {
+    const result: { line: string; label: string; agregar: number; retirar: number }[] = [];
+    for (const lineKey of ["CS", "LT", "IMPORT"]) {
+      const lineRetiro = retiroRefs.filter((r) => r.line === lineKey).length;
+      // "Agregar" = missing from derrotero for this line
+      const cov = coverageByLine.get(lineKey);
+      const agregar = cov ? cov.missing : 0;
+      if (agregar > 0 || lineRetiro > 0) {
+        result.push({
+          line: lineKey,
+          label: DERROTERO_LINE_LABEL[lineKey] ?? lineKey,
+          agregar,
+          retirar: lineRetiro,
+        });
+      }
+    }
+    return result;
+  }, [retiroRefs, coverageByLine]);
+
+  // ── 6. Impacto esperado ─────────────────────────────────────────────
+  const projectedImpact = useMemo(() => {
+    const result: { line: string; label: string; current: number; projected: number }[] = [];
+    for (const lineKey of ["CS", "LT", "IMPORT"]) {
+      const cov = coverageByLine.get(lineKey);
+      if (!cov || cov.total === 0) continue;
+      // If all missing refs are added and excess retiro removed
+      const projectedComplete = Math.min(cov.total, cov.complete + cov.missing);
+      const projectedPct = Math.round((projectedComplete / cov.total) * 100);
+      result.push({
+        line: lineKey,
+        label: DERROTERO_LINE_LABEL[lineKey] ?? lineKey,
+        current: cov.pct,
+        projected: projectedPct,
+      });
+    }
+    return result;
+  }, [coverageByLine]);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: S[4], padding: `${S[2]}px 0` }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: S[5], padding: `${S[2]}px 0` }}>
 
-      {/* ── Cobertura por linea (circular indicators) ── */}
+      {/* ── 1. Salud del derrotero (tarjetas grandes) ── */}
       <div>
-        {sectionTitle("Cobertura por linea")}
-        <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
-          {[...coverageByLine.entries()].map(([line, cov]) => (
-            <CoverageCircle key={line} line={line} cov={cov} onClick={() => handleCoverageClick(line)} />
-          ))}
+        {sectionTitle("Salud del derrotero")}
+        <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
+          {coverageCards.length === 0 ? (
+            <div style={{
+              padding: S[4], fontFamily: T.mono, fontSize: 10, color: C.inkFaint,
+              background: C.surfaceAlt, borderRadius: R.md, border: `1px solid ${C.line}`,
+              textAlign: "center",
+            }}>
+              Sin derrotero configurado para esta maleta
+            </div>
+          ) : coverageCards.map(({ line, cov }) => {
+            const label = DERROTERO_LINE_LABEL[line] ?? line;
+            const pct = cov.total > 0 ? cov.pct : 0;
+            const color = cov.total > 0 ? (pct >= 80 ? C.green : pct >= 50 ? C.amber : C.red) : C.inkFaint;
+            return (
+              <button
+                key={line}
+                onClick={() => onNavigate?.({ tab: "derrotero", line })}
+                style={{
+                  display: "flex", flexDirection: "column", gap: S[2],
+                  padding: S[4],
+                  background: C.white,
+                  border: `1px solid ${color}30`,
+                  borderRadius: R.lg,
+                  cursor: "pointer",
+                  transition: "all 0.15s",
+                  textAlign: "left" as const,
+                  boxShadow: `0 1px 4px ${color}10`,
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = color; e.currentTarget.style.boxShadow = `0 2px 8px ${color}20`; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = `${color}30`; e.currentTarget.style.boxShadow = `0 1px 4px ${color}10`; }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 800, color: C.titleDeep }}>
+                    {label}
+                  </span>
+                  <span style={{ fontFamily: T.mono, fontSize: 22, fontWeight: 800, color }}>
+                    {cov.total > 0 ? `${pct}%` : "\u2014"}
+                  </span>
+                </div>
+                {/* Progress bar */}
+                <div style={{ width: "100%", height: 8, borderRadius: R.pill, background: C.line, overflow: "hidden" }}>
+                  <div style={{
+                    width: `${pct}%`, height: "100%", borderRadius: R.pill,
+                    background: color,
+                    transition: "width 0.4s ease",
+                  }} />
+                </div>
+                <span style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint }}>
+                  {cov.complete} / {cov.total} completos
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* ── Acciones prioritarias ── */}
+      {/* ── 2. Referencias en riesgo ── */}
       <div>
-        {sectionTitle("Acciones prioritarias")}
-        <PriorityActionsCard activeRefs={activeRefs} depletedRefs={depletedRefs} onActionClick={handleActionClick} />
+        {sectionTitle("Referencias en riesgo")}
+        {riskByLine.length === 0 ? (
+          <div style={{
+            padding: S[3], fontFamily: T.mono, fontSize: 10, color: C.green,
+            background: C.greenLight, borderRadius: R.md, border: `1px solid ${C.greenBorder}`,
+          }}>
+            Sin referencias proximas a retiro
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
+            {riskByLine.map((r) => (
+              <div key={r.line} style={{
+                display: "flex", alignItems: "center", gap: S[3],
+                padding: `${S[3]}px ${S[4]}px`,
+                background: C.amberLight,
+                border: `1px solid ${C.amberBorder}`,
+                borderRadius: R.md,
+              }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: C.titleDeep }}>
+                    {r.label}
+                  </div>
+                  <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkMid, marginTop: 2 }}>
+                    {r.rangeLabel}
+                  </div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontFamily: T.mono, fontSize: 18, fontWeight: 800, color: C.amber }}>
+                    {r.count}
+                  </div>
+                  <div style={{ fontFamily: T.mono, fontSize: 8, color: C.inkFaint }}>
+                    referencia{r.count !== 1 ? "s" : ""}
+                  </div>
+                </div>
+              </div>
+            ))}
+            <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint, paddingTop: S[1] }}>
+              Estas referencias aun son vigentes pero pueden convertirse en retiro si su inventario sigue bajando.
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* ── Subgrupos pendientes ── */}
+      {/* ── 3. Riesgo de perder cobertura ── */}
       <div>
-        {sectionTitle("Subgrupos pendientes")}
-        <PendingSubgroupsCard derroteroRules={derroteroRules} activeRefs={activeRefs} onSubgroupClick={handleSubgroupClick} />
+        {sectionTitle("Riesgo de perder cobertura")}
+        {coverageRisk.length === 0 ? (
+          <div style={{
+            padding: S[3], fontFamily: T.mono, fontSize: 10, color: C.green,
+            background: C.greenLight, borderRadius: R.md, border: `1px solid ${C.greenBorder}`,
+          }}>
+            Sin riesgo de perdida de cobertura
+          </div>
+        ) : (
+          <div style={{
+            padding: S[4],
+            background: C.redLight,
+            border: `1px solid ${C.redBorder}`,
+            borderRadius: R.lg,
+          }}>
+            <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: C.red, marginBottom: S[3] }}>
+              Si hoy no ingresan referencias nuevas:
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
+              {coverageRisk.map((r) => (
+                <div key={r.line} style={{
+                  padding: `${S[3]}px`,
+                  background: C.white,
+                  borderRadius: R.md,
+                  border: `1px solid ${C.redBorder}`,
+                }}>
+                  <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: C.titleDeep, marginBottom: S[1] }}>
+                    {r.label}
+                  </div>
+                  <div style={{ fontFamily: T.mono, fontSize: 10, color: C.ink }}>
+                    {r.groups > 0 && <>perdera <span style={{ fontWeight: 800, color: C.red }}>{r.groups}</span> grupo{r.groups !== 1 ? "s" : ""}</>}
+                    {r.groups > 0 && r.subgroups > 0 && " · "}
+                    {r.subgroups > 0 && <><span style={{ fontWeight: 800, color: C.red }}>{r.subgroups}</span> subgrupo{r.subgroups !== 1 ? "s" : ""}</>}
+                  </div>
+                  <div style={{ fontFamily: T.mono, fontSize: 9, color: C.red, fontWeight: 600, marginTop: 2 }}>
+                    {r.horizon}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* ── Impacto operativo ── */}
+      {/* ── 4. Calidad del mostrario ── */}
       <div>
-        {sectionTitle("Impacto operativo")}
-        <OperationalImpactCard activeRefs={activeRefs} depletedRefs={depletedRefs} coverageByLine={coverageByLine} />
+        {sectionTitle("Calidad del mostrario")}
+        <div style={{
+          display: "flex", flexDirection: "column", gap: 0,
+          background: C.white, borderRadius: R.lg,
+          border: `1px solid ${C.line}`,
+          overflow: "hidden",
+        }}>
+          {[
+            { label: "Vigentes", value: quality.vigentes, color: C.green },
+            { label: "Para retirar", value: quality.retiro, color: C.red },
+            { label: "Retiro urgente (sin inventario)", value: quality.retiroUrgente, color: C.red, indent: true },
+            { label: "Rotacion baja (proximas a retiro)", value: quality.rotacionBaja, color: C.amber, indent: true },
+            { label: "Sin clasificacion", value: quality.sinClasificar, color: C.inkFaint },
+          ].map(({ label, value, color, indent }, i) => (
+            <div key={label} style={{
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+              padding: `${S[2]}px ${S[4]}px`,
+              paddingLeft: indent ? S[6] : S[4],
+              borderBottom: i < 4 ? `1px solid ${C.lineSubtle}` : "none",
+              background: indent ? `${C.surfaceAlt}80` : "transparent",
+            }}>
+              <span style={{ fontFamily: T.mono, fontSize: 10, color: C.ink }}>
+                {label}
+              </span>
+              <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 800, color: value > 0 ? color : C.inkFaint }}>
+                {value}
+              </span>
+            </div>
+          ))}
+          <div style={{
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+            padding: `${S[3]}px ${S[4]}px`,
+            background: C.surfaceAlt,
+            borderTop: `1px solid ${C.line}`,
+          }}>
+            <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.titleDeep }}>
+              Total muestras en maleta
+            </span>
+            <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 800, color: C.titleDeep }}>
+              {quality.total}
+            </span>
+          </div>
+        </div>
       </div>
 
-      {/* ── Acciones por linea ── */}
+      {/* ── 5. Acciones por linea ── */}
       <div>
         {sectionTitle("Acciones por linea")}
-        <LineActionSummary activeRefs={activeRefs} depletedRefs={depletedRefs} />
+        {lineActions.length === 0 ? (
+          <div style={{
+            padding: S[3], fontFamily: T.mono, fontSize: 10, color: C.green,
+            background: C.greenLight, borderRadius: R.md, border: `1px solid ${C.greenBorder}`,
+          }}>
+            Sin acciones pendientes
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(lineActions.length, 3)}, 1fr)`, gap: S[3] }}>
+            {lineActions.map((la) => (
+              <div key={la.line} style={{
+                padding: S[4],
+                background: C.white,
+                border: `1px solid ${C.line}`,
+                borderRadius: R.lg,
+                textAlign: "center" as const,
+                boxShadow: `0 1px 3px ${C.ink}06`,
+              }}>
+                <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 800, color: C.titleDeep, marginBottom: S[3] }}>
+                  {la.label}
+                </div>
+                <div style={{ display: "flex", gap: S[3], justifyContent: "center" }}>
+                  <div>
+                    <div style={{ fontFamily: T.mono, fontSize: 20, fontWeight: 800, color: la.agregar > 0 ? C.green : C.inkFaint }}>
+                      {la.agregar}
+                    </div>
+                    <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 600, color: C.inkFaint }}>
+                      Agregar
+                    </div>
+                  </div>
+                  <div style={{ width: 1, background: C.line, alignSelf: "stretch" }} />
+                  <div>
+                    <div style={{ fontFamily: T.mono, fontSize: 20, fontWeight: 800, color: la.retirar > 0 ? C.red : C.inkFaint }}>
+                      {la.retirar}
+                    </div>
+                    <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 600, color: C.inkFaint }}>
+                      Retirar
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── 6. Impacto esperado ── */}
+      <div>
+        {sectionTitle("Impacto esperado")}
+        <div style={{
+          padding: S[3], fontFamily: T.mono, fontSize: 9, color: C.inkFaint, marginBottom: S[2],
+        }}>
+          Si se ejecutan todas las acciones pendientes:
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(projectedImpact.length, 3)}, 1fr)`, gap: S[3] }}>
+          {projectedImpact.map((p) => {
+            const improved = p.projected > p.current;
+            const arrowColor = improved ? C.green : p.projected === p.current ? C.inkFaint : C.red;
+            return (
+              <div key={p.line} style={{
+                padding: S[4],
+                background: C.white,
+                border: `1px solid ${improved ? C.greenBorder : C.line}`,
+                borderRadius: R.lg,
+                textAlign: "center" as const,
+                boxShadow: improved ? `0 1px 4px ${C.green}12` : `0 1px 3px ${C.ink}06`,
+              }}>
+                <div style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.titleDeep, marginBottom: S[2] }}>
+                  {p.label}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: S[2] }}>
+                  <span style={{ fontFamily: T.mono, fontSize: 16, fontWeight: 800, color: C.inkFaint }}>
+                    {p.current}%
+                  </span>
+                  <span style={{ fontFamily: T.mono, fontSize: 14, fontWeight: 800, color: arrowColor }}>
+                    →
+                  </span>
+                  <span style={{ fontFamily: T.mono, fontSize: 18, fontWeight: 800, color: improved ? C.green : arrowColor }}>
+                    {p.projected}%
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
     </div>
