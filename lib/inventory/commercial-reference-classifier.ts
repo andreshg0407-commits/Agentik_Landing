@@ -47,6 +47,14 @@ export interface ClassifierInput {
   lastSaleDate: Date | null;
   inventoryLevels: RawInventoryLevel[];
   dataQualityFlags?: string[];
+  /**
+   * When provided, overrides PIL-based commercial stock with a CCS-sourced
+   * value (e.g. disponibleReal from CommercialCoverageSnapshot).
+   *
+   * PIL commercial warehouses have 63% negative rows (accounting entries),
+   * making PIL unreliable for commercial availability. CCS is the source of truth.
+   */
+  compatibleCommercialStockOverride?: number;
 }
 
 /** Extended input that includes product metadata for domain resolution */
@@ -130,6 +138,7 @@ export function classifyReferenceWithDomainGate(input: DomainAwareClassifierInpu
  * Exported for inspection/testing.
  */
 export function buildContext(input: ClassifierInput): CommercialReferenceContext {
+  const hasCcsOverride = input.compatibleCommercialStockOverride !== undefined;
   let totalCommercialStock = 0;
   let totalProductionStock = 0;
   let totalContainerStock = 0;
@@ -146,7 +155,8 @@ export function buildContext(input: ClassifierInput): CommercialReferenceContext
     }
 
     if (isCommercialTextileWarehouse(lvl.warehouseId) || isCommercialAvailableImportWarehouse(lvl.warehouseId)) {
-      totalCommercialStock += qty;
+      // When CCS override is provided, skip PIL-based commercial sum — CCS is truth
+      if (!hasCcsOverride) totalCommercialStock += qty;
     } else if (isProductionOnlyWarehouse(lvl.warehouseId)) {
       totalProductionStock += qty;
     } else if (isImportContainerWarehouse(lvl.warehouseId)) {
@@ -157,6 +167,11 @@ export function buildContext(input: ClassifierInput): CommercialReferenceContext
       totalOtherStock += qty;
     }
     // EXCLUDED warehouses are silently ignored — no bucket
+  }
+
+  // Use CCS-sourced commercial stock when available (PIL has unreliable negatives)
+  if (hasCcsOverride) {
+    totalCommercialStock = Math.max(0, input.compatibleCommercialStockOverride!);
   }
 
   const lastRelevantActivity = resolveLastRelevantActivity({

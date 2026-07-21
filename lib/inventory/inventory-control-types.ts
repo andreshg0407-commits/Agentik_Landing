@@ -231,6 +231,16 @@ export interface InventoryItem {
    * Sprint: COMERCIAL-INVENTARIO-ACTIVO-HISTORICO-01
    */
   inventoryVisibility: InventoryVisibility;
+
+  // ── Lifecycle/Domain fields (shared with canonical enrichment) ──
+  /** SAG product line ID — used for domain resolution */
+  productLine?: string | null;
+  /** SAG line name — used for domain resolution */
+  lineaSag?: string | null;
+  /** Last modification date in SAG — used for lifecycle resolution */
+  lastModifiedSag?: Date | null;
+  /** Last sale date in SAG — used for lifecycle resolution */
+  lastSaleSag?: Date | null;
 }
 
 // ── Sales Portfolio Eligibility (COMERCIAL-MALETAS-CANONICAL-INVENTORY-INTEGRATION-01)
@@ -379,6 +389,13 @@ export interface InventoryDataQuality {
 
 // ── Complete Snapshot ─────────────────────────────────────────────────────────
 
+/** Pre-loaded non-commercial PIL row for canonical enrichment. */
+export interface NonCommercialPilRow {
+  productId: string;
+  warehouseId: string;
+  quantity: number;
+}
+
 /** Complete inventory control center snapshot. */
 export interface InventoryControlSnapshot {
   orgSlug: string;
@@ -403,4 +420,11 @@ export interface InventoryControlSnapshot {
   subgrupoCoverage: SubgrupoCoverage[];
   /** Accessories with low stock. */
   accesoriosBajaCantidad: AccesorioBajaCantidad[];
+
+  /**
+   * Pre-loaded non-commercial PIL rows (production, staging, container, vendor/store warehouses).
+   * Used by canonical enrichment to avoid a duplicate PIL query.
+   * Internal — not consumed by UI.
+   */
+  _nonCommercialPil?: NonCommercialPilRow[];
 }

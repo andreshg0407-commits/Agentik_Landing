@@ -100,6 +100,7 @@ interface Props {
   open: boolean;
   onClose: () => void;
   product: CommercialProductData | null;
+  children?: React.ReactNode;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -136,7 +137,7 @@ const SEC_PB = S[2];   // section padding-bottom (was S[4])
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export function CommercialProductDrawer({ open, onClose, product }: Props) {
+export function CommercialProductDrawer({ open, onClose, product, children }: Props) {
   if (!product) return null;
 
   const loading = product.enrichmentLoading === true;
@@ -352,6 +353,8 @@ export function CommercialProductDrawer({ open, onClose, product }: Props) {
           </InfoGrid>
         </Section>
       )}
+
+      {children}
     </OperationalSideDrawer>
   );
 }

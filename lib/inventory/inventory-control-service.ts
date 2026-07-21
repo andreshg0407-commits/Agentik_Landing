@@ -38,6 +38,7 @@ import type {
   InventoryHealth,
   InventoryDataQuality,
   InventoryControlSnapshot,
+  NonCommercialPilRow,
   SubgrupoCoverage,
   SubgrupoCoverageState,
   AccesorioBajaCantidad,
@@ -47,6 +48,10 @@ import {
   IMPORT_SOURCE_WAREHOUSES,
   IMPORT_SCARCITY_MINIMUM,
 } from "@/lib/comercial/maletas/vendor-sample-types";
+import {
+  getCommercialTextilePks,
+  getCommercialAvailableImportPks,
+} from "./warehouse-master";
 
 // ── Operational State Derivation (INVENTARIO-KPI-REALIGNMENT-01) ─────────────
 
@@ -132,9 +137,8 @@ async function loadActiveProductionCounts(
  *
  * Sprint: INVENTARIO-SYNC-FRESHNESS-01
  */
-async function resolveFreshestSnapshotAt(
+async function loadPilFreshnessDate(
   organizationId: string,
-  ccsSnapshotAt: string | null,
 ): Promise<string | null> {
   try {
     const pilMax = await (prisma as any).$queryRaw`
@@ -142,17 +146,42 @@ async function resolveFreshestSnapshotAt(
       FROM "ProductInventoryLevel"
       WHERE "organizationId" = ${organizationId}
     ` as any[];
-    const pilDate = pilMax[0]?.max_synced
+    return pilMax[0]?.max_synced
       ? new Date(pilMax[0].max_synced).toISOString()
       : null;
-
-    if (!ccsSnapshotAt && !pilDate) return null;
-    if (!ccsSnapshotAt) return pilDate;
-    if (!pilDate) return ccsSnapshotAt;
-
-    return new Date(ccsSnapshotAt) > new Date(pilDate) ? ccsSnapshotAt : pilDate;
   } catch {
-    return ccsSnapshotAt;
+    return null;
+  }
+}
+
+/**
+ * Loads non-commercial PIL rows (production, staging, container, vendor/store warehouses).
+ * Pre-loaded in snapshot builder so canonical enrichment doesn't need a separate query.
+ */
+async function loadNonCommercialPil(
+  organizationId: string,
+): Promise<NonCommercialPilRow[]> {
+  try {
+    const commercialPks = [
+      ...getCommercialTextilePks(),
+      ...getCommercialAvailableImportPks(),
+    ];
+    const placeholders = commercialPks.map((_, i) => `$${i + 2}`).join(", ");
+    const rows = await (prisma as any).$queryRawUnsafe(
+      `SELECT "productId", "warehouseId", quantity
+       FROM "ProductInventoryLevel"
+       WHERE "organizationId" = $1 AND quantity > 0
+         AND "warehouseId" NOT IN (${placeholders})`,
+      organizationId,
+      ...commercialPks,
+    ) as any[];
+    return rows.map((r: any) => ({
+      productId: r.productId as string,
+      warehouseId: r.warehouseId as string,
+      quantity: Number(r.quantity ?? 0),
+    }));
+  } catch {
+    return [];
   }
 }
 
@@ -401,46 +430,64 @@ function buildAccesoriosBajaCantidad(items: InventoryItem[]): AccesorioBajaCanti
   return result.sort((a, b) => a.categoria.localeCompare(b.categoria));
 }
 
-// ── Product Metadata (COMERCIAL-MALETAS-CANONICAL-INVENTORY-INTEGRATION-01) ──
+// ── Unified Product Loader (COMERCIAL-INVENTARIO-CANONICAL-STATUS-INTEGRATION-01) ──
 
-interface ProductMetadata {
-  productId: string;
+interface ProductRecord {
+  id: string;
+  sku: string;
+  name: string | null;
+  description: string | null;
+  productLine: string | null;
+  lineaSag: string | null;
+  subgrupoSag: string | null;
   grupoSag: string | null;
   grupoId: number | null;
   subgrupoId: number | null;
+  handlingUnit: string | null;
   costo: number | null;
+  lastModifiedSag: Date | null;
+  lastSaleSag: Date | null;
 }
 
 /**
- * Loads extended metadata for SKUs from ProductEntity.
- * Returns productId, grupoSag, grupoId, subgrupoId, costo per SKU.
+ * Loads ALL ProductEntity rows for an org in a single raw SQL query.
+ * Replaces separate loadProductMetadata + loadAccessoryRefs queries.
+ * Raw SQL avoids Prisma findMany overhead with large IN clauses (603ms vs 2848ms).
  */
-async function loadProductMetadata(
+async function loadAllProducts(
   organizationId: string,
-  skus: string[],
-): Promise<Map<string, ProductMetadata>> {
-  const result = new Map<string, ProductMetadata>();
-  if (skus.length === 0) return result;
+): Promise<ProductRecord[]> {
   try {
-    const products = await (prisma as any).productEntity.findMany({
-      where: { organizationId, sku: { in: skus } },
-      select: { id: true, sku: true, grupoSag: true, grupoId: true, subgrupoId: true, costo: true },
-    });
-    for (const p of products) {
-      if (p.sku) {
-        result.set(p.sku as string, {
-          productId: p.id as string,
-          grupoSag: (p.grupoSag as string | null) ?? null,
-          grupoId: (p.grupoId as number | null) ?? null,
-          subgrupoId: (p.subgrupoId as number | null) ?? null,
-          costo: p.costo != null ? Number(p.costo) : null,
-        });
-      }
-    }
+    const rows = await (prisma as any).$queryRawUnsafe(`
+      SELECT id, sku, name, description,
+             "productLine", "lineaSag", "subgrupoSag",
+             "grupoSag", "grupoId", "subgrupoId",
+             "handlingUnit", costo,
+             "lastModifiedSag", "lastSaleSag"
+      FROM "ProductEntity"
+      WHERE "organizationId" = $1
+    `, organizationId) as any[];
+    return rows
+      .filter((r: any) => r.sku)
+      .map((r: any) => ({
+        id: r.id as string,
+        sku: r.sku as string,
+        name: (r.name as string | null) ?? null,
+        description: (r.description as string | null) ?? null,
+        productLine: (r.productLine as string | null) ?? null,
+        lineaSag: (r.lineaSag as string | null) ?? null,
+        subgrupoSag: (r.subgrupoSag as string | null) ?? null,
+        grupoSag: (r.grupoSag as string | null) ?? null,
+        grupoId: r.grupoId != null ? Number(r.grupoId) : null,
+        subgrupoId: r.subgrupoId != null ? Number(r.subgrupoId) : null,
+        handlingUnit: (r.handlingUnit as string | null) ?? null,
+        costo: r.costo != null ? Number(r.costo) : null,
+        lastModifiedSag: r.lastModifiedSag ? new Date(r.lastModifiedSag) : null,
+        lastSaleSag: r.lastSaleSag ? new Date(r.lastSaleSag) : null,
+      }));
   } catch {
-    // Graceful degradation
+    return [];
   }
-  return result;
 }
 
 // ── Variant Summaries (COMERCIAL-MALETAS-CANONICAL-INVENTORY-INTEGRATION-01) ─
@@ -452,50 +499,39 @@ interface VariantSummary {
 }
 
 /**
- * Loads talla/color summaries for all products in one batch query.
- * Returns Map<sku, VariantSummary>.
+ * Loads talla/color summaries using SQL aggregation.
+ * Raw SQL with ARRAY_AGG returns ~4K grouped rows instead of ~53K individual rows.
+ * Returns Map<productId, VariantSummary>.
  */
 async function loadVariantSummaries(
   organizationId: string,
-  productIdToSku: Map<string, string>,
 ): Promise<Map<string, VariantSummary>> {
   const result = new Map<string, VariantSummary>();
-  if (productIdToSku.size === 0) return result;
-
   try {
-    const productIds = [...productIdToSku.keys()];
-    const variants = await (prisma as any).productVariant.findMany({
-      where: { productId: { in: productIds } },
-      select: { productId: true, attributes: true },
-    });
+    const rows = await (prisma as any).$queryRawUnsafe(`
+      SELECT pv."productId",
+             COUNT(*)::int AS "variantCount",
+             COALESCE(
+               ARRAY_AGG(DISTINCT COALESCE(pv.attributes->>'tallaName', pv.attributes->>'talla'))
+                 FILTER (WHERE COALESCE(pv.attributes->>'tallaName', pv.attributes->>'talla') IS NOT NULL),
+               ARRAY[]::text[]
+             ) AS sizes,
+             COALESCE(
+               ARRAY_AGG(DISTINCT COALESCE(pv.attributes->>'colorName', pv.attributes->>'color'))
+                 FILTER (WHERE COALESCE(pv.attributes->>'colorName', pv.attributes->>'color') IS NOT NULL),
+               ARRAY[]::text[]
+             ) AS colors
+      FROM "ProductVariant" pv
+      JOIN "ProductEntity" pe ON pe.id = pv."productId"
+      WHERE pe."organizationId" = $1
+      GROUP BY pv."productId"
+    `, organizationId) as any[];
 
-    // Group by productId
-    const byProduct = new Map<string, any[]>();
-    for (const v of variants) {
-      const pid = v.productId as string;
-      const list = byProduct.get(pid) ?? [];
-      list.push(v);
-      byProduct.set(pid, list);
-    }
-
-    for (const [pid, pvs] of byProduct) {
-      const sku = productIdToSku.get(pid);
-      if (!sku) continue;
-
-      const tallaSet = new Set<string>();
-      const colorSet = new Set<string>();
-      for (const v of pvs) {
-        const attrs = v.attributes as Record<string, string> | null;
-        if (attrs?.tallaName) tallaSet.add(attrs.tallaName);
-        else if (attrs?.talla) tallaSet.add(attrs.talla);
-        if (attrs?.colorName) colorSet.add(attrs.colorName);
-        else if (attrs?.color) colorSet.add(attrs.color);
-      }
-
-      result.set(sku, {
-        sizes: [...tallaSet].sort(),
-        colors: [...colorSet].sort(),
-        variantCount: pvs.length,
+    for (const r of rows) {
+      result.set(r.productId as string, {
+        sizes: (r.sizes as string[] ?? []).sort(),
+        colors: (r.colors as string[] ?? []).sort(),
+        variantCount: Number(r.variantCount),
       });
     }
   } catch {
@@ -506,48 +542,6 @@ async function loadVariantSummaries(
 }
 
 // ── Accessories (Import) ─────────────────────────────────────────────────────
-
-interface AccessoryRef {
-  id: string;
-  sku: string;
-  description: string;
-  subgrupoSag: string | null;
-  grupoSag: string | null;
-  grupoId: number | null;
-  subgrupoId: number | null;
-  handlingUnit: string | null;
-  costo: number | null;
-}
-
-async function loadAccessoryRefs(
-  organizationId: string,
-): Promise<AccessoryRef[]> {
-  try {
-    const products = await (prisma as any).productEntity.findMany({
-      where: { organizationId, productLine: "5" },
-      select: {
-        id: true, sku: true, name: true, description: true,
-        subgrupoSag: true, grupoSag: true, grupoId: true, subgrupoId: true,
-        handlingUnit: true, costo: true,
-      },
-    });
-    return products
-      .filter((p: any) => p.sku)
-      .map((p: any) => ({
-        id: p.id as string,
-        sku: p.sku as string,
-        description: (p.name ?? p.description ?? "") as string,
-        subgrupoSag: (p.subgrupoSag as string | null) ?? null,
-        grupoSag: (p.grupoSag as string | null) ?? null,
-        grupoId: (p.grupoId as number | null) ?? null,
-        subgrupoId: (p.subgrupoId as number | null) ?? null,
-        handlingUnit: (p.handlingUnit as string | null) ?? null,
-        costo: p.costo != null ? Number(p.costo) : null,
-      }));
-  } catch {
-    return [];
-  }
-}
 
 async function loadAccessoryAvailability(
   organizationId: string,
@@ -596,24 +590,39 @@ export async function buildInventoryControlSnapshot(
   organizationId: string,
   orgSlug: string,
 ): Promise<InventoryControlSnapshot> {
-  // 1. Load raw availability data
-  const { records, snapshotAt } = await loadAvailabilityRecords(organizationId);
+  // ── Phase 1 (parallel): CCS + all PE + production + variants + freshness ──
+  // All independent queries run in a single parallel batch.
+  // Variant summaries use SQL aggregation (~223ms vs ~4680ms findMany).
+  // Unified PE query replaces separate textile metadata + accessory refs (~600ms vs ~3000ms).
+  const [availResult, allProducts, productionCounts, variantMap, freshestPilAt, accessoryAvail, nonCommercialPil] = await Promise.all([
+    loadAvailabilityRecords(organizationId),
+    loadAllProducts(organizationId),
+    loadActiveProductionCounts(organizationId),
+    loadVariantSummaries(organizationId),
+    loadPilFreshnessDate(organizationId),
+    loadAccessoryAvailability(organizationId),
+    loadNonCommercialPil(organizationId),
+  ]);
+  const { records, snapshotAt } = availResult;
 
-  // 2. Build availability report (pure domain engine)
+  // ── Pure computation ──
   const report = buildAvailabilityReport({ orgSlug, records, sourceBodega: "01+04+14+15" });
 
-  // 3. Resolve tenant thresholds
   const thresholdRules = resolveInventoryThresholds(orgSlug);
   const thresholdMap = new Map(thresholdRules.map(r => [r.subLinea.toUpperCase(), r.threshold]));
 
-  // 4. Load active production counts + accessory data + product metadata
-  const textileSkus = report.rows.map((r: AvailabilityRow) => r.reference);
-  const [productionCounts, accessoryRefs, accessoryAvail, textileMetadata] = await Promise.all([
-    loadActiveProductionCounts(organizationId),
-    loadAccessoryRefs(organizationId),
-    loadAccessoryAvailability(organizationId),
-    loadProductMetadata(organizationId, textileSkus),
-  ]);
+  // Build lookup maps from unified PE result
+  const textileMetaBySku = new Map<string, ProductRecord>();
+  const accessoryProducts: ProductRecord[] = [];
+  const accessorySkuSet = new Set<string>();
+  for (const p of allProducts) {
+    if (p.productLine === "5") {
+      accessoryProducts.push(p);
+      accessorySkuSet.add(p.sku);
+    } else {
+      textileMetaBySku.set(p.sku, p);
+    }
+  }
 
   // 5. Enrich rows into InventoryItem[] (textile)
   const textileItems: InventoryItem[] = report.rows.map((row: AvailabilityRow) => {
@@ -629,7 +638,7 @@ export async function buildInventoryControlSnapshot(
     );
 
     const canonicalLine = resolveCanonicalLine(row.subLinea, false);
-    const meta = textileMetadata.get(row.reference);
+    const meta = textileMetaBySku.get(row.reference);
 
     return {
       reference: row.reference,
@@ -638,7 +647,7 @@ export async function buildInventoryControlSnapshot(
       subGrupo: row.subGrupo,
       subgrupoSag: row.subGrupo,
       grupoSag: meta?.grupoSag ?? undefined,
-      productId: meta?.productId ?? null,
+      productId: meta?.id ?? null,
       grupoId: meta?.grupoId ?? null,
       subgrupoId: meta?.subgrupoId ?? null,
       sizes: [] as string[],
@@ -658,11 +667,15 @@ export async function buildInventoryControlSnapshot(
       lineCategory: "textile" as const,
       canonicalLine,
       inventoryVisibility: deriveInventoryVisibility(row.disponibleReal, true),
+      productLine: meta?.productLine ?? null,
+      lineaSag: meta?.lineaSag ?? null,
+      lastModifiedSag: meta?.lastModifiedSag ?? null,
+      lastSaleSag: meta?.lastSaleSag ?? null,
     };
   });
 
   // 5b. Build accessory InventoryItem[]
-  const accessoryItems: InventoryItem[] = accessoryRefs.map((ref) => {
+  const accessoryItems: InventoryItem[] = accessoryProducts.map((ref) => {
     const rawAvail = accessoryAvail.get(ref.sku);
     const hasData = rawAvail !== undefined;
     const available = rawAvail ?? 0;
@@ -670,7 +683,7 @@ export async function buildInventoryControlSnapshot(
 
     return {
       reference: ref.sku,
-      description: ref.description,
+      description: (ref.name ?? ref.description ?? "") as string,
       subLinea: "IMPORTACION",
       subGrupo: ref.subgrupoSag ?? "ACCESORIO",
       subgrupoSag: ref.subgrupoSag ?? "ACCESORIO",
@@ -696,29 +709,27 @@ export async function buildInventoryControlSnapshot(
       lineCategory: "accessory" as const,
       canonicalLine: "IMPORTACION" as const,
       inventoryVisibility: deriveInventoryVisibility(available, hasData),
+      productLine: ref.productLine ?? null,
+      lineaSag: ref.lineaSag ?? null,
+      lastModifiedSag: ref.lastModifiedSag ?? null,
+      lastSaleSag: ref.lastSaleSag ?? null,
     };
   });
 
-  // COMERCIAL-INVENTARIO-IMPORT-PIPELINE-CANONICALIZATION-01:
   // Dedup guard — if a productLine=5 SKU somehow entered the textile pipeline
   // (e.g. historical CCS snapshot), the accessory pipeline takes precedence.
-  const accessorySkus = new Set(accessoryItems.map(i => i.reference));
-  const dedupedTextile = textileItems.filter(i => !accessorySkus.has(i.reference));
+  const dedupedTextile = textileItems.filter(i => !accessorySkuSet.has(i.reference));
   const items = [...dedupedTextile, ...accessoryItems];
 
-  // 5c. Load variant summaries (sizes/colors/variantCount) in one batch
-  // COMERCIAL-MALETAS-CANONICAL-INVENTORY-INTEGRATION-01
-  const productIdToSku = new Map<string, string>();
+  // 5c. Apply variant summaries (pre-loaded via SQL aggregation in Phase 1)
   for (const item of items) {
-    if (item.productId) productIdToSku.set(item.productId, item.reference);
-  }
-  const variantMap = await loadVariantSummaries(organizationId, productIdToSku);
-  for (const item of items) {
-    const vs = variantMap.get(item.reference);
-    if (vs) {
-      item.sizes = vs.sizes;
-      item.colors = vs.colors;
-      item.variantCount = vs.variantCount;
+    if (item.productId) {
+      const vs = variantMap.get(item.productId);
+      if (vs) {
+        item.sizes = vs.sizes;
+        item.colors = vs.colors;
+        item.variantCount = vs.variantCount;
+      }
     }
   }
 
@@ -728,7 +739,10 @@ export async function buildInventoryControlSnapshot(
   const subgrupoCoverage = buildSubgrupoCoverage(items);
   const accesoriosBaja = buildAccesoriosBajaCantidad(items);
   const health = buildHealth(items, subgrupoCoverage, accesoriosBaja);
-  const freshestAt = await resolveFreshestSnapshotAt(organizationId, snapshotAt);
+  // Combine CCS + PIL freshness
+  const freshestAt = snapshotAt && freshestPilAt
+    ? (new Date(snapshotAt) > new Date(freshestPilAt) ? snapshotAt : freshestPilAt)
+    : snapshotAt ?? freshestPilAt;
   const dataQuality = computeDataQuality(freshestAt, records.length);
 
   return {
@@ -742,5 +756,6 @@ export async function buildInventoryControlSnapshot(
     availabilityReport: report,
     subgrupoCoverage,
     accesoriosBajaCantidad: accesoriosBaja,
+    _nonCommercialPil: nonCommercialPil,
   };
 }
