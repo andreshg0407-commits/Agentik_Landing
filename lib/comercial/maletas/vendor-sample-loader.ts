@@ -88,6 +88,7 @@ import {
   type MaletaCoverageMatch,
   type MaletaSupplyAction,
 } from "./maletas-canonical-inventory";
+import { isReferenceEligibleForMaletasRuntime } from "./maletas-commercial-scope";
 import type {
   VendorAssortmentResult,
   SubgroupProductionEval,
@@ -200,6 +201,16 @@ export interface CanonicalDiffReport {
   };
 }
 
+/** COMERCIAL-MALETAS-CANONICAL-ACTIVATION-01: scope filter audit */
+export interface CommercialScopeAudit {
+  totalClassified: number;
+  runtimeEligible: number;
+  excluded: number;
+  exclusionsByReason: Record<string, number>;
+  classificationMs: number;
+  scopeFilterMs: number;
+}
+
 // Bodega ka_nl → human-readable name (for sourceWarehouse display)
 const BODEGA_NAMES: Record<number, string> = {
   10: "PRINCIPAL",
@@ -229,6 +240,8 @@ export interface VendorSampleLoadResult {
   coverageResult: BusinessCoverageResult;
   /** Phase 6: canonical diff report (progressive integration — remove after migration) */
   canonicalDiffReport: CanonicalDiffReport | null;
+  /** ACTIVATION-01: commercial scope filter audit */
+  commercialScopeAudit: CommercialScopeAudit | null;
 }
 
 // ── Main loader ──────────────────────────────────────────────────────────────
@@ -277,6 +290,7 @@ export async function loadVendorSampleData(
       importEvaluation: { evaluations: [], diagnostic: { evaluadas: 0, sinFechaIngreso: 0, sinVentas: 0, sinTamano: 0, sinInventario: 0, watch: 0, doNotRebuy: 0, rebuy: 0, lowRotation: 0 } },
       coverageResult: { textileCoverage: [], importCoverage: [], urgentProductionNeeds: [] },
       canonicalDiffReport: null,
+      commercialScopeAudit: null,
     };
   }
 
@@ -322,8 +336,70 @@ export async function loadVendorSampleData(
   // ── 2e. Load product enrichment (group, brand, sizeClass) from ProductEntity ──
   const productEnrichmentMap = await loadProductEnrichment(db, organizationId);
 
-  // ── 3. Build per-vendor snapshots ──────────────────────────────────
+  // ── 2f. Canonical classification + commercial scope filter ──────────────
+  // COMERCIAL-MALETAS-CANONICAL-ACTIVATION-01
+  // Runs classifyMaletaReferencesBatch() to get CanonicalMaletaInventoryRef per ref.
+  // Applies isReferenceEligibleForMaletasRuntime() to produce the filtered universe.
+  // All downstream candidate operations use the filtered set.
+
+  // Pre-compute allVendorRefs from presence (needed for classification)
   const allVendorRefs = new Set<string>();
+  for (const pr of presenceResults) {
+    for (const item of pr.items) {
+      allVendorRefs.add(item.reference);
+    }
+  }
+
+  const tClassifyStart = Date.now();
+  const ccsRecordsForClassify: MaletaCcsRecord[] = canonical.refs.map((r) => ({
+    reference: r.reference,
+    disponible: r.available,
+    line: r.line,
+    subgrupoSag: r.subgrupoSag,
+    description: r.description,
+  }));
+  const additionalClassifyRefs = [...allVendorRefs].filter((ref) => !coverageMap.has(ref));
+
+  const canonicalMap = await classifyMaletaReferencesBatch({
+    organizationId,
+    ccsRecords: ccsRecordsForClassify,
+    additionalReferences: additionalClassifyRefs.length > 0 ? additionalClassifyRefs : undefined,
+  });
+  const tClassifyEnd = Date.now();
+  const classificationMs = tClassifyEnd - tClassifyStart;
+
+  // Apply commercial scope filter
+  const tScopeStart = Date.now();
+  const runtimeEligibleSet = new Set<string>();
+  const scopeExclusions: Record<string, number> = {};
+  for (const [ref, can] of canonicalMap) {
+    if (isReferenceEligibleForMaletasRuntime(can)) {
+      runtimeEligibleSet.add(ref);
+    } else {
+      const reason = can.businessDomain === "JUPITER_PETS" ? "JUPITER_PETS"
+        : can.businessDomain === "UNKNOWN" ? "UNKNOWN_DOMAIN"
+        : can.stockDistribution === "NO_ACTIVITY_DATA" ? "NO_DATA"
+        : can.commercialReferenceStatus;
+      scopeExclusions[reason] = (scopeExclusions[reason] ?? 0) + 1;
+    }
+  }
+  const tScopeEnd = Date.now();
+
+  // Filtered candidate catalogs (replacement candidates, coverage gaps, production)
+  const runtimeCoverageRows = coverageRows.filter((r) => runtimeEligibleSet.has(r.refCode));
+
+  console.log(`[MALETAS] Commercial scope: ${canonicalMap.size} classified → ${runtimeEligibleSet.size} eligible, ${canonicalMap.size - runtimeEligibleSet.size} excluded (${classificationMs}ms classify, ${tScopeEnd - tScopeStart}ms filter)`);
+
+  const commercialScopeAudit: CommercialScopeAudit = {
+    totalClassified: canonicalMap.size,
+    runtimeEligible: runtimeEligibleSet.size,
+    excluded: canonicalMap.size - runtimeEligibleSet.size,
+    exclusionsByReason: scopeExclusions,
+    classificationMs,
+    scopeFilterMs: tScopeEnd - tScopeStart,
+  };
+
+  // ── 3. Build per-vendor snapshots ──────────────────────────────────
   const vendors: VendorSampleSnapshot[] = [];
   for (const pr of presenceResults) {
     // Resolve vendor activation state for snapshot
@@ -425,13 +501,15 @@ export async function loadVendorSampleData(
     const derroteroMap = await loadEffectiveMinimumRefsMap(organizationId, pr.vendorId);
 
     // Apply replacement intelligence (bodega + OP) — textil only
-    applyReplacements(refs, coverageRows, subgrupoLookup, opOptionsBySubgrupoId, derroteroMap);
+    // ACTIVATION-01: uses runtimeCoverageRows (scope-filtered candidate catalog)
+    applyReplacements(refs, runtimeCoverageRows, subgrupoLookup, opOptionsBySubgrupoId, derroteroMap);
 
     vendors.push(buildVendorSnapshot(pr.vendorId, pr.vendorName, pr.bodegaKaNl, refs, vendorIsActive));
   }
 
   // ── 4. Coverage gaps ───────────────────────────────────────────────
-  const coverageGaps: CoverageGapRef[] = coverageRows
+  // ACTIVATION-01: uses runtimeCoverageRows (scope-filtered)
+  const coverageGaps: CoverageGapRef[] = runtimeCoverageRows
     .filter((r) => r.disponible >= 20 && !allVendorRefs.has(r.refCode))
     .sort((a, b) => b.disponible - a.disponible)
     .slice(0, 30)
@@ -459,6 +537,7 @@ export async function loadVendorSampleData(
 
   for (const vendor of vendors) {
     for (const ref of vendor.refs) {
+      if (!runtimeEligibleSet.has(ref.reference)) continue; // ACTIVATION-01
       if (!isEligibleForProductionSuggestion(ref)) continue;
       const sg = ref.subgrupoSag || "SIN_SUBGRUPO_SAG";
       const key = `${ref.line}|${sg}`;
@@ -615,15 +694,18 @@ export async function loadVendorSampleData(
   for (const v of vendors) {
     vendorRefSets.set(v.vendorId, new Set(v.refs.map((r) => r.reference)));
   }
-  const allCentralRefs = canonical.refs.map((cr) => ({
-    reference: cr.reference,
-    description: cr.description,
-    line: cr.line,
-    grupoSag: cr.grupoSag,
-    subgrupoSag: cr.subgrupoSag,
-    sizeClass: productEnrichmentMap.get(cr.reference)?.sizeClass ?? null,
-    disponible: cr.available,
-  }));
+  // ACTIVATION-01: scope-filtered central refs for coverage opportunities
+  const allCentralRefs = canonical.refs
+    .filter((cr) => runtimeEligibleSet.has(cr.reference))
+    .map((cr) => ({
+      reference: cr.reference,
+      description: cr.description,
+      line: cr.line,
+      grupoSag: cr.grupoSag,
+      subgrupoSag: cr.subgrupoSag,
+      sizeClass: productEnrichmentMap.get(cr.reference)?.sizeClass ?? null,
+      disponible: cr.available,
+    }));
 
   // Build flat OP candidate list for unified coverage engine
   const opCovCandidates: OpCoverageCandidate[] = [];
@@ -663,24 +745,7 @@ export async function loadVendorSampleData(
 
   if (shadowEnabled) {
     try {
-      const t10Start = Date.now();
-
-      const ccsRecords: MaletaCcsRecord[] = canonical.refs.map((r) => ({
-        reference: r.reference,
-        disponible: r.available,
-        line: r.line,
-        subgrupoSag: r.subgrupoSag,
-        description: r.description,
-      }));
-      const additionalRefs = [...allVendorRefs].filter((ref) => !coverageMap.has(ref));
-
-      const canonicalMap = await classifyMaletaReferencesBatch({
-        organizationId,
-        ccsRecords,
-        additionalReferences: additionalRefs.length > 0 ? additionalRefs : undefined,
-      });
-      const tClassifyEnd = Date.now();
-
+      // ACTIVATION-01: canonicalMap already computed in step 2f — reuse it (zero additional queries)
       const tDiffStart = Date.now();
 
       // Build per-vendor ref sets (scoped, NOT global)
@@ -951,7 +1016,7 @@ export async function loadVendorSampleData(
           pilQueryMs: lastClassifyPerformanceMs.pilQueryMs,
           classifyLoopMs: lastClassifyPerformanceMs.classifyLoopMs,
           diffComputationMs: tDiffEnd - tDiffStart,
-          totalCanonicalMs: tDiffEnd - t10Start,
+          totalCanonicalMs: classificationMs + (tDiffEnd - tDiffStart),
         },
       };
     } catch (err) {
@@ -974,6 +1039,7 @@ export async function loadVendorSampleData(
     importEvaluation,
     coverageResult,
     canonicalDiffReport,
+    commercialScopeAudit,
   };
 }
 
