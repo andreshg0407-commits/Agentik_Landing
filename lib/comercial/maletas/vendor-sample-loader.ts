@@ -69,6 +69,25 @@ import {
   getCanonicalMainWarehouseAvailability,
   buildStockBySubgrupoFromCanonical,
 } from "./canonical-warehouse-availability";
+import {
+  classifyMaletaReferencesBatch,
+  lastClassifyPerformanceMs,
+  isCommerciallyAvailableForMaletas,
+  isEligibleForMaletaCoverage,
+  isEligibleForMaletaPresence,
+  resolveMaletaRemovalReason,
+  isStructurallyEligibleForMaletaProduction,
+  resolveMaletaSupplyAction,
+  matchesMaletaCoverageNeed,
+  MALETA_REMOVAL_LIMITS,
+  MALETA_COVERAGE_MINIMUMS,
+  type CanonicalMaletaInventoryRef,
+  type MaletaCcsRecord,
+  type MaletaCoverageContext,
+  type MaletaCoverageNeed,
+  type MaletaCoverageMatch,
+  type MaletaSupplyAction,
+} from "./maletas-canonical-inventory";
 import type {
   VendorAssortmentResult,
   SubgroupProductionEval,
@@ -77,6 +96,109 @@ import type {
   IdealOverrideMap,
   BusinessCoverageResult,
 } from "./maletas-functional-evaluation";
+
+// ── Canonical diff report (Phase 6 — progressive integration) ────────────────
+
+export interface CanonicalDiffEntry {
+  reference: string;
+  vendorId: string;
+  oldState: SampleState;
+  newCanonicalStatus: string;
+  oldLine: string;
+  newDomain: string;
+  commerciallyAvailable: boolean;
+  eligiblePresence: boolean;
+  /** Qualifies as coverage candidate for THIS vendor (stock > threshold, not in bag) */
+  eligibleCoverage: boolean;
+  /** Structurally eligible for production consideration */
+  structurallyEligibleProduction: boolean;
+  /** Has production in process (productionStock > 0) */
+  hasProductionInProcess: boolean;
+  /** Resolved supply action from waterfall */
+  supplyAction: MaletaSupplyAction | null;
+  removalReason: string | null;
+  diverges: boolean;
+}
+
+/** Per-need coverage/supply diff for shadow comparison */
+export interface CanonicalNeedDiff {
+  riskReference: string;
+  vendorId: string;
+  vendorName: string;
+  canonicalLine: string;
+  grupoSag: string | null;
+  subgrupoSag: string | null;
+  sizeClass: string | null;
+  oldSupplyAction: SupplyActionType | null;
+  canonicalSupplyAction: MaletaSupplyAction;
+  coverageMatches: MaletaCoverageMatch[];
+  divergenceReason: string | null;
+}
+
+/** Per-vendor reconciled coverage summary (Cierre 1) */
+export interface VendorCoverageSummary {
+  vendorId: string;
+  vendorName: string;
+  /** Total refs currently in this vendor's bag */
+  currentRefs: number;
+  /** Refs that need replacement (state=reemplazar or removalReason!=null) */
+  needsReplacement: number;
+  /** candidatePool: unique refs eligible for this vendor BEFORE need-matching */
+  candidatePoolCS: number;
+  candidatePoolLT: number;
+  candidatePoolIMPORT: number;
+  /** matchedCandidatesByNeed: total candidate-need pairs that match */
+  matchedPairsTotal: number;
+  /** coveredNeeds: needs for which >= 1 candidate exists */
+  coveredNeeds: number;
+  /** uniqueCandidatesUsed: unique refs that serve as candidate in >= 1 match */
+  uniqueCandidatesUsed: number;
+  /** excludedAlreadyInOwnBag: refs that would pass stock/status but are in THIS bag */
+  excludedAlreadyInOwnBag: number;
+  /** needsWithoutCoverage: needs without any matching candidate */
+  needsWithoutCoverage: number;
+}
+
+/** OP audit data (Cierre 3) */
+export interface OpAuditData {
+  totalOpLoaded: number;
+  activeAfterTemporalFilter: number;
+  withResolvedSubgrupo: number;
+  uniqueSubgruposWithOp: number;
+  /** OP that match at least one vendor need */
+  matchingVendorNeeds: number;
+  /** OP discarded: reasons */
+  discardedZombie: number;
+  discardedNoSubgrupo: number;
+  discardedNoMatchingNeed: number;
+}
+
+export interface CanonicalDiffReport {
+  totalRefs: number;
+  divergentRefs: number;
+  stateDivergences: number;
+  lineDivergences: number;
+  commerciallyAvailable: number;
+  eligiblePresence: number;
+  removalByLimit: number;
+  removalByCanonicalState: number;
+  productionInProcess: number;
+  newProductionNeeded: number;
+  excludedByAge: number;
+  excludedByExternalIntegration: number;
+  entries: CanonicalDiffEntry[];
+  vendorCoverageSummaries: VendorCoverageSummary[];
+  needDiffs: CanonicalNeedDiff[];
+  opAudit: OpAuditData;
+  canonicalMap: Map<string, CanonicalMaletaInventoryRef>;
+  performanceMs: {
+    peQueryMs: number;
+    pilQueryMs: number;
+    classifyLoopMs: number;
+    diffComputationMs: number;
+    totalCanonicalMs: number;
+  };
+}
 
 // Bodega ka_nl → human-readable name (for sourceWarehouse display)
 const BODEGA_NAMES: Record<number, string> = {
@@ -105,6 +227,8 @@ export interface VendorSampleLoadResult {
   productionThresholds: SubgroupProductionEval[];
   importEvaluation: ImportEvaluationResult;
   coverageResult: BusinessCoverageResult;
+  /** Phase 6: canonical diff report (progressive integration — remove after migration) */
+  canonicalDiffReport: CanonicalDiffReport | null;
 }
 
 // ── Main loader ──────────────────────────────────────────────────────────────
@@ -152,6 +276,7 @@ export async function loadVendorSampleData(
       productionThresholds: [],
       importEvaluation: { evaluations: [], diagnostic: { evaluadas: 0, sinFechaIngreso: 0, sinVentas: 0, sinTamano: 0, sinInventario: 0, watch: 0, doNotRebuy: 0, rebuy: 0, lowRotation: 0 } },
       coverageResult: { textileCoverage: [], importCoverage: [], urgentProductionNeeds: [] },
+      canonicalDiffReport: null,
     };
   }
 
@@ -528,6 +653,312 @@ export async function loadVendorSampleData(
     vendorRefSets,
   );
 
+  // ── 10. Canonical classification shadow diff ──────────────────────────────
+  // Gated by MALETAS_CANONICAL_SHADOW_ENABLED. Default: false.
+  // When false: zero additional queries, zero overhead.
+  // When true: runs batch classifier + diff computation for validation only.
+  // Does NOT change any existing outputs — pure observation.
+  const shadowEnabled = process.env.MALETAS_CANONICAL_SHADOW_ENABLED === "true";
+  let canonicalDiffReport: CanonicalDiffReport | null = null;
+
+  if (shadowEnabled) {
+    try {
+      const t10Start = Date.now();
+
+      const ccsRecords: MaletaCcsRecord[] = canonical.refs.map((r) => ({
+        reference: r.reference,
+        disponible: r.available,
+        line: r.line,
+        subgrupoSag: r.subgrupoSag,
+        description: r.description,
+      }));
+      const additionalRefs = [...allVendorRefs].filter((ref) => !coverageMap.has(ref));
+
+      const canonicalMap = await classifyMaletaReferencesBatch({
+        organizationId,
+        ccsRecords,
+        additionalReferences: additionalRefs.length > 0 ? additionalRefs : undefined,
+      });
+      const tClassifyEnd = Date.now();
+
+      const tDiffStart = Date.now();
+
+      // Build per-vendor ref sets (scoped, NOT global)
+      const vendorRefSetsForDiff = new Map<string, Set<string>>();
+      for (const v of vendors) {
+        vendorRefSetsForDiff.set(v.vendorId, new Set(v.refs.map((r) => r.reference)));
+      }
+
+      const entries: CanonicalDiffEntry[] = [];
+      let stateDivergences = 0;
+      let lineDivergences = 0;
+      let commerciallyAvailableCount = 0;
+      let eligiblePresenceCount = 0;
+      let removalByLimitCount = 0;
+      let removalByCanonicalStateCount = 0;
+      let productionInProcessCount = 0;
+      let newProductionNeededCount = 0;
+      let excludedByAgeCount = 0;
+      let excludedByExternalCount = 0;
+      const seenForGlobalCounts = new Set<string>();
+      const vendorCoverageSummaries: VendorCoverageSummary[] = [];
+      const needDiffs: CanonicalNeedDiff[] = [];
+
+      // OP audit: count OP entries by subgrupoId for audit trail
+      let opTotalLoaded = 0;
+      let opWithSubgrupo = 0;
+      const opSubgruposWithEntries = new Set<number>();
+      for (const [subId, opts] of opOptionsBySubgrupoId) {
+        opTotalLoaded += opts.length;
+        opWithSubgrupo += opts.length;
+        opSubgruposWithEntries.add(subId);
+      }
+      let opMatchingNeeds = 0;
+      let opDiscardedNoMatch = 0;
+
+      for (const v of vendors) {
+        if (!v.isActive) continue;
+
+        const thisVendorRefs = vendorRefSetsForDiff.get(v.vendorId) ?? new Set<string>();
+        const coverageCtx: MaletaCoverageContext = {
+          vendorId: v.vendorId,
+          currentVendorReferences: thisVendorRefs,
+        };
+
+        // ── Cierre 1: Compute candidatePool BEFORE need matching ──
+        // Scan entire canonical map for refs eligible for this vendor
+        let poolCS = 0;
+        let poolLT = 0;
+        let poolIMPORT = 0;
+        let excludedInBag = 0;
+        for (const [, can] of canonicalMap) {
+          if (!isCommerciallyAvailableForMaletas(can)) continue;
+          if (!can.grupoSag || !can.subgrupoSag) continue;
+          const threshold = MALETA_COVERAGE_MINIMUMS[can.canonicalLine];
+          if (threshold === undefined) continue;
+          if (can.compatibleCommercialStock <= threshold) continue;
+
+          // Would be eligible except for bag exclusion?
+          if (thisVendorRefs.has(can.reference)) {
+            excludedInBag++;
+            continue;
+          }
+
+          // Passes all eligibility checks for this vendor
+          if (can.canonicalLine === "CASTILLITOS") poolCS++;
+          else if (can.canonicalLine === "LATIN_KIDS") poolLT++;
+          else if (can.canonicalLine === "IMPORTACION") poolIMPORT++;
+        }
+
+        // ── Process refs in this vendor's bag ──
+        let vendorNeedsReplacement = 0;
+        let vendorMatchedPairs = 0;
+        let vendorCoveredNeeds = 0;
+        const vendorUniqueCandidates = new Set<string>();
+        let vendorUncoveredNeeds = 0;
+
+        for (const ref of v.refs) {
+          const can = canonicalMap.get(ref.reference);
+          if (!can) continue;
+
+          const oldStateMap: Record<SampleState, string> = {
+            saludable: "ACTIVE_AVAILABLE",
+            reemplazar: ref.commercialHealth === "OUT_OF_STOCK" ? "ACTIVE_NON_COMMERCIAL" : "ACTIVE_AVAILABLE",
+            sin_datos: "UNKNOWN",
+          };
+          const oldStateCanonical = oldStateMap[ref.state] ?? "UNKNOWN";
+          const oldLineToDomain: Record<string, string> = {
+            CS: "CASTILLITOS_TEXTILE", LT: "LATIN_KIDS_TEXTILE", IMPORT: "CASTILLITOS_IMPORT", OTRO: "UNKNOWN",
+          };
+          const oldDomainEquiv = oldLineToDomain[ref.line] ?? "UNKNOWN";
+
+          const commerciallyAvailable = isCommerciallyAvailableForMaletas(can);
+          const eligiblePresence = isEligibleForMaletaPresence(can);
+          const eligibleCoverage = isEligibleForMaletaCoverage(can, coverageCtx);
+          const structurallyEligibleProduction = isStructurallyEligibleForMaletaProduction(can);
+          const hasProductionInProcess = can.productionStock > 0 && can.compatibleCommercialStock <= 0;
+
+          const removalLimit = MALETA_REMOVAL_LIMITS[can.canonicalLine] ?? ref.minimumRequired;
+          const removalReason = resolveMaletaRemovalReason(can, removalLimit);
+
+          if (!seenForGlobalCounts.has(ref.reference)) {
+            seenForGlobalCounts.add(ref.reference);
+            if (commerciallyAvailable) commerciallyAvailableCount++;
+            if (eligiblePresence) eligiblePresenceCount++;
+            if (hasProductionInProcess) productionInProcessCount++;
+            if (removalReason === "BELOW_OPERATIONAL_LIMIT") removalByLimitCount++;
+            if (removalReason === "DORMANT_REFERENCE" || removalReason === "ARCHIVE_REVIEW" || removalReason === "UNKNOWN_ACTIVITY" || removalReason === "NON_COMMERCIAL_STOCK" || removalReason === "OUT_OF_STOCK") removalByCanonicalStateCount++;
+            if (removalReason === "DORMANT_REFERENCE" || removalReason === "ARCHIVE_REVIEW") excludedByAgeCount++;
+            if (removalReason === "EXTERNAL_INTEGRATION") excludedByExternalCount++;
+          }
+
+          const stateDiverges = oldStateCanonical !== can.commercialReferenceStatus;
+          const lineDiverges = oldDomainEquiv !== can.businessDomain;
+          const diverges = stateDiverges || lineDiverges;
+          if (stateDiverges) stateDivergences++;
+          if (lineDiverges) lineDivergences++;
+
+          // Waterfall for refs needing replacement
+          let supplyAction: MaletaSupplyAction | null = null;
+          if (ref.state === "reemplazar" || removalReason != null) {
+            vendorNeedsReplacement++;
+
+            const need: MaletaCoverageNeed = {
+              riskReference: ref.reference,
+              vendorId: v.vendorId,
+              businessDomain: can.businessDomain,
+              canonicalLine: can.canonicalLine,
+              grupoSag: can.grupoSag,
+              subgrupoSag: can.subgrupoSag,
+              sizeClass: can.sizeClass,
+            };
+
+            // Find warehouse candidates matching this need
+            const warehouseMatches: MaletaCoverageMatch[] = [];
+            for (const [, candidateCan] of canonicalMap) {
+              if (candidateCan.reference === ref.reference) continue;
+              if (!isEligibleForMaletaCoverage(candidateCan, coverageCtx)) continue;
+              if (!matchesMaletaCoverageNeed(candidateCan, need)) continue;
+              warehouseMatches.push({
+                candidateReference: candidateCan.reference,
+                riskReference: ref.reference,
+                vendorId: v.vendorId,
+                matchReason: buildMatchReason(can.canonicalLine, can.grupoSag, can.subgrupoSag, can.sizeClass),
+                candidateStock: candidateCan.compatibleCommercialStock,
+                candidateDomain: candidateCan.businessDomain,
+                candidateLine: candidateCan.canonicalLine,
+              });
+            }
+
+            // OP audit: check if OP candidates exist for this ref's subgrupo
+            const hasOpCandidates = ref.opReplacementOptions.length > 0;
+            if (hasOpCandidates) opMatchingNeeds++;
+
+            supplyAction = resolveMaletaSupplyAction({
+              ref: can,
+              hasWarehouseCandidates: warehouseMatches.length > 0,
+              hasActiveOpCandidates: hasOpCandidates,
+            });
+
+            if (supplyAction === "CREATE_NEW_PRODUCTION_NEED") newProductionNeededCount++;
+
+            // Reconciled counts
+            vendorMatchedPairs += warehouseMatches.length;
+            if (warehouseMatches.length > 0 || hasOpCandidates || can.productionStock > 0) {
+              vendorCoveredNeeds++;
+            } else {
+              vendorUncoveredNeeds++;
+            }
+            for (const m of warehouseMatches) vendorUniqueCandidates.add(m.candidateReference);
+
+            needDiffs.push({
+              riskReference: ref.reference,
+              vendorId: v.vendorId,
+              vendorName: v.vendorName,
+              canonicalLine: can.canonicalLine,
+              grupoSag: can.grupoSag,
+              subgrupoSag: can.subgrupoSag,
+              sizeClass: can.sizeClass,
+              oldSupplyAction: ref.supplyAction,
+              canonicalSupplyAction: supplyAction,
+              coverageMatches: warehouseMatches.slice(0, 5),
+              divergenceReason: ref.supplyAction !== mapCanonicalToOldAction(supplyAction)
+                ? `old=${ref.supplyAction ?? "null"} vs canonical=${supplyAction}`
+                : null,
+            });
+          }
+
+          entries.push({
+            reference: ref.reference,
+            vendorId: v.vendorId,
+            oldState: ref.state,
+            newCanonicalStatus: can.commercialReferenceStatus,
+            oldLine: ref.line,
+            newDomain: can.businessDomain,
+            commerciallyAvailable,
+            eligiblePresence,
+            eligibleCoverage,
+            structurallyEligibleProduction,
+            hasProductionInProcess,
+            supplyAction,
+            removalReason,
+            diverges,
+          });
+        }
+
+        vendorCoverageSummaries.push({
+          vendorId: v.vendorId,
+          vendorName: v.vendorName,
+          currentRefs: v.totalRefs,
+          needsReplacement: vendorNeedsReplacement,
+          candidatePoolCS: poolCS,
+          candidatePoolLT: poolLT,
+          candidatePoolIMPORT: poolIMPORT,
+          matchedPairsTotal: vendorMatchedPairs,
+          coveredNeeds: vendorCoveredNeeds,
+          uniqueCandidatesUsed: vendorUniqueCandidates.size,
+          excludedAlreadyInOwnBag: excludedInBag,
+          needsWithoutCoverage: vendorUncoveredNeeds,
+        });
+      }
+
+      // OP audit: count OP that DON'T match any need
+      const needSubgrupoIds = new Set<number>();
+      for (const nd of needDiffs) {
+        // Find subgrupoId from the risk ref in vendor data
+        for (const v of vendors) {
+          const vRef = v.refs.find((r) => r.reference === nd.riskReference);
+          if (vRef?.subgrupoId != null) needSubgrupoIds.add(vRef.subgrupoId);
+        }
+      }
+      for (const subId of opSubgruposWithEntries) {
+        if (!needSubgrupoIds.has(subId)) {
+          opDiscardedNoMatch += opOptionsBySubgrupoId.get(subId)?.length ?? 0;
+        }
+      }
+
+      const tDiffEnd = Date.now();
+
+      canonicalDiffReport = {
+        totalRefs: entries.length,
+        divergentRefs: entries.filter((e) => e.diverges).length,
+        stateDivergences,
+        lineDivergences,
+        commerciallyAvailable: commerciallyAvailableCount,
+        eligiblePresence: eligiblePresenceCount,
+        removalByLimit: removalByLimitCount,
+        removalByCanonicalState: removalByCanonicalStateCount,
+        productionInProcess: productionInProcessCount,
+        newProductionNeeded: newProductionNeededCount,
+        excludedByAge: excludedByAgeCount,
+        excludedByExternalIntegration: excludedByExternalCount,
+        entries,
+        vendorCoverageSummaries,
+        needDiffs,
+        opAudit: {
+          totalOpLoaded: opTotalLoaded,
+          activeAfterTemporalFilter: opTotalLoaded, // already filtered by loadOpBySubgrupo
+          withResolvedSubgrupo: opWithSubgrupo,
+          uniqueSubgruposWithOp: opSubgruposWithEntries.size,
+          matchingVendorNeeds: opMatchingNeeds,
+          discardedZombie: 0, // already filtered upstream
+          discardedNoSubgrupo: 0, // already filtered upstream
+          discardedNoMatchingNeed: opDiscardedNoMatch,
+        },
+        canonicalMap,
+        performanceMs: {
+          peQueryMs: lastClassifyPerformanceMs.peQueryMs,
+          pilQueryMs: lastClassifyPerformanceMs.pilQueryMs,
+          classifyLoopMs: lastClassifyPerformanceMs.classifyLoopMs,
+          diffComputationMs: tDiffEnd - tDiffStart,
+          totalCanonicalMs: tDiffEnd - t10Start,
+        },
+      };
+    } catch (err) {
+      console.error("[MALETAS] Canonical shadow diff failed (non-fatal):", err);
+    }
+  }
+
   return {
     vendors,
     summary,
@@ -542,7 +973,35 @@ export async function loadVendorSampleData(
     productionThresholds,
     importEvaluation,
     coverageResult,
+    canonicalDiffReport,
   };
+}
+
+// ── Canonical diff helpers ─────────────────────────────────────────────────────
+
+function buildMatchReason(
+  canonicalLine: string,
+  grupoSag: string | null,
+  subgrupoSag: string | null,
+  sizeClass: string | null,
+): string {
+  switch (canonicalLine) {
+    case "CASTILLITOS": return `grupo=${grupoSag ?? "?"} subgrupo=${subgrupoSag ?? "?"}`;
+    case "LATIN_KIDS": return `subgrupo=${subgrupoSag ?? "?"}`;
+    case "IMPORTACION": return `sizeClass=${sizeClass ?? "?"}`;
+    default: return canonicalLine;
+  }
+}
+
+function mapCanonicalToOldAction(action: MaletaSupplyAction | null): SupplyActionType | null {
+  if (action == null) return null;
+  switch (action) {
+    case "COVER_FROM_WAREHOUSE": return "REEMPLAZAR_BODEGA";
+    case "COVER_FROM_ACTIVE_OP": return "COMPLETAR_DESDE_OP";
+    case "WAIT_FOR_PRODUCTION_IN_PROCESS": return "PRODUCCION_SUGERIDA"; // closest old equivalent
+    case "CREATE_NEW_PRODUCTION_NEED": return "PRODUCCION_SUGERIDA";
+    case "NO_ACTION_DATA_ISSUE": return "RETIRAR_MOSTRARIO";
+  }
 }
 
 // ── State derivation (2-state model) ─────────────────────────────────────────
