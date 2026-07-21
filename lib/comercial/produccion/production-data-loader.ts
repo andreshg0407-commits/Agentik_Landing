@@ -6,7 +6,7 @@
  *
  * Data sources:
  *   - ProductEntity (textile products, LINEA != "5")
- *   - ProductInventoryLevel (textile warehouses, excluding import 24/42-46)
+ *   - ProductInventoryLevel (textile warehouses, excluding import via warehouse-master)
  *   - ProductionEvent (OP = active production orders)
  *   - CustomerOrderRecord (pending orders by product)
  *   - VendorBagItem (count of maletas referencing textile products)
@@ -24,8 +24,12 @@ import type {
 
 const db = prisma as any;
 
-// Import warehouses to EXCLUDE from textile inventory
-const IMPORT_WAREHOUSE_CODES = new Set(["24", "42", "43", "44", "45", "46"]);
+// Warehouses to EXCLUDE from textile inventory.
+// Uses warehouse-master canonical resolution against warehouseId (= ka_nl_bodega).
+// Excludes ALL import-domain warehouses (commercial + staging + containers).
+import { getAllImportDomainPks, getProductionOnlyPks } from "@/lib/inventory/warehouse-master";
+
+const IMPORT_DOMAIN_PKS = getAllImportDomainPks();
 
 /**
  * Load SubgroupInput[] from real Prisma data.
@@ -69,7 +73,7 @@ export async function loadProductionSubgroupInputs(
 
   const inventoryByProduct = new Map<string, number>();
   for (const lvl of allInventory) {
-    if (IMPORT_WAREHOUSE_CODES.has(lvl.warehouseId)) continue;
+    if (IMPORT_DOMAIN_PKS.has(lvl.warehouseId)) continue;
     const qty = Number(lvl.quantity ?? 0);
     if (qty > 0) {
       inventoryByProduct.set(lvl.productId, (inventoryByProduct.get(lvl.productId) ?? 0) + qty);
@@ -353,8 +357,9 @@ async function loadTiendasCounts(
   const result = new Map<string, number>();
   if (productIds.length === 0) return result;
 
-  // Store warehouses (not import, not production)
-  const PRODUCTION_WAREHOUSES = new Set(["14", "15"]);
+  // Exclude production warehouses from store distribution counts.
+  // Uses warehouse-master canonical resolution against warehouseId (= ka_nl_bodega).
+  const PRODUCTION_WAREHOUSE_SET = getProductionOnlyPks();
 
   try {
     const levels = await db.productInventoryLevel.findMany({
@@ -367,8 +372,8 @@ async function loadTiendasCounts(
     });
 
     for (const lvl of levels) {
-      if (IMPORT_WAREHOUSE_CODES.has(lvl.warehouseId)) continue;
-      if (PRODUCTION_WAREHOUSES.has(lvl.warehouseId)) continue;
+      if (IMPORT_DOMAIN_PKS.has(lvl.warehouseId)) continue;
+      if (PRODUCTION_WAREHOUSE_SET.has(lvl.warehouseId)) continue;
       // Count unique store warehouses per product
       const key = `${lvl.productId}:${lvl.warehouseId}`;
       if (!result.has(key)) {

@@ -5,7 +5,7 @@
  *
  * Data sources:
  *   Products:  ProductEntity (SAG LINEA "5" = imported accessories, category 148)
- *   Inventory: ProductInventoryLevel (import warehouses: 24, 42-46)
+ *   Inventory: ProductInventoryLevel (import warehouses via warehouse-master)
  *   Sales:     CustomerOrderLine + CustomerOrderRecord (product-level sales)
  *   Prices:    CommercialProductDataSource (SAG v_articulos PV3/PV4)
  *   Receipts:  CommercialProductDataSource (SAG MOVIMIENTOS C1/C2)
@@ -50,12 +50,15 @@ function isImportedProduct(product: { productLine: string | null }): boolean {
   return product.productLine !== null && IMPORT_PRODUCT_LINES.has(product.productLine);
 }
 
-// ── Import warehouse codes (Castillitos) ────────────────────────────────────
-// 24 = IMPORTACION (staging), 42-46 = IMPO CONTENEDOR containers
-// Only these warehouses hold imported product inventory.
-// Excludes textile (01,04), production (14,15), stores, transit.
+// ── Import warehouse identification ─────────────────────────────────────────
+// Uses warehouse-master canonical resolution.
+// Compared against ProductInventoryLevel.warehouseId (= ka_nl_bodega).
+// Only COMMERCIAL_IMPORT participates in commercial import inventory.
+// IMPORT_STAGING and IMPORT_CONTAINER are "no tener en cuenta" per admin.
 
-const IMPORT_WAREHOUSE_CODES = new Set(["24", "42", "43", "44", "45", "46"]);
+import { getCommercialAvailableImportPks } from "@/lib/inventory/warehouse-master";
+
+const IMPORT_WAREHOUSE_PKS = getCommercialAvailableImportPks();
 
 // ── Data source resolution ──────────────────────────────────────────────────
 
@@ -117,7 +120,7 @@ export async function listImportedReferences(orgId: string): Promise<ImportedRef
       totalStockMap.set(lvl.productId, (totalStockMap.get(lvl.productId) ?? 0) + qty);
     }
     // Import warehouse stock only
-    if (IMPORT_WAREHOUSE_CODES.has(lvl.warehouseId)) {
+    if (IMPORT_WAREHOUSE_PKS.has(lvl.warehouseId)) {
       remainingMap.set(lvl.productId, (remainingMap.get(lvl.productId) ?? 0) + qty);
     }
   }
