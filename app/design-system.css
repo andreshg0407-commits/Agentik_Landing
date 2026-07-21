@@ -2168,6 +2168,10 @@
   background: var(--ag-surface-alt, #f2f4f7);
 }
 
+/* Hidden scrollbar utility */
+.ag-hide-scrollbar::-webkit-scrollbar { display: none; }
+.ag-hide-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+
 /* Stage graph container */
 .ag-orchestrator-graph {
   min-width: 0;

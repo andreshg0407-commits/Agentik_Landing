@@ -25,14 +25,11 @@ import type {
   InventoryControlSnapshot,
   InventoryItem,
   InventoryOperationalState,
-  CanonicalLine,
   SubgrupoCoverage,
   AccesorioBajaCantidad,
 } from "@/lib/inventory/inventory-control-types";
 import {
   CANONICAL_LINE_LABELS,
-  CANONICAL_LINE_ORDER,
-  getActiveCanonicalInventory,
 } from "@/lib/inventory/inventory-control-types";
 import type {
   CanonicalInventorySnapshot,
@@ -40,8 +37,6 @@ import type {
 } from "@/lib/inventory/inventory-canonical-status-loader";
 import type { PanelDestination, VaultSubcategory } from "@/lib/inventory/inventory-panel-destination";
 import {
-  PANEL_DESTINATION_LABELS,
-  PANEL_DESTINATION_ORDER,
   VAULT_SUBCATEGORY_LABELS,
 } from "@/lib/inventory/inventory-panel-destination";
 import type { CommercialReferenceStatus } from "@/lib/inventory/commercial-reference-status";
@@ -140,6 +135,26 @@ const TAB_ORDER: PanelDestination[] = [
   "VAULT",
 ];
 
+const TAB_LABELS: Record<PanelDestination, string> = {
+  CASTILLITOS: "Castillitos",
+  LATIN_KIDS: "Latin Kids",
+  IMPORTACION: "Importacion",
+  SIN_CLASIFICAR: "Sin clasificar",
+  AGOTADOS: "Agotadas",
+  VAULT: "Historico",
+  EXTERNAL_EXCLUDED: "Externas",
+};
+
+const TAB_ICONS: Record<PanelDestination, string> = {
+  CASTILLITOS: "\uD83D\uDC55",
+  LATIN_KIDS: "\uD83D\uDC76",
+  IMPORTACION: "\uD83D\uDCE6",
+  SIN_CLASIFICAR: "\u2753",
+  AGOTADOS: "\u2B55",
+  VAULT: "\uD83D\uDDC4\uFE0F",
+  EXTERNAL_EXCLUDED: "",
+};
+
 // Grid columns
 const TEXTILE_GRID = "36px 120px 1fr 120px 80px 90px";
 const ACCESSORY_GRID = "36px 100px 1fr 100px 70px 80px 80px";
@@ -166,7 +181,7 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
   const [pageMap, setPageMap] = useState<Record<string, number>>({});
 
   const { health, dataQuality, items, subgrupoCoverage, accesoriosBajaCantidad } = snapshot;
-  const { panels, statusDistribution, externalExcludedCount, canonicalItems } = canonicalSnapshot;
+  const { panels, canonicalItems } = canonicalSnapshot;
 
   // ── Compute tab counts ─────────────────────────────────────────────────
   const tabCounts = useMemo(() => {
@@ -464,19 +479,6 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
     };
   }, [drawerItem, enrichment, enrichmentLoading]);
 
-  // ── Derive header status ───────────────────────────────────────────────
-
-  const totalActive = tabCounts.CASTILLITOS + tabCounts.LATIN_KIDS + tabCounts.IMPORTACION + tabCounts.SIN_CLASIFICAR;
-
-  const headerStatus =
-    dataQuality.freshnessLabel === "SIN_DATOS" ? "critical" as const :
-    dataQuality.freshnessLabel === "DESACTUALIZADO" ? "warning" as const :
-    health.coberturaComercialPct >= 70 ? "ok" as const : "warning" as const;
-
-  const headerStatusLabel =
-    dataQuality.freshnessLabel === "SIN_DATOS" ? "Sin datos" :
-    `${health.coberturaComercialPct}% cobertura · ${dataQuality.freshnessLabel}`;
-
   return (
     <div style={{ padding: S[6], maxWidth: 1200 }}>
       <OperationalWorkspaceHeader
@@ -485,58 +487,55 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
           { label: "Inventario" },
         ]}
         title="Inventario"
-        subtitle={`Disponibilidad comercial — ${totalActive} vendibles · ${tabCounts.AGOTADOS} agotadas · ${tabCounts.VAULT} vault · ${items.length} totales`}
-        status={headerStatus}
-        statusLabel={headerStatusLabel}
+        subtitle={`Centro de control comercial — ${items.length.toLocaleString("es-CO")} referencias`}
       />
 
       {/* ── KPI Strip ─────────────────────────────────────────────────── */}
       <div style={{
         display: "grid",
-        gridTemplateColumns: "repeat(3, 1fr)",
+        gridTemplateColumns: "repeat(5, 1fr)",
         gap: S[3],
         marginBottom: S[5],
       }}>
         <KpiCard
-          label="Refs vendibles"
-          value={totalActive}
-          detail="Con stock comercial disponible"
+          label="Total referencias"
+          value={items.length}
+          detail="Referencias registradas"
           detailColor={C.inkGhost}
-          onClick={() => switchTab("CASTILLITOS")}
         />
         <KpiCard
-          label="Disponible en bodega"
+          label="Total unidades"
           value={health.totalDisponibleBodega}
           suffix=" uds"
-          onClick={() => { switchTab("CASTILLITOS"); setFilter("disponible"); }}
-        />
-        <KpiCard
-          label="Vault"
-          value={tabCounts.VAULT}
-          color={C.inkLight}
-          detail={`${statusDistribution.DORMANT} dormantes · ${statusDistribution.ARCHIVE_REVIEW} archivo`}
+          detail="Inventario disponible"
           detailColor={C.inkGhost}
-          onClick={() => switchTab("VAULT")}
         />
         <KpiCard
           label="Castillitos"
-          value={tabCounts.CASTILLITOS}
+          value={health.totalCS}
+          suffix=" uds"
           color={C.blueDark}
+          detail="Unidades disponibles"
+          detailColor={C.inkGhost}
           onClick={() => switchTab("CASTILLITOS")}
         />
         <KpiCard
           label="Latin Kids"
-          value={tabCounts.LATIN_KIDS}
+          value={health.totalLT}
+          suffix=" uds"
           color={C.blueDark}
+          detail="Unidades disponibles"
+          detailColor={C.inkGhost}
           onClick={() => switchTab("LATIN_KIDS")}
         />
         <KpiCard
-          label="Agotadas"
-          value={tabCounts.AGOTADOS}
-          color={C.red}
-          detail={`Activas sin stock comercial${externalExcludedCount > 0 ? ` · ${externalExcludedCount} externas excluidas` : ""}`}
+          label="Importacion"
+          value={health.totalImportacion}
+          suffix=" uds"
+          color={C.blueDark}
+          detail="Unidades disponibles"
           detailColor={C.inkGhost}
-          onClick={() => switchTab("AGOTADOS")}
+          onClick={() => switchTab("IMPORTACION")}
         />
       </div>
 
@@ -544,40 +543,12 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
       <SyncStatusBlock dataQuality={dataQuality} />
 
       {/* ── Tab Navigation ─────────────────────────────────────────────── */}
-      <div style={{
-        display: "flex",
-        gap: S[1],
-        marginBottom: S[4],
-        borderBottom: `1px solid ${C.line}`,
-        paddingBottom: S[1],
-        flexWrap: "wrap" as const,
-      }}>
-        {TAB_ORDER.map(tab => {
-          const active = activeTab === tab;
-          const count = tabCounts[tab];
-          return (
-            <button
-              key={tab}
-              onClick={() => switchTab(tab)}
-              style={{
-                fontFamily: T.mono,
-                fontSize: T.sz["2xs"],
-                fontWeight: active ? T.wt.bold : T.wt.normal,
-                padding: `${S[2]}px ${S[3]}px`,
-                borderRadius: `${R.sm}px ${R.sm}px 0 0`,
-                border: "none",
-                borderBottom: active ? `2px solid ${C.blueDark}` : "2px solid transparent",
-                background: active ? `${C.blueDark}08` : "transparent",
-                color: active ? C.blueDark : C.inkMid,
-                cursor: "pointer",
-                transition: "all 0.15s",
-              }}
-            >
-              {PANEL_DESTINATION_LABELS[tab]} ({count})
-            </button>
-          );
-        })}
-      </div>
+      <TabNavigation
+        tabs={TAB_ORDER}
+        activeTab={activeTab}
+        tabCounts={tabCounts}
+        onSwitch={switchTab}
+      />
 
       {/* ── Filters + Search (only for line-based tabs) ─────────────── */}
       {activeTab !== "VAULT" && activeTab !== "AGOTADOS" && (
@@ -639,7 +610,7 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
             color: C.inkLight,
             flexShrink: 0,
           }}>
-            {filteredPanelItems.length} ref{filteredPanelItems.length !== 1 ? "s" : ""}
+            {filteredPanelItems.length} referencia{filteredPanelItems.length !== 1 ? "s" : ""}
           </span>
         </div>
       )}
@@ -676,7 +647,7 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
             color: C.inkLight,
             flexShrink: 0,
           }}>
-            {panelItems.length} ref{panelItems.length !== 1 ? "s" : ""}
+            {panelItems.length} referencia{panelItems.length !== 1 ? "s" : ""}
           </span>
         </div>
       )}
@@ -691,7 +662,7 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
                   ? `Sin resultados para "${search.trim()}"`
                   : filter !== "todos"
                   ? `Sin referencias con estado "${FILTER_OPTIONS.find(o => o.key === filter)?.label}"`
-                  : `Sin datos de inventario para ${PANEL_DESTINATION_LABELS[activeTab]}`
+                  : `Sin datos de inventario para ${TAB_LABELS[activeTab]}`
               }
               hint={
                 dataQuality.freshnessLabel === "SIN_DATOS"
@@ -865,7 +836,7 @@ function AgotadosTabContent({
     return (
       <EmptyState
         message="Sin referencias agotadas"
-        hint="Todas las referencias tienen stock disponible"
+        hint="Todas las referencias tienen unidades disponibles"
       />
     );
   }
@@ -886,7 +857,7 @@ function AgotadosTabContent({
         background: C.surfaceAlt ?? C.surface,
         borderBottom: `1px solid ${C.line}`,
       }}>
-        {["", "Referencia", "Descripcion", "Linea original", "Subgrupo", "Disponible"].map((h, i) => (
+        {["", "Referencia", "Descripcion", "Linea", "Subgrupo", "Disponible"].map((h, i) => (
           <span key={`${h}-${i}`} style={{
             fontFamily: T.mono,
             fontSize: T.sz["2xs"],
@@ -951,8 +922,8 @@ function VaultTabContent({
   if (entries.length === 0) {
     return (
       <EmptyState
-        message="Sin referencias en vault"
-        hint="Todas las referencias estan activas y disponibles comercialmente"
+        message="Sin referencias en historico"
+        hint="Todas las referencias estan activas y disponibles"
       />
     );
   }
@@ -1006,7 +977,7 @@ function VaultTabContent({
                   fontSize: T.sz["2xs"],
                   color: C.inkLight,
                 }}>
-                  {items.length} ref{items.length !== 1 ? "s" : ""}
+                  {items.length} referencia{items.length !== 1 ? "s" : ""}
                 </span>
               </div>
             </button>
@@ -1028,7 +999,7 @@ function VaultTabContent({
                   background: C.surfaceAlt ?? C.surface,
                   borderBottom: `1px solid ${C.line}`,
                 }}>
-                  {["Referencia", "Descripcion", "Linea", "Estado", "Stock comercial", "Stock otro", "Accion"].map((h, i) => (
+                  {["Referencia", "Descripcion", "Linea", "Estado", "Disponible", "En proceso", "Accion"].map((h, i) => (
                     <span key={`${h}-${i}`} style={{
                       fontFamily: T.mono,
                       fontSize: T.sz["2xs"],
@@ -1211,15 +1182,13 @@ function CanonicalStatusSection({ canonical }: { canonical: CanonicalInventoryIt
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: `${S[2]}px ${S[4]}px` }}>
         <DrawerField label="Estado" value={statusLabel} valueColor={statusColor} />
-        <DrawerField label="Dominio" value={canonical.businessDomain.replace(/_/g, " ")} />
-        <DrawerField label="Ciclo de vida" value={canonical.lifecycleState.replace(/_/g, " ")} />
-        <DrawerField label="Linea canonica" value={CANONICAL_LINE_LABELS[canonical.canonicalLine]} />
+        <DrawerField label="Linea" value={CANONICAL_LINE_LABELS[canonical.canonicalLine]} />
         <DrawerField
-          label="Stock comercial"
+          label="Disponible"
           value={canonical.compatibleCommercialStock > 0 ? canonical.compatibleCommercialStock.toLocaleString("es-CO") : "\u2014"}
         />
         <DrawerField
-          label="Stock produccion"
+          label="En produccion"
           value={canonical.totalProductionStock > 0 ? canonical.totalProductionStock.toLocaleString("es-CO") : "\u2014"}
         />
         {canonical.lastRelevantActivityAt && (
@@ -1235,32 +1204,12 @@ function CanonicalStatusSection({ canonical }: { canonical: CanonicalInventoryIt
             valueColor={canonical.inactivityDays > 365 ? C.red : canonical.inactivityDays > 180 ? C.amber : C.ink}
           />
         )}
-        <DrawerField label="Panel" value={PANEL_DESTINATION_LABELS[canonical.panelDestination]} />
+        <DrawerField label="Ubicacion" value={TAB_LABELS[canonical.panelDestination]} />
         {canonical.vaultSubcategory && (
-          <DrawerField label="Subcategoria vault" value={VAULT_SUBCATEGORY_LABELS[canonical.vaultSubcategory]} />
-        )}
-        {canonical.exclusionReason && (
-          <DrawerField label="Exclusion" value={canonical.exclusionReason} valueColor={C.red} />
+          <DrawerField label="Subcategoria" value={VAULT_SUBCATEGORY_LABELS[canonical.vaultSubcategory]} />
         )}
       </div>
 
-      {canonical.dataQualityFlags.length > 0 && (
-        <div style={{ marginTop: S[3], display: "flex", gap: S[1], flexWrap: "wrap" as const }}>
-          {canonical.dataQualityFlags.map(flag => (
-            <span key={flag} style={{
-              fontFamily: T.mono,
-              fontSize: T.sz["2xs"],
-              color: C.amber,
-              padding: "2px 6px",
-              borderRadius: R.sm,
-              background: `${C.amber}10`,
-              border: `1px solid ${C.amber}30`,
-            }}>
-              {flag}
-            </span>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -1350,108 +1299,231 @@ function KpiCard({
   );
 }
 
-function MiniStat({ label, value, color }: { label: string; value: number; color: string }) {
+// ── Tab Navigation (single-line, horizontally scrollable) ──────────────────
+
+function TabNavigation({
+  tabs,
+  activeTab,
+  tabCounts,
+  onSwitch,
+}: {
+  tabs: PanelDestination[];
+  activeTab: PanelDestination;
+  tabCounts: Record<PanelDestination, number>;
+  onSwitch: (tab: PanelDestination) => void;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+
+  const checkScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 4);
+    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+  }, []);
+
+  useEffect(() => {
+    checkScroll();
+    const el = scrollRef.current;
+    if (!el) return;
+    el.addEventListener("scroll", checkScroll, { passive: true });
+    const ro = new ResizeObserver(checkScroll);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener("scroll", checkScroll);
+      ro.disconnect();
+    };
+  }, [checkScroll]);
+
+  const scroll = (dir: "left" | "right") => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollBy({ left: dir === "right" ? 180 : -180, behavior: "smooth" });
+  };
+
   return (
-    <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-      <span style={{
-        width: 6,
-        height: 6,
-        borderRadius: "50%",
-        background: color,
-        display: "inline-block",
-        flexShrink: 0,
-      }} />
-      <span style={{
-        fontFamily: T.mono,
-        fontSize: T.sz["2xs"],
-        color: C.inkMid,
-      }}>
-        {label} {value}
-      </span>
-    </span>
+    <div style={{
+      position: "relative" as const,
+      marginBottom: S[5],
+    }}>
+      {/* Left arrow */}
+      {canScrollLeft && (
+        <button
+          onClick={() => scroll("left")}
+          aria-label="Desplazar pestanas a la izquierda"
+          style={{
+            position: "absolute" as const,
+            left: 0,
+            top: 0,
+            bottom: 2,
+            width: 32,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: `linear-gradient(90deg, ${C.surface} 60%, transparent)`,
+            border: "none",
+            cursor: "pointer",
+            zIndex: 2,
+            fontFamily: T.mono,
+            fontSize: T.sz.sm,
+            color: C.inkMid,
+          }}
+        >
+          {"\u25C0"}
+        </button>
+      )}
+
+      {/* Scrollable track */}
+      <div
+        ref={scrollRef}
+        className="ag-hide-scrollbar"
+        style={{
+          display: "flex",
+          gap: S[2],
+          borderBottom: `2px solid ${C.line}`,
+          paddingBottom: 0,
+          overflowX: "auto" as const,
+        }}
+      >
+        {tabs.map(tab => {
+          const active = activeTab === tab;
+          const count = tabCounts[tab];
+          const icon = TAB_ICONS[tab];
+          return (
+            <button
+              key={tab}
+              onClick={() => onSwitch(tab)}
+              style={{
+                fontFamily: T.mono,
+                fontSize: T.sz.xs,
+                fontWeight: active ? T.wt.bold : T.wt.semibold,
+                padding: `${S[3]}px ${S[4]}px`,
+                borderRadius: `${R.md}px ${R.md}px 0 0`,
+                border: "none",
+                borderBottom: active ? `3px solid ${C.blueDark}` : "3px solid transparent",
+                background: active ? `${C.blueDark}0C` : "transparent",
+                color: active ? C.blueDark : C.inkMid,
+                cursor: "pointer",
+                transition: "all 0.15s",
+                display: "flex",
+                alignItems: "center",
+                gap: S[2],
+                marginBottom: -2,
+                whiteSpace: "nowrap" as const,
+                flexShrink: 0,
+              }}
+            >
+              <span style={{ fontSize: T.sz.sm }}>{icon}</span>
+              <span>{TAB_LABELS[tab]}</span>
+              <span style={{
+                fontFamily: T.mono,
+                fontSize: T.sz["2xs"],
+                fontWeight: T.wt.bold,
+                color: active ? C.blueDark : C.inkLight,
+                background: active ? `${C.blueDark}14` : `${C.ink}08`,
+                padding: "2px 6px",
+                borderRadius: R.pill,
+                lineHeight: 1.2,
+              }}>
+                {count.toLocaleString("es-CO")}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Right arrow */}
+      {canScrollRight && (
+        <button
+          onClick={() => scroll("right")}
+          aria-label="Desplazar pestanas a la derecha"
+          style={{
+            position: "absolute" as const,
+            right: 0,
+            top: 0,
+            bottom: 2,
+            width: 32,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: `linear-gradient(270deg, ${C.surface} 60%, transparent)`,
+            border: "none",
+            cursor: "pointer",
+            zIndex: 2,
+            fontFamily: T.mono,
+            fontSize: T.sz.sm,
+            color: C.inkMid,
+          }}
+        >
+          {"\u25B6"}
+        </button>
+      )}
+    </div>
   );
 }
 
 // ── Sync Status Block ────────────────────────────────────────────────────────
 
 function SyncStatusBlock({ dataQuality }: { dataQuality: InventoryControlSnapshot["dataQuality"] }) {
-  const bg =
-    dataQuality.freshnessLabel === "SIN_DATOS" ? `${C.red}08` :
-    dataQuality.freshnessLabel === "DESACTUALIZADO" ? "#fffbeb" :
-    `${C.green}08`;
+  const isStale = dataQuality.freshnessLabel === "SIN_DATOS" || dataQuality.freshnessLabel === "DESACTUALIZADO";
+  const dotColor = isStale ? C.amber : C.green;
 
-  const borderColor =
-    dataQuality.freshnessLabel === "SIN_DATOS" ? `${C.red}33` :
-    dataQuality.freshnessLabel === "DESACTUALIZADO" ? `${C.amber}33` :
-    `${C.green}33`;
-
-  const labelColor =
-    dataQuality.freshnessLabel === "SIN_DATOS" ? C.red :
-    dataQuality.freshnessLabel === "DESACTUALIZADO" ? C.amber :
-    C.green;
+  // Format date in human-readable LATAM style
+  let dateLabel = "";
+  if (dataQuality.snapshotAt) {
+    const d = new Date(dataQuality.snapshotAt);
+    const datePart = d.toLocaleDateString("es-CO", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+      timeZone: "America/Bogota",
+    });
+    const timePart = d.toLocaleTimeString("es-CO", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+      timeZone: "America/Bogota",
+    });
+    dateLabel = `${datePart} \u00B7 ${timePart}`;
+  }
 
   return (
     <div style={{
-      padding: `${S[3]}px ${S[4]}px`,
-      marginBottom: S[5],
-      background: bg,
-      border: `1px solid ${borderColor}`,
-      borderRadius: R.sm,
       display: "flex",
       alignItems: "center",
-      justifyContent: "space-between",
+      gap: S[3],
+      marginBottom: S[5],
+      padding: `${S[2]}px 0`,
     }}>
-      <div style={{ display: "flex", alignItems: "center", gap: S[3] }}>
-        <span style={{
-          width: 8,
-          height: 8,
-          borderRadius: "50%",
-          background: labelColor,
-          display: "inline-block",
-          flexShrink: 0,
-        }} />
-        <span style={{
-          fontFamily: T.mono,
-          fontSize: T.sz.xs,
-          fontWeight: T.wt.semibold,
-          color: labelColor,
-        }}>
-          {dataQuality.freshnessLabel}
-        </span>
-        {dataQuality.snapshotAt && (
-          <span
-            suppressHydrationWarning
-            style={{
-              fontFamily: T.mono,
-              fontSize: T.sz["2xs"],
-              color: C.inkMid,
-            }}
-          >
-            {formatDateTimeEsCoStable(dataQuality.snapshotAt)}
-          </span>
-        )}
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: S[3] }}>
-        {dataQuality.sources.map((s, i) => (
-          <span key={i} style={{
+      <span style={{
+        width: 8,
+        height: 8,
+        borderRadius: "50%",
+        background: dotColor,
+        display: "inline-block",
+        flexShrink: 0,
+      }} />
+      <span style={{
+        fontFamily: T.mono,
+        fontSize: T.sz.xs,
+        fontWeight: T.wt.semibold,
+        color: isStale ? C.amber : C.inkMid,
+      }}>
+        {isStale ? "Desactualizado" : "Actualizado"}
+      </span>
+      {dateLabel && (
+        <span
+          suppressHydrationWarning
+          style={{
             fontFamily: T.mono,
             fontSize: T.sz["2xs"],
-            color: C.inkGhost,
-            padding: "2px 6px",
-            borderRadius: R.sm,
-            background: `${C.ink}06`,
-          }}>
-            {s}
-          </span>
-        ))}
-        <span style={{
-          fontFamily: T.mono,
-          fontSize: T.sz["2xs"],
-          color: C.inkLight,
-        }}>
-          {dataQuality.confidence}% confianza
+            color: C.inkLight,
+          }}
+        >
+          {dateLabel}
         </span>
-      </div>
+      )}
     </div>
   );
 }
@@ -1459,7 +1531,7 @@ function SyncStatusBlock({ dataQuality }: { dataQuality: InventoryControlSnapsho
 // ── Table Headers ────────────────────────────────────────────────────────────
 
 function TextileTableHeader() {
-  const headers = ["", "Referencia", "Descripcion", "Subgrupo SAG", "Disponible", "Estado"];
+  const headers = ["", "Referencia", "Descripcion", "Subgrupo", "Disponible", "Estado"];
   const centerAligned = new Set([4]);
   return (
     <div className="ag-op-row" style={{
