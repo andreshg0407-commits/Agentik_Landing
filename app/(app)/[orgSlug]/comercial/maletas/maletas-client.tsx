@@ -420,13 +420,57 @@ export function MaletasClient({
     () => productionThresholds.filter((p) => !isPendingClassification(p)),
     [productionThresholds, isPendingClassification],
   );
-  const prodThresholdProducir = useMemo(
-    () => productionValid.filter((p) => p.decision === "PRODUCIR"),
+
+  // COMERCIAL-MALETAS-PRODUCTION-PRIORITY-ENGINE-01
+  // COMERCIAL-MALETAS-PRODUCTION-RISK-LIST-01
+  //
+  // 4-bucket classification: IMMEDIATE / RISK / ACTIVE_OP / HEALTHY
+  // Mutually exclusive, exhaustive partition of productionValid.
+  //
+  // Risk limits calibrated from real data distribution (Jul 2026):
+  //   Castillitos: lowest no-OP stock = 359 → risk ≤ 500 catches 4 items
+  //   Latin Kids:  all items have OP → risk ≤ 800 future-proofed
+  //
+  // Change these constants to adjust policy. Single source of truth.
+  const PRODUCTION_RISK_LIMITS: Record<string, number> = {
+    Castillitos: 500,
+    "Latin Kids": 800,
+  };
+
+  // Bucket 1: IMMEDIATE — stock ≤ threshold, no OP activa
+  const prodImmediate = useMemo(
+    () => productionValid
+      .filter((p) => p.decision === "PRODUCIR")
+      .sort((a, b) => a.stockDisponible - b.stockDisponible),
     [productionValid],
   );
-  const prodThresholdEsperar = useMemo(
-    () => productionValid.filter((p) => p.decision === "ESPERAR_OP"),
+
+  // Bucket 3: ACTIVE_OP — has OP activa (regardless of stock level)
+  const prodWithOp = useMemo(
+    () => productionValid.filter((p) => p.tieneOpActiva),
     [productionValid],
+  );
+
+  // Bucket 2: RISK — stock > threshold, stock ≤ risk limit, no OP activa
+  const prodRisk = useMemo(
+    () => productionValid
+      .filter((p) => {
+        if (p.decision !== "SIN_ACCION") return false;
+        if (p.tieneOpActiva) return false;
+        const limit = PRODUCTION_RISK_LIMITS[p.brand];
+        if (limit === undefined) return false;
+        return p.stockDisponible <= limit;
+      })
+      .sort((a, b) => a.stockDisponible - b.stockDisponible),
+    [productionValid],
+  );
+
+  // Bucket 4: HEALTHY — stock > risk limit, no OP activa (NOT rendered)
+  const prodHealthy = useMemo(
+    () => productionValid.filter((p) =>
+      p.decision === "SIN_ACCION" && !p.tieneOpActiva && !prodRisk.includes(p),
+    ),
+    [productionValid, prodRisk],
   );
 
   // Drawer: state counts for action cards (uses activeRefs for main panel)
@@ -470,7 +514,7 @@ export function MaletasClient({
             Ir a:
           </span>
           {[
-            { label: "Produccion", ref: productionSectionRef, key: "produccion", count: prodThresholdProducir.length },
+            { label: "Produccion", ref: productionSectionRef, key: "produccion", count: prodImmediate.length },
             { label: "Oportunidades", ref: coverageSectionRef, key: "cobertura", count: coverageResult.textileCoverage.length + coverageResult.importCoverage.length },
           ].map(({ label, ref, key, count }) => (
             <button
@@ -645,96 +689,179 @@ export function MaletasClient({
           </div>
         )}
 
-        {/* ── Produccion por umbral (MALLETS-FUNCTIONAL-RECOVERY-01 Phase 5) ── */}
+        {/* ── Produccion — centro de decisiones (COMERCIAL-MALETAS-PRODUCTION-PRIORITY-ENGINE-01) ── */}
         <SectionHeader
           title="Produccion"
-          subtitle="Evaluacion por marca + grupo + subgrupo. Umbral: CS \u2264 100, LT \u2264 200"
-          count={productionValid.length > 0 ? productionValid.length : undefined}
+          subtitle={
+            prodImmediate.length > 0
+              ? `${prodImmediate.length} inmediata${prodImmediate.length > 1 ? "s" : ""}, ${prodRisk.length} proximos al limite`
+              : prodRisk.length > 0
+                ? `0 inmediatas, ${prodRisk.length} proximos al limite`
+                : "Sin acciones pendientes"
+          }
+          count={prodImmediate.length + prodRisk.length > 0 ? prodImmediate.length + prodRisk.length : undefined}
           open={sectionOpen.produccion}
           onToggle={() => toggleSection("produccion")}
           sectionRef={productionSectionRef}
-          statusHint={prodThresholdProducir.length > 0 ? `${prodThresholdProducir.length} PRODUCIR` : "sin alertas"}
+          statusHint={prodImmediate.length > 0 ? `${prodImmediate.length} inmediata${prodImmediate.length > 1 ? "s" : ""}` : "controlado"}
         >
-          {productionValid.length > 0 ? (
-            <div style={{
-              background: C.white, borderRadius: R.lg,
-              border: `1px solid ${C.line}`, boxShadow: `0 1px 3px ${C.ink}06`,
-              overflow: "hidden", overflowX: "auto", minWidth: 0,
-            }}>
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: "minmax(80px,0.8fr) minmax(90px,1fr) minmax(100px,1.2fr) 80px 80px 80px 120px 110px",
-                padding: `10px 16px`, background: C.surfaceAlt,
-                borderBottom: `1px solid ${C.line}`, gap: S[2], alignItems: "center",
+          {/* ── KPIs de decisión ── */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: S[3], marginBottom: S[4] }}>
+            {[
+              { label: "Produccion inmediata", value: prodImmediate.length, color: prodImmediate.length > 0 ? C.red : C.green },
+              { label: "Proximos al limite", value: prodRisk.length, color: prodRisk.length > 0 ? C.amber : C.green },
+              { label: "Con OP activa", value: prodWithOp.length, color: prodWithOp.length > 0 ? C.blueDark : C.inkFaint },
+            ].map((kpi) => (
+              <div key={kpi.label} style={{
+                background: C.white, borderRadius: R.lg,
+                border: `1px solid ${C.line}`, padding: S[4],
+                textAlign: "center" as const,
               }}>
-                {["Marca", "Grupo", "Subgrupo", "Stock", "Umbral", "OP Activa", "Estado datos", "Decision"].map((h) => (
-                  <div key={h} style={{
-                    ...listHeaderCell,
-                    textAlign: h === "Stock" || h === "Umbral" ? "right" as const : h === "Decision" || h === "OP Activa" || h === "Estado datos" ? "center" as const : undefined,
-                  }}>{h}</div>
-                ))}
+                <div style={{ fontFamily: T.mono, fontSize: 22, fontWeight: 700, color: kpi.color }}>
+                  {kpi.value}
+                </div>
+                <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 600, color: C.inkFaint, marginTop: S[1] }}>
+                  {kpi.label}
+                </div>
               </div>
-              {productionValid.map((pt, i) => {
-                const decColor: Record<ProductionDecision, string> = {
-                  PRODUCIR: C.red, ESPERAR_OP: C.amber, SIN_ACCION: C.green,
-                  DATOS_INSUFICIENTES: C.inkFaint, EN_VALIDACION: C.amber,
-                };
-                const decLabel: Record<ProductionDecision, string> = {
-                  PRODUCIR: "PRODUCIR", ESPERAR_OP: "ESPERAR OP", SIN_ACCION: "SIN ACCION",
-                  DATOS_INSUFICIENTES: "SIN DATOS", EN_VALIDACION: "EN VALIDACION",
-                };
-                const dataStateLabel: Record<string, string> = {
-                  STOCK_REAL_CERO: "Cero real",
-                  STOCK_REAL_POSITIVO: "Dato real",
-                  DATO_DESACTUALIZADO: "Desactualizado",
-                };
-                const dataStateColor: Record<string, string> = {
-                  STOCK_REAL_CERO: C.red,
-                  STOCK_REAL_POSITIVO: C.green,
-                  DATO_DESACTUALIZADO: C.amber,
-                };
-                return (
-                  <div key={`${pt.brand}|${pt.group ?? ""}|${pt.subgrupoSag}`} style={{
+            ))}
+          </div>
+
+          {/* ── Produccion inmediata ── */}
+          {prodImmediate.length > 0 && (
+            <div style={{ marginBottom: S[4] }}>
+              <div style={{
+                fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+                color: C.red, textTransform: "uppercase" as const, letterSpacing: "0.08em",
+                marginBottom: S[2],
+              }}>
+                Produccion inmediata
+              </div>
+              <div style={{
+                background: C.white, borderRadius: R.lg,
+                border: `1px solid ${C.line}`, boxShadow: `0 1px 3px ${C.ink}06`,
+                overflow: "hidden", overflowX: "auto", minWidth: 0,
+              }}>
+                <div style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(80px,0.8fr) minmax(90px,1fr) minmax(100px,1.2fr) 80px 80px 130px",
+                  padding: "10px 16px", background: C.surfaceAlt,
+                  borderBottom: `1px solid ${C.line}`, gap: S[2], alignItems: "center",
+                }}>
+                  {["Marca", "Grupo", "Subgrupo", "Stock", "Umbral", "Accion"].map((h) => (
+                    <div key={h} style={{
+                      ...listHeaderCell,
+                      textAlign: h === "Stock" || h === "Umbral" ? "right" as const : h === "Accion" ? "center" as const : undefined,
+                    }}>{h}</div>
+                  ))}
+                </div>
+                {prodImmediate.map((pt, i) => (
+                  <div key={`imm-${pt.brand}|${pt.group ?? ""}|${pt.subgrupoSag}`} style={{
                     display: "grid",
-                    gridTemplateColumns: "minmax(80px,0.8fr) minmax(90px,1fr) minmax(100px,1.2fr) 80px 80px 80px 120px 110px",
+                    gridTemplateColumns: "minmax(80px,0.8fr) minmax(90px,1fr) minmax(100px,1.2fr) 80px 80px 130px",
                     padding: ROW_PAD,
-                    borderBottom: i === productionValid.length - 1 ? "none" : `1px solid ${C.lineSubtle}`,
+                    borderBottom: i === prodImmediate.length - 1 ? "none" : `1px solid ${C.lineSubtle}`,
                     gap: S[2], alignItems: "center",
                   }}>
                     <div style={{ ...listCell, fontWeight: 700, color: C.titleDeep }}>{pt.brand}</div>
                     <div style={{ ...listCell, color: C.ink }}>{pt.group ?? "\u2014"}</div>
                     <div style={{ ...listCell, color: C.ink }}>{pt.subgrupoSag}</div>
-                    <div style={{ ...listCell, fontWeight: 700, color: pt.stockDisponible <= pt.umbral ? C.red : C.green, textAlign: "right" as const }}>
+                    <div style={{ ...listCell, fontWeight: 700, color: C.red, textAlign: "right" as const }}>
                       {pt.stockDisponible}
                     </div>
                     <div style={{ ...listCell, color: C.inkFaint, textAlign: "right" as const }}>{pt.umbral || "\u2014"}</div>
-                    <div style={{ ...listCell, textAlign: "center" as const, color: pt.tieneOpActiva ? C.amber : C.inkFaint }}>{pt.tieneOpActiva ? "Si" : "No"}</div>
-                    <div style={{
-                      fontFamily: T.mono, fontSize: 9, fontWeight: 600,
-                      color: dataStateColor[pt.dataState] ?? C.inkFaint,
-                      textAlign: "center" as const, whiteSpace: "nowrap" as const,
-                    }}>
-                      {dataStateLabel[pt.dataState] ?? pt.dataState}
-                    </div>
                     <div style={{
                       fontFamily: T.mono, fontSize: 10, fontWeight: 700,
-                      color: C.white, background: decColor[pt.decision],
+                      color: C.white, background: C.red,
                       padding: "2px 8px", borderRadius: R.pill,
                       textAlign: "center" as const, whiteSpace: "nowrap" as const,
                     }}>
-                      {decLabel[pt.decision]}
+                      Programar produccion
                     </div>
                   </div>
-                );
-              })}
+                ))}
+              </div>
             </div>
-          ) : (
+          )}
+
+          {/* ── Proximos al limite ── */}
+          {prodRisk.length > 0 && (
+            <div style={{ marginBottom: S[4] }}>
+              <div style={{
+                fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+                color: C.amber, textTransform: "uppercase" as const, letterSpacing: "0.08em",
+                marginBottom: S[1],
+              }}>
+                Proximos al limite
+              </div>
+              <div style={{
+                fontFamily: T.mono, fontSize: 9, color: C.inkFaint, marginBottom: S[2],
+              }}>
+                Grupos y subgrupos que requieren seguimiento antes de llegar al minimo de produccion.
+              </div>
+              <div style={{
+                background: C.white, borderRadius: R.lg,
+                border: `1px solid ${C.line}`, boxShadow: `0 1px 3px ${C.ink}06`,
+                overflow: "hidden", overflowX: "auto", minWidth: 0,
+              }}>
+                <div style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(80px,0.8fr) minmax(90px,1fr) minmax(100px,1.2fr) 80px 80px 80px 150px",
+                  padding: "10px 16px", background: C.surfaceAlt,
+                  borderBottom: `1px solid ${C.line}`, gap: S[2], alignItems: "center",
+                }}>
+                  {["Marca", "Grupo", "Subgrupo", "Disponible", "Minimo", "Margen", "Accion"].map((h) => (
+                    <div key={h} style={{
+                      ...listHeaderCell,
+                      textAlign: h === "Disponible" || h === "Minimo" || h === "Margen" ? "right" as const : h === "Accion" ? "center" as const : undefined,
+                    }}>{h}</div>
+                  ))}
+                </div>
+                {prodRisk.map((pt, i) => {
+                  const margin = pt.stockDisponible - pt.umbral;
+                  return (
+                    <div key={`risk-${pt.brand}|${pt.group ?? ""}|${pt.subgrupoSag}`} style={{
+                      display: "grid",
+                      gridTemplateColumns: "minmax(80px,0.8fr) minmax(90px,1fr) minmax(100px,1.2fr) 80px 80px 80px 150px",
+                      padding: ROW_PAD,
+                      borderBottom: i === prodRisk.length - 1 ? "none" : `1px solid ${C.lineSubtle}`,
+                      gap: S[2], alignItems: "center",
+                    }}>
+                      <div style={{ ...listCell, fontWeight: 700, color: C.titleDeep }}>{pt.brand}</div>
+                      <div style={{ ...listCell, color: C.ink }}>{pt.group ?? "\u2014"}</div>
+                      <div style={{ ...listCell, color: C.ink }}>{pt.subgrupoSag}</div>
+                      <div style={{ ...listCell, fontWeight: 700, color: C.amber, textAlign: "right" as const }}>
+                        {pt.stockDisponible}
+                      </div>
+                      <div style={{ ...listCell, color: C.inkFaint, textAlign: "right" as const }}>{pt.umbral || "\u2014"}</div>
+                      <div style={{ ...listCell, fontWeight: 700, color: margin <= 200 ? C.amber : C.inkFaint, textAlign: "right" as const }}>
+                        +{margin}
+                      </div>
+                      <div style={{
+                        fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+                        color: C.white, background: C.amber,
+                        padding: "2px 8px", borderRadius: R.pill,
+                        textAlign: "center" as const, whiteSpace: "nowrap" as const,
+                      }}>
+                        Monitorear produccion
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Con OP activa: only counted in KPI — not rendered as table */}
+
+          {/* ── Todo controlado ── */}
+          {prodImmediate.length === 0 && prodRisk.length === 0 && (
             <div style={{
               padding: S[5], background: C.white, borderRadius: R.lg,
               border: `1px solid ${C.line}`,
             }}>
               <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, color: C.green }}>
-                Sin alertas de produccion. Todos los subgrupos superan el umbral.
+                No hay grupos proximos al limite. Todos los subgrupos superan el umbral operativo.
               </div>
             </div>
           )}
