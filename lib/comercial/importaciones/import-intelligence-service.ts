@@ -6,25 +6,59 @@
  * fully classified, KPI-ready data for the UI.
  *
  * Rules:
- *   - No Prisma imports (delegates to import-service)
  *   - No React imports
  *   - All business calculations here, never in React components
  *   - Consumes listImportedReferences(), never queries PIL directly
  *
- * Sprint: AGENTIK-IMPORTS-DATA-TRUST-CALIBRATION-01
+ * Sprint: AGENTIK-IMPORTS-SIMPLIFICATION-01
  */
 
 import { prisma } from "@/lib/prisma";
 import { listImportedReferences } from "./import-service";
 import { evaluateInventoryAging, evaluateRepurchase } from "./import-decision-engine";
 import { CASTILLITOS_IMPORT_POLICY_PACK_CONFIG } from "./import-policy-pack-config";
-import type { ImportedReference, ImportSupplyIntelligenceItem, ImportSupplyKpis, ImportDataQualitySummary, SaludComercial, RecompraClassification, RotacionClassification, EnvejecimientoClassification, BajaRotacionClassification, Prioridad, InventoryAgingStatusLite } from "./import-types";
+import type {
+  ImportedReference,
+  ImportSupplyIntelligenceItem,
+  ImportSupplyKpis,
+  ImportLastInboundSource,
+  ImportSizeClass,
+  SaludComercial,
+  RecompraClassification,
+  RotacionClassification,
+  EnvejecimientoClassification,
+  BajaRotacionClassification,
+  Prioridad,
+  InventoryAgingStatusLite,
+} from "./import-types";
 import type { ImportReferenceInput, ImportPolicyContext } from "./import-policy-types";
 import { resolveLifecycleState } from "@/lib/inventory/reference-lifecycle";
 
+import type { StockDataQuality, SalesDataQuality } from "./import-types";
+
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const HIGH_ROTATION_THRESHOLD = 50; // salesTotal6m >= 50 for KPI "Alta rotacion"
+const INVENTARIO_LENTO_DAYS = 240;  // >8 months
+const CANONICAL_SIZE_CLASSES = new Set<string>(["PEQUENO", "MEDIANO", "GRANDE"]);
+
+// ── Size-aware reorder thresholds (Castillitos initial calibration) ──────────
+// salesTotal6m must be STRICTLY GREATER THAN threshold for INMEDIATA.
+// These will move to import-policy-pack-config.ts when formalized.
+
+const SIZE_REORDER_THRESHOLDS: Record<ImportSizeClass, number> = {
+  PEQUENO: 100,
+  MEDIANO: 50,
+  GRANDE: 10,
+};
+
+const LOW_COVERAGE_DAYS = 60;         // cobertura <= 60d = supply emergency
+const MIN_SALES_SIN_CLASIFICAR = 5;   // minimum 6M sales for VIGILAR without size
+
+const SIZE_DISPLAY_LABELS: Record<ImportSizeClass, string> = {
+  PEQUENO: "Pequeno",
+  MEDIANO: "Mediano",
+  GRANDE: "Grande",
+};
 
 // ── Main entry point ─────────────────────────────────────────────────────────
 
@@ -42,14 +76,11 @@ export async function buildImportSupplyIntelligence(
     return { items: [], kpis: emptyKpis() };
   }
 
-  // 2. Load costo from ProductEntity
+  // 2. Load costo + handlingUnit + SAG dates from ProductEntity
   const productIds = references.map(r => r.productId);
-  const costoMap = await loadCostoMap(orgId, productIds);
+  const productDataMap = await loadProductData(orgId, productIds);
 
-  // 3. Load lifecycle state inputs
-  const lifecycleMap = await loadLifecycleInputs(orgId, productIds);
-
-  // 4. Run decision engine evaluations
+  // 3. Run decision engine evaluations
   const ctx: ImportPolicyContext = { tenantId: "castillitos" };
   const config = CASTILLITOS_IMPORT_POLICY_PACK_CONFIG;
   const engineInputs = references.map(r => toEngineInput(r));
@@ -60,19 +91,19 @@ export async function buildImportSupplyIntelligence(
   const repurchaseResults = engineInputs.map(input => evaluateRepurchase(ctx, input, config));
   const repurchaseMap = new Map(repurchaseResults.map(r => [r.reference, r]));
 
-  // 5. Compute rotation rankings for classification
+  // 4. Compute rotation rankings for classification
   const sortedByVolume = [...references].filter(r => r.soldNet > 0).sort((a, b) => b.soldNet - a.soldNet);
   const topVolumeRefs = new Set(sortedByVolume.slice(0, Math.max(10, Math.ceil(sortedByVolume.length * 0.15))).map(r => r.reference));
 
   const sortedBySpeed = [...references].filter(r => r.salesTotal6m > 0).sort((a, b) => (b.salesTotal6m / 6) - (a.salesTotal6m / 6));
   const topSpeedRefs = new Set(sortedBySpeed.slice(0, Math.max(10, Math.ceil(sortedBySpeed.length * 0.15))).map(r => r.reference));
 
-  // 6. Build intelligence items
+  // 5. Build intelligence items
   const items: ImportSupplyIntelligenceItem[] = references.map(ref => {
-    const costo = costoMap.get(ref.productId) ?? null;
+    const pd = productDataMap.get(ref.productId);
+    const costo = pd?.costo ?? null;
     const aging = agingMap.get(ref.reference);
     const repurchase = repurchaseMap.get(ref.reference);
-    const lifecycle = lifecycleMap.get(ref.productId);
 
     const agingStatus: InventoryAgingStatusLite = aging?.agingStatus ?? "NORMAL";
     const ritmoPromedioVentas = ref.salesTotal6m > 0 ? Math.round((ref.salesTotal6m / 6) * 10) / 10 : null;
@@ -84,25 +115,45 @@ export async function buildImportSupplyIntelligence(
       : null;
 
     // Lifecycle state
-    const lifecycleState = lifecycle
-      ? resolveLifecycleState(lifecycle).lifecycleState
+    const lifecycleState = pd
+      ? resolveLifecycleState({
+          lastModifiedAt: pd.lastModifiedSag ? new Date(pd.lastModifiedSag) : null,
+          lastSaleDate: pd.lastSaleSag ? new Date(pd.lastSaleSag) : null,
+        }).lifecycleState
       : "NO_ACTIVITY_DATA";
 
-    // Commercial health badge
+    // ── Last inbound date: C1/C2 receipt → lastPurchaseSag fallback ──
+    const { lastInboundDate, lastInboundSource, daysSinceLastInbound } =
+      resolveLastInbound(ref, pd?.lastPurchaseSag ?? null);
+
+    // Size class from handlingUnit
+    const sizeClass = resolveSizeClass(pd?.handlingUnit ?? null);
+
+    // Commercial health badge (internal)
     const { saludComercial, saludComercialRazon } = classifySaludComercial(ref, agingStatus);
 
-    // Classifications
-    const recompraClassification = classifyRecompra(ref.repurchaseStatus);
+    // Classifications — size-aware calibration replaces simple status mapping
+    const { classification: recompraClassification, reason: recompraReason } = calibrateRecompra({
+      sizeClass,
+      salesTotal6m: ref.salesTotal6m,
+      soldNet: ref.soldNet,
+      remaining: ref.remaining,
+      stockDataQuality: ref.stockDataQuality,
+      salesDataQuality: ref.salesDataQuality,
+      coberturaPromedioDias,
+    });
     const rotacionClassification = classifyRotacion(ref, topVolumeRefs, topSpeedRefs);
     const envejecimientoClassification = classifyEnvejecimiento(ref);
     const bajaRotacionClassification = classifyBajaRotacion(ref, agingStatus);
 
-    // Priority
+    // Priority (internal)
     const { prioridad, prioridadRazon } = classifyPrioridad(ref, saludComercial);
 
     // Decision engine evidence
     const repurchaseActionRationale = repurchase?.evidence.actionRationale ?? null;
     const repurchaseRecommendedAction = repurchase?.recommendedAction ?? null;
+
+    const fmtDate = (d: unknown) => d ? new Date(d as string).toISOString().split("T")[0] : null;
 
     return {
       ...ref,
@@ -115,6 +166,7 @@ export async function buildImportSupplyIntelligence(
       saludComercial,
       saludComercialRazon,
       recompraClassification,
+      recompraReason,
       rotacionClassification,
       envejecimientoClassification,
       bajaRotacionClassification,
@@ -122,17 +174,59 @@ export async function buildImportSupplyIntelligence(
       prioridadRazon,
       repurchaseActionRationale,
       repurchaseRecommendedAction,
-      createdAtSag: lifecycle?.createdAtSag ?? null,
-      lastModifiedSag: lifecycle?.lastModifiedSag ?? null,
-      lastPurchaseSag: lifecycle?.lastPurchaseSag ?? null,
-      lastSaleSag: lifecycle?.lastSaleSag ?? null,
+      createdAtSag: fmtDate(pd?.createdAtSag),
+      lastModifiedSag: fmtDate(pd?.lastModifiedSag),
+      lastPurchaseSag: fmtDate(pd?.lastPurchaseSag),
+      lastSaleSag: fmtDate(pd?.lastSaleSag),
+      lastInboundDate,
+      lastInboundSource,
+      daysSinceLastInbound,
+      sizeClass,
     };
   });
 
-  // 7. Compute KPIs
+  // 6. Compute KPIs
   const kpis = computeKpis(items);
 
   return { items, kpis };
+}
+
+// ── Last inbound resolver ────────────────────────────────────────────────────
+
+function resolveLastInbound(
+  ref: ImportedReference,
+  lastPurchaseSag: string | null,
+): { lastInboundDate: string | null; lastInboundSource: ImportLastInboundSource; daysSinceLastInbound: number | null } {
+  // Priority 1: C1/C2 receipt date (highest quality)
+  if (ref.entryDateSource === "SAG_RECEIPT" && ref.lastEntryDate) {
+    return {
+      lastInboundDate: ref.lastEntryDate,
+      lastInboundSource: "SAG_RECEIPT_C1_C2",
+      daysSinceLastInbound: ref.daysSinceLastEntry,
+    };
+  }
+
+  // Priority 2: ProductEntity.lastPurchaseSag (d_ultima_compra)
+  if (lastPurchaseSag) {
+    const purchaseDate = new Date(lastPurchaseSag);
+    const days = Math.floor((Date.now() - purchaseDate.getTime()) / (1000 * 60 * 60 * 24));
+    return {
+      lastInboundDate: purchaseDate.toISOString().split("T")[0],
+      lastInboundSource: "LAST_PURCHASE_SAG",
+      daysSinceLastInbound: days,
+    };
+  }
+
+  return { lastInboundDate: null, lastInboundSource: "UNAVAILABLE", daysSinceLastInbound: null };
+}
+
+// ── Size class resolver ──────────────────────────────────────────────────────
+
+function resolveSizeClass(handlingUnit: string | null): ImportSizeClass | null {
+  if (handlingUnit && CANONICAL_SIZE_CLASSES.has(handlingUnit)) {
+    return handlingUnit as ImportSizeClass;
+  }
+  return null;
 }
 
 // ── Classification functions ─────────────────────────────────────────────────
@@ -188,13 +282,93 @@ function classifySaludComercial(
   return { saludComercial: "SIN_DATOS", saludComercialRazon: "Sin datos de ventas disponibles." };
 }
 
-function classifyRecompra(status: ImportedReference["repurchaseStatus"]): RecompraClassification {
-  switch (status) {
-    case "RECOMPRAR": return "INMEDIATA";
-    case "VIGILAR": return "VIGILAR";
-    case "NO_RECOMPRAR": return "NO_RECOMPRAR";
-    case "SIN_DATOS": return "SIN_DATOS";
+// ── Size-aware recompra calibration ───────────────────────────────────────────
+//
+// Replaces the simple status mapper with demand-calibrated logic.
+// INMEDIATA requires: known size + sales > threshold + confirmed stock + depleted/low coverage.
+// VIGILAR: meaningful sales below threshold, or adequate stock, or missing size.
+// NO_RECOMPRAR: negligible demand for the size category.
+// SIN_DATOS: no sales history or sync failure.
+
+function calibrateRecompra(input: {
+  sizeClass: ImportSizeClass | null;
+  salesTotal6m: number;
+  soldNet: number;
+  remaining: number;
+  stockDataQuality: StockDataQuality;
+  salesDataQuality: SalesDataQuality;
+  coberturaPromedioDias: number | null;
+}): { classification: RecompraClassification; reason: string } {
+  const { sizeClass, salesTotal6m, soldNet, remaining, stockDataQuality, salesDataQuality, coberturaPromedioDias } = input;
+
+  // Gate: no sales history
+  if (soldNet === 0) {
+    return { classification: "SIN_DATOS", reason: "Sin historial de ventas." };
   }
+  if (salesDataQuality !== "SYNCED") {
+    return { classification: "SIN_DATOS", reason: "Datos de ventas no disponibles." };
+  }
+
+  const stockConfirmed = stockDataQuality === "CONFIRMED";
+  const isDepleted = stockConfirmed && remaining === 0;
+  const isLowCoverage = coberturaPromedioDias !== null && coberturaPromedioDias <= LOW_COVERAGE_DAYS;
+  const needsStock = isDepleted || isLowCoverage;
+
+  // ── Sized references ──
+  if (sizeClass !== null) {
+    const threshold = SIZE_REORDER_THRESHOLDS[sizeClass];
+    const sizeLabel = SIZE_DISPLAY_LABELS[sizeClass];
+    const vigilarFloor = Math.max(Math.ceil(threshold * 0.2), 3);
+
+    if (salesTotal6m > threshold) {
+      // Above threshold — check stock conditions
+      if (!stockConfirmed) {
+        return { classification: "VIGILAR", reason: `Ventas superan umbral pero sin dato de stock en B24.` };
+      }
+      if (needsStock) {
+        if (isDepleted) {
+          return { classification: "INMEDIATA", reason: `${sizeLabel} agotado; ${salesTotal6m} unidades vendidas en 6 meses.` };
+        }
+        return { classification: "INMEDIATA", reason: `${sizeLabel} con cobertura de ${coberturaPromedioDias} dias; ${salesTotal6m} unidades vendidas en 6 meses.` };
+      }
+      // Stock sufficient
+      return { classification: "VIGILAR", reason: `Stock disponible suficiente para ${coberturaPromedioDias ?? "?"} dias.` };
+    }
+
+    // Below threshold but meaningful sales OR stock available with demand
+    if (salesTotal6m >= vigilarFloor) {
+      return { classification: "VIGILAR", reason: `Ventas por debajo del umbral de recompra para producto ${sizeLabel.toLowerCase()} (${salesTotal6m}/${threshold}).` };
+    }
+
+    // Stock available with some demand — always VIGILAR (product is alive)
+    if (salesTotal6m > 0 && stockConfirmed && remaining > 0) {
+      return { classification: "VIGILAR", reason: `Stock disponible (${remaining} und) con demanda activa (${salesTotal6m} und en 6M).` };
+    }
+
+    // Negligible demand + depleted or no stock confirmation
+    if (salesTotal6m > 0) {
+      if (isDepleted) {
+        return { classification: "NO_RECOMPRAR", reason: `Agotado, pero solo vendio ${salesTotal6m} unidad${salesTotal6m > 1 ? "es" : ""} en 6 meses.` };
+      }
+      return { classification: "NO_RECOMPRAR", reason: `Ventas insuficientes para justificar importacion (${salesTotal6m} und en 6M).` };
+    }
+
+    // Zero recent sales
+    if (isDepleted) {
+      return { classification: "NO_RECOMPRAR", reason: "Agotado sin ventas en los ultimos 6 meses." };
+    }
+    return { classification: "NO_RECOMPRAR", reason: "Sin ventas en los ultimos 6 meses." };
+  }
+
+  // ── Unsized references ──
+  if (salesTotal6m >= MIN_SALES_SIN_CLASIFICAR) {
+    return { classification: "VIGILAR", reason: "Sin tamano clasificado; revisar antes de comprar." };
+  }
+  if (salesTotal6m > 0) {
+    return { classification: "NO_RECOMPRAR", reason: `Solo ${salesTotal6m} unidad${salesTotal6m > 1 ? "es" : ""} vendida${salesTotal6m > 1 ? "s" : ""} en 6M; sin tamano clasificado.` };
+  }
+
+  return { classification: "NO_RECOMPRAR", reason: "Sin ventas recientes." };
 }
 
 function classifyRotacion(
@@ -282,135 +456,56 @@ function classifyPrioridad(
 // ── KPIs ─────────────────────────────────────────────────────────────────────
 
 function computeKpis(items: ImportSupplyIntelligenceItem[]): ImportSupplyKpis {
-  const recompraInmediata = items.filter(i => i.recompraClassification === "INMEDIATA").length;
-  const altaRotacion = items.filter(i => i.salesTotal6m >= HIGH_ROTATION_THRESHOLD).length;
-  // Baja rotacion: only count refs with confirmed entry date for aging-based classification
-  const bajaRotacion = items.filter(i =>
-    i.entryDateSource === "SAG_RECEIPT" &&
-    (i.agingStatus === "LOW_ROTATION" || i.agingStatus === "OBSOLETE_CANDIDATE"),
+  const comprarAhora = items.filter(i => i.recompraClassification === "INMEDIATA").length;
+  const revisarRecompra = items.filter(i => i.recompraClassification === "VIGILAR").length;
+  const noRecomprar = items.filter(i => i.recompraClassification === "NO_RECOMPRAR").length;
+  const inventarioLento = items.filter(i =>
+    i.daysSinceLastInbound !== null && i.daysSinceLastInbound > INVENTARIO_LENTO_DAYS && i.remaining > 0,
   ).length;
-  // Inventario >8 meses: only with confirmed entry dates
-  const inventarioMas8Meses = items.filter(i =>
-    i.entryDateSource === "SAG_RECEIPT" && i.daysSinceLastEntry !== null && i.daysSinceLastEntry > 240 && i.remaining > 0,
-  ).length;
-
-  // Cobertura promedio (only refs with 6M sales + confirmed stock)
-  const refsConVentas = items.filter(i => i.coberturaPromedioDias !== null && i.stockDataQuality === "CONFIRMED");
-  const coberturaPromedioDias = refsConVentas.length > 0
-    ? Math.round(refsConVentas.reduce((s, i) => s + i.coberturaPromedioDias!, 0) / refsConVentas.length)
-    : null;
-
-  // Capital en inventario lento (aging != NEW/NORMAL, with costo + confirmed date)
-  const refsLentas = items.filter(i =>
-    i.entryDateSource === "SAG_RECEIPT" &&
-    i.agingStatus !== "NEW" && i.agingStatus !== "NORMAL" && i.capitalInmovilizado !== null,
-  );
-  const capitalInventarioLento = refsLentas.length > 0
-    ? refsLentas.reduce((s, i) => s + i.capitalInmovilizado!, 0)
-    : null;
-  const refsConCosto = items.filter(i => i.costo !== null).length;
-  const capitalInventarioLentoCobertura = items.length > 0
-    ? Math.round((refsConCosto / items.length) * 100)
-    : 0;
-
-  // Data quality summary
-  const refsWithConfirmedStock = items.filter(i => i.stockDataQuality === "CONFIRMED").length;
-  const refsWithConfirmedEntryDate = items.filter(i => i.entryDateSource === "SAG_RECEIPT").length;
-  const refsWithSyncedSales = items.filter(i => i.salesDataQuality === "SYNCED").length;
-  const refsRequiringDataReview = items.filter(i =>
-    i.stockDataQuality === "NO_PIL_RECORD" || i.entryDateSource === "NONE" || i.salesDataQuality === "UNAVAILABLE",
-  ).length;
-
-  const dataQuality: ImportDataQualitySummary = {
-    totalRefs: items.length,
-    refsWithConfirmedStock,
-    refsWithoutB24Record: items.length - refsWithConfirmedStock,
-    refsWithConfirmedEntryDate,
-    refsWithoutEntryDate: items.length - refsWithConfirmedEntryDate,
-    refsWithSyncedSales,
-    refsWithPricePV3: items.filter(i => i.pricePV3 !== null).length,
-    refsWithPricePV4: items.filter(i => i.pricePV4 !== null).length,
-    refsWithCosto: refsConCosto,
-    refsWithClassifiableChannel: items.filter(i => i.channelQuality !== "UNAVAILABLE").length,
-    refsEligibleForRecompra: items.filter(i =>
-      i.stockDataQuality === "CONFIRMED" && i.salesDataQuality === "SYNCED" && i.soldNet > 0,
-    ).length,
-    refsEligibleForEnvejecimiento: refsWithConfirmedEntryDate,
-    refsRequiringDataReview,
-  };
 
   return {
-    recompraInmediata,
-    altaRotacion,
-    bajaRotacion,
-    inventarioMas8Meses,
-    coberturaPromedioDias,
-    capitalInventarioLento,
-    capitalInventarioLentoCobertura,
-    dataQuality,
+    comprarAhora,
+    revisarRecompra,
+    noRecomprar,
+    inventarioLento,
+    totalRefs: items.length,
   };
 }
 
 function emptyKpis(): ImportSupplyKpis {
   return {
-    recompraInmediata: 0,
-    altaRotacion: 0,
-    bajaRotacion: 0,
-    inventarioMas8Meses: 0,
-    coberturaPromedioDias: null,
-    capitalInventarioLento: null,
-    capitalInventarioLentoCobertura: 0,
-    dataQuality: {
-      totalRefs: 0, refsWithConfirmedStock: 0, refsWithoutB24Record: 0,
-      refsWithConfirmedEntryDate: 0, refsWithoutEntryDate: 0, refsWithSyncedSales: 0,
-      refsWithPricePV3: 0, refsWithPricePV4: 0, refsWithCosto: 0,
-      refsWithClassifiableChannel: 0, refsEligibleForRecompra: 0,
-      refsEligibleForEnvejecimiento: 0, refsRequiringDataReview: 0,
-    },
+    comprarAhora: 0,
+    revisarRecompra: 0,
+    noRecomprar: 0,
+    inventarioLento: 0,
+    totalRefs: 0,
   };
 }
 
-// ── Data loaders ─────────────────────────────────────────────────────────────
+// ── Data loader ──────────────────────────────────────────────────────────────
 
-async function loadCostoMap(orgId: string, productIds: string[]): Promise<Map<string, number>> {
-  const map = new Map<string, number>();
-  if (productIds.length === 0) return map;
-
-  const products = await (prisma as any).productEntity.findMany({
-    where: { organizationId: orgId, id: { in: productIds } },
-    select: { id: true, costo: true },
-  });
-
-  for (const p of products) {
-    const costo = p.costo !== null && p.costo !== undefined ? Number(p.costo) : null;
-    if (costo !== null && costo > 0) {
-      map.set(p.id, costo);
-    }
-  }
-
-  return map;
-}
-
-interface LifecycleAndSagDates {
-  lastModifiedAt: Date | null;
-  lastSaleDate: Date | null;
+interface ProductData {
+  costo: number | null;
+  handlingUnit: string | null;
   createdAtSag: string | null;
   lastModifiedSag: string | null;
   lastPurchaseSag: string | null;
   lastSaleSag: string | null;
 }
 
-async function loadLifecycleInputs(
+async function loadProductData(
   orgId: string,
   productIds: string[],
-): Promise<Map<string, LifecycleAndSagDates>> {
-  const map = new Map<string, LifecycleAndSagDates>();
+): Promise<Map<string, ProductData>> {
+  const map = new Map<string, ProductData>();
   if (productIds.length === 0) return map;
 
   const products = await (prisma as any).productEntity.findMany({
     where: { organizationId: orgId, id: { in: productIds } },
     select: {
       id: true,
+      costo: true,
+      handlingUnit: true,
       createdAtSag: true,
       lastModifiedSag: true,
       lastPurchaseSag: true,
@@ -419,14 +514,14 @@ async function loadLifecycleInputs(
   });
 
   for (const p of products) {
-    const fmtDate = (d: unknown) => d ? new Date(d as string).toISOString().split("T")[0] : null;
+    const costo = p.costo !== null && p.costo !== undefined ? Number(p.costo) : null;
     map.set(p.id, {
-      lastModifiedAt: p.lastModifiedSag ? new Date(p.lastModifiedSag) : null,
-      lastSaleDate: p.lastSaleSag ? new Date(p.lastSaleSag) : null,
-      createdAtSag: fmtDate(p.createdAtSag),
-      lastModifiedSag: fmtDate(p.lastModifiedSag),
-      lastPurchaseSag: fmtDate(p.lastPurchaseSag),
-      lastSaleSag: fmtDate(p.lastSaleSag),
+      costo: costo !== null && costo > 0 ? costo : null,
+      handlingUnit: p.handlingUnit ?? null,
+      createdAtSag: p.createdAtSag ?? null,
+      lastModifiedSag: p.lastModifiedSag ?? null,
+      lastPurchaseSag: p.lastPurchaseSag ?? null,
+      lastSaleSag: p.lastSaleSag ?? null,
     });
   }
 

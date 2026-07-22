@@ -49,6 +49,7 @@ import type {
   BusinessCoverageResult,
 } from "@/lib/comercial/maletas/maletas-functional-evaluation";
 import { getVendorMalletBaseMetrics } from "@/lib/comercial/maletas/maletas-functional-evaluation";
+import { CommercialReferenceThumbnail } from "@/components/comercial/commercial-reference-thumbnail";
 
 // ── Props ────────────────────────────────────────────────────────────────────
 
@@ -1435,7 +1436,7 @@ export function MaletasClient({
                                       }}
                                     >
                                       {/* Thumbnail — MALETAS-REFERENCIAS-GRUPO-IMAGEN-01 */}
-                                      <RefThumbnail imageUrl={ref.imageUrl} alt={ref.description} />
+                                      <CommercialReferenceThumbnail imageUrl={ref.imageUrl} reference={ref.reference} description={ref.description} />
 
                                       {/* Ref code */}
                                       <div style={{
@@ -1654,7 +1655,7 @@ export function MaletasClient({
                                         gap: S[2],
                                       }}
                                     >
-                                      <RefThumbnail imageUrl={ref.imageUrl} alt={ref.description} />
+                                      <CommercialReferenceThumbnail imageUrl={ref.imageUrl} reference={ref.reference} description={ref.description} />
                                       <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 600, color: C.titleDeep, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, minWidth: 0 }}>
                                         {ref.reference}
                                       </div>
@@ -4152,44 +4153,7 @@ function DerroteroIdealPanel({
   );
 }
 
-/** MALETAS-REFERENCIAS-GRUPO-IMAGEN-01: Product thumbnail with error fallback */
-function RefThumbnail({ imageUrl, alt }: { imageUrl: string | null; alt: string }) {
-  const [failed, setFailed] = useState(false);
-  const showPlaceholder = !imageUrl || failed;
-  return (
-    <div style={{ width: 32, height: 32, flexShrink: 0 }}>
-      {!showPlaceholder ? (
-        <img
-          src={imageUrl}
-          alt={alt}
-          loading="lazy"
-          onError={() => setFailed(true)}
-          style={{
-            width: 32, height: 32,
-            objectFit: "cover" as const,
-            borderRadius: R.xs,
-            border: `1px solid ${C.line}`,
-          }}
-        />
-      ) : (
-        <div
-          title="Sin imagen disponible"
-          style={{
-            width: 32, height: 32,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            borderRadius: R.xs,
-            border: `1px solid ${C.line}`,
-            background: C.surfaceAlt,
-            color: C.inkFaint,
-            fontFamily: T.mono, fontSize: 12,
-          }}
-        >
-          &#x25A1;
-        </div>
-      )}
-    </div>
-  );
-}
+/* RefThumbnail replaced by shared CommercialReferenceThumbnail — see components/comercial/ */
 
 function DerroteroSummaryKpi({ label, value, color }: { label: string; value: number | string; color: string }) {
   return (

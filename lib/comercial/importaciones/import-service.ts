@@ -105,6 +105,27 @@ export async function listImportedReferences(orgId: string): Promise<ImportedRef
   const productIds = products.map((p: any) => p.id);
   const productCodes = products.map((p: any) => p.externalId).filter(Boolean) as string[];
 
+  // Hero images: ProductAssetLink (role="hero") → GeneratedAsset.assetUrl
+  const heroImageMap = new Map<string, string>();
+  try {
+    const heroLinks = await (prisma as any).productAssetLink.findMany({
+      where: { organizationId: orgId, productId: { in: productIds }, role: "hero" },
+      select: { productId: true, assetId: true },
+    });
+    if (heroLinks.length > 0) {
+      const assets = await (prisma as any).generatedAsset.findMany({
+        where: { id: { in: heroLinks.map((l: any) => l.assetId) } },
+        select: { id: true, assetUrl: true },
+      });
+      const assetMap = new Map<string, string>();
+      for (const a of assets) { if (a.assetUrl) assetMap.set(a.id, a.assetUrl); }
+      for (const link of heroLinks) {
+        const url = assetMap.get(link.assetId);
+        if (url) heroImageMap.set(link.productId, url);
+      }
+    }
+  } catch { /* ProductAssetLink/GeneratedAsset may not exist yet */ }
+
   // 2. Inventory levels — import warehouses + total across all warehouses
   const allInventoryLevels = await (prisma as any).productInventoryLevel.findMany({
     where: {
@@ -390,6 +411,7 @@ export async function listImportedReferences(orgId: string): Promise<ImportedRef
       productId: p.id,
       reference: p.externalId ?? "\u2014",
       description: p.name ?? "\u2014",
+      imageUrl: heroImageMap.get(p.id) ?? null,
       entryDate,
       entryDateQuality,
       lastEntryDate,
@@ -559,7 +581,12 @@ function computeRepurchaseDecision(input: {
   }
 
   // Import warehouse depleted + active demand — ONLY with confirmed stock data
+  // Guard: if remaining covers >180 days of demand, it's not a real supply emergency
   if (stockDataQuality === "CONFIRMED" && remaining <= 20 && salesTotal6m > 0) {
+    const coberturaDias = remaining / (salesTotal6m / 180);
+    if (coberturaDias > 180) {
+      return { status: "VIGILAR", motivo: "stock_suficiente" };
+    }
     return { status: "RECOMPRAR", motivo: "desabastecimiento" };
   }
 

@@ -10,7 +10,7 @@
  *   Prices:    CommercialProductDataSource (SAG v_articulos PV3/PV4)
  *   Receipts:  CommercialProductDataSource (SAG MOVIMIENTOS C1/C2)
  *
- * Sprint: GO-LIVE-IMPORTACIONES-DATA-TRUST-AND-NAVIGATION-01
+ * Sprint: AGENTIK-IMPORTS-SIMPLIFICATION-01
  */
 
 // ── Data quality ────────────────────────────────────────────────────────────
@@ -37,12 +37,28 @@ export type EntryDateSource = "SAG_RECEIPT" | "NONE";
  */
 export type SalesDataQuality = "SYNCED" | "UNAVAILABLE";
 
+// ── Last inbound source (simplified aging with fallback) ────────────────────
+
+/**
+ * Source of the last inbound date used for aging/inventario-lento.
+ *   SAG_RECEIPT_C1_C2  = MOVIMIENTOS receipt date (highest quality)
+ *   LAST_PURCHASE_SAG  = ProductEntity.lastPurchaseSag (d_ultima_compra, 97% coverage)
+ *   UNAVAILABLE        = no date from either source
+ */
+export type ImportLastInboundSource = "SAG_RECEIPT_C1_C2" | "LAST_PURCHASE_SAG" | "UNAVAILABLE";
+
+// ── Import size class ──────────────────────────────────────────────────────
+
+export type ImportSizeClass = "PEQUENO" | "MEDIANO" | "GRANDE";
+
 // ── Imported reference row ──────────────────────────────────────────────────
 
 export interface ImportedReference {
   productId:       string;
   reference:       string;
   description:     string;
+  /** Hero image URL from ProductAssetLink (role="hero") → GeneratedAsset.assetUrl */
+  imageUrl:        string | null;
   entryDate:       string | null;
   entryDateQuality: DataQuality;
   lastEntryDate:   string | null;
@@ -196,46 +212,61 @@ export interface ImportSupplyIntelligenceItem extends ImportedReference {
   coberturaPromedioDias: number | null;
   ritmoPromedioVentas: number | null;
 
-  // Aging & lifecycle
+  // Aging & lifecycle (internal — not displayed as badges)
   agingStatus: InventoryAgingStatusLite;
   lifecycleState: string;
 
-  // Commercial health badge
+  // Commercial health (internal — used for logic, not displayed as badge)
   saludComercial: SaludComercial;
   saludComercialRazon: string;
 
-  // Classifications for the 5 views
+  // Classifications
   recompraClassification: RecompraClassification;
+  /** Human-readable reason for the recompra classification (size-aware) */
+  recompraReason: string;
   rotacionClassification: RotacionClassification;
   envejecimientoClassification: EnvejecimientoClassification;
   bajaRotacionClassification: BajaRotacionClassification | null;
 
-  // Priority for triage view
+  // Priority (internal — no Prioridades tab, but used for sorting)
   prioridad: Prioridad;
   prioridadRazon: string;
 
-  // Decision engine evidence (exposed for UI)
+  // Decision engine evidence (exposed for drawer)
   repurchaseActionRationale: string | null;
   repurchaseRecommendedAction: string | null;
 
-  // SAG informational dates (for drawer)
+  // SAG informational dates (for drawer secondary section)
   createdAtSag: string | null;
   lastModifiedSag: string | null;
   lastPurchaseSag: string | null;
   lastSaleSag: string | null;
+
+  // ── Simplification sprint additions ────────────────────────────────────
+  /** Unified last inbound date (C1/C2 receipt → lastPurchaseSag fallback) */
+  lastInboundDate: string | null;
+  lastInboundSource: ImportLastInboundSource;
+  daysSinceLastInbound: number | null;
+
+  /** Canonical size from ProductEntity.handlingUnit */
+  sizeClass: ImportSizeClass | null;
 }
 
+/** Simplified KPIs — 4 clickable metrics only */
 export interface ImportSupplyKpis {
-  recompraInmediata: number;
-  altaRotacion: number;
-  bajaRotacion: number;
-  inventarioMas8Meses: number;
-  coberturaPromedioDias: number | null;
-  capitalInventarioLento: number | null;
-  capitalInventarioLentoCobertura: number;
-  dataQuality: ImportDataQualitySummary;
+  /** "Comprar ahora" — refs with recompraClassification === INMEDIATA */
+  comprarAhora: number;
+  /** "Revisar recompra" — refs with recompraClassification === VIGILAR */
+  revisarRecompra: number;
+  /** "No recomprar" — refs with recompraClassification === NO_RECOMPRAR */
+  noRecomprar: number;
+  /** "Inventario lento" — refs with daysSinceLastInbound > 240 && remaining > 0 */
+  inventarioLento: number;
+  /** Total references for context */
+  totalRefs: number;
 }
 
+/** Data quality summary — kept for internal diagnostics, not shown in UI */
 export interface ImportDataQualitySummary {
   totalRefs: number;
   refsWithConfirmedStock: number;
@@ -250,4 +281,6 @@ export interface ImportDataQualitySummary {
   refsEligibleForRecompra: number;
   refsEligibleForEnvejecimiento: number;
   refsRequiringDataReview: number;
+  /** How many refs have any inbound date (C1/C2 or lastPurchaseSag) */
+  refsWithAnyInboundDate: number;
 }
