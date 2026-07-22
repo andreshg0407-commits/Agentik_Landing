@@ -11,15 +11,15 @@
  *   - All business calculations here, never in React components
  *   - Consumes listImportedReferences(), never queries PIL directly
  *
- * Sprint: AGENTIK-IMPORTS-AUDIT-01
+ * Sprint: AGENTIK-IMPORTS-DATA-TRUST-CALIBRATION-01
  */
 
 import { prisma } from "@/lib/prisma";
 import { listImportedReferences } from "./import-service";
-import { evaluateInventoryAging, evaluateLowRotation, evaluateRepurchase } from "./import-decision-engine";
+import { evaluateInventoryAging, evaluateRepurchase } from "./import-decision-engine";
 import { CASTILLITOS_IMPORT_POLICY_PACK_CONFIG } from "./import-policy-pack-config";
-import type { ImportedReference, ImportSupplyIntelligenceItem, ImportSupplyKpis, SaludComercial, RecompraClassification, RotacionClassification, EnvejecimientoClassification, BajaRotacionClassification, Prioridad, InventoryAgingStatusLite } from "./import-types";
-import type { ImportReferenceInput, ImportPolicyContext, InventoryAgingStatus } from "./import-policy-types";
+import type { ImportedReference, ImportSupplyIntelligenceItem, ImportSupplyKpis, ImportDataQualitySummary, SaludComercial, RecompraClassification, RotacionClassification, EnvejecimientoClassification, BajaRotacionClassification, Prioridad, InventoryAgingStatusLite } from "./import-types";
+import type { ImportReferenceInput, ImportPolicyContext } from "./import-policy-types";
 import { resolveLifecycleState } from "@/lib/inventory/reference-lifecycle";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -94,7 +94,7 @@ export async function buildImportSupplyIntelligence(
     // Classifications
     const recompraClassification = classifyRecompra(ref.repurchaseStatus);
     const rotacionClassification = classifyRotacion(ref, topVolumeRefs, topSpeedRefs);
-    const envejecimientoClassification = classifyEnvejecimiento(ref.daysSinceLastEntry);
+    const envejecimientoClassification = classifyEnvejecimiento(ref);
     const bajaRotacionClassification = classifyBajaRotacion(ref, agingStatus);
 
     // Priority
@@ -122,6 +122,10 @@ export async function buildImportSupplyIntelligence(
       prioridadRazon,
       repurchaseActionRationale,
       repurchaseRecommendedAction,
+      createdAtSag: lifecycle?.createdAtSag ?? null,
+      lastModifiedSag: lifecycle?.lastModifiedSag ?? null,
+      lastPurchaseSag: lifecycle?.lastPurchaseSag ?? null,
+      lastSaleSag: lifecycle?.lastSaleSag ?? null,
     };
   });
 
@@ -137,39 +141,51 @@ function classifySaludComercial(
   ref: ImportedReference,
   agingStatus: InventoryAgingStatusLite,
 ): { saludComercial: SaludComercial; saludComercialRazon: string } {
-  // SIN_DATOS
-  if (ref.daysSinceLastEntry === null && ref.soldNet === 0) {
+  const hasConfirmedStock = ref.stockDataQuality === "CONFIRMED";
+  const hasConfirmedDate = ref.entryDateSource === "SAG_RECEIPT";
+
+  // SIN_DATOS — insufficient data for any classification
+  if (!hasConfirmedDate && ref.soldNet === 0) {
     return { saludComercial: "SIN_DATOS", saludComercialRazon: "Sin fecha de ingreso ni ventas registradas." };
   }
+  if (!hasConfirmedStock && !hasConfirmedDate && ref.salesTotal6m === 0) {
+    return { saludComercial: "SIN_DATOS", saludComercialRazon: "Sin datos confirmados de stock ni fecha de ingreso." };
+  }
 
-  // CRITICA
-  if (agingStatus === "LOW_ROTATION" || agingStatus === "OBSOLETE_CANDIDATE") {
-    const meses = ref.daysSinceLastEntry !== null ? Math.round(ref.daysSinceLastEntry / 30) : null;
+  // CRITICA — only with confirmed data backing the classification
+  if (hasConfirmedDate && (agingStatus === "LOW_ROTATION" || agingStatus === "OBSOLETE_CANDIDATE")) {
+    const meses = Math.round(ref.daysSinceLastEntry! / 30);
     return {
       saludComercial: "CRITICA",
-      saludComercialRazon: meses !== null
-        ? `Inventario de ${meses} meses sin reposicion${ref.salesTotal6m > 0 ? " con demanda activa" : ""}.`
-        : `Sin fecha de ingreso con ${ref.remaining} und en inventario.`,
+      saludComercialRazon: `Inventario de ${meses} meses sin reposicion${ref.salesTotal6m > 0 ? ` (${ref.salesTotal6m} und vendidas en 6M)` : ""}.`,
     };
   }
-  if (ref.remaining === 0 && ref.salesTotal6m > 10) {
-    return { saludComercial: "CRITICA", saludComercialRazon: `Agotado con demanda activa (${ref.salesTotal6m} und en 6M).` };
+  if (hasConfirmedStock && ref.remaining === 0 && ref.salesTotal6m > 0) {
+    return { saludComercial: "CRITICA", saludComercialRazon: `Stock agotado con ${ref.salesTotal6m} und vendidas en 6M.` };
   }
 
   // EN_RIESGO
-  if (agingStatus === "AGING") {
-    return { saludComercial: "EN_RIESGO", saludComercialRazon: "Inventario envejeciendo — supera 6 meses sin ingreso." };
+  if (hasConfirmedDate && agingStatus === "AGING") {
+    const meses = Math.round(ref.daysSinceLastEntry! / 30);
+    return { saludComercial: "EN_RIESGO", saludComercialRazon: `Inventario envejeciendo — ${meses} meses sin ingreso.` };
   }
-  if (ref.remaining > 0 && ref.remaining <= 20 && ref.salesTotal6m > 0) {
-    return { saludComercial: "EN_RIESGO", saludComercialRazon: `Stock bajo (${ref.remaining} und) con demanda activa.` };
-  }
-
-  // SANA
-  if (ref.salesTotal6m > 0) {
-    return { saludComercial: "SANA", saludComercialRazon: "Inventario saludable con ventas activas." };
+  if (hasConfirmedStock && ref.remaining > 0 && ref.remaining <= 20 && ref.salesTotal6m > 0) {
+    return { saludComercial: "EN_RIESGO", saludComercialRazon: `Stock bajo (${ref.remaining} und) con demanda activa (${ref.salesTotal6m} und en 6M).` };
   }
 
-  return { saludComercial: "SIN_DATOS", saludComercialRazon: "Sin ventas en los ultimos 6 meses." };
+  // SANA — requires confirmed stock WITH positive remaining
+  if (hasConfirmedStock && ref.remaining > 0 && ref.salesTotal6m > 0) {
+    return { saludComercial: "SANA", saludComercialRazon: `Stock confirmado (${ref.remaining} und) con ventas activas.` };
+  }
+  if (!hasConfirmedStock && ref.salesTotal6m > 0) {
+    return { saludComercial: "SIN_DATOS", saludComercialRazon: `Ventas activas (${ref.salesTotal6m} und en 6M) pero sin datos de stock B24.` };
+  }
+
+  // Distinguish confirmed zero sales from unavailable
+  if (ref.salesDataQuality === "SYNCED") {
+    return { saludComercial: "SIN_DATOS", saludComercialRazon: "Sin ventas confirmadas en los ultimos 6 meses." };
+  }
+  return { saludComercial: "SIN_DATOS", saludComercialRazon: "Sin datos de ventas disponibles." };
 }
 
 function classifyRecompra(status: ImportedReference["repurchaseStatus"]): RecompraClassification {
@@ -192,12 +208,12 @@ function classifyRotacion(
   return "NORMAL";
 }
 
-function classifyEnvejecimiento(daysSinceLastEntry: number | null): EnvejecimientoClassification {
-  if (daysSinceLastEntry === null) return "12M_PLUS";
-  if (daysSinceLastEntry <= 90) return "0_3M";
-  if (daysSinceLastEntry <= 180) return "3_6M";
-  if (daysSinceLastEntry <= 240) return "6_8M";
-  if (daysSinceLastEntry <= 365) return "8_12M";
+function classifyEnvejecimiento(ref: ImportedReference): EnvejecimientoClassification {
+  if (ref.entryDateSource === "NONE" || ref.daysSinceLastEntry === null) return "SIN_DATOS";
+  if (ref.daysSinceLastEntry <= 90) return "0_3M";
+  if (ref.daysSinceLastEntry <= 180) return "3_6M";
+  if (ref.daysSinceLastEntry <= 240) return "6_8M";
+  if (ref.daysSinceLastEntry <= 365) return "8_12M";
   return "12M_PLUS";
 }
 
@@ -205,7 +221,14 @@ function classifyBajaRotacion(
   ref: ImportedReference,
   agingStatus: InventoryAgingStatusLite,
 ): BajaRotacionClassification | null {
-  if (ref.salesTotal6m === 0 && ref.remaining > 0) return "SIN_MOVIMIENTO";
+  const hasConfirmedStock = ref.stockDataQuality === "CONFIRMED";
+  const hasConfirmedDate = ref.entryDateSource === "SAG_RECEIPT";
+  const isOldEnough = hasConfirmedDate && ref.daysSinceLastEntry !== null && ref.daysSinceLastEntry > 240;
+
+  // All baja rotacion categories require: confirmed date > 240 days + confirmed stock > 0
+  if (!isOldEnough || !hasConfirmedStock || ref.remaining <= 0) return null;
+
+  if (ref.salesTotal6m === 0) return "SIN_MOVIMIENTO";
   if (ref.remaining > 100 && ref.salesTotal6m < 10) return "SOBRESTOCK";
   if (agingStatus === "OBSOLETE_CANDIDATE") return "REVISAR_CONTINUIDAD";
   return null;
@@ -215,18 +238,44 @@ function classifyPrioridad(
   ref: ImportedReference,
   saludComercial: SaludComercial,
 ): { prioridad: Prioridad; prioridadRazon: string } {
+  // ALTA — with data-specific reasons
   if (ref.repurchaseStatus === "RECOMPRAR" || saludComercial === "CRITICA") {
     const razones: string[] = [];
-    if (ref.repurchaseStatus === "RECOMPRAR") razones.push("recompra sugerida");
-    if (saludComercial === "CRITICA") razones.push("salud critica");
-    return { prioridad: "ALTA", prioridadRazon: `Requiere decision inmediata: ${razones.join(", ")}.` };
+    if (ref.repurchaseStatus === "RECOMPRAR") {
+      if (ref.repurchaseMotivo === "desabastecimiento") {
+        razones.push(`Stock agotado${ref.salesTotal6m > 0 ? `; ${ref.salesTotal6m} und vendidas en 6M` : ""}`);
+      } else if (ref.repurchaseMotivo === "alta_rotacion") {
+        razones.push(`Alta rotacion (${ref.percentSold !== null ? ref.percentSold + "% vendido" : "demanda activa"})`);
+      } else if (ref.repurchaseMotivo === "exito_historico") {
+        razones.push(`Exito historico (${ref.soldNet} und vendidas)`);
+      } else if (ref.repurchaseMotivo === "recompra_recurrente") {
+        razones.push(`Recompra recurrente (${ref.batchCount} lotes)`);
+      } else {
+        razones.push("recompra sugerida");
+      }
+    }
+    if (saludComercial === "CRITICA" && ref.repurchaseStatus !== "RECOMPRAR") {
+      razones.push("salud critica");
+    }
+    return { prioridad: "ALTA", prioridadRazon: razones.join(". ") + "." };
   }
+
+  // MEDIA
   if (ref.repurchaseStatus === "VIGILAR" || saludComercial === "EN_RIESGO") {
+    if (saludComercial === "EN_RIESGO" && ref.stockDataQuality === "CONFIRMED" && ref.remaining <= 20) {
+      return { prioridad: "MEDIA", prioridadRazon: `Stock bajo (${ref.remaining} und) con demanda activa.` };
+    }
+    if (ref.repurchaseStatus === "VIGILAR") {
+      return { prioridad: "MEDIA", prioridadRazon: `Stock suficiente (${ref.remaining} und); monitorear demanda.` };
+    }
     return { prioridad: "MEDIA", prioridadRazon: "Monitorear esta semana." };
   }
+
+  // BAJA
   if (saludComercial === "SANA" && ref.salesTotal6m > 0) {
     return { prioridad: "BAJA", prioridadRazon: "Sin accion requerida." };
   }
+
   return { prioridad: "SIN_ACCION", prioridadRazon: "Verificar datos." };
 }
 
@@ -235,21 +284,25 @@ function classifyPrioridad(
 function computeKpis(items: ImportSupplyIntelligenceItem[]): ImportSupplyKpis {
   const recompraInmediata = items.filter(i => i.recompraClassification === "INMEDIATA").length;
   const altaRotacion = items.filter(i => i.salesTotal6m >= HIGH_ROTATION_THRESHOLD).length;
+  // Baja rotacion: only count refs with confirmed entry date for aging-based classification
   const bajaRotacion = items.filter(i =>
-    i.agingStatus === "LOW_ROTATION" || i.agingStatus === "OBSOLETE_CANDIDATE",
+    i.entryDateSource === "SAG_RECEIPT" &&
+    (i.agingStatus === "LOW_ROTATION" || i.agingStatus === "OBSOLETE_CANDIDATE"),
   ).length;
+  // Inventario >8 meses: only with confirmed entry dates
   const inventarioMas8Meses = items.filter(i =>
-    i.daysSinceLastEntry !== null && i.daysSinceLastEntry > 240 && i.remaining > 0,
+    i.entryDateSource === "SAG_RECEIPT" && i.daysSinceLastEntry !== null && i.daysSinceLastEntry > 240 && i.remaining > 0,
   ).length;
 
-  // Cobertura promedio (only refs with 6M sales)
-  const refsConVentas = items.filter(i => i.coberturaPromedioDias !== null);
+  // Cobertura promedio (only refs with 6M sales + confirmed stock)
+  const refsConVentas = items.filter(i => i.coberturaPromedioDias !== null && i.stockDataQuality === "CONFIRMED");
   const coberturaPromedioDias = refsConVentas.length > 0
     ? Math.round(refsConVentas.reduce((s, i) => s + i.coberturaPromedioDias!, 0) / refsConVentas.length)
     : null;
 
-  // Capital en inventario lento (aging != NEW/NORMAL, with costo)
+  // Capital en inventario lento (aging != NEW/NORMAL, with costo + confirmed date)
   const refsLentas = items.filter(i =>
+    i.entryDateSource === "SAG_RECEIPT" &&
     i.agingStatus !== "NEW" && i.agingStatus !== "NORMAL" && i.capitalInmovilizado !== null,
   );
   const capitalInventarioLento = refsLentas.length > 0
@@ -260,6 +313,32 @@ function computeKpis(items: ImportSupplyIntelligenceItem[]): ImportSupplyKpis {
     ? Math.round((refsConCosto / items.length) * 100)
     : 0;
 
+  // Data quality summary
+  const refsWithConfirmedStock = items.filter(i => i.stockDataQuality === "CONFIRMED").length;
+  const refsWithConfirmedEntryDate = items.filter(i => i.entryDateSource === "SAG_RECEIPT").length;
+  const refsWithSyncedSales = items.filter(i => i.salesDataQuality === "SYNCED").length;
+  const refsRequiringDataReview = items.filter(i =>
+    i.stockDataQuality === "NO_PIL_RECORD" || i.entryDateSource === "NONE" || i.salesDataQuality === "UNAVAILABLE",
+  ).length;
+
+  const dataQuality: ImportDataQualitySummary = {
+    totalRefs: items.length,
+    refsWithConfirmedStock,
+    refsWithoutB24Record: items.length - refsWithConfirmedStock,
+    refsWithConfirmedEntryDate,
+    refsWithoutEntryDate: items.length - refsWithConfirmedEntryDate,
+    refsWithSyncedSales,
+    refsWithPricePV3: items.filter(i => i.pricePV3 !== null).length,
+    refsWithPricePV4: items.filter(i => i.pricePV4 !== null).length,
+    refsWithCosto: refsConCosto,
+    refsWithClassifiableChannel: items.filter(i => i.channelQuality !== "UNAVAILABLE").length,
+    refsEligibleForRecompra: items.filter(i =>
+      i.stockDataQuality === "CONFIRMED" && i.salesDataQuality === "SYNCED" && i.soldNet > 0,
+    ).length,
+    refsEligibleForEnvejecimiento: refsWithConfirmedEntryDate,
+    refsRequiringDataReview,
+  };
+
   return {
     recompraInmediata,
     altaRotacion,
@@ -268,6 +347,7 @@ function computeKpis(items: ImportSupplyIntelligenceItem[]): ImportSupplyKpis {
     coberturaPromedioDias,
     capitalInventarioLento,
     capitalInventarioLentoCobertura,
+    dataQuality,
   };
 }
 
@@ -280,6 +360,13 @@ function emptyKpis(): ImportSupplyKpis {
     coberturaPromedioDias: null,
     capitalInventarioLento: null,
     capitalInventarioLentoCobertura: 0,
+    dataQuality: {
+      totalRefs: 0, refsWithConfirmedStock: 0, refsWithoutB24Record: 0,
+      refsWithConfirmedEntryDate: 0, refsWithoutEntryDate: 0, refsWithSyncedSales: 0,
+      refsWithPricePV3: 0, refsWithPricePV4: 0, refsWithCosto: 0,
+      refsWithClassifiableChannel: 0, refsEligibleForRecompra: 0,
+      refsEligibleForEnvejecimiento: 0, refsRequiringDataReview: 0,
+    },
   };
 }
 
@@ -304,22 +391,42 @@ async function loadCostoMap(orgId: string, productIds: string[]): Promise<Map<st
   return map;
 }
 
+interface LifecycleAndSagDates {
+  lastModifiedAt: Date | null;
+  lastSaleDate: Date | null;
+  createdAtSag: string | null;
+  lastModifiedSag: string | null;
+  lastPurchaseSag: string | null;
+  lastSaleSag: string | null;
+}
+
 async function loadLifecycleInputs(
   orgId: string,
   productIds: string[],
-): Promise<Map<string, { lastModifiedAt: Date | null; lastSaleDate: Date | null }>> {
-  const map = new Map<string, { lastModifiedAt: Date | null; lastSaleDate: Date | null }>();
+): Promise<Map<string, LifecycleAndSagDates>> {
+  const map = new Map<string, LifecycleAndSagDates>();
   if (productIds.length === 0) return map;
 
   const products = await (prisma as any).productEntity.findMany({
     where: { organizationId: orgId, id: { in: productIds } },
-    select: { id: true, lastModifiedSag: true, lastSaleSag: true },
+    select: {
+      id: true,
+      createdAtSag: true,
+      lastModifiedSag: true,
+      lastPurchaseSag: true,
+      lastSaleSag: true,
+    },
   });
 
   for (const p of products) {
+    const fmtDate = (d: unknown) => d ? new Date(d as string).toISOString().split("T")[0] : null;
     map.set(p.id, {
       lastModifiedAt: p.lastModifiedSag ? new Date(p.lastModifiedSag) : null,
       lastSaleDate: p.lastSaleSag ? new Date(p.lastSaleSag) : null,
+      createdAtSag: fmtDate(p.createdAtSag),
+      lastModifiedSag: fmtDate(p.lastModifiedSag),
+      lastPurchaseSag: fmtDate(p.lastPurchaseSag),
+      lastSaleSag: fmtDate(p.lastSaleSag),
     });
   }
 

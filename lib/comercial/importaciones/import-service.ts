@@ -37,6 +37,9 @@ import type {
   RepurchaseStatus,
   RepurchaseMotivo,
   DataQuality,
+  StockDataQuality,
+  EntryDateSource,
+  SalesDataQuality,
 } from "./import-types";
 import type { CommercialProductDataSource, ProductEnrichment } from "@/lib/comercial/data-sources/commercial-product-data-source";
 import { createSagDirectDataSource } from "@/lib/comercial/data-sources/sag-direct-commercial-product-data-source";
@@ -153,6 +156,7 @@ export async function listImportedReferences(orgId: string): Promise<ImportedRef
   };
 
   const salesMap = new Map<string, SalesAgg>();
+  let salesQuerySucceeded = false;
 
   if (productCodes.length > 0) {
     try {
@@ -256,6 +260,7 @@ export async function listImportedReferences(orgId: string): Promise<ImportedRef
 
       // Store enrichment for reuse in reference building
       _cachedEnrichment = enrichmentForClassification;
+      salesQuerySucceeded = true;
     } catch (err) {
       console.error("[IMPORTACIONES] CustomerOrderLine query failed:", err);
     }
@@ -272,10 +277,20 @@ export async function listImportedReferences(orgId: string): Promise<ImportedRef
     }
   }
 
-  // 5. Build references
+  // 5. Build set of products that have at least one PIL record in B24
+  const productsWithB24Record = new Set<string>();
+  for (const lvl of allInventoryLevels) {
+    if (IMPORT_WAREHOUSE_PKS.has(lvl.warehouseId)) {
+      productsWithB24Record.add(lvl.productId);
+    }
+  }
+
+  // 6. Build references
   const references: ImportedReference[] = products.map((p: any) => {
+    const hasB24Record = productsWithB24Record.has(p.id);
     const rawRemaining = remainingMap.get(p.id) ?? 0;
     const remaining = Math.max(0, rawRemaining);
+    const stockDataQuality: StockDataQuality = hasB24Record ? "CONFIRMED" : "NO_PIL_RECORD";
     const totalStock = totalStockMap.get(p.id) ?? 0;
     const agg = salesMap.get(p.externalId ?? "");
 
@@ -306,6 +321,7 @@ export async function listImportedReferences(orgId: string): Promise<ImportedRef
     const lastEntryDate = sagLastEntry;
 
     // "Days since last restock" — only from CONFIRMED last receipt date
+    const entryDateSource: EntryDateSource = sagLastEntry ? "SAG_RECEIPT" : "NONE";
     const daysSinceLastEntry = sagLastEntry
       ? Math.floor((Date.now() - new Date(sagLastEntry).getTime()) / (1000 * 60 * 60 * 24))
       : null;
@@ -367,6 +383,7 @@ export async function listImportedReferences(orgId: string): Promise<ImportedRef
 
     const { status, motivo } = computeRepurchaseDecision({
       percentSold, remaining, totalStock, sold: soldNet, salesTotal6m: sales6mNet, batchCount,
+      stockDataQuality,
     });
 
     return {
@@ -386,12 +403,15 @@ export async function listImportedReferences(orgId: string): Promise<ImportedRef
       soldNet,
       sold,
       remaining,
+      stockDataQuality,
       totalStock,
       percentSold,
       daysSinceLastEntry,
+      entryDateSource,
       daysInWarehouse: daysSinceLastEntry,
       repurchaseStatus: status,
       repurchaseMotivo: motivo,
+      salesDataQuality: (salesQuerySucceeded ? "SYNCED" : "UNAVAILABLE") as SalesDataQuality,
       sales6mGross,
       returns6m,
       sales6mNet,
@@ -530,31 +550,38 @@ function computeRepurchaseDecision(input: {
   sold: number;
   salesTotal6m: number;
   batchCount: number;
+  stockDataQuality: StockDataQuality;
 }): { status: RepurchaseStatus; motivo: RepurchaseMotivo } {
-  const { percentSold, remaining, totalStock, sold, salesTotal6m, batchCount } = input;
+  const { percentSold, remaining, totalStock, sold, salesTotal6m, batchCount, stockDataQuality } = input;
 
   if (sold === 0) {
     return { status: "SIN_DATOS", motivo: "sin_datos" };
   }
 
-  // Import warehouse depleted + active demand
-  if (remaining <= 20 && salesTotal6m > 0) {
+  // Import warehouse depleted + active demand — ONLY with confirmed stock data
+  if (stockDataQuality === "CONFIRMED" && remaining <= 20 && salesTotal6m > 0) {
     return { status: "RECOMPRAR", motivo: "desabastecimiento" };
   }
 
-  // High rotation with CONFIRMED data
-  if (percentSold !== null && percentSold >= 70 && salesTotal6m > 10 && remaining <= 50) {
+  // High rotation: requires confirmed stock + current active demand
+  if (stockDataQuality === "CONFIRMED" && percentSold !== null && percentSold >= 70 && salesTotal6m > 10 && remaining <= 50) {
     return { status: "RECOMPRAR", motivo: "alta_rotacion" };
   }
 
-  // Historical success with CONFIRMED data
+  // Historical success: RECOMPRAR only with current supply risk, otherwise VIGILAR
   if (percentSold !== null && sold >= 200 && percentSold >= 80) {
-    return { status: "RECOMPRAR", motivo: "exito_historico" };
+    if (stockDataQuality === "CONFIRMED" && remaining <= 50 && salesTotal6m > 0) {
+      return { status: "RECOMPRAR", motivo: "exito_historico" };
+    }
+    return { status: "VIGILAR", motivo: "exito_historico" };
   }
 
-  // Recurring repurchase pattern
+  // Recurring repurchase: RECOMPRAR only with current supply risk, otherwise VIGILAR
   if (batchCount > 1 && percentSold !== null && percentSold >= 60) {
-    return { status: "RECOMPRAR", motivo: "recompra_recurrente" };
+    if (stockDataQuality === "CONFIRMED" && remaining <= 50 && salesTotal6m > 0) {
+      return { status: "RECOMPRAR", motivo: "recompra_recurrente" };
+    }
+    return { status: "VIGILAR", motivo: "recompra_recurrente" };
   }
 
   // Active demand but sufficient stock

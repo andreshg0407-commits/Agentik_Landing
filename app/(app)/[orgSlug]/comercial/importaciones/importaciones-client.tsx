@@ -26,6 +26,7 @@ import type {
   SaludComercial,
   Prioridad,
   RecompraClassification,
+  EnvejecimientoClassification,
   DataQuality,
 } from "@/lib/comercial/importaciones/import-types";
 
@@ -88,9 +89,9 @@ const CHANNEL_LABELS: Record<string, string> = {
   detal: "Detal", mayorista: "Mayorista", equilibrado: "Equilibrado", sin_datos: "\u2014",
 };
 
-const ENVEJECIMIENTO_LABELS: Record<string, string> = {
+const ENVEJECIMIENTO_LABELS: Record<EnvejecimientoClassification, string> = {
   "0_3M": "0\u20133 meses", "3_6M": "3\u20136 meses", "6_8M": "6\u20138 meses",
-  "8_12M": "8\u201312 meses", "12M_PLUS": ">12 meses",
+  "8_12M": "8\u201312 meses", "12M_PLUS": ">12 meses", "SIN_DATOS": "Sin fecha confirmada",
 };
 
 const BAJA_ROT_LABELS: Record<string, string> = {
@@ -130,9 +131,16 @@ export function ImportacionesClient({ orgSlug, items, kpis }: ImportacionesClien
           label="Capital inv. lento"
           value={kpis.capitalInventarioLento !== null ? kpis.capitalInventarioLento : null}
           format="currency"
-          footnote={kpis.capitalInventarioLentoCobertura < 100 ? `${kpis.capitalInventarioLentoCobertura}% refs con costo` : undefined}
+          footnote={kpis.capitalInventarioLentoCobertura < 100
+            ? kpis.capitalInventarioLentoCobertura < 10
+              ? "Cobertura insuficiente"
+              : `${kpis.capitalInventarioLentoCobertura}% refs con costo`
+            : undefined}
         />
       </div>
+
+      {/* ── Data quality strip ─────────────────────────────────────────── */}
+      <DataQualityStrip dq={kpis.dataQuality} />
 
       {/* ── View tabs ─────────────────────────────────────────────────── */}
       <div style={{ display: "flex", gap: S[1], borderBottom: `1px solid ${C.line}`, paddingBottom: 0 }}>
@@ -208,11 +216,9 @@ function PrioridadesView({ items, onDetail }: { items: ImportSupplyIntelligenceI
                   <span style={{ ...cell, display: "grid", gridTemplateColumns: GRID, width: "100%", alignItems: "center" }}>
                     <span style={{ ...cell, fontWeight: T.wt.semibold, color: C.blueDark }}>{item.reference}</span>
                     <span style={{ ...cell, color: C.inkMid }}>{item.description}</span>
-                    <span style={{ ...cell, color: item.remaining <= 20 ? C.red : C.ink, fontWeight: item.remaining <= 20 ? T.wt.bold : T.wt.normal }}>
-                      {item.remaining > 0 ? fmt(item.remaining) : "\u2014"}
-                    </span>
-                    <span style={{ ...cell }}>{item.salesTotal6m > 0 ? fmt(item.salesTotal6m) : "\u2014"}</span>
-                    <span style={{ ...cell, color: C.inkMid }}>{item.daysSinceLastEntry !== null ? item.daysSinceLastEntry : "\u2014"}</span>
+                    {(() => { const s = fmtStock(item); return <span style={{ ...cell, color: s.color, fontWeight: s.weight }}>{s.text}</span>; })()}
+                    {(() => { const sv = fmtSales6m(item); return <span style={{ ...cell, color: sv.color }}>{sv.text}</span>; })()}
+                    {(() => { const d = fmtDays(item); return <span style={{ ...cell, color: d.color }}>{d.text}</span>; })()}
                     <span style={{ ...cell, fontSize: T.sz["2xs"], color: C.inkMid }}>{item.prioridadRazon}</span>
                     <SaludChip salud={item.saludComercial} />
                     <StatusChip status={item.repurchaseStatus} />
@@ -271,10 +277,8 @@ function RecomprasView({ items, onDetail }: { items: ImportSupplyIntelligenceIte
                   <span style={{ ...cell, display: "grid", gridTemplateColumns: GRID, width: "100%", alignItems: "center" }}>
                     <span style={{ ...cell, fontWeight: T.wt.semibold, color: C.blueDark }}>{item.reference}</span>
                     <span style={{ ...cell, color: C.inkMid }}>{item.description}</span>
-                    <span style={{ ...cell, color: item.remaining <= 20 ? C.red : C.ink, fontWeight: item.remaining <= 20 ? T.wt.bold : T.wt.normal }}>
-                      {item.remaining > 0 ? fmt(item.remaining) : "\u2014"}
-                    </span>
-                    <span style={{ ...cell }}>{item.salesTotal6m > 0 ? fmt(item.salesTotal6m) : "\u2014"}</span>
+                    {(() => { const s = fmtStock(item); return <span style={{ ...cell, color: s.color, fontWeight: s.weight }}>{s.text}</span>; })()}
+                    {(() => { const sv = fmtSales6m(item); return <span style={{ ...cell, color: sv.color }}>{sv.text}</span>; })()}
                     <span style={{ ...cell }}>{item.salesDetal6m > 0 ? fmt(item.salesDetal6m) : "\u2014"}</span>
                     <span style={{ ...cell, fontSize: T.sz["2xs"] }}>{CHANNEL_LABELS[item.dominantChannel]}</span>
                     <span style={{ ...cell, fontSize: T.sz["2xs"], color: C.inkMid }}>{MOTIVO_LABELS[item.repurchaseMotivo]}</span>
@@ -347,9 +351,9 @@ function RotacionView({ items, onDetail }: { items: ImportSupplyIntelligenceItem
                 <span style={{ ...cell, fontWeight: T.wt.semibold, color: C.blueDark }}>{item.reference}</span>
                 <span style={{ ...cell, color: C.inkMid }}>{item.description}</span>
                 <span style={{ ...cell, fontWeight: T.wt.bold }}>{item.soldNet > 0 ? fmt(item.soldNet) : "\u2014"}</span>
-                <span style={{ ...cell }}>{item.salesTotal6m > 0 ? fmt(item.salesTotal6m) : "\u2014"}</span>
+                {(() => { const sv = fmtSales6m(item); return <span style={{ ...cell, color: sv.color }}>{sv.text}</span>; })()}
                 <span style={{ ...cell, color: C.inkMid }}>{item.ritmoPromedioVentas !== null ? `${item.ritmoPromedioVentas}/m` : "\u2014"}</span>
-                <span style={{ ...cell, color: item.remaining <= 20 ? C.red : C.ink }}>{item.remaining > 0 ? fmt(item.remaining) : "\u2014"}</span>
+                {(() => { const s = fmtStock(item); return <span style={{ ...cell, color: s.color, fontWeight: s.weight }}>{s.text}</span>; })()}
                 <span style={{ ...cell, fontSize: T.sz["2xs"] }}>{CHANNEL_LABELS[item.dominantChannel]}</span>
                 <SaludChip salud={item.saludComercial} />
               </span>
@@ -365,12 +369,13 @@ function RotacionView({ items, onDetail }: { items: ImportSupplyIntelligenceItem
 
 function EnvejecimientoView({ items, onDetail }: { items: ImportSupplyIntelligenceItem[]; onDetail: (i: ImportSupplyIntelligenceItem) => void }) {
   const bands = useMemo(() => {
-    const order: Array<{ key: string; accent: string }> = [
+    const order: Array<{ key: EnvejecimientoClassification; accent: string }> = [
       { key: "0_3M", accent: C.green },
       { key: "3_6M", accent: C.blueDark },
       { key: "6_8M", accent: C.amber },
       { key: "8_12M", accent: C.red },
       { key: "12M_PLUS", accent: "#7c3aed" },
+      { key: "SIN_DATOS", accent: C.inkFaint },
     ];
     return order.map(b => ({
       ...b,
@@ -410,9 +415,9 @@ function EnvejecimientoView({ items, onDetail }: { items: ImportSupplyIntelligen
                   <span style={{ ...cell, display: "grid", gridTemplateColumns: GRID, width: "100%", alignItems: "center" }}>
                     <span style={{ ...cell, fontWeight: T.wt.semibold, color: C.blueDark }}>{item.reference}</span>
                     <span style={{ ...cell, color: C.inkMid }}>{item.description}</span>
-                    <span style={{ ...cell }}>{item.remaining > 0 ? fmt(item.remaining) : "\u2014"}</span>
-                    <span style={{ ...cell }}>{item.salesTotal6m > 0 ? fmt(item.salesTotal6m) : "\u2014"}</span>
-                    <span style={{ ...cell, color: C.inkMid }}>{item.daysSinceLastEntry !== null ? item.daysSinceLastEntry : "\u2014"}</span>
+                    {(() => { const s = fmtStock(item); return <span style={{ ...cell, color: s.color, fontWeight: s.weight }}>{s.text}</span>; })()}
+                    {(() => { const sv = fmtSales6m(item); return <span style={{ ...cell, color: sv.color }}>{sv.text}</span>; })()}
+                    {(() => { const d = fmtDays(item); return <span style={{ ...cell, color: d.color }}>{d.text}</span>; })()}
                     <AgingChip status={item.agingStatus} />
                     <span style={{ ...cell, fontSize: T.sz["2xs"] }}>{CHANNEL_LABELS[item.dominantChannel]}</span>
                     <SaludChip salud={item.saludComercial} />
@@ -471,9 +476,9 @@ function BajaRotacionView({ items, onDetail }: { items: ImportSupplyIntelligence
                 <span style={{ ...cell, display: "grid", gridTemplateColumns: GRID, width: "100%", alignItems: "center" }}>
                   <span style={{ ...cell, fontWeight: T.wt.semibold, color: C.blueDark }}>{item.reference}</span>
                   <span style={{ ...cell, color: C.inkMid }}>{item.description}</span>
-                  <span style={{ ...cell }}>{item.remaining > 0 ? fmt(item.remaining) : "\u2014"}</span>
-                  <span style={{ ...cell }}>{item.salesTotal6m > 0 ? fmt(item.salesTotal6m) : "\u2014"}</span>
-                  <span style={{ ...cell, color: C.inkMid }}>{item.daysSinceLastEntry !== null ? item.daysSinceLastEntry : "\u2014"}</span>
+                  {(() => { const s = fmtStock(item); return <span style={{ ...cell, color: s.color, fontWeight: s.weight }}>{s.text}</span>; })()}
+                  {(() => { const sv = fmtSales6m(item); return <span style={{ ...cell, color: sv.color }}>{sv.text}</span>; })()}
+                  {(() => { const d = fmtDays(item); return <span style={{ ...cell, color: d.color }}>{d.text}</span>; })()}
                   <AgingChip status={item.agingStatus} />
                   <SaludChip salud={item.saludComercial} />
                 </span>
@@ -578,10 +583,19 @@ function ImportDetailDrawer({ item, onClose }: { item: ImportSupplyIntelligenceI
         {/* Inventory & metrics */}
         <DrawerSection title="Inventario y metricas">
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: `${S[2]}px ${S[4]}px` }}>
-            <DrawerField label="Stock B24" value={item.remaining > 0 ? fmt(item.remaining) : "\u2014"} highlight={item.remaining <= 20 && item.remaining > 0 ? C.red : undefined} />
+            <DrawerField
+              label="Stock B24"
+              value={item.stockDataQuality === "NO_PIL_RECORD" ? "Sin dato" : item.remaining === 0 ? "0" : fmt(item.remaining)}
+              highlight={item.stockDataQuality === "NO_PIL_RECORD" ? C.inkFaint : item.remaining <= 20 ? C.red : undefined}
+              quality={item.stockDataQuality === "CONFIRMED" ? "CONFIRMED" : "UNAVAILABLE"}
+            />
             <DrawerField label="Stock total" value={item.totalStock > 0 ? fmt(item.totalStock) : "\u2014"} />
             <DrawerField label="Total importado" value={item.totalImported !== null ? fmt(item.totalImported) : "\u2014"} quality={item.totalImportedQuality} />
-            <DrawerField label="Venta neta" value={item.soldNet > 0 ? fmt(item.soldNet) : "\u2014"} />
+            <DrawerField
+              label="Venta neta"
+              value={item.salesDataQuality === "UNAVAILABLE" ? "Sin dato" : item.soldNet > 0 ? fmt(item.soldNet) : "0"}
+              highlight={item.salesDataQuality === "UNAVAILABLE" ? C.inkFaint : undefined}
+            />
             <DrawerField label="Devoluciones" value={item.returns > 0 ? fmt(item.returns) : "\u2014"} />
             <DrawerField label="% vendido" value={item.percentSold !== null ? `${item.percentSold}%` : "\u2014"} />
             <DrawerField label="Ritmo/mes" value={item.ritmoPromedioVentas !== null ? `${item.ritmoPromedioVentas}` : "\u2014"} />
@@ -594,11 +608,28 @@ function ImportDetailDrawer({ item, onClose }: { item: ImportSupplyIntelligenceI
         <DrawerSection title="Fechas de ingreso">
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: `${S[2]}px ${S[4]}px` }}>
             <DrawerField label="Primera entrada" value={item.entryDate ?? "\u2014"} quality={item.entryDateQuality} />
-            <DrawerField label="Ultima entrada" value={item.lastEntryDate ?? "\u2014"} />
-            <DrawerField label="Dias sin ingreso" value={item.daysSinceLastEntry !== null ? `${item.daysSinceLastEntry}` : "\u2014"} />
+            <DrawerField label="Ultima entrada" value={item.lastEntryDate ?? "\u2014"} quality={item.entryDateSource === "SAG_RECEIPT" ? "CONFIRMED" : "UNAVAILABLE"} />
+            <DrawerField
+              label="Dias sin ingreso"
+              value={item.entryDateSource === "NONE" ? "Sin dato" : `${item.daysSinceLastEntry}`}
+              highlight={item.entryDateSource === "NONE" ? C.inkFaint : undefined}
+            />
             <DrawerField label="Lotes" value={item.batchCount > 0 ? `${item.batchCount}` : "\u2014"} />
             <DrawerField label="Aging" value={item.agingStatus.replace("_", " ")} />
             <DrawerField label="Lifecycle" value={item.lifecycleState.replace("_", " ")} />
+          </div>
+        </DrawerSection>
+
+        {/* SAG dates */}
+        <DrawerSection title="Fechas SAG (informativo)">
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: `${S[2]}px ${S[4]}px` }}>
+            <DrawerField label="Creado en SAG" value={item.createdAtSag ?? "\u2014"} />
+            <DrawerField label="Mod. en SAG" value={item.lastModifiedSag ?? "\u2014"} />
+            <DrawerField label="Ult. compra SAG" value={item.lastPurchaseSag ?? "\u2014"} />
+            <DrawerField label="Ult. venta SAG" value={item.lastSaleSag ?? "\u2014"} />
+          </div>
+          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginTop: S[1] }}>
+            Aging usa fecha de recibo SAG (MOVIMIENTOS C1/C2), no estas fechas.
           </div>
         </DrawerSection>
 
@@ -850,6 +881,48 @@ function rowStyle(isLast: boolean): React.CSSProperties {
   };
 }
 
+// ── Data Quality Strip ──────────────────────────────────────────────────────
+
+function DataQualityStrip({ dq }: { dq: ImportSupplyKpis["dataQuality"] }) {
+  if (dq.totalRefs === 0) return null;
+  const pct = (n: number) => Math.round((n / dq.totalRefs) * 100);
+
+  return (
+    <div style={{
+      display: "flex", flexDirection: "column", gap: S[2], padding: `${S[3]}px ${S[4]}px`,
+      background: C.surface, borderRadius: R.md, border: `1px solid ${C.line}`,
+    }}>
+      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkMid, textTransform: "uppercase" as const, letterSpacing: 0.4 }}>
+        Calidad de datos — {dq.totalRefs} referencias
+      </span>
+      <div style={{ display: "flex", gap: S[4], flexWrap: "wrap" }}>
+        <DqBadge label="Stock B24" pct={pct(dq.refsWithConfirmedStock)} count={dq.refsWithConfirmedStock} total={dq.totalRefs} />
+        <DqBadge label="Fecha ingreso" pct={pct(dq.refsWithConfirmedEntryDate)} count={dq.refsWithConfirmedEntryDate} total={dq.totalRefs} />
+        <DqBadge label="Ventas sync" pct={pct(dq.refsWithSyncedSales)} count={dq.refsWithSyncedSales} total={dq.totalRefs} />
+        <DqBadge label="PV3" pct={pct(dq.refsWithPricePV3)} count={dq.refsWithPricePV3} total={dq.totalRefs} />
+        <DqBadge label="PV4" pct={pct(dq.refsWithPricePV4)} count={dq.refsWithPricePV4} total={dq.totalRefs} />
+        <DqBadge label="Costo" pct={pct(dq.refsWithCosto)} count={dq.refsWithCosto} total={dq.totalRefs} />
+        <DqBadge label="Canal clasif." pct={pct(dq.refsWithClassifiableChannel)} count={dq.refsWithClassifiableChannel} total={dq.totalRefs} />
+      </div>
+      <div style={{ display: "flex", gap: S[4], flexWrap: "wrap" }}>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
+          Eleg. recompra: {dq.refsEligibleForRecompra} | Eleg. envejecimiento: {dq.refsEligibleForEnvejecimiento} | Requieren revision: {dq.refsRequiringDataReview}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function DqBadge({ label, pct, count, total }: { label: string; pct: number; count: number; total: number }) {
+  const color = pct >= 80 ? C.green : pct >= 50 ? C.amber : C.red;
+  return (
+    <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
+      {label}: <span style={{ color, fontWeight: T.wt.semibold }}>{pct}%</span>
+      <span style={{ color: C.inkFaint }}> ({count}/{total})</span>
+    </span>
+  );
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function fmt(n: number): string {
@@ -858,4 +931,33 @@ function fmt(n: number): string {
 
 function fmtCurrency(n: number): string {
   return `$${Math.round(n).toLocaleString("es-CO")}`;
+}
+
+/** Disambiguated stock display: "0" for confirmed zero, "Sin dato" for no PIL record */
+function fmtStock(item: ImportSupplyIntelligenceItem): { text: string; color: string; weight: number } {
+  if (item.stockDataQuality === "NO_PIL_RECORD") {
+    return { text: "Sin dato", color: C.inkFaint, weight: T.wt.normal };
+  }
+  if (item.remaining === 0) {
+    return { text: "0", color: C.red, weight: T.wt.bold };
+  }
+  if (item.remaining <= 20) {
+    return { text: fmt(item.remaining), color: C.red, weight: T.wt.bold };
+  }
+  return { text: fmt(item.remaining), color: C.ink, weight: T.wt.normal };
+}
+
+/** Disambiguated days display: number for confirmed, "Sin dato" for no date */
+function fmtDays(item: ImportSupplyIntelligenceItem): { text: string; color: string } {
+  if (item.entryDateSource === "NONE") {
+    return { text: "Sin dato", color: C.inkFaint };
+  }
+  return { text: `${item.daysSinceLastEntry}`, color: C.inkMid };
+}
+
+function fmtSales6m(item: ImportSupplyIntelligenceItem): { text: string; color: string } {
+  if (item.salesDataQuality === "UNAVAILABLE") {
+    return { text: "Sin dato", color: C.inkFaint };
+  }
+  return { text: item.salesTotal6m > 0 ? fmt(item.salesTotal6m) : "0", color: item.salesTotal6m > 0 ? C.ink : C.inkMid };
 }
