@@ -147,3 +147,56 @@ export interface MonthlySale {
 export interface ImportReferenceDetail extends ImportedReference {
   monthlySales: MonthlySale[];
 }
+
+// ── Supply Intelligence ─────────────────────────────────────────────────────
+
+export type SaludComercial = "SANA" | "EN_RIESGO" | "CRITICA" | "SIN_DATOS";
+export type RecompraClassification = "INMEDIATA" | "VIGILAR" | "NO_RECOMPRAR" | "SIN_DATOS";
+export type RotacionClassification = "MAS_VENDIDA" | "MAS_RAPIDA" | "NORMAL" | "SIN_VENTAS";
+export type EnvejecimientoClassification = "0_3M" | "3_6M" | "6_8M" | "8_12M" | "12M_PLUS";
+export type BajaRotacionClassification = "SOBRESTOCK" | "SIN_MOVIMIENTO" | "REVISAR_CONTINUIDAD";
+export type Prioridad = "ALTA" | "MEDIA" | "BAJA" | "SIN_ACCION";
+
+export type InventoryAgingStatusLite = "NEW" | "NORMAL" | "AGING" | "LOW_ROTATION" | "OBSOLETE_CANDIDATE";
+
+export interface ImportSupplyIntelligenceItem extends ImportedReference {
+  // Cost
+  costo: number | null;
+  capitalInmovilizado: number | null;
+
+  // Derived metrics
+  coberturaPromedioDias: number | null;
+  ritmoPromedioVentas: number | null;
+
+  // Aging & lifecycle
+  agingStatus: InventoryAgingStatusLite;
+  lifecycleState: string;
+
+  // Commercial health badge
+  saludComercial: SaludComercial;
+  saludComercialRazon: string;
+
+  // Classifications for the 5 views
+  recompraClassification: RecompraClassification;
+  rotacionClassification: RotacionClassification;
+  envejecimientoClassification: EnvejecimientoClassification;
+  bajaRotacionClassification: BajaRotacionClassification | null;
+
+  // Priority for triage view
+  prioridad: Prioridad;
+  prioridadRazon: string;
+
+  // Decision engine evidence (exposed for UI)
+  repurchaseActionRationale: string | null;
+  repurchaseRecommendedAction: string | null;
+}
+
+export interface ImportSupplyKpis {
+  recompraInmediata: number;
+  altaRotacion: number;
+  bajaRotacion: number;
+  inventarioMas8Meses: number;
+  coberturaPromedioDias: number | null;
+  capitalInventarioLento: number | null;
+  capitalInventarioLentoCobertura: number;
+}
