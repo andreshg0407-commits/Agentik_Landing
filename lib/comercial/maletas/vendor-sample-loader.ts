@@ -728,7 +728,15 @@ export async function loadVendorSampleData(
     vendorRefSets.set(v.vendorId, new Set(v.refs.map((r) => r.reference)));
   }
   // ACTIVATION-01: scope-filtered central refs for coverage opportunities
-  const allCentralRefs = canonical.refs
+  const allCentralRefs: Array<{
+    reference: string;
+    description: string;
+    line: string;
+    grupoSag: string | null;
+    subgrupoSag: string | null;
+    sizeClass: string | null;
+    disponible: number;
+  }> = canonical.refs
     .filter((cr) => runtimeEligibleSet.has(cr.reference))
     .map((cr) => ({
       reference: cr.reference,
@@ -739,6 +747,67 @@ export async function loadVendorSampleData(
       sizeClass: productEnrichmentMap.get(cr.reference)?.sizeClass ?? null,
       disponible: cr.available,
     }));
+
+  // IMPORT-COVERAGE-B24-01: CCS only covers textile warehouses (B01+B04).
+  // Import products live in B24. Load B24 inventory and append import refs
+  // so the coverage engine can find import replacement candidates.
+  const existingRefs = new Set(allCentralRefs.map((r) => r.reference));
+  try {
+    const importProducts = await db.productEntity.findMany({
+      where: { organizationId, productLine: "5" },
+      select: {
+        sku: true,
+        name: true,
+        description: true,
+        handlingUnit: true,
+        inventoryLevels: {
+          where: { externalRef: "24" },
+          select: { quantity: true, reservedQty: true },
+        },
+      },
+    });
+
+    let importRefsAdded = 0;
+    // Aggregate by SKU (reference) — multiple PIL rows per product possible
+    const importAgg = new Map<string, { description: string; sizeClass: string | null; disponible: number }>();
+    for (const p of importProducts) {
+      if (!p.sku) continue;
+      let totalAvailable = 0;
+      for (const il of p.inventoryLevels) {
+        totalAvailable += Math.max(0, il.quantity - il.reservedQty);
+      }
+      const existing = importAgg.get(p.sku);
+      if (existing) {
+        existing.disponible += totalAvailable;
+      } else {
+        const sizeClass = p.handlingUnit && CANONICAL_SIZE_CLASSES.has(p.handlingUnit)
+          ? p.handlingUnit : null;
+        importAgg.set(p.sku, {
+          description: p.description ?? p.name,
+          sizeClass,
+          disponible: totalAvailable,
+        });
+      }
+    }
+
+    for (const [sku, agg] of importAgg) {
+      if (existingRefs.has(sku)) continue; // CCS already has this ref
+      if (agg.disponible <= 0) continue;   // No stock
+      allCentralRefs.push({
+        reference: sku,
+        description: agg.description,
+        line: "IMPORT",
+        grupoSag: null,
+        subgrupoSag: null,
+        sizeClass: agg.sizeClass,
+        disponible: agg.disponible,
+      });
+      importRefsAdded++;
+    }
+    console.log(`[MALETAS] Import B24 refs: ${importAgg.size} products, ${importRefsAdded} added to coverage pool`);
+  } catch (err) {
+    console.error("[MALETAS] Import B24 load failed (non-fatal):", err);
+  }
 
   // Build flat OP candidate list for unified coverage engine
   const opCovCandidates: OpCoverageCandidate[] = [];

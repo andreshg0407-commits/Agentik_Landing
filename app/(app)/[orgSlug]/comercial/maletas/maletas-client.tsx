@@ -997,82 +997,117 @@ export function MaletasClient({
             </div>
           )}
 
-          {/* ── Oportunidades de Importacion ── */}
-          {coverageResult.importCoverage.length > 0 && (
-            <div style={{ marginBottom: S[4] }}>
-              <div style={{
-                fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.titleDeep,
-                textTransform: "uppercase" as const, letterSpacing: "0.08em",
-                marginBottom: S[2],
-              }}>
-                Importacion ({coverageResult.importCoverage.length})
-              </div>
-              <div style={{
-                background: C.white, borderRadius: R.lg,
-                border: `1px solid ${C.line}`, boxShadow: `0 1px 3px ${C.ink}06`,
-                overflow: "hidden", overflowX: "auto", minWidth: 0,
-              }}>
+          {/* ── Oportunidades de Importacion (grouped by size) ── */}
+          {coverageResult.importCoverage.length > 0 && (() => {
+            const SIZE_ORDER = ["PEQUENO", "MEDIANO", "GRANDE"] as const;
+            const SIZE_LABELS: Record<string, string> = { PEQUENO: "Pequeno", MEDIANO: "Mediano", GRANDE: "Grande" };
+            const bySize = new Map<string, typeof coverageResult.importCoverage>();
+            for (const opp of coverageResult.importCoverage) {
+              const key = opp.sizeClass || "SIN_TAMANO";
+              const list = bySize.get(key) ?? [];
+              list.push(opp);
+              bySize.set(key, list);
+            }
+            const sizeGroups: { size: string; label: string; items: typeof coverageResult.importCoverage }[] = SIZE_ORDER
+              .filter((s) => bySize.has(s))
+              .map((s) => ({ size: s as string, label: SIZE_LABELS[s] ?? s, items: bySize.get(s)! }));
+            // Append any uncategorized
+            for (const [k, v] of bySize) {
+              if (!SIZE_ORDER.includes(k as any)) {
+                sizeGroups.push({ size: k, label: k, items: v });
+              }
+            }
+
+            return (
+              <div style={{ marginBottom: S[4] }}>
                 <div style={{
-                  display: "grid",
-                  gridTemplateColumns: "minmax(80px,0.9fr) minmax(120px,1.5fr) 80px 70px minmax(80px,0.8fr)",
-                  padding: `10px 16px`, background: C.surfaceAlt,
-                  borderBottom: `1px solid ${C.line}`, gap: S[2], alignItems: "center",
+                  fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.titleDeep,
+                  textTransform: "uppercase" as const, letterSpacing: "0.08em",
+                  marginBottom: S[2],
                 }}>
-                  {["Referencia", "Descripcion", "Tamano", "Disponible", "Sirve para"].map((h) => (
-                    <div key={h} style={{
-                      ...listHeaderCell,
-                      textAlign: h === "Disponible" ? "right" as const : undefined,
-                    }}>{h}</div>
-                  ))}
+                  Importacion ({coverageResult.importCoverage.length})
                 </div>
-                {coverageResult.importCoverage.map((opp, i) => (
-                  <div key={`${opp.replacementReference}-${i}`}>
+                {sizeGroups.map((sg) => (
+                  <div key={sg.size} style={{ marginBottom: S[3] }}>
                     <div style={{
-                      display: "grid",
-                      gridTemplateColumns: "minmax(80px,0.9fr) minmax(120px,1.5fr) 80px 70px minmax(80px,0.8fr)",
-                      padding: ROW_PAD,
-                      borderBottom: i === coverageResult.importCoverage.length - 1 ? "none" : `1px solid ${C.lineSubtle}`,
-                      gap: S[2], alignItems: "center",
+                      fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: C.blueDark,
+                      textTransform: "uppercase" as const, letterSpacing: "0.06em",
+                      marginBottom: S[1], paddingLeft: S[1],
                     }}>
-                      <div style={{ ...listCell, fontWeight: 700, color: C.titleDeep }}>{opp.replacementReference}</div>
-                      <div style={{ ...listCell, color: C.inkMid, fontSize: 10 }}>{opp.replacementDescription}</div>
-                      <div style={{ ...listCell, color: C.ink }}>{opp.sizeClass}</div>
-                      <div style={{ ...listCell, fontWeight: 600, color: C.green, textAlign: "right" as const }}>{opp.availableNow}</div>
-                      <div style={{ ...listCell }}>
-                        <button
-                          onClick={() => setExpandedRef(expandedRef === opp.replacementReference ? null : opp.replacementReference)}
-                          style={{
-                            fontFamily: T.mono, fontSize: 9, fontWeight: 600, color: C.blueDark,
-                            background: "none", border: "none", cursor: "pointer", padding: 0,
-                            textDecoration: "underline", textUnderlineOffset: 2,
-                          }}
-                        >
-                          {opp.targets.length} referencia{opp.targets.length !== 1 ? "s" : ""}
-                        </button>
-                      </div>
+                      {sg.label} ({sg.items.length})
                     </div>
-                    {expandedRef === opp.replacementReference && (
+                    <div style={{
+                      background: C.white, borderRadius: R.lg,
+                      border: `1px solid ${C.line}`, boxShadow: `0 1px 3px ${C.ink}06`,
+                      overflow: "hidden", overflowX: "auto", minWidth: 0,
+                    }}>
                       <div style={{
-                        padding: `${S[2]} ${S[4]}`, background: `${C.blueDark}06`,
-                        borderBottom: `1px solid ${C.lineSubtle}`,
+                        display: "grid",
+                        gridTemplateColumns: "minmax(80px,0.9fr) minmax(120px,1.5fr) 70px 70px minmax(80px,0.8fr)",
+                        padding: `10px 16px`, background: C.surfaceAlt,
+                        borderBottom: `1px solid ${C.line}`, gap: S[2], alignItems: "center",
                       }}>
-                        {opp.targets.map((t, ti) => (
-                          <div key={ti} style={{
-                            fontFamily: T.mono, fontSize: 9, color: C.inkMid,
-                            display: "flex", gap: S[3], padding: "2px 0",
-                          }}>
-                            <span style={{ color: C.ink, fontWeight: 600 }}>{t.vendorId}</span>
-                            <span>{t.subgroupName}</span>
-                            <span style={{ color: C.red }}>faltan {t.faltante}</span>
-                          </div>
+                        {["Referencia", "Descripcion", "Disponible", "Confianza", "Sirve para"].map((h) => (
+                          <div key={h} style={{
+                            ...listHeaderCell,
+                            textAlign: h === "Disponible" ? "right" as const : undefined,
+                          }}>{h}</div>
                         ))}
                       </div>
-                    )}
+                      {sg.items.map((opp, i) => (
+                        <div key={`${opp.replacementReference}-${i}`}>
+                          <div style={{
+                            display: "grid",
+                            gridTemplateColumns: "minmax(80px,0.9fr) minmax(120px,1.5fr) 70px 70px minmax(80px,0.8fr)",
+                            padding: ROW_PAD,
+                            borderBottom: i === sg.items.length - 1 ? "none" : `1px solid ${C.lineSubtle}`,
+                            gap: S[2], alignItems: "center",
+                          }}>
+                            <div style={{ ...listCell, fontWeight: 700, color: C.titleDeep }}>{opp.replacementReference}</div>
+                            <div style={{ ...listCell, color: C.inkMid, fontSize: 10 }}>{opp.replacementDescription}</div>
+                            <div style={{ ...listCell, fontWeight: 600, color: C.green, textAlign: "right" as const }}>{opp.availableNow}</div>
+                            <div style={{
+                              ...listCell, fontWeight: 600, fontSize: 9,
+                              color: opp.confidence === "ALTA" ? C.green : opp.confidence === "MEDIA" ? C.amber : C.red,
+                            }}>{opp.confidence}</div>
+                            <div style={{ ...listCell }}>
+                              <button
+                                onClick={() => setExpandedRef(expandedRef === opp.replacementReference ? null : opp.replacementReference)}
+                                style={{
+                                  fontFamily: T.mono, fontSize: 9, fontWeight: 600, color: C.blueDark,
+                                  background: "none", border: "none", cursor: "pointer", padding: 0,
+                                  textDecoration: "underline", textUnderlineOffset: 2,
+                                }}
+                              >
+                                {opp.targets.length} vendedor{opp.targets.length !== 1 ? "es" : ""}
+                              </button>
+                            </div>
+                          </div>
+                          {expandedRef === opp.replacementReference && (
+                            <div style={{
+                              padding: `${S[2]} ${S[4]}`, background: `${C.blueDark}06`,
+                              borderBottom: `1px solid ${C.lineSubtle}`,
+                            }}>
+                              {opp.targets.map((t, ti) => (
+                                <div key={ti} style={{
+                                  fontFamily: T.mono, fontSize: 9, color: C.inkMid,
+                                  display: "flex", gap: S[3], padding: "2px 0",
+                                }}>
+                                  <span style={{ color: C.ink, fontWeight: 600 }}>{t.vendorId}</span>
+                                  <span>{t.subgroupName}</span>
+                                  <span style={{ color: C.red }}>faltan {t.faltante}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ))}
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Empty state — no opportunities at all */}
           {coverageResult.textileCoverage.length === 0 && coverageResult.importCoverage.length === 0 && (
