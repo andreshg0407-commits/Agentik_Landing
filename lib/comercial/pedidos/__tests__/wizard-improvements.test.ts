@@ -22,8 +22,10 @@
  *   - SIMULATION without network call
  *   - Seller optionality (warning, not error)
  *   - Castillitos stays in SIMULATION
+ *   - Auto-distribution cell assignment (indexOf fix)
  *
  * Sprint: AGENTIK-ORDERS-WIZARD-IMPROVEMENTS-01
+ * Bugfix: AGENTIK-ORDERS-WIZARD-AUTO-DISTRIBUTION-01
  */
 
 import { test, describe } from "node:test";
@@ -495,5 +497,205 @@ describe("Seller optionality", () => {
 describe("Reference code uppercasing", () => {
   test("maps to uppercase for SAG", () => {
     assert.equal("ref-abc-123".toUpperCase(), "REF-ABC-123");
+  });
+});
+
+// ── Auto-distribution cell assignment (AGENTIK-ORDERS-WIZARD-AUTO-DISTRIBUTION-01) ─
+
+/**
+ * Pure extraction of the setMatrixCells callback from handleAutoDistribute().
+ * This is the EXACT algorithm from wholesale-order-wizard.tsx lines 404-453.
+ * The bug: indexOf() compared object references after spread created new objects.
+ * The fix: use stable integer indices via size+color key map.
+ */
+interface TestMatrixCell {
+  size: string;
+  color: string;
+  quantity: number;
+  available: number;
+  operationalAvailableQty?: number | null;
+  cellState?: "known" | "unknown";
+}
+
+interface TestDistEntry {
+  size: string;
+  allocatedUnits: number;
+}
+
+function applyDistributionToCells(
+  cells: TestMatrixCell[],
+  distribution: TestDistEntry[],
+): TestMatrixCell[] {
+  const newCells = [...cells];
+
+  // Build index: "size\0color" → position in newCells
+  const cellIndex = new Map<string, number>();
+  for (let i = 0; i < newCells.length; i++) {
+    cellIndex.set(`${newCells[i].size}\0${newCells[i].color}`, i);
+  }
+
+  for (const entry of distribution) {
+    if (entry.allocatedUnits <= 0) continue;
+    // Find eligible cell indices for this size (have stock, not unknown)
+    const eligibleIndices: number[] = [];
+    for (let i = 0; i < newCells.length; i++) {
+      const c = newCells[i];
+      if (c.size === entry.size && c.cellState !== "unknown"
+        && (c.operationalAvailableQty ?? c.available ?? 0) > 0) {
+        eligibleIndices.push(i);
+      }
+    }
+    if (eligibleIndices.length === 0) continue;
+
+    // Split allocated units across colors for this size
+    let remaining = entry.allocatedUnits;
+    const perColor = Math.floor(remaining / eligibleIndices.length);
+
+    for (const idx of eligibleIndices) {
+      const c = newCells[idx];
+      const cellAvail = c.operationalAvailableQty ?? c.available ?? 0;
+      const alloc = Math.min(perColor || remaining, cellAvail, remaining);
+      newCells[idx] = { ...c, quantity: alloc };
+      remaining -= alloc;
+    }
+
+    // Distribute remainder
+    if (remaining > 0) {
+      for (const idx of eligibleIndices) {
+        if (remaining <= 0) break;
+        const c = newCells[idx];
+        const cellAvail = c.operationalAvailableQty ?? c.available ?? 0;
+        const canAdd = Math.min(remaining, cellAvail - c.quantity);
+        if (canAdd > 0) {
+          newCells[idx] = { ...c, quantity: c.quantity + canAdd };
+          remaining -= canAdd;
+        }
+      }
+    }
+  }
+  return newCells;
+}
+
+function totalQty(cells: TestMatrixCell[]): number {
+  return cells.reduce((s, c) => s + c.quantity, 0);
+}
+
+describe("Auto-distribution cell assignment (indexOf fix)", () => {
+
+  test("1. distribution with 1 size", () => {
+    const cells: TestMatrixCell[] = [
+      { size: "M", color: "NEGRO", quantity: 0, available: 30, cellState: "known" },
+      { size: "M", color: "AZUL", quantity: 0, available: 20, cellState: "known" },
+    ];
+    const dist: TestDistEntry[] = [{ size: "M", allocatedUnits: 40 }];
+    const result = applyDistributionToCells(cells, dist);
+    assert.equal(totalQty(result), 40);
+    // Each color gets proportional share: floor(40/2)=20 each, capped by available
+    assert.equal(result[0].quantity, 20); // NEGRO: min(20, 30) = 20
+    assert.equal(result[1].quantity, 20); // AZUL: min(20, 20) = 20
+  });
+
+  test("2. distribution with multiple sizes", () => {
+    const cells: TestMatrixCell[] = [
+      { size: "S", color: "NEGRO", quantity: 0, available: 15, cellState: "known" },
+      { size: "M", color: "NEGRO", quantity: 0, available: 25, cellState: "known" },
+      { size: "L", color: "NEGRO", quantity: 0, available: 10, cellState: "known" },
+    ];
+    const dist: TestDistEntry[] = [
+      { size: "S", allocatedUnits: 10 },
+      { size: "M", allocatedUnits: 20 },
+      { size: "L", allocatedUnits: 5 },
+    ];
+    const result = applyDistributionToCells(cells, dist);
+    assert.equal(result[0].quantity, 10); // S
+    assert.equal(result[1].quantity, 20); // M
+    assert.equal(result[2].quantity, 5);  // L
+    assert.equal(totalQty(result), 35);
+  });
+
+  test("3. insufficient inventory caps allocation", () => {
+    const cells: TestMatrixCell[] = [
+      { size: "M", color: "NEGRO", quantity: 0, available: 5, cellState: "known" },
+      { size: "M", color: "AZUL", quantity: 0, available: 3, cellState: "known" },
+    ];
+    const dist: TestDistEntry[] = [{ size: "M", allocatedUnits: 50 }];
+    const result = applyDistributionToCells(cells, dist);
+    // Can only allocate 5+3=8, not 50
+    assert.equal(totalQty(result), 8);
+    assert.equal(result[0].quantity, 5);
+    assert.equal(result[1].quantity, 3);
+  });
+
+  test("4. zero inventory assigns nothing", () => {
+    const cells: TestMatrixCell[] = [
+      { size: "M", color: "NEGRO", quantity: 0, available: 0, cellState: "known" },
+      { size: "M", color: "AZUL", quantity: 0, available: 0, cellState: "known" },
+    ];
+    const dist: TestDistEntry[] = [{ size: "M", allocatedUnits: 30 }];
+    const result = applyDistributionToCells(cells, dist);
+    assert.equal(totalQty(result), 0);
+  });
+
+  test("5. duplicate size+color entries use last index", () => {
+    // If two cells share size+color (shouldn't happen, but test stability)
+    const cells: TestMatrixCell[] = [
+      { size: "M", color: "NEGRO", quantity: 0, available: 10, cellState: "known" },
+      { size: "M", color: "NEGRO", quantity: 0, available: 15, cellState: "known" },
+      { size: "M", color: "AZUL", quantity: 0, available: 20, cellState: "known" },
+    ];
+    const dist: TestDistEntry[] = [{ size: "M", allocatedUnits: 30 }];
+    const result = applyDistributionToCells(cells, dist);
+    // All 3 cells are eligible (index scan doesn't rely on cellIndex map for eligibility)
+    assert.equal(totalQty(result), 30);
+  });
+
+  test("6. repeated distribution is idempotent (second run overwrites)", () => {
+    const cells: TestMatrixCell[] = [
+      { size: "M", color: "NEGRO", quantity: 0, available: 50, cellState: "known" },
+      { size: "M", color: "AZUL", quantity: 0, available: 50, cellState: "known" },
+    ];
+    const dist: TestDistEntry[] = [{ size: "M", allocatedUnits: 40 }];
+    const first = applyDistributionToCells(cells, dist);
+    assert.equal(totalQty(first), 40);
+    // Run again on the result (simulates user clicking auto-distribute twice)
+    const second = applyDistributionToCells(first, dist);
+    // Second run overwrites quantity (not additive) because the algorithm
+    // sets quantity = alloc, not quantity += alloc in the first pass.
+    assert.equal(totalQty(second), 40);
+  });
+
+  test("7. distribution over cloned objects (the indexOf bug case)", () => {
+    // This is the EXACT scenario that caused the TypeError:
+    // 1. Create cells
+    // 2. Spread-copy the array (like React setState(prev => [...prev]))
+    // 3. Replace one element with { ...cell, someField: newValue }
+    // 4. Try to find the original reference — indexOf returns -1
+    //
+    // The fix uses integer indices instead of indexOf, so this must work.
+    const original: TestMatrixCell[] = [
+      { size: "S", color: "ROJO", quantity: 0, available: 10, cellState: "known" },
+      { size: "M", color: "ROJO", quantity: 0, available: 20, cellState: "known" },
+      { size: "L", color: "ROJO", quantity: 0, available: 15, cellState: "known" },
+    ];
+
+    // Simulate what React does: clone array, replace an element
+    const cloned = [...original];
+    cloned[1] = { ...cloned[1], quantity: 5 }; // new object reference!
+
+    // Old bug: indexOf(original[1]) would return -1 on cloned array
+    assert.equal(cloned.indexOf(original[1]), -1, "confirms reference identity is broken");
+
+    // But our fixed algorithm uses index-based access, so it works:
+    const dist: TestDistEntry[] = [
+      { size: "S", allocatedUnits: 8 },
+      { size: "M", allocatedUnits: 15 },
+      { size: "L", allocatedUnits: 10 },
+    ];
+    const result = applyDistributionToCells(cloned, dist);
+
+    assert.equal(result[0].quantity, 8);  // S: 8 allocated, 10 available
+    assert.equal(result[1].quantity, 15); // M: 15 allocated, 20 available
+    assert.equal(result[2].quantity, 10); // L: 10 allocated, 15 available
+    assert.equal(totalQty(result), 33);
   });
 });

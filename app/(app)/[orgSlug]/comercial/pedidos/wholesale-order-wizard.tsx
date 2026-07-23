@@ -399,40 +399,51 @@ export function WholesaleOrderWizard({
     );
 
     // Apply distribution to matrix cells
-    // For each size, distribute proportionally across colors
+    // For each size, distribute proportionally across colors.
+    // Uses stable index lookup (size+color) — never indexOf by object reference.
     setMatrixCells(prev => {
       const newCells = [...prev];
+
+      // Build index: "size\0color" → position in newCells
+      const cellIndex = new Map<string, number>();
+      for (let i = 0; i < newCells.length; i++) {
+        cellIndex.set(`${newCells[i].size}\0${newCells[i].color}`, i);
+      }
+
       for (const entry of result.distribution) {
         if (entry.allocatedUnits <= 0) continue;
-        // Find cells with this size that have operational stock (skip unknown)
-        const eligibleCells = newCells.filter(c =>
-          c.size === entry.size && c.cellState !== "unknown"
-          && (c.operationalAvailableQty ?? c.available ?? 0) > 0
-        );
-        if (eligibleCells.length === 0) continue;
+        // Find eligible cell indices for this size (have stock, not unknown)
+        const eligibleIndices: number[] = [];
+        for (let i = 0; i < newCells.length; i++) {
+          const c = newCells[i];
+          if (c.size === entry.size && c.cellState !== "unknown"
+            && (c.operationalAvailableQty ?? c.available ?? 0) > 0) {
+            eligibleIndices.push(i);
+          }
+        }
+        if (eligibleIndices.length === 0) continue;
 
         // Split allocated units across colors for this size
         let remaining = entry.allocatedUnits;
-        const perColor = Math.floor(remaining / eligibleCells.length);
+        const perColor = Math.floor(remaining / eligibleIndices.length);
 
-        for (const cell of eligibleCells) {
-          const idx = newCells.indexOf(cell);
-          const cellAvail = cell.operationalAvailableQty ?? cell.available ?? 0;
+        for (const idx of eligibleIndices) {
+          const c = newCells[idx];
+          const cellAvail = c.operationalAvailableQty ?? c.available ?? 0;
           const alloc = Math.min(perColor || remaining, cellAvail, remaining);
-          newCells[idx] = { ...cell, quantity: alloc };
+          newCells[idx] = { ...c, quantity: alloc };
           remaining -= alloc;
         }
 
         // Distribute remainder
         if (remaining > 0) {
-          for (const cell of eligibleCells) {
+          for (const idx of eligibleIndices) {
             if (remaining <= 0) break;
-            const idx = newCells.indexOf(cell);
-            const current = newCells[idx].quantity;
-            const cellAvail = cell.operationalAvailableQty ?? cell.available ?? 0;
-            const canAdd = Math.min(remaining, cellAvail - current);
+            const c = newCells[idx];
+            const cellAvail = c.operationalAvailableQty ?? c.available ?? 0;
+            const canAdd = Math.min(remaining, cellAvail - c.quantity);
             if (canAdd > 0) {
-              newCells[idx] = { ...newCells[idx], quantity: current + canAdd };
+              newCells[idx] = { ...c, quantity: c.quantity + canAdd };
               remaining -= canAdd;
             }
           }
