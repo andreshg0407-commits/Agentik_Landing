@@ -126,6 +126,35 @@ export const CASTILLITOS_STOCK_THRESHOLDS: StockThresholdsConfig = {
   },
 };
 
+// ── FASE 9: SAG Write Mode (WIZARD-IMPROVEMENTS-01) ────────────────────────
+
+/**
+ * SAG_ORDER_WRITE_MODE controls the behavior of the order → SAG write pipeline.
+ *
+ * - DISABLED:   No SAG write at all. sendOrderToSag returns immediately.
+ * - SIMULATION: Builds payload, validates, logs — but never calls SAG.
+ *               Returns a simulated success with a fake sagOperationId.
+ *               Useful for verifying mapping + idempotency without side effects.
+ * - LIVE:       Full pipeline — enqueues in SAG write queue for execution.
+ *               Requires SAG integration connection to be configured.
+ */
+export type SagOrderWriteMode = "DISABLED" | "SIMULATION" | "LIVE";
+
+export interface SagWriteConfig {
+  /** Master switch — if false, all SAG write operations are blocked */
+  enabled: boolean;
+  /** Write mode — controls pipeline behavior */
+  mode: SagOrderWriteMode;
+  /** Idempotency key template: orgId + orderId + version */
+  idempotencyKeyVersion: number;
+}
+
+export const CASTILLITOS_SAG_WRITE: SagWriteConfig = {
+  enabled: true,
+  mode: "SIMULATION",
+  idempotencyKeyVersion: 1,
+};
+
 // ── Full Policy Pack Config ─────────────────────────────────────────────────
 
 export interface OrderPolicyPackConfig {
@@ -137,6 +166,7 @@ export interface OrderPolicyPackConfig {
   discountOverride: DiscountOverrideConfig;
   orderReadiness: OrderReadinessConfig;
   stockThresholds: StockThresholdsConfig;
+  sagWrite: SagWriteConfig;
 }
 
 export const CASTILLITOS_ORDER_POLICY_PACK_CONFIG: OrderPolicyPackConfig = {
@@ -148,4 +178,5 @@ export const CASTILLITOS_ORDER_POLICY_PACK_CONFIG: OrderPolicyPackConfig = {
   discountOverride: CASTILLITOS_DISCOUNT_OVERRIDE,
   orderReadiness: CASTILLITOS_ORDER_READINESS,
   stockThresholds: CASTILLITOS_STOCK_THRESHOLDS,
+  sagWrite: CASTILLITOS_SAG_WRITE,
 };

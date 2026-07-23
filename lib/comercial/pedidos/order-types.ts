@@ -70,6 +70,10 @@ export interface OrderLine {
 
 export type DeliveryMode = "immediate" | "scheduled";
 
+// ── Delivery scope (WIZARD-IMPROVEMENTS-01) ─────────────────────────────────
+
+export type DeliveryScope = "full" | "partial";
+
 // ── Discount type ────────────────────────────────────────────────────────────
 
 export type DiscountType = "percentage" | "fixed";
@@ -91,6 +95,11 @@ export interface OrderHeader {
   discountValue?:   number;
   customerNotes?:   string;
   internalNotes?:   string;
+  // Delivery scope (WIZARD-IMPROVEMENTS-01)
+  deliveryScope?:   DeliveryScope;
+  // Customer address (WIZARD-IMPROVEMENTS-01) — read-only display, set from canonical service
+  customerAddress?: string;
+  customerCity?:    string;
 }
 
 // ── Order summary ─────────────────────────────────────────────────────────────

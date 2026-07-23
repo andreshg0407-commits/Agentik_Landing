@@ -41,6 +41,11 @@ import {
   getCustomerBySagCode,
 } from "@/lib/comercial/clientes/canonical-customer-service";
 import { validateCustomerForSagOrder } from "@/lib/comercial/clientes/customer-sag-validation";
+// Reservation hooks: DEFERRED (Sprint AGENTIK-ORDERS-RESERVATION-ADAPTER-01)
+// OperationalReservation Prisma model + engine + bridge exist (lib/operational-inventory/),
+// but they were built for CRM OperationalOrder, not Agentik OrderDraft.
+// An adapter (OrderDraft → OperationalOrder + PIL → OperationalInventoryItem) is needed.
+// See: lib/operational-inventory/order-reservation-bridge.ts
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -217,7 +222,9 @@ export async function createOrderDraft(
     },
   });
 
-  return rowToOrder(row);
+  const order = rowToOrder(row);
+
+  return order;
 }
 
 // ── Get single order ──────────────────────────────────────────────────────────
@@ -752,7 +759,7 @@ export async function updateOrderDraft(
     lines?:  OrderLine[];
   },
 ): Promise<OrderDraft | null> {
-  return await patchOrderMeta(orgId, orderId, (order) => {
+  const result = await patchOrderMeta(orgId, orderId, (order) => {
     // Allow editing borrador and listo_para_enviar (pre-SAG states)
     if (order.status !== "borrador" && order.status !== "listo_para_enviar") return null;
 
@@ -790,6 +797,8 @@ export async function updateOrderDraft(
       linkedDocuments:     order.linkedDocuments ?? [],
     };
   });
+
+  return result;
 }
 
 // ── Update a single order line ────────────────────────────────────────────────
@@ -896,11 +905,13 @@ export async function submitOrder(
     });
   }
 
-  return await patchOrderMeta(orgId, orderId, (order) => {
+  const submitted = await patchOrderMeta(orgId, orderId, (order) => {
     if (order.status !== "borrador") return null;
     const now = new Date().toISOString();
     return buildMetaSnapshot(order, { status: "listo_para_enviar", updatedAt: now });
   });
+
+  return submitted;
 }
 
 /**
@@ -987,10 +998,12 @@ export async function cancelOrder(
   orgId:   string,
   orderId: string,
 ): Promise<OrderDraft | null> {
-  return await patchOrderMeta(orgId, orderId, (order) => {
+  const result = await patchOrderMeta(orgId, orderId, (order) => {
     const now = new Date().toISOString();
     return buildMetaSnapshot(order, { status: "cancelado", updatedAt: now });
   });
+
+  return result;
 }
 
 // ── Return to draft ───────────────────────────────────────────────────────────
@@ -1053,6 +1066,7 @@ export async function deleteDraftOrder(
     }
 
     await execDb().delete({ where: { id: orderId } });
+
     return { ok: true };
   } catch (e) {
     return { ok: false, error: (e as Error).message };

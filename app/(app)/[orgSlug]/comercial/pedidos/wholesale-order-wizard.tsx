@@ -18,8 +18,11 @@ import type {
   OrderValidationResult,
   OrderCopilotSignal,
   DeliveryMode,
-  DiscountType,
+  DeliveryScope,
 } from "@/lib/comercial/pedidos/order-types";
+import { evaluateAutoSizeDistribution } from "@/lib/comercial/pedidos/order-decision-engine";
+import { CASTILLITOS_ORDER_POLICY_PACK_CONFIG } from "@/lib/comercial/pedidos/order-policy-pack-config";
+import type { SizeInventorySnapshot } from "@/lib/comercial/pedidos/order-decision-types";
 import { computeOrderSummary } from "@/lib/comercial/pedidos/order-validation";
 import type {
   OrderProductSearchResult,
@@ -39,14 +42,14 @@ interface SellerOption {
 interface CustomerSearchResult {
   customerCode: string;
   customerName: string;
-  customerId: string;
-  lastSellerName: string;
-  lastChannel: string;
-  totalOrders: number;
-  totalValue: number;
-  lastOrderDate: string | null;
+  customerId: string;   // NIT
   city: string;
   sagCode: string;
+  profileId: string;
+  address: string;
+  sellerName: string;
+  sellerId: string;
+  sagReadiness: string;
 }
 
 interface Props {
@@ -107,12 +110,43 @@ async function productApi(orgSlug: string, body: Record<string, unknown>) {
 
 // ── Matrix cell type ──────────────────────────────────────────────────────────
 
+/**
+ * Stock state for a single matrix cell (size × color).
+ * WIZARD-IMPROVEMENTS-01: enhanced with operational inventory fields.
+ *
+ * States:
+ *   available      — operationalAvailableQty > 10
+ *   low_stock      — 0 < operationalAvailableQty <= 10
+ *   no_stock       — operationalAvailableQty === 0 (or physicalQty === 0)
+ *   unknown        — physicalQty is null (not synced)
+ *   reserved       — reservedQty > 0 (shown as info, not blocking)
+ */
+type MatrixCellState = "available" | "low_stock" | "no_stock" | "unknown" | "reserved_full";
+
 interface MatrixCell {
   color: string;
   size: string;
+  /** Assigned quantity (editable by user) */
   quantity: number;
+  /** Physical stock from SAG snapshot — null = not synced */
+  physicalQty: number | null;
+  /** Units reserved by other orders (Agentik reservations) */
+  reservedQty: number;
+  /** Operational available = physical - reserved - salesAssigned - pendingTransfers */
+  operationalAvailableQty: number | null;
+  /** Legacy field — kept for compatibility, equals operationalAvailableQty ?? physicalQty */
   available: number | null;
   variantId: string;
+  /** Computed cell state for visual differentiation */
+  cellState: MatrixCellState;
+}
+
+function computeCellState(cell: Pick<MatrixCell, "physicalQty" | "operationalAvailableQty">): MatrixCellState {
+  if (cell.physicalQty === null || cell.physicalQty === undefined) return "unknown";
+  const avail = cell.operationalAvailableQty ?? cell.physicalQty;
+  if (avail <= 0) return "no_stock";
+  if (avail <= 10) return "low_stock";
+  return "available";
 }
 
 // ── Main Component ────────────────────────────────────────────────────────────
@@ -143,14 +177,18 @@ export function WholesaleOrderWizard({
   const [customerSearching, setCustomerSearching] = useState(false);
   const customerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [selectedCustomerCity, setSelectedCustomerCity] = useState("");
+  const [selectedCustomerAddress, setSelectedCustomerAddress] = useState("");
   const [manualCity, setManualCity] = useState("");
   const [missingSagCode, setMissingSagCode] = useState(false);
 
-  // Validation rules differ by mode
+  // Auto-distribution state (WIZARD-IMPROVEMENTS-01)
+  const [autoDistributeQty, setAutoDistributeQty] = useState<number>(0);
+
+  // Validation: seller NOT required (warning only per FOUNDATION-01)
   const clientValid = clientMode === "selected"
-    ? Boolean(header.customerName.trim() && (header.customerId.trim() || header.customerCode.trim()) && header.sellerId.trim())
+    ? Boolean(header.customerName.trim() && (header.customerId.trim() || header.customerCode.trim()))
     : clientMode === "manual"
-      ? Boolean(header.customerName.trim() && header.customerId.trim() && header.sellerId.trim() && manualCity.trim() && header.channel.trim())
+      ? Boolean(header.customerName.trim() && header.customerId.trim() && manualCity.trim() && header.channel.trim())
       : false;
 
   function handleCustomerSearch(q: string) {
@@ -172,11 +210,16 @@ export function WholesaleOrderWizard({
       customerName: c.customerName,
       customerCode: c.sagCode || c.customerCode,
       customerId: c.customerId, // NIT
-      sellerId: c.lastSellerName ? sellers.find(s => s.sellerName === c.lastSellerName)?.sellerId ?? "" : header.sellerId,
-      sellerName: c.lastSellerName || header.sellerName,
-      channel: c.lastChannel || header.channel,
+      // Auto-assign seller from canonical profile (WIZARD-IMPROVEMENTS-01)
+      sellerId: c.sellerId || header.sellerId,
+      sellerName: c.sellerName || header.sellerName,
+      channel: header.channel,
+      // Address from canonical service
+      customerAddress: c.address || "",
+      customerCity: c.city || "",
     });
     setSelectedCustomerCity(c.city ?? "");
+    setSelectedCustomerAddress(c.address ?? "");
     setMissingSagCode(!hasSag);
     setClientMode("selected");
     setCustomerQuery("");
@@ -187,10 +230,12 @@ export function WholesaleOrderWizard({
     onHeaderChange({
       customerId: "", customerName: "", customerCode: "",
       sellerId: "", sellerName: "", channel: "", notes: "",
+      customerAddress: "", customerCity: "",
     });
     setClientMode("search");
     setMissingSagCode(false);
     setSelectedCustomerCity("");
+    setSelectedCustomerAddress("");
   }
 
   // ── Product search ──────────────────────────────────────────────────────
@@ -240,18 +285,29 @@ export function WholesaleOrderWizard({
     const sizes = [...new Set(p.variants.map(v => v.size).filter(Boolean))].sort();
     setMatrixColors(colors);
     setMatrixSizes(sizes);
-    // Initialize cells
+    // Initialize cells with operational inventory data
     const cells: MatrixCell[] = [];
     for (const color of colors) {
       for (const size of sizes) {
         const variant = p.variants.find(v => v.color === color && v.size === size);
-        cells.push({
+        const physicalQty = variant?.availability.availableUnits ?? null;
+        // TODO: When operational inventory API is wired, populate reservedQty from snapshot
+        // For now, reservedQty = 0 (product API does not yet include reservation data)
+        const reservedQty = 0;
+        const operationalAvailableQty = physicalQty !== null ? Math.max(0, physicalQty - reservedQty) : null;
+        const cell: MatrixCell = {
           color,
           size,
           quantity: 0,
-          available: variant?.availability.availableUnits ?? null,
+          physicalQty,
+          reservedQty,
+          operationalAvailableQty,
+          available: operationalAvailableQty ?? physicalQty,
           variantId: variant?.variantId ?? "",
-        });
+          cellState: "available",
+        };
+        cell.cellState = computeCellState(cell);
+        cells.push(cell);
       }
     }
     setMatrixCells(cells);
@@ -262,11 +318,19 @@ export function WholesaleOrderWizard({
   function updateCellQty(color: string, size: string, qty: number) {
     setMatrixCells(prev => prev.map(c => {
       if (c.color !== color || c.size !== size) return c;
-      let clamped = Math.max(0, qty);
-      // Auto-cap at available stock
-      if (c.available !== null && clamped > c.available) {
-        clamped = c.available;
-        setStockFeedback(`Maximo disponible: ${c.available}`);
+      // Enforce: no negatives, no decimals
+      let clamped = Math.max(0, Math.floor(qty));
+      // Enforce: no assignment on unknown stock
+      if (c.cellState === "unknown" && clamped > 0) {
+        setStockFeedback("No se puede asignar sobre stock desconocido");
+        setTimeout(() => setStockFeedback(null), 2000);
+        return c;
+      }
+      // Enforce: cap at operational availability
+      const maxAvail = c.operationalAvailableQty ?? c.available;
+      if (maxAvail !== null && clamped > maxAvail) {
+        clamped = maxAvail;
+        setStockFeedback(`Maximo disponible operacional: ${maxAvail}`);
         setTimeout(() => setStockFeedback(null), 2000);
       }
       return { ...c, quantity: clamped };
@@ -301,6 +365,89 @@ export function WholesaleOrderWizard({
     setTimeout(() => searchInputRef.current?.focus(), 50);
   }
 
+  // ── Auto-distribute by sizes (WIZARD-IMPROVEMENTS-01) ──────────────────
+  function handleAutoDistribute() {
+    if (!selectedProduct || autoDistributeQty <= 0) return;
+
+    // Build SizeInventorySnapshot from current matrix — aggregate across all colors
+    // Skip unknown stock cells (no auto-assignment on unknown)
+    const sizeMap = new Map<string, number>();
+    for (const cell of matrixCells) {
+      if (cell.cellState === "unknown") continue; // Never auto-distribute on unknown stock
+      const avail = cell.operationalAvailableQty ?? cell.available;
+      if (avail === null || avail <= 0) continue;
+      const curr = sizeMap.get(cell.size) ?? 0;
+      sizeMap.set(cell.size, curr + avail);
+    }
+
+    const snapshot: SizeInventorySnapshot = {
+      referenceCode: selectedProduct.referenceCode,
+      productName: selectedProduct.productName,
+      sizes: [...sizeMap.entries()].map(([size, avail]) => ({
+        size,
+        sizeName: size,
+        availableUnits: avail,
+      })),
+    };
+
+    const result = evaluateAutoSizeDistribution(
+      selectedProduct.referenceCode,
+      selectedProduct.productName,
+      autoDistributeQty,
+      snapshot,
+      CASTILLITOS_ORDER_POLICY_PACK_CONFIG,
+    );
+
+    // Apply distribution to matrix cells
+    // For each size, distribute proportionally across colors
+    setMatrixCells(prev => {
+      const newCells = [...prev];
+      for (const entry of result.distribution) {
+        if (entry.allocatedUnits <= 0) continue;
+        // Find cells with this size that have operational stock (skip unknown)
+        const eligibleCells = newCells.filter(c =>
+          c.size === entry.size && c.cellState !== "unknown"
+          && (c.operationalAvailableQty ?? c.available ?? 0) > 0
+        );
+        if (eligibleCells.length === 0) continue;
+
+        // Split allocated units across colors for this size
+        let remaining = entry.allocatedUnits;
+        const perColor = Math.floor(remaining / eligibleCells.length);
+
+        for (const cell of eligibleCells) {
+          const idx = newCells.indexOf(cell);
+          const cellAvail = cell.operationalAvailableQty ?? cell.available ?? 0;
+          const alloc = Math.min(perColor || remaining, cellAvail, remaining);
+          newCells[idx] = { ...cell, quantity: alloc };
+          remaining -= alloc;
+        }
+
+        // Distribute remainder
+        if (remaining > 0) {
+          for (const cell of eligibleCells) {
+            if (remaining <= 0) break;
+            const idx = newCells.indexOf(cell);
+            const current = newCells[idx].quantity;
+            const cellAvail = cell.operationalAvailableQty ?? cell.available ?? 0;
+            const canAdd = Math.min(remaining, cellAvail - current);
+            if (canAdd > 0) {
+              newCells[idx] = { ...newCells[idx], quantity: current + canAdd };
+              remaining -= canAdd;
+            }
+          }
+        }
+      }
+      return newCells;
+    });
+
+    const msg = result.totalAllocated === autoDistributeQty
+      ? `Distribuidas ${result.totalAllocated} uds en ${result.distribution.filter(d => d.allocatedUnits > 0).length} tallas`
+      : `Distribuidas ${result.totalAllocated} de ${autoDistributeQty} uds (inventario insuficiente)`;
+    showFeedback(msg);
+    setAutoDistributeQty(0);
+  }
+
   // ── Keyboard shortcuts ──────────────────────────────────────────────────
   function handleSearchKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Enter" && searchResults.length > 0) {
@@ -324,14 +471,25 @@ export function WholesaleOrderWizard({
 
   // ── Computed ────────────────────────────────────────────────────────────
   const activeLines = lines.filter(l => !l.removed);
-  const summary = computeOrderSummary(activeLines, {
-    type:  header.discountType,
-    value: header.discountValue,
-  });
+  // No discount for new orders (WIZARD-IMPROVEMENTS-01)
+  const summary = computeOrderSummary(activeLines);
   const matrixTotal = matrixCells.reduce((s, c) => s + c.quantity, 0);
   const matrixOverStock = matrixCells.filter(c => c.quantity > 0 && c.available !== null && c.quantity > c.available);
-  const canAdvanceToResumen = activeLines.length > 0 && clientValid
-    && !activeLines.some(l => l.availableUnits !== null && l.quantity > l.availableUnits);
+
+  // Delivery scope metrics
+  const totalRequested = autoDistributeQty > 0 ? autoDistributeQty : summary.totalUnits;
+  const totalAssigned = summary.totalUnits;
+  const totalShortfall = Math.max(0, totalRequested - totalAssigned);
+  const coveragePercent = totalRequested > 0 ? Math.round((totalAssigned / totalRequested) * 100) : 100;
+  const hasShortfall = totalShortfall > 0;
+  const deliveryScope = header.deliveryScope ?? "full";
+
+  // FULL: blocks confirmation when shortfall exists
+  // PARTIAL: allows confirming available quantity
+  const hasOverStock = activeLines.some(l => l.availableUnits !== null && l.quantity > l.availableUnits);
+  const canAdvanceToResumen = activeLines.length > 0 && clientValid && !hasOverStock;
+  const canConfirmOrder = canAdvanceToResumen
+    && (deliveryScope === "partial" || !hasShortfall);
 
   // ── Steps ───────────────────────────────────────────────────────────────
   const steps: { key: WholesaleStep; label: string }[] = [
@@ -456,8 +614,13 @@ export function WholesaleOrderWizard({
                             <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginTop: 1 }}>
                               {c.customerId ? `NIT ${c.customerId}` : ""}
                               {c.city ? ` · ${c.city}` : ""}
-                              {c.lastSellerName ? ` · ${c.lastSellerName}` : ""}
+                              {c.sellerName ? ` · ${c.sellerName}` : ""}
                             </div>
+                            {c.address && (
+                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginTop: 1 }}>
+                                {c.address}
+                              </div>
+                            )}
                             <div style={{ display: "flex", gap: S[2], marginTop: 3 }}>
                               {c.sagCode && (
                                 <span style={{
@@ -468,11 +631,13 @@ export function WholesaleOrderWizard({
                                   SAG: {c.sagCode}
                                 </span>
                               )}
-                              {c.totalOrders > 0 && (
+                              {c.sagReadiness === "SAG_SUBMISSION_READY" && (
                                 <span style={{
-                                  fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint,
+                                  fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                                  padding: "1px 5px", borderRadius: R.sm,
+                                  background: C.greenLight, color: C.green,
                                 }}>
-                                  {c.totalOrders} {c.totalOrders === 1 ? "pedido" : "pedidos"} · ${c.totalValue.toLocaleString()}
+                                  Listo SAG
                                 </span>
                               )}
                             </div>
@@ -548,15 +713,41 @@ export function WholesaleOrderWizard({
                           {header.customerId ? `NIT ${header.customerId}` : ""}
                           {selectedCustomerCity ? ` · ${selectedCustomerCity}` : ""}
                         </div>
-                        {header.customerCode && (
-                          <div style={{
-                            fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                            padding: "1px 5px", borderRadius: R.sm, display: "inline-block",
-                            background: C.greenLight, color: C.green, marginTop: 3,
-                          }}>
-                            SAG: {header.customerCode}
+                        {/* Address display (WIZARD-IMPROVEMENTS-01) */}
+                        {selectedCustomerAddress && (
+                          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, marginTop: 2 }}>
+                            {selectedCustomerAddress}
                           </div>
                         )}
+                        <div style={{ display: "flex", gap: S[2], marginTop: 3 }}>
+                          {header.customerCode && (
+                            <span style={{
+                              fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                              padding: "1px 5px", borderRadius: R.sm,
+                              background: C.greenLight, color: C.green,
+                            }}>
+                              SAG: {header.customerCode}
+                            </span>
+                          )}
+                          {/* Seller badge — auto-assigned, not required */}
+                          {header.sellerName ? (
+                            <span style={{
+                              fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                              padding: "1px 5px", borderRadius: R.sm,
+                              background: C.blueLight, color: C.blueDark,
+                            }}>
+                              Vendedor: {header.sellerName}
+                            </span>
+                          ) : (
+                            <span style={{
+                              fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                              padding: "1px 5px", borderRadius: R.sm,
+                              background: C.amberLight, color: C.amber,
+                            }}>
+                              Sin vendedor asignado
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <button onClick={clearCustomer} style={{
                         fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight,
@@ -579,9 +770,9 @@ export function WholesaleOrderWizard({
                     </div>
                   )}
 
-                  {/* Vendedor — pre-filled or select */}
+                  {/* Seller override — optional, collapsible */}
                   <div>
-                    <label style={requiredLabel}>Vendedor asignado *</label>
+                    <label style={labelStyle}>Vendedor (opcional — cambiar si necesario)</label>
                     <select
                       value={header.sellerId}
                       onChange={e => {
@@ -594,21 +785,16 @@ export function WholesaleOrderWizard({
                       }}
                       style={{ ...inputStyle, background: C.white }}
                     >
-                      <option value="">— Seleccionar vendedor —</option>
+                      <option value="">— Sin vendedor —</option>
                       {sellers.map(s => (
                         <option key={s.sellerId} value={s.sellerId}>
                           {s.sellerName}{!s.active ? " (inactivo)" : ""}
                         </option>
                       ))}
                     </select>
-                    {!header.sellerId && header.sellerName && (
-                      <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginTop: 2 }}>
-                        Vendedor detectado: {header.sellerName}. Confirma en el selector.
-                      </div>
-                    )}
                   </div>
 
-                  {/* Canal */}
+                  {/* Canal — only Mayorista / Detal (WIZARD-IMPROVEMENTS-01) */}
                   <div>
                     <label style={labelStyle}>Canal</label>
                     <select
@@ -618,9 +804,7 @@ export function WholesaleOrderWizard({
                     >
                       <option value="">— Canal —</option>
                       <option value="mayorista">Mayorista</option>
-                      <option value="distribuidor">Distribuidor</option>
-                      <option value="institucional">Institucional</option>
-                      <option value="retail">Retail</option>
+                      <option value="detal">Detal</option>
                     </select>
                   </div>
 
@@ -631,16 +815,6 @@ export function WholesaleOrderWizard({
                       onChange={e => onHeaderChange({ ...header, notes: e.target.value })}
                       placeholder="Notas adicionales" style={inputStyle} />
                   </div>
-
-                  {/* Validation */}
-                  {!clientValid && (
-                    <div style={{
-                      fontFamily: T.mono, fontSize: T.sz.xs, color: C.red,
-                      padding: `${S[2]}px ${S[3]}px`, background: C.redLight, borderRadius: R.sm,
-                    }}>
-                      Selecciona un vendedor para continuar.
-                    </div>
-                  )}
 
                   {/* Next */}
                   <button
@@ -762,9 +936,7 @@ export function WholesaleOrderWizard({
                       >
                         <option value="">— Canal —</option>
                         <option value="mayorista">Mayorista</option>
-                        <option value="distribuidor">Distribuidor</option>
-                        <option value="institucional">Institucional</option>
-                        <option value="retail">Retail</option>
+                        <option value="detal">Detal</option>
                       </select>
                     </div>
                   </div>
@@ -1013,6 +1185,43 @@ export function WholesaleOrderWizard({
                     </button>
                   </div>
 
+                  {/* Auto-distribute (WIZARD-IMPROVEMENTS-01) */}
+                  <div style={{
+                    display: "flex", gap: S[2], alignItems: "center",
+                    padding: `${S[2]}px 0`, borderBottom: `1px solid ${C.line}`, marginBottom: S[2],
+                  }}>
+                    <label style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, whiteSpace: "nowrap" }}>
+                      Cantidad total:
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={autoDistributeQty || ""}
+                      onChange={e => setAutoDistributeQty(parseInt(e.target.value) || 0)}
+                      placeholder="Ej: 100"
+                      style={{ ...inputStyle, width: 100, textAlign: "center", minHeight: 32, padding: `${S[1]}px ${S[2]}px` }}
+                    />
+                    <button
+                      onClick={handleAutoDistribute}
+                      disabled={autoDistributeQty <= 0}
+                      className="ag-action-secondary"
+                      style={{
+                        fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
+                        color: autoDistributeQty > 0 ? C.blueDark : C.inkFaint,
+                        background: autoDistributeQty > 0 ? C.blueLight : C.surface,
+                        border: `1px solid ${autoDistributeQty > 0 ? C.blueBorder : C.line}`,
+                        borderRadius: R.sm, padding: `${S[1]}px ${S[3]}px`,
+                        cursor: autoDistributeQty > 0 ? "pointer" : "not-allowed",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      Distribuir por tallas
+                    </button>
+                    <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
+                      Distribuye equilibradamente entre tallas con stock
+                    </span>
+                  </div>
+
                   {/* Stock warning banner (SCARCITY-01) */}
                   {(() => {
                     const ss = getCommercialStockState(selectedProduct);
@@ -1037,7 +1246,7 @@ export function WholesaleOrderWizard({
                     );
                   })()}
 
-                  {/* Matrix table */}
+                  {/* Matrix table — enhanced with operational inventory (WIZARD-IMPROVEMENTS-01) */}
                   <div style={{ overflowX: "auto" }}>
                     <table style={{
                       width: "100%", borderCollapse: "collapse",
@@ -1048,15 +1257,15 @@ export function WholesaleOrderWizard({
                           <th style={{
                             textAlign: "left", padding: `${S[1]}px ${S[2]}px`,
                             fontWeight: T.wt.semibold, color: C.inkFaint,
-                            borderBottom: `1px solid ${C.line}`,
+                            borderBottom: `2px solid ${C.line}`,
                           }}>
                             Color / Talla
                           </th>
                           {matrixSizes.map(sz => (
                             <th key={sz} style={{
                               textAlign: "center", padding: `${S[1]}px ${S[1]}px`,
-                              fontWeight: T.wt.semibold, color: C.ink, minWidth: 56,
-                              borderBottom: `1px solid ${C.line}`,
+                              fontWeight: T.wt.semibold, color: C.ink, minWidth: 80,
+                              borderBottom: `2px solid ${C.line}`,
                             }}>
                               {sz}
                             </th>
@@ -1069,59 +1278,86 @@ export function WholesaleOrderWizard({
                             <td style={{
                               padding: `${S[2]}px ${S[2]}px`, fontWeight: T.wt.semibold,
                               color: C.ink, borderBottom: `1px solid ${C.line}`,
-                              whiteSpace: "nowrap",
+                              whiteSpace: "nowrap", verticalAlign: "top",
                             }}>
                               {color}
                             </td>
                             {matrixSizes.map(size => {
                               const cell = matrixCells.find(c => c.color === color && c.size === size);
                               if (!cell) return <td key={size} />;
-                              const noStock = cell.available !== null && cell.available <= 0;
-                              const cellColor = noStock ? C.inkFaint
-                                : cell.available !== null && cell.available <= 10 ? C.amber : C.green;
+                              const isUnknown = cell.cellState === "unknown";
+                              const isNoStock = cell.cellState === "no_stock";
+                              const isLow = cell.cellState === "low_stock";
+                              const isDisabled = isNoStock || isUnknown;
+
+                              const stateColor = isUnknown ? C.inkFaint
+                                : isNoStock ? C.red
+                                : isLow ? C.amber
+                                : C.green;
+                              const stateBg = isUnknown ? C.surfaceAlt
+                                : isNoStock ? `${C.red}08`
+                                : isLow ? `${C.amber}08`
+                                : "transparent";
+
+                              const operAvail = cell.operationalAvailableQty;
+
                               return (
                                 <td key={size} style={{
                                   padding: `${S[1]}px`, textAlign: "center",
                                   borderBottom: `1px solid ${C.line}`,
+                                  background: stateBg,
+                                  verticalAlign: "top",
                                 }}>
+                                  {/* Quantity input */}
                                   <input
                                     type="number"
                                     inputMode="numeric"
                                     min={0}
-                                    max={cell.available ?? undefined}
+                                    max={operAvail ?? undefined}
                                     value={cell.quantity || ""}
-                                    disabled={noStock}
+                                    disabled={isDisabled}
                                     onChange={e => updateCellQty(color, size, parseInt(e.target.value) || 0)}
                                     onFocus={e => e.target.select()}
                                     onKeyDown={e => {
                                       if (e.key === "Enter") {
                                         e.preventDefault();
-                                        // Move to next input
                                         const next = (e.target as HTMLElement).closest("td")?.nextElementSibling?.querySelector("input") as HTMLInputElement | null;
                                         if (next) next.focus();
                                         else if ((e.metaKey || e.ctrlKey) && matrixTotal > 0) addMatrixToOrder();
                                       }
                                     }}
-                                    placeholder="0"
+                                    placeholder={isUnknown ? "\u2014" : "0"}
                                     style={{
-                                      width: 52, height: 36, textAlign: "center",
+                                      width: 52, height: 32, textAlign: "center",
                                       fontFamily: T.mono, fontSize: T.sz.sm,
                                       border: `1px solid ${cell.quantity > 0 ? C.blueDark : C.line}`,
                                       borderRadius: R.sm, outline: "none",
-                                      background: noStock ? C.surfaceAlt : cell.quantity > 0 ? C.blueLight : C.white,
-                                      color: noStock ? C.inkFaint : C.ink,
+                                      background: isDisabled ? C.surfaceAlt : cell.quantity > 0 ? C.blueLight : C.white,
+                                      color: isDisabled ? C.inkFaint : C.ink,
                                       fontWeight: cell.quantity > 0 ? T.wt.bold : T.wt.normal,
-                                      cursor: noStock ? "not-allowed" : "text",
+                                      cursor: isDisabled ? "not-allowed" : "text",
                                     }}
                                   />
-                                  {/* Stock indicator: "disp. N" */}
+                                  {/* Stock detail: physical / reserved / available */}
                                   <div style={{
-                                    fontFamily: T.mono, fontSize: "9px", marginTop: 1,
-                                    color: cellColor,
+                                    fontFamily: T.mono, fontSize: "8px", marginTop: 2,
+                                    lineHeight: 1.3, color: C.inkFaint,
                                   }}>
-                                    {cell.available === null ? "\u2014"
-                                      : noStock ? "sin stock"
-                                      : `disp. ${cell.available}`}
+                                    {isUnknown ? (
+                                      <span style={{ color: C.inkFaint }}>sin datos</span>
+                                    ) : (
+                                      <>
+                                        <div style={{ color: stateColor, fontWeight: T.wt.semibold }}>
+                                          {isNoStock ? "sin stock"
+                                            : `disp. ${operAvail ?? cell.available}`}
+                                        </div>
+                                        {cell.reservedQty > 0 && (
+                                          <div style={{ color: C.amber }}>
+                                            res. {cell.reservedQty}
+                                          </div>
+                                        )}
+                                      </>
+                                    )}
                                   </div>
                                 </td>
                               );
@@ -1131,6 +1367,43 @@ export function WholesaleOrderWizard({
                       </tbody>
                     </table>
                   </div>
+
+                  {/* Matrix allocation summary strip */}
+                  {matrixTotal > 0 && (
+                    <div style={{
+                      display: "flex", gap: S[3], padding: `${S[2]}px ${S[3]}px`,
+                      background: C.surface, borderRadius: R.sm, marginTop: S[2],
+                      fontFamily: T.mono, fontSize: T.sz.xs,
+                    }}>
+                      <div>
+                        <span style={{ color: C.inkFaint }}>Asignado: </span>
+                        <span style={{ fontWeight: T.wt.bold, color: C.ink }}>{matrixTotal}</span>
+                      </div>
+                      {autoDistributeQty > 0 && matrixTotal < autoDistributeQty && (
+                        <>
+                          <div>
+                            <span style={{ color: C.inkFaint }}>Solicitado: </span>
+                            <span style={{ fontWeight: T.wt.bold, color: C.ink }}>{autoDistributeQty}</span>
+                          </div>
+                          <div>
+                            <span style={{ color: C.inkFaint }}>Faltante: </span>
+                            <span style={{ fontWeight: T.wt.bold, color: C.red }}>
+                              {autoDistributeQty - matrixTotal}
+                            </span>
+                          </div>
+                          <div>
+                            <span style={{ color: C.inkFaint }}>Cobertura: </span>
+                            <span style={{
+                              fontWeight: T.wt.bold,
+                              color: matrixTotal >= autoDistributeQty ? C.green : C.amber,
+                            }}>
+                              {Math.round((matrixTotal / autoDistributeQty) * 100)}%
+                            </span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
 
                   {/* Stock feedback */}
                   {stockFeedback && (
@@ -1196,13 +1469,19 @@ export function WholesaleOrderWizard({
                       value={matrixTotal || ""}
                       onChange={e => {
                         const qty = parseInt(e.target.value) || 0;
-                        setMatrixCells([{
+                        const physQty = selectedProduct.variants[0]?.availability.availableUnits ?? null;
+                        const cell: MatrixCell = {
                           color: selectedProduct.variants[0]?.color ?? "",
                           size: selectedProduct.variants[0]?.size ?? "",
                           quantity: qty,
-                          available: selectedProduct.variants[0]?.availability.availableUnits ?? null,
+                          physicalQty: physQty,
+                          reservedQty: 0,
+                          operationalAvailableQty: physQty,
+                          available: physQty,
                           variantId: selectedProduct.variants[0]?.variantId ?? "",
-                        }]);
+                          cellState: computeCellState({ physicalQty: physQty, operationalAvailableQty: physQty }),
+                        };
+                        setMatrixCells([cell]);
                       }}
                       placeholder="Cantidad"
                       style={{ ...inputStyle, width: 80, textAlign: "center" }}
@@ -1284,10 +1563,16 @@ export function WholesaleOrderWizard({
                   {header.customerName}
                 </div>
                 <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, marginTop: 2 }}>
-                  NIT: {header.customerId} · Vendedor: {header.sellerName}
+                  NIT: {header.customerId}
+                  {header.sellerName ? ` · Vendedor: ${header.sellerName}` : " · Sin vendedor"}
                   {header.channel ? ` · ${header.channel}` : ""}
                   {selectedCustomerCity ? ` · ${selectedCustomerCity}` : ""}
                 </div>
+                {selectedCustomerAddress && (
+                  <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, marginTop: 1 }}>
+                    {selectedCustomerAddress}
+                  </div>
+                )}
                 {header.customerCode && (
                   <div style={{
                     fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
@@ -1322,10 +1607,10 @@ export function WholesaleOrderWizard({
                 onEditRef={(refCode) => { setStep("productos"); handleSearch(refCode); }}
               />
 
-              {/* Totals */}
+              {/* Totals + delivery fulfillment (WIZARD-IMPROVEMENTS-01) */}
               <div style={{
                 ...panel, padding: S[3],
-                display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: S[2],
+                display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: S[2],
               }}>
                 <div style={{ textAlign: "center" }}>
                   <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Referencias</div>
@@ -1334,14 +1619,25 @@ export function WholesaleOrderWizard({
                   </div>
                 </div>
                 <div style={{ textAlign: "center" }}>
-                  <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Unidades</div>
+                  <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Asignado</div>
                   <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: C.ink }}>
-                    {summary.totalUnits}
+                    {totalAssigned} uds
                   </div>
                 </div>
                 <div style={{ textAlign: "center" }}>
                   <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
-                    {(summary.discountAmount ?? 0) > 0 ? "Subtotal" : "Total"}
+                    {hasShortfall ? "Faltante" : "Cobertura"}
+                  </div>
+                  <div style={{
+                    fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold,
+                    color: hasShortfall ? C.red : C.green,
+                  }}>
+                    {hasShortfall ? `${totalShortfall} uds` : "100%"}
+                  </div>
+                </div>
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
+                    Valor total
                   </div>
                   <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: C.green }}>
                     ${summary.totalValue.toLocaleString()}
@@ -1349,138 +1645,134 @@ export function WholesaleOrderWizard({
                 </div>
               </div>
 
-              {/* Discount preview (if active) */}
-              {(summary.discountAmount ?? 0) > 0 && (
-                <div style={{
-                  ...panel, padding: S[3],
-                  display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: S[2],
-                }}>
-                  <div style={{ textAlign: "center" }}>
-                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Subtotal</div>
-                    <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid }}>
-                      ${summary.totalValue.toLocaleString()}
-                    </div>
-                  </div>
-                  <div style={{ textAlign: "center" }}>
-                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.red }}>Descuento</div>
-                    <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold, color: C.red }}>
-                      -${(summary.discountAmount ?? 0).toLocaleString()}
-                    </div>
-                  </div>
-                  <div style={{ textAlign: "center" }}>
-                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Total final</div>
-                    <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: C.green }}>
-                      ${(summary.totalFinal ?? summary.totalValue).toLocaleString()}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* ── Commercial conditions (ORDER-CREATION-POLISH-01) ─────── */}
+              {/* Delivery scope — type of fulfillment */}
               <div style={{ ...panel, padding: S[3] }}>
                 <div style={{
                   fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold,
                   color: C.ink, marginBottom: S[3],
                 }}>
-                  Condiciones comerciales
+                  Condiciones de despacho
                 </div>
 
-                {/* 1. Delivery mode */}
+                {/* Delivery scope selector */}
                 <div style={{ marginBottom: S[3] }}>
                   <div style={labelStyle}>Tipo de entrega</div>
                   <div style={{ display: "flex", gap: S[3] }}>
-                    {(["immediate", "scheduled"] as DeliveryMode[]).map(mode => (
-                      <label key={mode} style={{
+                    {(["full", "partial"] as DeliveryScope[]).map(scope => (
+                      <label key={scope} style={{
                         fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink,
                         display: "flex", alignItems: "center", gap: 4, cursor: "pointer",
                       }}>
                         <input
                           type="radio"
-                          name="deliveryMode"
-                          checked={(header.deliveryMode ?? "immediate") === mode}
-                          onChange={() => onHeaderChange({
-                            ...header,
-                            deliveryMode: mode,
-                            deliveryDate: mode === "immediate" ? null : header.deliveryDate,
-                          })}
+                          name="deliveryScope"
+                          checked={deliveryScope === scope}
+                          onChange={() => onHeaderChange({ ...header, deliveryScope: scope })}
                         />
-                        {mode === "immediate" ? "Entrega inmediata" : "Entrega programada"}
+                        {scope === "full" ? "Despacho completo" : "Despacho parcial"}
                       </label>
                     ))}
                   </div>
-                  {(header.deliveryMode === "scheduled") && (
-                    <div style={{ marginTop: S[2] }}>
-                      <div style={labelStyle}>Fecha compromiso</div>
-                      <input
-                        type="date"
-                        value={header.deliveryDate ?? ""}
-                        onChange={e => onHeaderChange({ ...header, deliveryDate: e.target.value || null })}
-                        style={inputStyle}
-                      />
+                </div>
+
+                {/* FULL + shortfall = blocked */}
+                {deliveryScope === "full" && hasShortfall && (
+                  <div style={{
+                    fontFamily: T.mono, fontSize: T.sz.xs, color: C.red,
+                    padding: `${S[2]}px ${S[3]}px`, background: C.redLight, borderRadius: R.sm,
+                    border: `1px solid ${C.red}20`, marginBottom: S[2],
+                  }}>
+                    Despacho completo requiere que total asignado ({totalAssigned}) sea igual a total solicitado ({totalRequested}).
+                    Faltan {totalShortfall} unidades. Cambia a despacho parcial o ajusta cantidades.
+                  </div>
+                )}
+
+                {/* PARTIAL info */}
+                {deliveryScope === "partial" && (
+                  <div style={{
+                    fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid,
+                    padding: `${S[2]}px ${S[3]}px`, background: C.surface, borderRadius: R.sm,
+                    marginBottom: S[2],
+                  }}>
+                    Despacho parcial: se enviara lo disponible ({totalAssigned} uds).
+                    {hasShortfall ? ` Los ${totalShortfall} faltantes quedan pendientes de revision.` : ""}
+                    {" No se promete backorder automatico."}
+                  </div>
+                )}
+
+                {/* Delivery summary strip */}
+                <div style={{
+                  display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: S[2],
+                  padding: `${S[2]}px`, background: C.surfaceAlt, borderRadius: R.sm,
+                  fontFamily: T.mono, fontSize: T.sz["2xs"],
+                }}>
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ color: C.inkFaint }}>Solicitado</div>
+                    <div style={{ fontWeight: T.wt.bold, color: C.ink }}>{totalRequested}</div>
+                  </div>
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ color: C.inkFaint }}>Asignado</div>
+                    <div style={{ fontWeight: T.wt.bold, color: C.ink }}>{totalAssigned}</div>
+                  </div>
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ color: C.inkFaint }}>Faltante</div>
+                    <div style={{ fontWeight: T.wt.bold, color: hasShortfall ? C.red : C.green }}>
+                      {totalShortfall}
                     </div>
-                  )}
-                </div>
-
-                {/* 2. Discount */}
-                <div style={{ marginBottom: S[3] }}>
-                  <div style={labelStyle}>Descuento</div>
-                  <div style={{ display: "flex", gap: S[3], marginBottom: S[1] }}>
-                    {(["percentage", "fixed"] as DiscountType[]).map(dt => (
-                      <label key={dt} style={{
-                        fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink,
-                        display: "flex", alignItems: "center", gap: 4, cursor: "pointer",
-                      }}>
-                        <input
-                          type="radio"
-                          name="discountType"
-                          checked={(header.discountType ?? "percentage") === dt}
-                          onChange={() => onHeaderChange({ ...header, discountType: dt })}
-                        />
-                        {dt === "percentage" ? "Porcentaje" : "Valor fijo"}
-                      </label>
-                    ))}
                   </div>
-                  <input
-                    type="number"
-                    min={0}
-                    step={header.discountType === "fixed" ? 1000 : 1}
-                    placeholder={header.discountType === "fixed" ? "Valor descuento" : "% descuento"}
-                    value={header.discountValue ?? ""}
-                    onChange={e => {
-                      const v = parseFloat(e.target.value) || 0;
-                      onHeaderChange({ ...header, discountValue: v });
-                    }}
-                    style={{ ...inputStyle, maxWidth: 200 }}
-                  />
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ color: C.inkFaint }}>Cobertura</div>
+                    <div style={{ fontWeight: T.wt.bold, color: coveragePercent >= 100 ? C.green : C.amber }}>
+                      {coveragePercent}%
+                    </div>
+                  </div>
                 </div>
 
-                {/* 3. Customer notes */}
+                {/* Tipo de entrega badge */}
+                <div style={{ marginTop: S[2] }}>
+                  <span style={{
+                    fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                    padding: "2px 8px", borderRadius: R.sm,
+                    background: deliveryScope === "full" ? C.greenLight : C.amberLight,
+                    color: deliveryScope === "full" ? C.green : C.amber,
+                  }}>
+                    {deliveryScope === "full" ? "DESPACHO COMPLETO" : "DESPACHO PARCIAL"}
+                  </span>
+                </div>
+              </div>
+
+              {/* Customer / internal notes */}
+              <div style={{ ...panel, padding: S[3] }}>
+                <div style={{
+                  fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold,
+                  color: C.ink, marginBottom: S[3],
+                }}>
+                  Observaciones
+                </div>
                 <div style={{ marginBottom: S[3] }}>
                   <div style={labelStyle}>Observaciones para cliente</div>
                   <textarea
                     value={header.customerNotes ?? ""}
                     onChange={e => onHeaderChange({ ...header, customerNotes: e.target.value })}
                     placeholder="Informacion visible para el cliente (ej: entregar despues del 15 de julio)"
-                    rows={3}
+                    rows={2}
                     style={{ ...inputStyle, resize: "vertical" as const }}
                   />
                 </div>
-
-                {/* 4. Internal notes */}
                 <div>
                   <div style={{ ...labelStyle, color: C.amber }}>Notas internas (solo Agentik)</div>
                   <textarea
                     value={header.internalNotes ?? ""}
                     onChange={e => onHeaderChange({ ...header, internalNotes: e.target.value })}
                     placeholder="Solo visible dentro de Agentik (ej: cliente estrategico, revisar cartera)"
-                    rows={3}
+                    rows={2}
                     style={{ ...inputStyle, resize: "vertical" as const, borderColor: C.amberBorder || C.amber }}
                   />
                 </div>
               </div>
 
-              {/* Validation */}
-              {!canAdvanceToResumen && (
+              {/* Validation messages */}
+              {hasOverStock && (
                 <div style={{
                   fontFamily: T.mono, fontSize: T.sz.xs, color: C.red,
                   padding: `${S[2]}px ${S[3]}px`, background: C.redLight, borderRadius: R.sm,
@@ -1505,13 +1797,22 @@ export function WholesaleOrderWizard({
                 }}>
                   {isEditing ? "Actualizar borrador" : "Guardar borrador"}
                 </button>
-                <button onClick={onSubmit} className="ag-action-primary" style={{
-                  fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold,
-                  color: C.white, background: C.blueDark, border: "none",
-                  borderRadius: R.sm, padding: `${S[2]}px ${S[4]}px`, cursor: "pointer",
-                  flex: 1,
-                }}>
-                  Confirmar pedido
+                <button
+                  onClick={() => canConfirmOrder && onSubmit()}
+                  disabled={!canConfirmOrder}
+                  className="ag-action-primary"
+                  style={{
+                    fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold,
+                    color: C.white,
+                    background: canConfirmOrder ? C.blueDark : C.inkFaint,
+                    border: "none", borderRadius: R.sm, padding: `${S[2]}px ${S[4]}px`,
+                    cursor: canConfirmOrder ? "pointer" : "not-allowed",
+                    flex: 1,
+                  }}
+                >
+                  {!canConfirmOrder && deliveryScope === "full" && hasShortfall
+                    ? "Faltantes impiden despacho completo"
+                    : "Confirmar pedido"}
                 </button>
               </div>
             </div>

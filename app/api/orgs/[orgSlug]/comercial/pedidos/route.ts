@@ -26,10 +26,13 @@ import {
   returnToDraft,
   checkDuplicateOrder,
   getOrderStats,
-  searchCustomers,
 } from "@/lib/comercial/pedidos/order-service";
 import { sendOrderToSagQueue } from "@/lib/comercial/pedidos/order-sag-bridge";
 import { buildSellerDirectory } from "@/lib/comercial/foundation/seller-directory";
+import {
+  searchCustomers,
+  getCustomer,
+} from "@/lib/comercial/clientes/canonical-customer-service";
 
 export async function POST(
   req: NextRequest,
@@ -155,8 +158,29 @@ export async function POST(
     }
 
     case "search_customers": {
-      const customers = await searchCustomers(orgId, body.query ?? "");
+      const results = await searchCustomers(orgId, body.query ?? "");
+      // Map canonical results to wizard-compatible shape
+      const customers = results.map(r => ({
+        customerCode: r.sagCode ?? "",
+        customerName: r.name,
+        customerId: r.nit ?? "",
+        city: r.city ?? "",
+        sagCode: r.sagCode ?? "",
+        profileId: r.id,
+        address: r.address ?? "",
+        sellerName: r.seller?.name ?? "",
+        sellerId: r.seller?.id ?? "",
+        sagReadiness: r.sagReadiness,
+      }));
       return NextResponse.json({ customers });
+    }
+
+    case "get_customer_detail": {
+      const customer = await getCustomer(orgId, body.profileId);
+      if (!customer) {
+        return NextResponse.json({ error: "Cliente no encontrado" }, { status: 404 });
+      }
+      return NextResponse.json({ customer });
     }
 
     default:

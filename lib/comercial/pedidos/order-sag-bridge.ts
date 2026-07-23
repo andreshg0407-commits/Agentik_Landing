@@ -25,7 +25,8 @@ import { prisma } from "@/lib/prisma";
 import { enqueue } from "@/lib/sag/write/queue";
 import type { SagDocumentInput, SagDocumentLine } from "@/lib/sag/write/types";
 import type { OrderDraft } from "./order-types";
-import { canSendToSag } from "./sag-order-sync-service";
+import { canSendToSag, resolveSagWriteMode, buildSagOrderPayload, resolveSagWriteConfig } from "./sag-order-sync-service";
+import { buildIdempotencyKey } from "./sag-order-sync-types";
 import { markPendingSag } from "./order-service";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -62,10 +63,14 @@ export function mapOrderToSagDocument(order: OrderDraft): SagDocumentInput {
     );
   }
 
+  // customerCode holds the SAG customer NIT (tax ID).
+  // For SAG-origin orders: CustomerOrderRecord.customerNit (already NIT).
+  // For wizard orders: set from CustomerProfile.nit or CustomerProfile.nitNormalized.
+  // NOT CustomerProfile.erpId (which is ka_nl_tercero, an internal SAG PK).
   if (!order.header.customerCode?.trim()) {
     throw new OrderBridgeError(
-      "MISSING_CUSTOMER_CODE",
-      "El codigo de cliente SAG (NIT) es obligatorio.",
+      "MISSING_CUSTOMER_NIT",
+      "El NIT del cliente es obligatorio para enviar a SAG.",
     );
   }
 
@@ -81,7 +86,7 @@ export function mapOrderToSagDocument(order: OrderDraft): SagDocumentInput {
 
   return {
     TIPO_DOC:    "PE",
-    NIT:         order.header.customerCode.trim(),
+    NIT:         order.header.customerCode.trim(), // SAG customer NIT (tax ID)
     FECHA:       order.createdAt.slice(0, 10),
     VENDEDOR:    order.header.sellerName || undefined,
     BODEGA:      order.sourceWarehouseCode ?? undefined,
@@ -92,6 +97,9 @@ export function mapOrderToSagDocument(order: OrderDraft): SagDocumentInput {
 
 function buildObservacion(order: OrderDraft): string {
   let obs = `Pedido Agentik #${order.externalSyncKey}`;
+  if (order.header.deliveryScope === "partial") {
+    obs += " | DESPACHO PARCIAL";
+  }
   if (order.header.notes?.trim()) {
     obs += ` | ${order.header.notes.trim()}`;
   }
@@ -131,8 +139,28 @@ export async function sendOrderToSagQueue(
 ): Promise<SendToSagResult> {
   const orderId = order.id;
   const sourceRef = order.externalSyncKey;
+  const mode = resolveSagWriteMode(orgId);
 
-  log("ORDER_SYNC_START", { orderId, sourceRef, status: order.status });
+  log("ORDER_SYNC_START", { orderId, sourceRef, status: order.status, mode });
+
+  // ── 0. Write mode gate ──────────────────────────────────────────────────
+  if (mode === "DISABLED") {
+    log("ORDER_SYNC_DISABLED", { orderId });
+    return { ok: false, error: "Escritura a SAG deshabilitada para esta organizacion." };
+  }
+
+  if (mode === "SIMULATION") {
+    const config = resolveSagWriteConfig(orgId);
+    const idempotencyKey = buildIdempotencyKey(orgId, orderId, config.idempotencyKeyVersion);
+    const payload = buildSagOrderPayload(order);
+    const simulatedId = `SIM-${orderId.slice(0, 8)}-${Date.now()}`;
+    log("ORDER_SYNC_SIMULATED", {
+      orderId, simulatedId, idempotencyKey,
+      lineCount: payload.lines.length,
+      customerCode: payload.customerCode,
+    });
+    return { ok: true, sagOperationId: simulatedId };
+  }
 
   // ── 1. Validate readiness ──────────────────────────────────────────────────
   const { canSend, reason } = canSendToSag(order);
