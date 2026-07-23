@@ -155,11 +155,7 @@ export async function POST(
     }
 
     case "search_customers": {
-      // eslint-disable-next-line no-console
-      console.log("[PEDIDOS-DEBUG-08] search_customers orgId:", orgId, "query:", body.query);
       const customers = await searchCustomers(orgId, body.query ?? "");
-      // eslint-disable-next-line no-console
-      console.log("[PEDIDOS-DEBUG-08] search_customers results:", customers.length);
       return NextResponse.json({ customers });
     }
 

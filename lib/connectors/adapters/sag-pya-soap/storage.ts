@@ -119,6 +119,9 @@ export const customerProfileStorage: StorageHandler<UnifiedCustomer> = {
               name:          record.name,
               email:         record.email      ?? null,
               phone:         record.phone      ?? null,
+              // CUSTOMER-DATA-FOUNDATION-01: write address from SAG sc_direccion.
+              // Only write when SAG provides a non-empty value.
+              ...(record.address?.line1 ? { address: record.address.line1 } : {}),
               // CUSTOMER-GEOGRAPHY-RECOVERY-01: SAG city/department are unresolvable FK integers.
               // Geography is owned by CRM (DANE codes). SAG must never write these fields.
               sellerName:    record.salesRepName        ?? null,
@@ -139,6 +142,10 @@ export const customerProfileStorage: StorageHandler<UnifiedCustomer> = {
               name:          record.name,
               email:         record.email      ?? null,
               phone:         record.phone      ?? null,
+              // CUSTOMER-DATA-FOUNDATION-01: update address from SAG sc_direccion.
+              // Only overwrite when SAG provides a non-empty value — never erase
+              // an existing address (CRM or manual) with null/empty.
+              ...(record.address?.line1 ? { address: record.address.line1 } : {}),
               // CUSTOMER-GEOGRAPHY-RECOVERY-01: city/department intentionally omitted.
               // CRM DANE codes are authoritative — SAG FK integers must not overwrite.
               sellerName:    record.salesRepName        ?? null,
@@ -661,7 +668,12 @@ export const customerOrderStorage: StorageHandler<UnifiedSagOrder> = {
             amount:         r.amount,
             currency:       r.currency,
             sourceCode:     r.sourceCode,
-            rawJson:        (r.meta ?? {}) as object,
+            // CUSTOMER-DATA-FOUNDATION-01: include sellerTerceroId in rawJson
+            // so the canonical customer service can extract the seller for orders.
+            rawJson:        {
+              ...(r.meta ?? {}),
+              sellerTerceroId: r.sellerTerceroId ?? null,
+            } as object,
           };
           return db.customerOrderRecord.upsert({
             where: {

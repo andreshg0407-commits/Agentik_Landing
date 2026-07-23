@@ -423,6 +423,8 @@ export interface UnifiedSagOrder extends SourceRecord {
   amount:       number;   // total_valor
   currency:     string;   // "COP" | "USD"
   sourceCode:   string;   // always "PD"
+  /** SAG internal FK to seller TERCEROS record (ka_nl_tercero_vend). Null when absent. */
+  sellerTerceroId?: number;
 }
 
 /**

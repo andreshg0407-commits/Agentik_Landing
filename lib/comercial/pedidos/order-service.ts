@@ -36,6 +36,11 @@ import type {
 import { computeOrderSummary } from "./order-validation";
 import type { OrderTimelineEvent, OrderVersion, SagDocumentReference } from "./order-core-types";
 import { createdInAgentikEvent } from "./order-timeline";
+import {
+  searchCustomers as canonicalSearchCustomers,
+  getCustomerBySagCode,
+} from "@/lib/comercial/clientes/canonical-customer-service";
+import { validateCustomerForSagOrder } from "@/lib/comercial/clientes/customer-sag-validation";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -851,15 +856,78 @@ export async function updateOrderLine(
 
 // ── Submit order ──────────────────────────────────────────────────────────────
 
+/**
+ * Submit order for SAG sync. Validates SAG readiness before allowing the
+ * order to leave draft status. FAIL-CLOSED: if the canonical service is
+ * unavailable, the order stays in borrador.
+ *
+ * Sprint: AGENTIK-ORDERS-CUSTOMER-DATA-FOUNDATION-01
+ */
 export async function submitOrder(
   orgId:   string,
   orderId: string,
 ): Promise<OrderDraft | null> {
+  // Pre-validate: load order to check SAG readiness before patching
+  const current = await getOrder(orgId, orderId);
+  if (!current || current.status !== "borrador") return current ?? null;
+
+  const sagCode = current.header?.customerCode;
+
+  // Gate: validate customer SAG readiness (fail-closed)
+  let validationResult: { ok: boolean; error?: string };
+  try {
+    validationResult = await validateOrderCustomerForSag(orgId, sagCode);
+  } catch {
+    // Canonical service unavailable — BLOCK submission (fail-closed)
+    validationResult = {
+      ok: false,
+      error: "No fue posible validar los datos SAG del cliente. Intente nuevamente.",
+    };
+  }
+
+  if (!validationResult.ok) {
+    return await patchOrderMeta(orgId, orderId, (order) => {
+      const now = new Date().toISOString();
+      return buildMetaSnapshot(order, {
+        status: "borrador",
+        sagError: validationResult.error ?? "Validacion SAG fallida",
+        updatedAt: now,
+      });
+    });
+  }
+
   return await patchOrderMeta(orgId, orderId, (order) => {
     if (order.status !== "borrador") return null;
     const now = new Date().toISOString();
     return buildMetaSnapshot(order, { status: "listo_para_enviar", updatedAt: now });
   });
+}
+
+/**
+ * Internal: validate customer data for SAG submission.
+ * Returns { ok: true } if SAG_SUBMISSION_READY, { ok: false, error } otherwise.
+ * Throws if the canonical service is unavailable (caller must handle).
+ */
+async function validateOrderCustomerForSag(
+  orgId: string,
+  sagCode: string | undefined,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!sagCode) {
+    return { ok: false, error: "Cliente sin codigo SAG — no puede enviarse a SAG" };
+  }
+
+  const customer = await getCustomerBySagCode(orgId, sagCode);
+  if (!customer) {
+    return { ok: false, error: `Cliente SAG ${sagCode} no encontrado en el sistema` };
+  }
+
+  const readiness = validateCustomerForSagOrder(customer);
+  if (readiness.status !== "READY") {
+    const reasons = readiness.blockers.map(b => b.reason).join("; ");
+    return { ok: false, error: `Validacion SAG: ${reasons}` };
+  }
+
+  return { ok: true };
 }
 
 // ── Mark pending SAG ──────────────────────────────────────────────────────────
@@ -1241,6 +1309,14 @@ export interface CustomerProfile {
   lastOrderDate:   string | null;
   city:            string;
   sagCode:         string;
+  /** SAG readiness for order creation */
+  sagReadiness?: "READY" | "DRAFT_ONLY" | "BLOCKED";
+  /** Whether the customer has multiple branches (sucursales) */
+  hasBranches?: boolean;
+  /** Number of branches sharing same NIT */
+  branchCount?: number;
+  /** Seller resolution confidence */
+  sellerConfidence?: string;
 }
 
 export async function searchCustomers(
@@ -1249,55 +1325,31 @@ export async function searchCustomers(
 ): Promise<CustomerProfile[]> {
   const map = new Map<string, CustomerProfile>();
 
-  // ── Source 1: CustomerProfile (real synced customers from SAG/CRM) ──────
+  // ── Source 1: Canonical customer service (SAG + CRM merged) ──────────
   try {
-    const q = query.trim();
-    const profileWhere: Record<string, unknown> = {
-      organizationId: orgId,
-      status: "ACTIVE",
-    };
-    if (q) {
-      profileWhere.OR = [
-        { name:          { contains: q, mode: "insensitive" } },
-        { slug:          { contains: q, mode: "insensitive" } },
-        { nit:           { contains: q, mode: "insensitive" } },
-        { nitNormalized: { contains: q, mode: "insensitive" } },
-        { sellerName:    { contains: q, mode: "insensitive" } },
-        { city:          { contains: q, mode: "insensitive" } },
-      ];
-    }
-    const profiles = await prisma.customerProfile.findMany({
-      where:   profileWhere,
-      orderBy: { lastPurchaseAt: { sort: "desc", nulls: "last" } },
-      take:    30,
-      select: {
-        id: true, slug: true, name: true, nit: true, nitNormalized: true,
-        sellerName: true, city: true,
-        ltv: true, avgTicket: true, lastPurchaseAt: true,
-        erpId: true, crmId: true,
-      },
-    });
-    // eslint-disable-next-line no-console
-    console.log("[PEDIDOS-DEBUG-08] searchCustomers orgId:", orgId, "query:", query, "profiles found:", profiles.length);
-
-    for (const p of profiles) {
-      const code = p.slug || p.nit || p.id;
+    const canonical = await canonicalSearchCustomers(orgId, query);
+    for (const c of canonical) {
+      const code = c.sagCode ?? c.nit ?? c.id;
       if (map.has(code)) continue;
       map.set(code, {
-        customerCode:   code,
-        customerName:   p.name,
-        customerId:     p.nit ?? p.nitNormalized ?? "",
-        lastSellerName: p.sellerName ?? "",
-        lastChannel:    "",
-        totalOrders:    0,
-        totalValue:     p.ltv ? Number(p.ltv) : 0,
-        lastOrderDate:  p.lastPurchaseAt ? p.lastPurchaseAt.toISOString() : null,
-        city:           p.city ?? "",
-        sagCode:        p.erpId ?? "",
+        customerCode:     code,
+        customerName:     c.name,
+        customerId:       c.nit ?? "",
+        lastSellerName:   c.seller?.name ?? "",
+        lastChannel:      "",
+        totalOrders:      0,
+        totalValue:       0,
+        lastOrderDate:    c.lastPurchaseAt ?? null,
+        city:             c.city ?? "",
+        sagCode:          c.sagCode ?? "",
+        sagReadiness:     c.sagReadiness,
+        hasBranches:      c.hasBranches,
+        branchCount:      c.branchCount,
+        sellerConfidence: c.seller?.confidence,
       });
     }
   } catch {
-    // CustomerProfile table may not exist yet — degrade silently
+    // Canonical service unavailable — degrade silently
   }
 
   // ── Source 2: Order history (existing orders in AgentExecution) ────────
@@ -1330,7 +1382,7 @@ export async function searchCustomers(
         existing.totalValue  += summary.totalValue ?? 0;
         if (!existing.lastOrderDate || dateStr > existing.lastOrderDate) {
           existing.lastOrderDate  = dateStr;
-          existing.lastSellerName = header.sellerName ?? "";
+          existing.lastSellerName = header.sellerName ?? existing.lastSellerName;
           existing.lastChannel    = header.channel ?? "";
         }
         if (!existing.customerName && header.customerName) {
@@ -1352,10 +1404,10 @@ export async function searchCustomers(
       }
     }
   } catch {
-    // AgentExecution not available — continue with CustomerProfile only
+    // AgentExecution not available — continue with canonical only
   }
 
-  // Filter by query
+  // Filter by query (order-history entries need client-side filter)
   const q = query.toLowerCase().trim();
   if (!q) return [...map.values()].slice(0, 20);
 

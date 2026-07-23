@@ -156,9 +156,12 @@ export function mapSagCustomer(
   // City/state: SAG stores integer FKs (ka_ni_ciudad, ka_nl_departamento)
   // that are NOT resolvable without a CIUDADES/DEPARTAMENTOS lookup table.
   // Emitting them as city/state overwrites correct CRM DANE codes on every sync.
-  // CUSTOMER-GEOGRAPHY-RECOVERY-01: emit undefined so SAG never touches geography.
+  // CUSTOMER-GEOGRAPHY-RECOVERY-01: emit undefined so SAG never touches geography names.
+  // However, we DO preserve the raw SAG FK IDs in meta for future resolution.
   const cityCode:  string | undefined = undefined;
   const stateCode: string | undefined = undefined;
+  const sagCityId    = row["ka_ni_ciudad"]      != null ? String(row["ka_ni_ciudad"]) : undefined;
+  const sagDeptId    = row["ka_nl_departamento"] != null ? String(row["ka_nl_departamento"]) : undefined;
 
   const customerType: UnifiedCustomer["type"] =
     naturaleza === "J" ? "company"
@@ -191,7 +194,22 @@ export function mapSagCustomer(
     createdAt,
     updatedAt,
 
-    meta: { raw: row },
+    meta: {
+      raw: row,
+      // SAG commercial fields — extracted for canonical customer service
+      sagCityId,
+      sagDeptId,
+      sagZona:         str(row, "sc_zona")          ?? str(row, "ZONA"),
+      sagFormaPago:     str(row, "sc_forma_pago")    ?? str(row, "FORMA_PAGO"),
+      sagPrecioVenta:   str(row, "n_precio_venta")   ?? str(row, "PRECIO_VENTA"),
+      sagCredito:       str(row, "n_credito")        ?? str(row, "CREDITO"),
+      sagDiasCredito:   str(row, "n_dias_credito")   ?? str(row, "DIAS_CREDITO"),
+      sagTipoCliente:   str(row, "sc_tipo_cliente")  ?? str(row, "TIPO_CLIENTE"),
+      sagTipoDoc:       str(row, "sc_tipo_doc")      ?? str(row, "TIPO_DOC"),
+      sagVendedor:      str(row, "sc_vendedor")      ?? str(row, "VENDEDOR"),
+      sagNitVendedor:   str(row, "n_nit_vendedor")   ?? str(row, "NIT_VENDEDOR"),
+      sagActivo:        str(row, "sc_activo")         ?? str(row, "ACTIVO"),
+    },
   };
 }
 
@@ -677,6 +695,11 @@ export function mapSagOrder(
   const moneda       = str(row, "ss_moneda") ?? "PESOS";
   const currency     = moneda.toUpperCase() === "DOLARES" ? "USD" : "COP";
 
+  // Seller: ka_nl_tercero_vend is the SAG internal FK to the seller's TERCEROS row.
+  // Present on ~92% of 2026 PD orders. When absent (0 or null), left undefined.
+  const sellerTerceroIdRaw = num(row, "ka_nl_tercero_vend", 0);
+  const sellerTerceroId = sellerTerceroIdRaw > 0 ? sellerTerceroIdRaw : undefined;
+
   return {
     sourceId:     `ORD-${movId}`,
     source:       "sag_pya_soap",
@@ -689,6 +712,7 @@ export function mapSagOrder(
     amount:       totalValor,
     currency,
     sourceCode:   "PD",
+    sellerTerceroId,
   };
 }
 

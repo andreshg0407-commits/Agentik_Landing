@@ -47,10 +47,14 @@ export function validateHeader(header: OrderHeader): OrderValidationIssue[] {
   }
 
   if (!header.sellerName?.trim()) {
+    // SAG PD treats VENDEDOR as optional (optEl in XML builder).
+    // Warn but do not block — seller is important for traceability
+    // and reporting but not a SAG submission requirement.
+    // Sprint: AGENTIK-ORDERS-CUSTOMER-DATA-FOUNDATION-01
     issues.push({
       field: "sellerName",
-      message: "El vendedor es obligatorio.",
-      severity: "error",
+      message: "Vendedor no asignado. El pedido puede enviarse a SAG sin vendedor, pero se recomienda asignarlo para trazabilidad.",
+      severity: "warning",
     });
   }
 
