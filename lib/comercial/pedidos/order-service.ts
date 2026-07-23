@@ -41,11 +41,86 @@ import {
   getCustomerBySagCode,
 } from "@/lib/comercial/clientes/canonical-customer-service";
 import { validateCustomerForSagOrder } from "@/lib/comercial/clientes/customer-sag-validation";
-// Reservation hooks: DEFERRED (Sprint AGENTIK-ORDERS-RESERVATION-ADAPTER-01)
-// OperationalReservation Prisma model + engine + bridge exist (lib/operational-inventory/),
-// but they were built for CRM OperationalOrder, not Agentik OrderDraft.
-// An adapter (OrderDraft → OperationalOrder + PIL → OperationalInventoryItem) is needed.
-// See: lib/operational-inventory/order-reservation-bridge.ts
+// Reservation adapter: OrderDraft → OperationalOrder → OperationalReservation
+// Sprint: AGENTIK-ORDERS-RESERVATION-ADAPTER-01
+import {
+  syncReservationsForDraft,
+  releaseReservationsForOrder,
+} from "./order-reservation-adapter";
+import type { OrderReservationOperationResult, ReservationConflict } from "./order-reservation-adapter-core";
+
+// ── Order mutation result (includes reservation status) ─────────────────────
+export interface OrderMutationResult {
+  order: OrderDraft | null;
+  reservation?: OrderReservationOperationResult;
+}
+
+// ── Reservation enforcement (D5: FULL/PARTIAL in service layer) ─────────────
+
+/**
+ * Enforces reservation policy based on delivery scope.
+ * This is the canonical enforcement — MUST be called by submitOrder and
+ * any future endpoint that confirms orders. Never rely on UI button state.
+ *
+ * FULL:  ANY conflict, expiry, or persistence error blocks confirmation.
+ * PARTIAL: Conflicts are surfaced but order can proceed with reserved portions.
+ *          The service marks which references are unprotected.
+ *
+ * Returns { allowed: true } if the order can advance, or { allowed: false, reason }
+ * with a user-readable explanation.
+ *
+ * Sprint: AGENTIK-ORDERS-RESERVATION-ADAPTER-01
+ */
+export function enforceReservationPolicy(
+  reservation: OrderReservationOperationResult | undefined,
+  scope: "full" | "partial",
+): { allowed: true } | { allowed: false; reason: string; conflicts?: ReservationConflict[] } {
+  // No reservation data → block (fail-closed)
+  if (!reservation) {
+    return { allowed: false, reason: "No se pudo verificar la disponibilidad de inventario." };
+  }
+
+  // Persistence error → always block (both FULL and PARTIAL)
+  if (!reservation.ok && reservation.status === "PERSISTENCE_ERROR") {
+    return {
+      allowed: false,
+      reason: `Error de persistencia: ${reservation.message}. Reintente el guardado.`,
+    };
+  }
+
+  // Expired → always block
+  if (!reservation.ok && reservation.status === "EXPIRED") {
+    return {
+      allowed: false,
+      reason: "La reserva expiró. Guarde el borrador nuevamente para renovar la reserva.",
+    };
+  }
+
+  // No inventory data → block
+  if (!reservation.ok && reservation.status === "NO_INVENTORY_DATA") {
+    return {
+      allowed: false,
+      reason: "No se encontraron datos de inventario. Verifique la sincronización.",
+    };
+  }
+
+  // Conflict handling depends on scope
+  if (!reservation.ok && reservation.status === "CONFLICT") {
+    if (scope === "full") {
+      return {
+        allowed: false,
+        reason: `Disponibilidad insuficiente para ${reservation.conflicts?.length ?? 0} referencia(s). En modo COMPLETO, todas las referencias deben estar disponibles.`,
+        conflicts: reservation.conflicts,
+      };
+    }
+    // PARTIAL: conflicts are surfaced but order can proceed
+    // The caller (wizard/API) shows which refs are unprotected
+    return { allowed: true };
+  }
+
+  // Success — allowed
+  return { allowed: true };
+}
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -151,7 +226,7 @@ export async function createOrderDraft(
     lines:     OrderLine[];
     createdBy: string;
   },
-): Promise<OrderDraft> {
+): Promise<OrderMutationResult> {
   // Generate consecutive number: count existing + 1
   let consecutivo = 1;
   try {
@@ -224,7 +299,10 @@ export async function createOrderDraft(
 
   const order = rowToOrder(row);
 
-  return order;
+  // Sync reservations — result surfaced to caller, never swallowed
+  const reservation = await syncReservationsForDraft(order);
+
+  return { order, reservation };
 }
 
 // ── Get single order ──────────────────────────────────────────────────────────
@@ -758,7 +836,7 @@ export async function updateOrderDraft(
     header?: OrderHeader;
     lines?:  OrderLine[];
   },
-): Promise<OrderDraft | null> {
+): Promise<OrderMutationResult> {
   const result = await patchOrderMeta(orgId, orderId, (order) => {
     // Allow editing borrador and listo_para_enviar (pre-SAG states)
     if (order.status !== "borrador" && order.status !== "listo_para_enviar") return null;
@@ -798,7 +876,13 @@ export async function updateOrderDraft(
     };
   });
 
-  return result;
+  // Sync reservations after update — result surfaced to caller
+  let reservation: OrderReservationOperationResult | undefined;
+  if (result) {
+    reservation = await syncReservationsForDraft(result);
+  }
+
+  return { order: result, reservation };
 }
 
 // ── Update a single order line ────────────────────────────────────────────────
@@ -875,10 +959,10 @@ export async function updateOrderLine(
 export async function submitOrder(
   orgId:   string,
   orderId: string,
-): Promise<OrderDraft | null> {
+): Promise<OrderMutationResult> {
   // Pre-validate: load order to check SAG readiness before patching
   const current = await getOrder(orgId, orderId);
-  if (!current || current.status !== "borrador") return current ?? null;
+  if (!current || current.status !== "borrador") return { order: current ?? null };
 
   const sagCode = current.header?.customerCode;
 
@@ -895,7 +979,7 @@ export async function submitOrder(
   }
 
   if (!validationResult.ok) {
-    return await patchOrderMeta(orgId, orderId, (order) => {
+    const reverted = await patchOrderMeta(orgId, orderId, (order) => {
       const now = new Date().toISOString();
       return buildMetaSnapshot(order, {
         status: "borrador",
@@ -903,6 +987,7 @@ export async function submitOrder(
         updatedAt: now,
       });
     });
+    return { order: reverted };
   }
 
   const submitted = await patchOrderMeta(orgId, orderId, (order) => {
@@ -911,7 +996,29 @@ export async function submitOrder(
     return buildMetaSnapshot(order, { status: "listo_para_enviar", updatedAt: now });
   });
 
-  return submitted;
+  // Revalidate reservations on submission (upgrades to "confirmed" hold)
+  // Enforce FULL/PARTIAL policy from the service layer — never trust UI alone
+  if (submitted) {
+    const reservation = await syncReservationsForDraft(submitted);
+    const scope = submitted.header.deliveryScope ?? "full";
+    const policy = enforceReservationPolicy(reservation, scope);
+
+    if (!policy.allowed) {
+      // Revert to borrador — submission cannot proceed
+      const reverted = await patchOrderMeta(orgId, orderId, (order) => {
+        const now2 = new Date().toISOString();
+        return buildMetaSnapshot(order, {
+          status: "borrador",
+          sagError: `Reserva bloqueada: ${policy.reason}`,
+          updatedAt: now2,
+        });
+      });
+      return { order: reverted, reservation };
+    }
+    return { order: submitted, reservation };
+  }
+
+  return { order: submitted };
 }
 
 /**
@@ -997,13 +1104,19 @@ export async function markConflict(
 export async function cancelOrder(
   orgId:   string,
   orderId: string,
-): Promise<OrderDraft | null> {
+): Promise<OrderMutationResult> {
   const result = await patchOrderMeta(orgId, orderId, (order) => {
     const now = new Date().toISOString();
     return buildMetaSnapshot(order, { status: "cancelado", updatedAt: now });
   });
 
-  return result;
+  // Release all reservations — result surfaced to caller
+  let reservation: OrderReservationOperationResult | undefined;
+  if (result) {
+    reservation = await releaseReservationsForOrder(result);
+  }
+
+  return { order: result, reservation };
 }
 
 // ── Return to draft ───────────────────────────────────────────────────────────
@@ -1024,7 +1137,7 @@ export async function returnToDraft(
 export async function deleteDraftOrder(
   orgId:   string,
   orderId: string,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; reservation?: OrderReservationOperationResult }> {
   try {
     const row = await execDb().findFirst({
       where: { id: orderId, tenantId: orgId, module: MODULE, operation: OPERATION },
@@ -1065,9 +1178,26 @@ export async function deleteDraftOrder(
       // SagWriteOperation table may not exist — safe to proceed
     }
 
+    // Release reservations before deleting the order
+    let reservationRelease: OrderReservationOperationResult | undefined;
+    try {
+      const order = await getOrder(orgId, orderId);
+      if (order) {
+        reservationRelease = await releaseReservationsForOrder(order);
+      }
+    } catch {
+      // Release attempt failed — proceed with deletion, TTL will clean up
+      reservationRelease = {
+        ok: false,
+        status: "PERSISTENCE_ERROR",
+        message: "No se pudo liberar reservas antes de eliminar. TTL expirará las reservas.",
+        retryable: false,
+      };
+    }
+
     await execDb().delete({ where: { id: orderId } });
 
-    return { ok: true };
+    return { ok: true, reservation: reservationRelease };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
   }
@@ -1083,7 +1213,7 @@ export async function createOrderDraftDeduped(
     createdBy: string;
     wizardSessionKey?: string;
   },
-): Promise<{ order: OrderDraft; alreadyExists: boolean }> {
+): Promise<{ order: OrderDraft; alreadyExists: boolean; reservation?: OrderReservationOperationResult }> {
   // If a wizard session key is provided, check if we already created an order for this session
   if (data.wizardSessionKey) {
     try {
@@ -1148,7 +1278,9 @@ export async function createOrderDraftDeduped(
     },
   });
 
-  return { order: rowToOrder(row), alreadyExists: false };
+  const order = rowToOrder(row);
+  const reservation = await syncReservationsForDraft(order);
+  return { order, alreadyExists: false, reservation };
 }
 
 // ── Duplicate check ───────────────────────────────────────────────────────────

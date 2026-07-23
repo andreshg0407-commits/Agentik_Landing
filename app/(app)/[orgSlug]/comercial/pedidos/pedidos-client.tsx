@@ -274,10 +274,49 @@ export function PedidosClient({ orgSlug, initialStats, initialOrders, commercial
 
   // Feedback
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
+  const [reservationAlert, setReservationAlert] = useState<{
+    type: "success" | "conflict" | "error";
+    message: string;
+    conflicts?: Array<{ reference: string; requested: number; available: number; shortfall: number }>;
+  } | null>(null);
 
   function showFeedback(msg: string) {
     setFeedbackMsg(msg);
     setTimeout(() => setFeedbackMsg(null), 5000);
+  }
+
+  /** Interprets reservation result from API and shows appropriate feedback. */
+  function handleReservationResult(reservation: any, context: "save" | "submit") {
+    if (!reservation) {
+      // No reservation data — legacy or error
+      setReservationAlert(null);
+      return;
+    }
+    if (reservation.ok) {
+      setReservationAlert({
+        type: "success",
+        message: context === "save"
+          ? "Borrador guardado y unidades reservadas."
+          : "Pedido enviado y unidades reservadas.",
+      });
+      setTimeout(() => setReservationAlert(null), 6000);
+    } else if (reservation.status === "CONFLICT") {
+      setReservationAlert({
+        type: "conflict",
+        message: "La disponibilidad cambio. Revisa las cantidades.",
+        conflicts: reservation.conflicts ?? [],
+      });
+      // Do NOT auto-dismiss conflicts — user must acknowledge
+    } else {
+      // PERSISTENCE_ERROR, EXPIRED, NO_INVENTORY_DATA
+      setReservationAlert({
+        type: "error",
+        message: reservation.retryable
+          ? "El pedido se guardo como borrador, pero las unidades no quedaron reservadas. Puedes reintentar."
+          : `Error de reserva: ${reservation.message}`,
+      });
+      setTimeout(() => setReservationAlert(null), 10000);
+    }
   }
 
   // Load orders
@@ -367,6 +406,7 @@ export function PedidosClient({ orgSlug, initialStats, initialOrders, commercial
   async function saveDraft() {
     if (submitting) return;
     setSubmitting(true);
+    setReservationAlert(null);
     try {
       if (editingOrderId) {
         // Update existing draft
@@ -377,9 +417,16 @@ export function PedidosClient({ orgSlug, initialStats, initialOrders, commercial
           lines:  wizardLines,
         });
         if (data.order) {
-          showFeedback("Borrador actualizado.");
-          setWizardOpen(false);
-          setEditingOrderId(null);
+          handleReservationResult(data.reservation, "save");
+          const hasConflict = data.reservation && !data.reservation.ok && data.reservation.status === "CONFLICT";
+          if (!hasConflict) {
+            showFeedback(data.reservation?.ok
+              ? "Borrador actualizado y unidades reservadas."
+              : "Borrador actualizado.");
+            setWizardOpen(false);
+            setEditingOrderId(null);
+          }
+          // On conflict: keep wizard open so user can adjust quantities
           await loadOrders();
           await loadStats();
         }
@@ -393,8 +440,18 @@ export function PedidosClient({ orgSlug, initialStats, initialOrders, commercial
           wizardSessionKey: wizardSessionRef.current,
         });
         if (data.order) {
-          showFeedback("Pedido guardado como borrador.");
-          setWizardOpen(false);
+          handleReservationResult(data.reservation, "save");
+          const hasConflict = data.reservation && !data.reservation.ok && data.reservation.status === "CONFLICT";
+          if (!hasConflict) {
+            showFeedback(data.reservation?.ok
+              ? "Pedido guardado y unidades reservadas."
+              : "Pedido guardado como borrador.");
+            setWizardOpen(false);
+          }
+          // On conflict: keep wizard open so user can adjust
+          if (hasConflict && data.order.id) {
+            setEditingOrderId(data.order.id);
+          }
           await loadOrders();
           await loadStats();
         }
@@ -407,6 +464,7 @@ export function PedidosClient({ orgSlug, initialStats, initialOrders, commercial
   async function submitDraft() {
     if (submitting) return;
     setSubmitting(true);
+    setReservationAlert(null);
     try {
       const data = await orderApi(orgSlug, {
         action: "create",
@@ -420,8 +478,22 @@ export function PedidosClient({ orgSlug, initialStats, initialOrders, commercial
           action: "submit", orderId: data.order.id,
         });
         if (submitData.order) {
-          showFeedback("Pedido enviado. Pendiente confirmacion en SAG.");
-          setWizardOpen(false);
+          // Check reservation result from submit
+          if (submitData.reservation && !submitData.reservation.ok) {
+            handleReservationResult(submitData.reservation, "submit");
+            // Submit reverted to borrador — keep wizard open for user to fix
+            if (submitData.reservation.status === "CONFLICT") {
+              setEditingOrderId(data.order.id);
+              // Do NOT close wizard — user must adjust quantities
+            } else {
+              showFeedback("El pedido se guardo como borrador. Las unidades no quedaron reservadas.");
+              setWizardOpen(false);
+            }
+          } else {
+            handleReservationResult(submitData.reservation, "submit");
+            showFeedback("Pedido enviado y unidades reservadas.");
+            setWizardOpen(false);
+          }
           await loadOrders();
           await loadStats();
         }
@@ -627,6 +699,49 @@ export function PedidosClient({ orgSlug, initialStats, initialOrders, commercial
           fontFamily: T.mono, fontSize: T.sz.sm, color: C.blueDark,
         }}>
           {feedbackMsg}
+        </div>
+      )}
+
+      {/* Reservation alert */}
+      {reservationAlert && (
+        <div style={{
+          ...panel, padding: `${S[3]}px ${S[4]}px`, marginBottom: S[3],
+          background: reservationAlert.type === "success" ? "#f0fdf4"
+            : reservationAlert.type === "conflict" ? "#fef3c7"
+            : "#fef2f2",
+          borderColor: reservationAlert.type === "success" ? "#86efac"
+            : reservationAlert.type === "conflict" ? "#fbbf24"
+            : "#fca5a5",
+          fontFamily: T.mono, fontSize: T.sz.sm,
+          color: reservationAlert.type === "success" ? "#166534"
+            : reservationAlert.type === "conflict" ? "#92400e"
+            : "#991b1b",
+        }}>
+          <div style={{ fontWeight: T.wt.semibold, marginBottom: reservationAlert.conflicts?.length ? S[2] : 0 }}>
+            {reservationAlert.type === "conflict" ? "Disponibilidad insuficiente" : reservationAlert.message}
+          </div>
+          {reservationAlert.conflicts && reservationAlert.conflicts.length > 0 && (
+            <div style={{ marginTop: S[1] }}>
+              {reservationAlert.conflicts.map((c, i) => (
+                <div key={i} style={{ display: "flex", gap: S[3], fontSize: T.sz.xs, padding: `${S[1]}px 0` }}>
+                  <span style={{ fontWeight: T.wt.semibold }}>{c.reference}</span>
+                  <span>Solicitado: {c.requested}</span>
+                  <span>Disponible: {c.available}</span>
+                  <span style={{ color: "#dc2626" }}>Faltante: {c.shortfall}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <button
+            onClick={() => setReservationAlert(null)}
+            style={{
+              marginTop: S[2], fontFamily: T.mono, fontSize: T.sz.xs,
+              background: "transparent", border: "none", cursor: "pointer",
+              textDecoration: "underline", color: "inherit",
+            }}
+          >
+            Cerrar
+          </button>
         </div>
       )}
 

@@ -114,16 +114,18 @@ try {
       createdBy: "e2e-test",
     });
 
-    assert(!!order.id, "Order created with ID");
-    assert(order.status === "borrador", "Initial status = borrador");
-    assert(!!order.externalSyncKey, `externalSyncKey generated: ${order.externalSyncKey}`);
+    const created = order.order;
+    if (!created) throw new Error("Order creation returned null");
+    assert(!!created.id, "Order created with ID");
+    assert(created.status === "borrador", "Initial status = borrador");
+    assert(!!created.externalSyncKey, `externalSyncKey generated: ${created.externalSyncKey}`);
 
-    testOrderId = order.id;
-    testExternalSyncKey = order.externalSyncKey;
+    testOrderId = created.id;
+    testExternalSyncKey = created.externalSyncKey;
 
     // Submit
-    const submitted = await submitOrder(org.id, order.id);
-    assert(submitted?.status === "listo_para_enviar", "Submitted → listo_para_enviar");
+    const submitResult = await submitOrder(org.id, created.id);
+    assert(submitResult.order?.status === "listo_para_enviar", "Submitted → listo_para_enviar");
   }
 } catch (e) {
   assert(false, "Order creation", (e as Error).message);

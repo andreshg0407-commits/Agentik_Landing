@@ -48,17 +48,17 @@ export async function POST(
   switch (action) {
     case "create": {
       if (body.wizardSessionKey) {
-        const { order, alreadyExists } = await createOrderDraftDeduped(orgId, {
+        const { order, alreadyExists, reservation } = await createOrderDraftDeduped(orgId, {
           header: body.header, lines: body.lines,
           createdBy: body.createdBy ?? "usuario",
           wizardSessionKey: body.wizardSessionKey,
         });
-        return NextResponse.json({ order, alreadyExists });
+        return NextResponse.json({ order, alreadyExists, reservation });
       }
-      const order = await createOrderDraft(orgId, {
+      const { order, reservation } = await createOrderDraft(orgId, {
         header: body.header, lines: body.lines, createdBy: body.createdBy ?? "usuario",
       });
-      return NextResponse.json({ order });
+      return NextResponse.json({ order, reservation });
     }
 
     case "delete_draft": {
@@ -66,7 +66,7 @@ export async function POST(
       if (!result.ok) {
         return NextResponse.json({ ok: false, error: result.error }, { status: 409 });
       }
-      return NextResponse.json({ ok: true });
+      return NextResponse.json({ ok: true, reservation: result.reservation });
     }
 
     case "list": {
@@ -82,10 +82,10 @@ export async function POST(
     }
 
     case "update_draft": {
-      const order = await updateOrderDraft(orgId, body.orderId, {
+      const { order, reservation } = await updateOrderDraft(orgId, body.orderId, {
         header: body.header, lines: body.lines,
       });
-      return NextResponse.json({ order });
+      return NextResponse.json({ order, reservation });
     }
 
     case "update_line": {
@@ -98,8 +98,8 @@ export async function POST(
     }
 
     case "submit": {
-      const order = await submitOrder(orgId, body.orderId);
-      return NextResponse.json({ order });
+      const { order, reservation } = await submitOrder(orgId, body.orderId);
+      return NextResponse.json({ order, reservation });
     }
 
     case "mark_pending_sag": {
@@ -118,8 +118,8 @@ export async function POST(
     }
 
     case "cancel": {
-      const order = await cancelOrder(orgId, body.orderId);
-      return NextResponse.json({ order });
+      const { order, reservation } = await cancelOrder(orgId, body.orderId);
+      return NextResponse.json({ order, reservation });
     }
 
     case "return_to_draft": {

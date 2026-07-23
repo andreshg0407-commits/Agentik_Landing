@@ -212,6 +212,10 @@ export interface OrderReservationSyncOptions {
   mode:                 "dry_run" | "commit";
   /** TTL for new order-driven reservations. Default: 86400 s (24 h) */
   ttlSec?:              number;
+  /** Internal: set by transaction wrapper to prevent re-entry */
+  _inTransaction?:      boolean;
+  /** Internal: Prisma transaction client. Set by transaction wrapper */
+  _db?:                 any;
 }
 
 export interface OrderReservationSyncResult {
@@ -249,6 +253,44 @@ export async function syncOrderReservations(
 ): Promise<OrderReservationSyncResult> {
   const { organizationId, mode, ttlSec = 86400 } = options;
 
+  // ── Transaction wrapper for commit mode ──────────────────────────────────
+  // Uses PostgreSQL advisory locks to serialize concurrent reservations
+  // for the same references, preventing overcommit.
+  if (mode === "commit" && !options._inTransaction) {
+    const inventorySnapshot =
+      options.inventorySnapshot ?? await _loadInventorySnapshot(organizationId);
+
+    return prisma.$transaction(async (tx) => {
+      // Determine references to lock (from order lines + existing reservations)
+      const orderRefs = [...aggregateOrderLinesByReference(order.lines).keys()];
+      const existingRows = await tx.operationalReservation.findMany({
+        where: { organizationId, sourceType: "order", sourceId: order.sourceId },
+        select: { reference: true },
+      });
+      const existingRefs = existingRows.map(
+        (r: { reference: string }) => r.reference.toUpperCase(),
+      );
+      const allRefs = [...new Set([...orderRefs, ...existingRefs])].sort();
+
+      // Acquire per-reference advisory locks (sorted to prevent deadlocks).
+      // pg_advisory_xact_lock is released when the transaction commits/rolls back.
+      for (const ref of allRefs) {
+        const lockKey = `${organizationId}:reservation:${ref}`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
+      }
+
+      // Execute sync within the locked, transactional context
+      return syncOrderReservations(order, {
+        ...options,
+        inventorySnapshot,
+        _inTransaction: true,
+        _db:            tx,
+      });
+    }, { timeout: 15000 });
+  }
+
+  const db: any = options._db ?? prisma;
+
   const result: OrderReservationSyncResult = {
     orderId:              order.id,
     sourceId:             order.sourceId,
@@ -265,8 +307,9 @@ export async function syncOrderReservations(
     dryRun:               mode === "dry_run",
   };
 
-  // Guard: no lines — nothing to reserve
-  if (order.lines.length === 0) {
+  // Guard: no lines — nothing to reserve (unless releasing for cancelled order)
+  const globalAction = getReservationActionForOrderStatus(order.status);
+  if (order.lines.length === 0 && globalAction !== "release") {
     result.warnings.push(
       `Order ${order.sourceId} has no lines. Run quote line ingestion first.`,
     );
@@ -279,7 +322,7 @@ export async function syncOrderReservations(
       ? options.existingReservations.filter(
           r => r.sourceType === "order" && r.sourceId === order.sourceId,
         )
-      : await _loadOrderReservations(organizationId, order.sourceId);
+      : await _loadOrderReservations(organizationId, order.sourceId, db);
 
   // Load inventory snapshot
   const inventorySnapshot: OperationalInventoryItem[] =
@@ -289,12 +332,18 @@ export async function syncOrderReservations(
   const allActive: OperationalReservation[] =
     options.existingReservations
       ? options.existingReservations.filter(r => r.status === "active")
-      : await _loadAllActiveReservations(organizationId);
+      : await _loadAllActiveReservations(organizationId, db);
 
   // Compute intent
   const intents = computeOrderReservationIntent(order, existingForOrder);
 
   if (intents.every(i => i.isNoop)) return result; // nothing to do
+
+  // Exclude this order's own reservations from availability calculation
+  // to prevent self-reservation double-counting when updating quantities.
+  const allActiveExcludingSelf = allActive.filter(
+    r => !(r.sourceType === "order" && r.sourceId === order.sourceId),
+  );
 
   const now = new Date();
 
@@ -316,6 +365,9 @@ export async function syncOrderReservations(
       }
 
       // Use engine to compute impact + pressure signals
+      // Pass allActiveExcludingSelf so the engine doesn't count this order's
+      // existing reservation as "already taken" — prevents false overcommit errors
+      // when updating an order's quantity upward.
       const engineResult = createReservations(
         {
           organizationId,
@@ -328,7 +380,7 @@ export async function syncOrderReservations(
           lines: [{ reference, qty: roundedQty, salesRepId: order.salesRepId }],
         },
         inventorySnapshot,
-        allActive,
+        allActiveExcludingSelf,
       );
 
       result.pressureSignals.push(...engineResult.pressureSignals);
@@ -350,7 +402,7 @@ export async function syncOrderReservations(
       if (mode === "commit") {
         if (existingReservation && qtyChanged) {
           // Update existing reservation qty
-          const updated = await prisma.operationalReservation.update({
+          const updated = await db.operationalReservation.update({
             where: { id: existingReservation.id },
             data: {
               qtyReserved: roundedQty,
@@ -363,7 +415,7 @@ export async function syncOrderReservations(
           result.reservationsUpdated.push(_prismaToOperational(updated));
         } else if (!existingReservation) {
           // Upsert new (handles race conditions gracefully)
-          const upserted = await prisma.operationalReservation.upsert({
+          const upserted = await db.operationalReservation.upsert({
             where: {
               organizationId_sourceType_sourceId_reference: {
                 organizationId,
@@ -424,7 +476,7 @@ export async function syncOrderReservations(
       result.impacts.push(releaseResult.impact);
 
       if (mode === "commit") {
-        await prisma.operationalReservation.update({
+        await db.operationalReservation.update({
           where: { id: existingReservation.id },
           data: {
             qtyReleased: releaseResult.reservation.qtyReleased,
@@ -442,7 +494,7 @@ export async function syncOrderReservations(
       result.impacts.push(_buildNoOpImpact(existingReservation, inventorySnapshot));
 
       if (mode === "commit") {
-        await prisma.operationalReservation.update({
+        await db.operationalReservation.update({
           where: { id: existingReservation.id },
           data: {
             qtyConsumed: consumed.qtyConsumed,
@@ -463,8 +515,9 @@ export async function syncOrderReservations(
 async function _loadOrderReservations(
   organizationId: string,
   sourceId:       string,
+  db:             any = prisma,
 ): Promise<OperationalReservation[]> {
-  const rows = await prisma.operationalReservation.findMany({
+  const rows = await db.operationalReservation.findMany({
     where: { organizationId, sourceType: "order", sourceId },
   });
   return rows.map(_prismaToOperational);
@@ -472,8 +525,9 @@ async function _loadOrderReservations(
 
 async function _loadAllActiveReservations(
   organizationId: string,
+  db:             any = prisma,
 ): Promise<OperationalReservation[]> {
-  const rows = await prisma.operationalReservation.findMany({
+  const rows = await db.operationalReservation.findMany({
     where: { organizationId, status: "active" },
   });
   return rows.map(_prismaToOperational);
