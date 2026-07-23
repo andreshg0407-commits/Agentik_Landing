@@ -30,6 +30,7 @@ import type {
   OrderLineCandidate,
 } from "@/lib/comercial/pedidos/order-product-types";
 import { getCommercialStockState, isProductSellable } from "@/lib/comercial/pedidos/order-product-types";
+import { CommercialReferenceThumbnail } from "@/components/comercial/commercial-reference-thumbnail";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1092,33 +1093,43 @@ export function WholesaleOrderWizard({
                             opacity: isOut ? 0.6 : 1,
                           }}
                         >
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                            <div>
-                              <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold, color: C.ink }}>
-                                {p.referenceCode}
-                              </span>
-                              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, marginLeft: S[2] }}>
-                                {p.productName}
-                              </span>
+                          <div style={{ display: "flex", gap: S[2], alignItems: "flex-start" }}>
+                            <CommercialReferenceThumbnail
+                              imageUrl={p.thumbnailUrl}
+                              reference={p.referenceCode}
+                              description={p.productName}
+                              size={40}
+                            />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                                <div style={{ minWidth: 0 }}>
+                                  <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold, color: C.ink }}>
+                                    {p.referenceCode}
+                                  </span>
+                                  <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, marginLeft: S[2] }}>
+                                    {p.productName}
+                                  </span>
+                                </div>
+                                <span style={{
+                                  fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                                  padding: "1px 6px", borderRadius: R.sm,
+                                  background: badgeBg, color: badgeColor, flexShrink: 0,
+                                }}>
+                                  {ss.label}
+                                </span>
+                              </div>
+                              <div style={{
+                                fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, marginTop: 2,
+                              }}>
+                                <span style={{ color: badgeColor, fontWeight: T.wt.semibold }}>
+                                  {ss.helperText}
+                                </span>
+                                {" · "}
+                                {p.variantCount} variantes
+                                {" · "}
+                                ${p.unitPrice.toLocaleString()} / ud
+                              </div>
                             </div>
-                            <span style={{
-                              fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                              padding: "1px 6px", borderRadius: R.sm,
-                              background: badgeBg, color: badgeColor, flexShrink: 0,
-                            }}>
-                              {ss.label}
-                            </span>
-                          </div>
-                          <div style={{
-                            fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, marginTop: 2,
-                          }}>
-                            <span style={{ color: badgeColor, fontWeight: T.wt.semibold }}>
-                              {ss.helperText}
-                            </span>
-                            {" · "}
-                            {p.variantCount} variantes
-                            {" · "}
-                            ${p.unitPrice.toLocaleString()} / ud
                           </div>
                         </button>
                       );
@@ -1134,23 +1145,31 @@ export function WholesaleOrderWizard({
                           opacity: 0.7, cursor: "not-allowed",
                         }}
                       >
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                          <div>
-                            <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold, color: C.inkMid }}>
-                              {p.referenceCode}
-                            </span>
-                            <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginLeft: S[2] }}>
-                              {p.productName}
+                        <div style={{ display: "flex", gap: S[2], alignItems: "flex-start" }}>
+                          <CommercialReferenceThumbnail
+                            imageUrl={p.thumbnailUrl}
+                            reference={p.referenceCode}
+                            description={p.productName}
+                            size={40}
+                          />
+                          <div style={{ flex: 1, minWidth: 0, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                            <div style={{ minWidth: 0 }}>
+                              <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold, color: C.inkMid }}>
+                                {p.referenceCode}
+                              </span>
+                              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginLeft: S[2] }}>
+                                {p.productName}
+                              </span>
+                            </div>
+                            <span style={{
+                              fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                              padding: "1px 6px", borderRadius: R.sm,
+                              background: C.surfaceAlt, color: C.inkFaint, flexShrink: 0,
+                              border: `1px solid ${C.line}`,
+                            }}>
+                              Pendiente variantes SAG
                             </span>
                           </div>
-                          <span style={{
-                            fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                            padding: "1px 6px", borderRadius: R.sm,
-                            background: C.surfaceAlt, color: C.inkFaint, flexShrink: 0,
-                            border: `1px solid ${C.line}`,
-                          }}>
-                            Pendiente variantes SAG
-                          </span>
                         </div>
                         <div style={{
                           fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginTop: 2,
@@ -1168,22 +1187,30 @@ export function WholesaleOrderWizard({
                 <div style={{ ...panel, padding: S[3] }}>
                   {/* Product header */}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: S[3] }}>
-                    <div>
-                      <div style={{ fontFamily: T.mono, fontSize: T.sz.base, fontWeight: T.wt.bold, color: C.ink }}>
-                        {selectedProduct.productName}
-                      </div>
-                      <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>
-                        {selectedProduct.referenceCode}
-                        {" · "}
-                        {selectedProduct.availableQty !== null
-                          ? <span style={{ color: selectedProduct.availableQty > 10 ? C.green : selectedProduct.availableQty > 0 ? C.amber : C.red }}>
-                              {selectedProduct.availableQty} uds disponibles
-                            </span>
-                          : <span style={{ color: C.inkFaint }}>sin datos de stock</span>}
-                        {" · "}
-                        {selectedProduct.variantCount} variantes
-                        {" · "}
-                        ${selectedProduct.unitPrice.toLocaleString()} / ud
+                    <div style={{ display: "flex", gap: S[3], alignItems: "center" }}>
+                      <CommercialReferenceThumbnail
+                        imageUrl={selectedProduct.thumbnailUrl}
+                        reference={selectedProduct.referenceCode}
+                        description={selectedProduct.productName}
+                        size={48}
+                      />
+                      <div>
+                        <div style={{ fontFamily: T.mono, fontSize: T.sz.base, fontWeight: T.wt.bold, color: C.ink }}>
+                          {selectedProduct.productName}
+                        </div>
+                        <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>
+                          {selectedProduct.referenceCode}
+                          {" · "}
+                          {selectedProduct.availableQty !== null
+                            ? <span style={{ color: selectedProduct.availableQty > 10 ? C.green : selectedProduct.availableQty > 0 ? C.amber : C.red }}>
+                                {selectedProduct.availableQty} uds disponibles
+                              </span>
+                            : <span style={{ color: C.inkFaint }}>sin datos de stock</span>}
+                          {" · "}
+                          {selectedProduct.variantCount} variantes
+                          {" · "}
+                          ${selectedProduct.unitPrice.toLocaleString()} / ud
+                        </div>
                       </div>
                     </div>
                     <button onClick={() => { setSelectedProduct(null); setSearchQuery(""); searchInputRef.current?.focus(); }}
@@ -1467,11 +1494,21 @@ export function WholesaleOrderWizard({
               {/* Single-variant product (no matrix needed) */}
               {selectedProduct && (matrixColors.length === 0 || matrixSizes.length === 0) && (
                 <div style={{ ...panel, padding: S[3] }}>
-                  <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
-                    {selectedProduct.productName} ({selectedProduct.referenceCode})
-                  </div>
-                  <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginTop: 2 }}>
-                    Producto sin variantes de talla/color. Agrega directamente.
+                  <div style={{ display: "flex", gap: S[2], alignItems: "center" }}>
+                    <CommercialReferenceThumbnail
+                      imageUrl={selectedProduct.thumbnailUrl}
+                      reference={selectedProduct.referenceCode}
+                      description={selectedProduct.productName}
+                      size={40}
+                    />
+                    <div>
+                      <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
+                        {selectedProduct.productName} ({selectedProduct.referenceCode})
+                      </div>
+                      <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginTop: 2 }}>
+                        Producto sin variantes de talla/color. Agrega directamente.
+                      </div>
+                    </div>
                   </div>
                   <div style={{ display: "flex", gap: S[2], alignItems: "center", marginTop: S[2] }}>
                     <input
@@ -1896,13 +1933,14 @@ function OrderLinesGrouped({
   onEditRef: (refCode: string) => void;
 }) {
   // Group by referenceCode
-  const groups = new Map<string, { name: string; lines: OrderLine[] }>();
+  const groups = new Map<string, { name: string; thumbnailUrl: string | null; lines: OrderLine[] }>();
   for (const l of lines) {
     const g = groups.get(l.referenceCode);
     if (g) {
       g.lines.push(l);
+      if (!g.thumbnailUrl && l.thumbnailUrl) g.thumbnailUrl = l.thumbnailUrl;
     } else {
-      groups.set(l.referenceCode, { name: l.productName, lines: [l] });
+      groups.set(l.referenceCode, { name: l.productName, thumbnailUrl: l.thumbnailUrl ?? null, lines: [l] });
     }
   }
 
@@ -1926,13 +1964,21 @@ function OrderLinesGrouped({
               display: "flex", justifyContent: "space-between", alignItems: "center",
               marginBottom: S[1],
             }}>
-              <div>
-                <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold, color: C.ink }}>
-                  {group.name}
-                </span>
-                <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginLeft: S[2] }}>
-                  {refCode}
-                </span>
+              <div style={{ display: "flex", gap: S[2], alignItems: "center", minWidth: 0 }}>
+                <CommercialReferenceThumbnail
+                  imageUrl={group.thumbnailUrl}
+                  reference={refCode}
+                  description={group.name}
+                  size={28}
+                />
+                <div style={{ minWidth: 0 }}>
+                  <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold, color: C.ink }}>
+                    {group.name}
+                  </span>
+                  <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint, marginLeft: S[2] }}>
+                    {refCode}
+                  </span>
+                </div>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
                 <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>

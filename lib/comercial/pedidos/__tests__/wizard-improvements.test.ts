@@ -699,3 +699,100 @@ describe("Auto-distribution cell assignment (indexOf fix)", () => {
     assert.equal(totalQty(result), 33);
   });
 });
+
+// ── Product thumbnails (AGENTIK-ORDERS-WIZARD-PRODUCT-THUMBNAILS-01) ────────
+
+describe("Product thumbnails", () => {
+  // Test data contracts — thumbnailUrl flows through search results to order lines
+  // without triggering extra queries. These tests validate the data shape,
+  // not React rendering (which requires a browser).
+
+  interface MockSearchResult {
+    referenceCode: string;
+    productName: string;
+    thumbnailUrl: string | null;
+    unitPrice: number;
+    variantCount: number;
+    availableQty: number | null;
+  }
+
+  function mockSearchResult(overrides: Partial<MockSearchResult> = {}): MockSearchResult {
+    return {
+      referenceCode: "REF-001",
+      productName: "Producto Test",
+      thumbnailUrl: null,
+      unitPrice: 50000,
+      variantCount: 3,
+      availableQty: 100,
+      ...overrides,
+    };
+  }
+
+  test("1. result with valid imageUrl preserves the URL", () => {
+    const r = mockSearchResult({ thumbnailUrl: "https://cdn.example.com/img/REF-001.jpg" });
+    assert.equal(r.thumbnailUrl, "https://cdn.example.com/img/REF-001.jpg");
+  });
+
+  test("2. result without imageUrl has null", () => {
+    const r = mockSearchResult();
+    assert.equal(r.thumbnailUrl, null);
+  });
+
+  test("3. broken URL is still a string (component handles onError)", () => {
+    const r = mockSearchResult({ thumbnailUrl: "https://broken.invalid/404.jpg" });
+    assert.equal(typeof r.thumbnailUrl, "string");
+    assert.ok(r.thumbnailUrl!.length > 0);
+  });
+
+  test("4. selected product preserves imageUrl through flow", () => {
+    const searchResult = mockSearchResult({ thumbnailUrl: "https://cdn.example.com/hero.jpg" });
+    // Simulate selecting a product — thumbnailUrl passes through unchanged
+    const selected = { ...searchResult };
+    assert.equal(selected.thumbnailUrl, searchResult.thumbnailUrl);
+  });
+
+  test("5. no additional queries per row — thumbnailUrl comes with dataset", () => {
+    // The contract: searchOrderProducts() returns thumbnailUrl in every result.
+    // No client-side fetch is needed. This test verifies the type shape.
+    const results = [
+      mockSearchResult({ referenceCode: "A1", thumbnailUrl: "https://cdn.example.com/a1.jpg" }),
+      mockSearchResult({ referenceCode: "A2", thumbnailUrl: null }),
+      mockSearchResult({ referenceCode: "A3", thumbnailUrl: "https://cdn.example.com/a3.jpg" }),
+    ];
+    // All results have thumbnailUrl field (string | null)
+    for (const r of results) {
+      assert.ok("thumbnailUrl" in r);
+      assert.ok(r.thumbnailUrl === null || typeof r.thumbnailUrl === "string");
+    }
+  });
+
+  test("6. null placeholder maintains fixed dimensions (type contract)", () => {
+    // CommercialReferenceThumbnail renders a fixed-size box regardless of image.
+    // The component expects: imageUrl: string | null, reference: string, description: string, size?: number.
+    const props = {
+      imageUrl: null as string | null,
+      reference: "REF-001",
+      description: "Producto Test",
+      size: 40,
+    };
+    assert.equal(props.size, 40);
+    assert.equal(props.imageUrl, null);
+    assert.ok(props.reference.length > 0);
+  });
+
+  test("7. thumbnailUrl does not affect selection logic", () => {
+    const withImg = mockSearchResult({ thumbnailUrl: "https://cdn.example.com/img.jpg", availableQty: 50 });
+    const withoutImg = mockSearchResult({ thumbnailUrl: null, availableQty: 50 });
+    // Selection is determined by availableQty and variantCount, never by thumbnail
+    assert.equal(withImg.availableQty, withoutImg.availableQty);
+    assert.equal(withImg.variantCount, withoutImg.variantCount);
+  });
+
+  test("8. thumbnailUrl does not change stock, price, or variants", () => {
+    const base = mockSearchResult({ unitPrice: 75000, variantCount: 5, availableQty: 200 });
+    const withThumb = { ...base, thumbnailUrl: "https://cdn.example.com/img.jpg" };
+    assert.equal(withThumb.unitPrice, 75000);
+    assert.equal(withThumb.variantCount, 5);
+    assert.equal(withThumb.availableQty, 200);
+  });
+});

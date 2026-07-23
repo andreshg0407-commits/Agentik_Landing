@@ -283,7 +283,7 @@ export async function searchOrderProducts(
       lineName:      extractDescField(entry.description, "Línea"),
       unitPrice:     entry.unitPrice,
       variants:      entry.variants,
-      thumbnailUrl:  null,
+      thumbnailUrl:  null, // populated below via batch hero image query
       lastSyncAt:    entry.lastSyncAt,
       description:   entry.description,
       availableQty:  hasSyncData ? totalAvailable : null,
@@ -292,6 +292,46 @@ export async function searchOrderProducts(
       inventoryStatus: refStatus,
     });
     if (results.length >= limit) break;
+  }
+
+  // ── Hero images: ProductAssetLink(role="hero") → GeneratedAsset.assetUrl ──
+  // Single batch query for all results — never per-row.
+  if (results.length > 0) {
+    const productIds = [...map.values()].map(e => e.productId).filter(Boolean);
+    if (productIds.length > 0) {
+      try {
+        const heroLinks = await (prisma as any).productAssetLink.findMany({
+          where: { organizationId: orgId, productId: { in: productIds }, role: "hero" },
+          select: { productId: true, assetId: true },
+        });
+        if (heroLinks.length > 0) {
+          const assets = await (prisma as any).generatedAsset.findMany({
+            where: { id: { in: heroLinks.map((l: any) => l.assetId) } },
+            select: { id: true, assetUrl: true },
+          });
+          const assetMap = new Map<string, string>();
+          for (const a of assets) { if (a.assetUrl) assetMap.set(a.id, a.assetUrl); }
+
+          // productId → assetUrl
+          const heroImageMap = new Map<string, string>();
+          for (const link of heroLinks) {
+            const url = assetMap.get(link.assetId);
+            if (url) heroImageMap.set(link.productId, url);
+          }
+
+          // refCode → productId (reverse lookup)
+          const refToProductId = new Map<string, string>();
+          for (const entry of map.values()) {
+            if (entry.productId) refToProductId.set(entry.refCode, entry.productId);
+          }
+
+          for (const r of results) {
+            const pid = refToProductId.get(r.referenceCode);
+            if (pid) r.thumbnailUrl = heroImageMap.get(pid) ?? null;
+          }
+        }
+      } catch { /* ProductAssetLink/GeneratedAsset may not exist yet */ }
+    }
   }
 
   return results;
