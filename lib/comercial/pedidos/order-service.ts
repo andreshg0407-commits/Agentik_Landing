@@ -243,7 +243,7 @@ export async function createOrderDraft(
   }
 
   const status:    OrderStatus    = "borrador";
-  const origin:    OrderOrigin    = "agentik";
+  const origin:    OrderOrigin    = "AGENTIK_NATIVE";
   const syncState: OrderSyncState = "nunca_sincronizado";
   const summary   = computeOrderSummary(data.lines, {
     type:  data.header.discountType,
@@ -355,13 +355,18 @@ export async function getOrder(
   }
 
   // Resolve seller for SAG orders via ka_nl_tercero_vend (VENDEDOR-RESOLUTION-01)
-  if (draft && draft.origin === "sag_customer_order" && !draft.header.sellerName) {
-    const resolved = await resolveSellerForSagOrder(orgId, draft.sagOrderId, draft.header.customerCode);
-    if (resolved.sellerName && (resolved.confidence === "high" || resolved.confidence === "medium")) {
-      draft.header.sellerName = resolved.sellerName;
-      draft.header.sellerId = resolved.sellerCode ?? "";
-      draft.sellerSource = resolved.source;
-      draft.sellerConfidence = resolved.confidence;
+  // Skip SOAP call if seller is already persisted on CustomerOrderRecord (SAG-HISTORICAL-READ-COMPLETENESS-01)
+  if (draft && (draft.origin === "sag_customer_order" || draft.origin === "SAG_HISTORICAL") && !draft.header.sellerName) {
+    try {
+      const resolved = await resolveSellerForSagOrder(orgId, draft.sagOrderId, draft.header.customerCode);
+      if (resolved.sellerName && (resolved.confidence === "high" || resolved.confidence === "medium")) {
+        draft.header.sellerName = resolved.sellerName;
+        draft.header.sellerId = resolved.sellerCode ?? "";
+        draft.sellerSource = resolved.source;
+        draft.sellerConfidence = resolved.confidence;
+      }
+    } catch {
+      // SOAP resolution failed — continue without seller rather than blocking drawer
     }
   }
 
@@ -433,7 +438,7 @@ function crmQuoteToOrderDraft(q: any): OrderDraft {
     },
     lines,
     status,
-    origin:     "sag",
+    origin:     "CRM_LEGACY",
     syncState:  sagOrderId ? "sincronizado" : "nunca_sincronizado",
     summary: {
       totalValue:       lines.length > 0 ? computedTotal : totalValue,
@@ -550,12 +555,12 @@ export async function listCustomerOrderRecords(
         id:              r.id,
         consecutivo:     r.orderNumber ? parseInt(r.orderNumber, 10) || 0 : 0,
         customerName:    r.customerName ?? "",
-        sellerName:      "",
-        totalReferences: r._count?.lines ?? 0,
-        totalUnits:      0,
+        sellerName:      r.sellerName ?? "",
+        totalReferences: r.lineCount ?? r._count?.lines ?? 0,
+        totalUnits:      r.totalUnits != null ? Number(r.totalUnits) : 0,
         totalValue:      r.amount != null ? Number(r.amount) : 0,
         status,
-        origin:          "sag_customer_order",
+        origin:          "SAG_HISTORICAL",
         syncState:       "sincronizado",
         createdAt:       orderDate,
         lastSyncAt:      r.syncedAt instanceof Date ? r.syncedAt.toISOString() : String(r.syncedAt),
@@ -607,14 +612,16 @@ function customerOrderRecordToOrderDraft(r: any): OrderDraft {
       customerId:   r.customerNit ?? "",
       customerName: r.customerName ?? "",
       customerCode: r.customerNit ?? "",
-      sellerId:     "",
-      sellerName:   "",
+      sellerId:     r.sellerTerceroId ? String(r.sellerTerceroId) : "",
+      sellerName:   r.sellerName ?? "",
       channel:      "",
       notes:        "",
     },
+    sellerSource:     r.sellerSource ?? undefined,
+    sellerConfidence: r.sellerConfidence ?? undefined,
     lines,
     status,
-    origin:     "sag_customer_order",
+    origin:     "SAG_HISTORICAL",
     syncState:  "sincronizado",
     summary: {
       totalValue,
@@ -744,7 +751,7 @@ export async function listSagOrders(
         totalUnits:      0, // unit sum requires full line load — kept light
         totalValue,
         status,
-        origin:          "sag",
+        origin:          "CRM_LEGACY",
         syncState,
         createdAt:       issuedAt,
         lastSyncAt:      sagOrderId ? issuedAt : null,
@@ -1152,7 +1159,7 @@ export async function deleteDraftOrder(
 
     // Only Agentik-created orders that have never touched SAG
     const originLower = (origin ?? "").toLowerCase().trim();
-    if (originLower !== "agentik" && originLower !== "agk") {
+    if (originLower !== "agentik" && originLower !== "agk" && originLower !== "agentik_native") {
       return { ok: false, error: "Solo se pueden eliminar pedidos creados en Agentik." };
     }
     if (sagOrderId) {
@@ -1244,7 +1251,7 @@ export async function createOrderDraftDeduped(
   } catch { /* fall back to 1 */ }
 
   const status:    OrderStatus    = "borrador";
-  const origin:    OrderOrigin    = "agentik";
+  const origin:    OrderOrigin    = "AGENTIK_NATIVE";
   const syncState: OrderSyncState = "nunca_sincronizado";
   const summary   = computeOrderSummary(data.lines, {
     type:  data.header.discountType,
@@ -1377,9 +1384,9 @@ export async function getOrderStats(
       if (status === "sincronizado")   synced++;
       if (status === "conflicto")      conflicts++;
 
-      if (origin === "agentik")   fromAgentik++;
-      if (origin === "sag")       fromSag++;
-      if (origin === "importado") fromImport++;
+      if (origin === "agentik" || origin === "AGENTIK_NATIVE")   fromAgentik++;
+      if (origin === "sag" || origin === "SAG_HISTORICAL")     fromSag++;
+      if (origin === "importado" || origin === "CRM_LEGACY")   fromImport++;
       if (origin === "migrado")   fromMigration++;
     }
   } catch {

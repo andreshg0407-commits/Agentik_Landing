@@ -658,6 +658,10 @@ export const customerOrderStorage: StorageHandler<UnifiedSagOrder> = {
           const orderDateUtc = new Date(
             Date.UTC(r.orderDate.getFullYear(), r.orderDate.getMonth(), r.orderDate.getDate())
           );
+          // SAG-READ-COMPLETENESS-01: persist sellerTerceroId as first-class column
+          const sellerTerceroId = r.sellerTerceroId && r.sellerTerceroId > 0
+            ? r.sellerTerceroId
+            : null;
           const fields = {
             organizationId: ctx.orgId,
             erpMovId:       r.erpMovId,
@@ -668,11 +672,10 @@ export const customerOrderStorage: StorageHandler<UnifiedSagOrder> = {
             amount:         r.amount,
             currency:       r.currency,
             sourceCode:     r.sourceCode,
-            // CUSTOMER-DATA-FOUNDATION-01: include sellerTerceroId in rawJson
-            // so the canonical customer service can extract the seller for orders.
+            sellerTerceroId,
             rawJson:        {
               ...(r.meta ?? {}),
-              sellerTerceroId: r.sellerTerceroId ?? null,
+              sellerTerceroId,
             } as object,
           };
           return db.customerOrderRecord.upsert({
@@ -684,13 +687,14 @@ export const customerOrderStorage: StorageHandler<UnifiedSagOrder> = {
             },
             create: fields,
             update: {
-              orderNumber:  fields.orderNumber,
-              customerNit:  fields.customerNit,
-              customerName: fields.customerName,
-              orderDate:    fields.orderDate,
-              amount:       fields.amount,
-              currency:     fields.currency,
-              rawJson:      fields.rawJson,
+              orderNumber:     fields.orderNumber,
+              customerNit:     fields.customerNit,
+              customerName:    fields.customerName,
+              orderDate:       fields.orderDate,
+              amount:          fields.amount,
+              currency:        fields.currency,
+              sellerTerceroId: fields.sellerTerceroId,
+              rawJson:         fields.rawJson,
             },
           });
         });

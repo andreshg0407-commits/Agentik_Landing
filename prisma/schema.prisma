@@ -3267,6 +3267,19 @@ model CustomerOrderRecord {
   rawJson        Json                // full raw SAG row for traceability
   syncedAt       DateTime            @default(now()) @updatedAt
 
+  // Seller — persisted from SAG MOVIMIENTOS.ka_nl_tercero_vend + TERCEROS join.
+  // Sprint: AGENTIK-ORDERS-SAG-READ-COMPLETENESS-01
+  sellerTerceroId  Int?              // ka_nl_tercero_vend — SAG internal FK to seller
+  sellerName       String?           // resolved from TERCEROS.sc_nombre
+  sellerSource     String?           // "sag_movimientos" | "crm_quote_history"
+  sellerConfidence String?           // "high" | "medium" | "low" | "unknown"
+
+  // Denormalized line aggregates for fast listing without JOIN.
+  // Sprint: AGENTIK-ORDERS-SAG-READ-COMPLETENESS-01
+  totalUnits     Decimal?  @db.Decimal(18, 2)
+  totalLineValue Decimal?  @db.Decimal(18, 2)
+  lineCount      Int?
+
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   lines        CustomerOrderLine[]
 

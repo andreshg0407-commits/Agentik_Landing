@@ -32,11 +32,71 @@ export type OrderStatus =
 // ── Order origin ─────────────────────────────────────────────────────────────
 
 export type OrderOrigin =
-  | "agentik"
-  | "sag"
-  | "sag_customer_order"
-  | "importado"
-  | "migrado";
+  | "agentik"             // legacy — use SAG_HISTORICAL or AGENTIK_NATIVE
+  | "sag"                 // legacy — use SAG_HISTORICAL
+  | "sag_customer_order"  // legacy — use SAG_HISTORICAL
+  | "importado"           // legacy
+  | "migrado"             // legacy
+  | "SAG_HISTORICAL"      // Orders created in SAG before AGENTIK_ORDERS_GO_LIVE_AT
+  | "AGENTIK_NATIVE"      // Orders created in Agentik wizard
+  | "CRM_LEGACY";         // Orders inherited from CRM (SuiteCRM)
+
+// ── Data authority ───────────────────────────────────────────────────────────
+
+/**
+ * Which system is authoritative for each field group.
+ *
+ * SAG_HISTORICAL:
+ *   header, lines, seller, invoice, dispatch, status → SAG
+ *   seller fallback → CRM (identified as inferred)
+ *
+ * AGENTIK_NATIVE:
+ *   header, lines, customer, seller, address, quantities, reservations → Agentik
+ *   SAG may only reconcile: sagDocumentId, sagDocumentNumber, acceptance,
+ *   invoice, dispatch, cancellation, post-creation status.
+ *   SAG sync MUST NOT overwrite Agentik data with null/empty.
+ *
+ * CRM_LEGACY:
+ *   header, seller → CRM
+ *   lines → CRM quote lines when available
+ */
+export type DataAuthority = "SAG" | "AGENTIK" | "CRM";
+
+/** Per-field authority map for merge rules */
+export interface OrderFieldAuthority {
+  header:      DataAuthority;
+  lines:       DataAuthority;
+  seller:      DataAuthority;
+  customer:    DataAuthority;
+  status:      DataAuthority;
+  invoice:     DataAuthority;
+  dispatch:    DataAuthority;
+}
+
+// ── Line data quality ────────────────────────────────────────────────────────
+
+export type LineDataStatus =
+  | "COMPLETE"                // Lines present, aggregates match
+  | "EMPTY_CONFIRMED"        // SAG header exists, no lines in MOVIMIENTOS_ITEMS
+  | "LINES_NOT_AVAILABLE"    // Lines exist in SAG but not yet synced
+  | "CANCELLED"              // Order cancelled — lines irrelevant
+  | "SOURCE_MISMATCH"        // Document type/source doesn't match expected
+  | "SYNC_ERROR";            // Error during line sync
+
+// ── Reconciliation ──────────────────────────────────────────────────────────
+
+export type ReconciliationStatus =
+  | "MATCHED"                // totalLinesComputed matches totalHeaderSag
+  | "DIFFERENCE"             // Values differ (common with discounts)
+  | "NOT_APPLICABLE"         // No lines to compare
+  | "PENDING";               // Not yet computed
+
+// ── Seller display status ───────────────────────────────────────────────────
+
+export type SellerDisplayStatus =
+  | "SAG_CONFIRMED"          // sellerSource=sag_movimientos, confidence=high
+  | "CRM_INFERRED"           // sellerSource=crm_quote_history, confidence=medium
+  | "UNAVAILABLE";           // No seller data from any source
 
 // ── Sync state (ENTERPRISE-05 dual state pattern) ─────────────────────────────
 

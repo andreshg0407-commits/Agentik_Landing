@@ -142,9 +142,9 @@ function orderStateLabel(syncState: OrderSyncState, origin: string, hasLines: bo
   if (syncState === "sincronizado") return "Confirmado en SAG";
   if (syncState === "error_sincronizacion") return "Error de envio";
   // nunca_sincronizado — depends on origin
-  if (origin === "sag_customer_order") return "Pedido SAG";
-  if (origin === "sag") return hasLines ? "Cotizacion CRM" : "Cotizacion CRM";
-  if (origin === "agentik") return "Borrador Agentik";
+  if (origin === "SAG_HISTORICAL" || origin === "sag_customer_order") return "Pedido SAG";
+  if (origin === "CRM_LEGACY" || origin === "sag") return "Cotizacion CRM";
+  if (origin === "AGENTIK_NATIVE" || origin === "agentik") return "Borrador Agentik";
   return "Pendiente de envio";
 }
 
@@ -196,7 +196,7 @@ async function historyApi(orgSlug: string, body: Record<string, unknown>) {
 
 function isAgentikOrder(origin: string): boolean {
   const n = origin.toLowerCase().trim();
-  return n === "agentik" || n === "agk";
+  return n === "agentik" || n === "agk" || n === "agentik_native";
 }
 
 function isDraftStatus(status: string): boolean {
@@ -896,8 +896,8 @@ function OrdersTable({ orders, onOpen }: { orders: OrderCard[]; onOpen: (id: str
 
       {orders.map(o => {
         const sc = STATUS_COLOR[o.status];
-        const isSagCor = o.origin === "sag_customer_order";
-        const isCrm    = o.origin === "sag";
+        const isSagCor = o.origin === "SAG_HISTORICAL" || o.origin === "sag_customer_order";
+        const isCrm    = o.origin === "CRM_LEGACY" || o.origin === "sag";
         const originBadge = isSagCor
           ? { label: "SAG",  bg: C.greenLight,  fg: C.green }
           : isCrm
@@ -2759,7 +2759,7 @@ function DrawerLinesTab({ activeLines, order }: { activeLines: OrderLine[]; orde
     });
 
   // Empty states
-  if (activeLines.length === 0 && (order.origin === "sag" || order.origin === "sag_customer_order")) {
+  if (activeLines.length === 0 && (order.origin === "sag" || order.origin === "sag_customer_order" || order.origin === "SAG_HISTORICAL" || order.origin === "CRM_LEGACY")) {
     return (
       <div style={{ ...panel, padding: S[4], borderLeft: `3px solid ${C.amber}` }}>
         <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.inkMid, marginBottom: S[1] }}>

@@ -128,6 +128,9 @@ const DEFAULT_RECEIVABLE_QUERY = [
   "  m.ka_nl_movimiento, m.ka_ni_fuente, m.n_numero_documento,",
   "  m.ka_nl_tercero, m.sc_beneficiario, m.d_fecha_documento,",
   "  m.ss_moneda, m.ddt_fecha_new,",
+  // ka_nl_tercero_vend: seller FK from MOVIMIENTOS — present on ~92% of 2026 PD orders.
+  // Added by AGENTIK-ORDERS-SAG-READ-COMPLETENESS-01 so orders are synced with seller data.
+  "  m.ka_nl_tercero_vend,",
   "  SUM(ISNULL(mi.n_valor, 0))      AS total_valor,",
   "  SUM(ISNULL(mi.n_iva, 0))        AS total_iva,",
   "  SUM(ISNULL(mi.n_descuento, 0))  AS total_descuento,",
@@ -147,7 +150,7 @@ const DEFAULT_RECEIVABLE_QUERY = [
   "GROUP BY",
   "  m.ka_nl_movimiento, m.ka_ni_fuente, m.n_numero_documento,",
   "  m.ka_nl_tercero, m.sc_beneficiario, m.d_fecha_documento,",
-  "  m.ss_moneda, m.ddt_fecha_new,",
+  "  m.ss_moneda, m.ddt_fecha_new, m.ka_nl_tercero_vend,",
   "  f.sc_cobrar_pagar, f.k_n_clase_fuente, f.ka_ni_forma_pago_fte",
   "ORDER BY m.ka_nl_movimiento",
 ].join(" ");
