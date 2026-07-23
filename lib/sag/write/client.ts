@@ -24,6 +24,7 @@
 
 import type { PyaApiConfig }  from "@/lib/connectors/pya/types";
 import type { SagWriteResponse, SagWriteType } from "./types";
+import { sanitizeEndpoint, safePayloadMetrics } from "./sanitizer";
 
 const SOAP_NS_ENV = "http://schemas.xmlsoap.org/soap/envelope/";
 const SOAP_NS_TNS = "http://tempuri.org/";
@@ -108,9 +109,10 @@ export async function insercionSag(
   const body = buildWriteEnvelope(config.token, tipo, xmlData);
 
   if (DEBUG) {
-    console.error("[SAG WRITE DEBUG] → POST", config.endpointUrl);
+    const metrics = safePayloadMetrics(xmlData);
+    console.error("[SAG WRITE DEBUG] → POST", sanitizeEndpoint(config.endpointUrl));
     console.error("[SAG WRITE DEBUG] → tipo:", tipo);
-    console.error("[SAG WRITE DEBUG] → xml:", xmlData);
+    console.error("[SAG WRITE DEBUG] → payload: %d bytes, %d items", metrics.bytes, metrics.lineCount);
   }
 
   const res = await fetch(config.endpointUrl, {
@@ -126,7 +128,7 @@ export async function insercionSag(
 
   if (DEBUG) {
     console.error("[SAG WRITE DEBUG] ← Status:", res.status);
-    console.error("[SAG WRITE DEBUG] ← Body:", responseText);
+    console.error("[SAG WRITE DEBUG] ← Body length:", responseText.length, "bytes");
   }
 
   // SOAP fault — structural error (bad token, wrong namespace, etc.)

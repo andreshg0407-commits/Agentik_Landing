@@ -100,6 +100,10 @@ export interface OrderHeader {
   // Customer address (WIZARD-IMPROVEMENTS-01) — read-only display, set from canonical service
   customerAddress?: string;
   customerCity?:    string;
+  // Business date for SAG (SAG-WRITE-ADAPTER-01)
+  // Semantics: the commercial date of the order (not the technical creation timestamp).
+  // Initialized to tenant's current date on draft creation. FECHA = orderDate in SAG XML.
+  orderDate?:       string;
 }
 
 // ── Order summary ─────────────────────────────────────────────────────────────

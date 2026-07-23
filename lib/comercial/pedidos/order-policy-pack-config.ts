@@ -126,6 +126,18 @@ export const CASTILLITOS_STOCK_THRESHOLDS: StockThresholdsConfig = {
   },
 };
 
+// ── FASE 9a: SAG Date Validation (SAG-WRITE-ADAPTER-01) ─────────────────────
+
+export interface SagDateValidationConfig {
+  /** Maximum days in the past for orderDate (blocks if older) */
+  maxDaysInPast: number;
+  /** Future dates are always blocked — no config needed */
+}
+
+export const CASTILLITOS_SAG_DATE_VALIDATION: SagDateValidationConfig = {
+  maxDaysInPast: 30,
+};
+
 // ── FASE 9: SAG Write Mode (WIZARD-IMPROVEMENTS-01) ────────────────────────
 
 /**
@@ -166,6 +178,7 @@ export interface OrderPolicyPackConfig {
   discountOverride: DiscountOverrideConfig;
   orderReadiness: OrderReadinessConfig;
   stockThresholds: StockThresholdsConfig;
+  sagDateValidation: SagDateValidationConfig;
   sagWrite: SagWriteConfig;
 }
 
@@ -178,5 +191,6 @@ export const CASTILLITOS_ORDER_POLICY_PACK_CONFIG: OrderPolicyPackConfig = {
   discountOverride: CASTILLITOS_DISCOUNT_OVERRIDE,
   orderReadiness: CASTILLITOS_ORDER_READINESS,
   stockThresholds: CASTILLITOS_STOCK_THRESHOLDS,
+  sagDateValidation: CASTILLITOS_SAG_DATE_VALIDATION,
   sagWrite: CASTILLITOS_SAG_WRITE,
 };

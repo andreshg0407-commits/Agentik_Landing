@@ -80,7 +80,10 @@ export type SagOrderWriteErrorCode =
   | "DISABLED"
   | "VALIDATION_FAILED"
   | "IDEMPOTENT_DUPLICATE"
+  | "PAYLOAD_CHANGED_AFTER_SUCCESS"
   | "ENQUEUE_FAILED"
+  | "CONFIGURATION_INCOMPLETE"
+  | "SECRET_UNAVAILABLE"
   | "SAG_TIMEOUT"
   | "SAG_REJECTED"
   | "EMPTY_RESPONSE"
@@ -89,6 +92,14 @@ export type SagOrderWriteErrorCode =
 /** Whether a failed write is safe to retry */
 export function isRetryableError(code: SagOrderWriteErrorCode): boolean {
   return code === "SAG_TIMEOUT" || code === "ENQUEUE_FAILED";
+}
+
+/** Non-retryable error codes — require manual intervention or new version */
+export function isTerminalError(code: SagOrderWriteErrorCode): boolean {
+  return code === "VALIDATION_FAILED"
+    || code === "SAG_REJECTED"
+    || code === "PAYLOAD_CHANGED_AFTER_SUCCESS"
+    || code === "DISABLED";
 }
 
 export interface SagOrderWriteResult {

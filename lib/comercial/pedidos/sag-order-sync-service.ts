@@ -27,22 +27,18 @@ import type {
   SagOrderWriteResult,
 } from "./sag-order-sync-types";
 import { buildIdempotencyKey } from "./sag-order-sync-types";
+import { buildIdempotencyKeyV2, computePayloadHash } from "./order-sag-idempotency";
 import type { SagOrderWriteMode, SagWriteConfig } from "./order-policy-pack-config";
 import { CASTILLITOS_ORDER_POLICY_PACK_CONFIG } from "./order-policy-pack-config";
-import { sendOrderToSagQueue } from "./order-sag-bridge";
+import { sendOrderToSagQueue, mapOrderToSagDocument } from "./order-sag-bridge";
+import { sagWriteLog } from "@/lib/sag/write/sanitizer";
 
 export { buildIdempotencyKey };
 
 // ── Structured log ──────────────────────────────────────────────────────────
 
-function log(
-  event: string,
-  data: Record<string, unknown>,
-): void {
-  // eslint-disable-next-line no-console
-  console.log(
-    JSON.stringify({ ts: new Date().toISOString(), module: "SAG_ORDER_SYNC", event, ...data }),
-  );
+function log(event: string, data: Record<string, unknown>): void {
+  sagWriteLog("SAG_ORDER_SYNC", event, data);
 }
 
 // ── Resolve write config per tenant ─────────────────────────────────────────
@@ -172,13 +168,21 @@ export async function sendOrderToSag(
 
   // ── SIMULATION mode ──────────────────────────────────────────────────────
   if (mode === "SIMULATION") {
+    let sagInput;
+    try {
+      sagInput = mapOrderToSagDocument(order, null);
+    } catch {
+      // Fall through — simulation continues without hash
+    }
+    const hash = sagInput ? computePayloadHash(sagInput) : "no-hash";
+    const fullKey = buildIdempotencyKeyV2(orgId, order.id, config.idempotencyKeyVersion, hash);
     const simulatedId = `SIM-${order.id.slice(0, 8)}-${Date.now()}`;
+
     log("SEND_ORDER_SIMULATED", {
       orderId: order.id,
       simulatedId,
       lineCount: payload.lines.length,
-      customerCode: payload.customerCode,
-      idempotencyKey,
+      hash,
     });
 
     return {
@@ -186,7 +190,7 @@ export async function sendOrderToSag(
       mode: "SIMULATION",
       sagOperationId: simulatedId,
       simulatedPayload: payload,
-      idempotencyKey,
+      idempotencyKey: fullKey,
       timestamp,
     };
   }
@@ -202,16 +206,16 @@ export async function sendOrderToSag(
 
   log("SEND_ORDER_LIVE_DELEGATING", { orderId: order.id });
 
-  const bridgeResult = await sendOrderToSagQueue(orgId, "system", order);
+  const bridgeResult = await sendOrderToSagQueue(orgId, "system", order, null);
 
   if (!bridgeResult.ok) {
     return {
       ok: false,
       mode: "LIVE",
-      errorCode: bridgeResult.alreadySynced ? "IDEMPOTENT_DUPLICATE"
-               : "ENQUEUE_FAILED",
+      errorCode: (bridgeResult.errorCode as SagOrderWriteResult["errorCode"])
+               ?? (bridgeResult.alreadySynced ? "IDEMPOTENT_DUPLICATE" : "ENQUEUE_FAILED"),
       errorMessage: bridgeResult.error ?? "Error al encolar pedido en SAG.",
-      idempotencyKey,
+      idempotencyKey: bridgeResult.idempotencyKey ?? idempotencyKey,
       timestamp,
     };
   }
@@ -220,7 +224,7 @@ export async function sendOrderToSag(
     ok: true,
     mode: "LIVE",
     sagOperationId: bridgeResult.sagOperationId,
-    idempotencyKey,
+    idempotencyKey: bridgeResult.idempotencyKey ?? idempotencyKey,
     timestamp,
   };
 }

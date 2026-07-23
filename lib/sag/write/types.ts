@@ -30,11 +30,12 @@ export type SagWriteType = (typeof SAG_WRITE_TYPE)[keyof typeof SAG_WRITE_TYPE];
 export type SagWriteStatus =
   | "PENDING"    // Created, awaiting human approval
   | "APPROVED"   // Approved, ready for the executor to send
-  | "REJECTED"   // Rejected by reviewer — will never be sent
+  | "REJECTED"   // Rejected by reviewer — terminal
   | "SENDING"    // Executor has picked it up, SAG call in-flight
-  | "SUCCEEDED"  // SAG returned a success response
+  | "SUCCEEDED"  // SAG returned a success response — terminal
   | "FAILED"     // SAG returned an error or network failure
-  | "RETRYING";  // Failed but scheduled for a manual retry
+  | "CANCELLED"  // Cancelled by user before SENDING — terminal
+  | "EXPIRED";   // TTL exceeded while PENDING — terminal
 
 // ── Risk levels — used to gate UI warnings and future automation ───────────────
 

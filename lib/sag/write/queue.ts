@@ -243,6 +243,59 @@ export async function retry(
   return { ok: true };
 }
 
+// ── cancel ────────────────────────────────────────────────────────────────────
+
+export async function cancel(
+  operationId:    string,
+  organizationId: string,
+  cancelledBy:    string,
+  reason:         string,
+): Promise<{ ok: boolean; error?: string }> {
+  const op = await db().findFirst({ where: { id: operationId, organizationId } });
+
+  if (!op) return { ok: false, error: "Operación no encontrada." };
+  if (op.status !== "PENDING" && op.status !== "APPROVED") {
+    return {
+      ok: false,
+      error: `Estado "${op.status}" — sólo se pueden cancelar operaciones PENDING o APPROVED (antes de envío).`,
+    };
+  }
+
+  await db().update({
+    where: { id: operationId },
+    data: {
+      status:          "CANCELLED" satisfies SagWriteStatus,
+      rejectedBy:      cancelledBy,
+      rejectedAt:      new Date(),
+      rejectionReason: reason || "Cancelado por usuario.",
+    },
+  });
+
+  return { ok: true };
+}
+
+// ── expire ────────────────────────────────────────────────────────────────────
+
+export async function expirePending(
+  organizationId: string,
+  ttlMs:          number,
+): Promise<{ expired: number }> {
+  const cutoff = new Date(Date.now() - ttlMs);
+
+  const result = await db().updateMany({
+    where: {
+      organizationId,
+      status: "PENDING",
+      initiatedAt: { lt: cutoff },
+    },
+    data: {
+      status: "EXPIRED" satisfies SagWriteStatus,
+    },
+  });
+
+  return { expired: result.count };
+}
+
 // ── Queries ───────────────────────────────────────────────────────────────────
 
 export async function listOperations(
