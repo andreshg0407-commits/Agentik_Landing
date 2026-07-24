@@ -1554,6 +1554,187 @@ export async function getOrderStats(
   };
 }
 
+// ── Server-side KPI stats (AGENTIK-ORDERS-KPI-CALIBRATION-01) ───────────────
+//
+// Computes KPI values directly from the full database using aggregates.
+// No `take` limits — queries the complete dataset.
+// These stats are the SINGLE SOURCE OF TRUTH for KPI cards.
+// The paginated table (allOrders) is for display only and never used for KPIs.
+
+export interface ServerKpiStats {
+  valorPedidosHoy: number;
+  pedidosDeHoy: number;
+  pendientesEnvioSag: number;
+  sincronizadosAgentik: number;
+  conConflicto: number;
+  /** Total orders across all sources (for header) */
+  totalOrders: number;
+  /** Orders loaded in the current page (for header context) */
+  loadedOrders: number;
+  generatedAt: string;
+  timezone: string;
+  currency: string;
+}
+
+export async function computeServerKpiStats(
+  orgId: string,
+  tenantTimezoneOffset: number = -300,
+): Promise<ServerKpiStats> {
+  // Compute today boundaries in tenant timezone (COT = -300)
+  const now = new Date();
+  const utcMs = now.getTime() + now.getTimezoneOffset() * 60_000;
+  const tenantMs = utcMs - tenantTimezoneOffset * 60_000;
+  const tenantNow = new Date(tenantMs);
+  const todayStart = new Date(Date.UTC(
+    tenantNow.getUTCFullYear(), tenantNow.getUTCMonth(), tenantNow.getUTCDate(),
+  ));
+  todayStart.setMinutes(todayStart.getMinutes() + tenantTimezoneOffset);
+  const tomorrowStart = new Date(todayStart.getTime() + 24 * 60 * 60_000);
+
+  let valorPedidosHoy = 0;
+  let pedidosDeHoy = 0;
+  let pendientesEnvioSag = 0;
+  let sincronizadosAgentik = 0;
+  let conConflicto = 0;
+  let totalOrders = 0;
+
+  // ── AgentExecution (AGENTIK_NATIVE orders) — full scan, no take limit ──
+  try {
+    const rows = await execDb().findMany({
+      where: {
+        tenantId: orgId,
+        module: MODULE,
+        operation: OPERATION,
+      },
+      select: { metadataJson: true, createdAt: true },
+    });
+
+    for (const r of rows as any[]) {
+      totalOrders++;
+      const meta = (r.metadataJson ?? {}) as Record<string, unknown>;
+      const status = (meta.status as string | undefined) ?? "borrador";
+      const origin = (meta.origin as string | undefined) ?? "agentik";
+      const sagError = (meta.sagError as string | undefined) ?? null;
+      const hasConflict = !!(meta.hasConflict);
+      const reservationExpired = !!(meta.reservationExpired);
+      const totalValue = Number(meta.totalValue ?? 0);
+      const cancelled = status === "cancelado";
+      const isNative = origin === "AGENTIK_NATIVE" || origin === "agentik";
+      const createdAt = r.createdAt instanceof Date ? r.createdAt : new Date(r.createdAt);
+
+      // Today KPIs
+      if (!cancelled && createdAt >= todayStart && createdAt < tomorrowStart) {
+        pedidosDeHoy++;
+        valorPedidosHoy += totalValue;
+      }
+
+      // Pendientes de envio a SAG
+      if (isNative && !cancelled) {
+        if (status === "listo_para_enviar" || status === "pendiente_sag") {
+          pendientesEnvioSag++;
+        }
+        if (status === "conflicto" && !sagError) {
+          pendientesEnvioSag++;
+        }
+      }
+
+      // Sincronizados con SAG (AGENTIK_NATIVE only)
+      if (isNative && status === "sincronizado") {
+        sincronizadosAgentik++;
+      }
+
+      // Con conflicto
+      if (status === "conflicto") {
+        conConflicto++;
+      } else if (hasConflict && !cancelled && status !== "sincronizado") {
+        conConflicto++;
+      }
+      if (reservationExpired && !cancelled && status !== "sincronizado") {
+        conConflicto++;
+      }
+    }
+  } catch {
+    // AgentExecution not available
+  }
+
+  // ── CRMQuote — full count, no take limit ───────────────────────────────
+  // CRM_LEGACY: never counts for pendientes/sincronizados KPIs.
+  // Only contributes to today + total + conflicts (if any).
+  try {
+    const crmCount = await prisma.cRMQuote.count({
+      where: { organizationId: orgId },
+    });
+    totalOrders += crmCount;
+
+    // CRM today: check quotes issued today
+    const crmToday = await prisma.cRMQuote.findMany({
+      where: {
+        organizationId: orgId,
+        issuedAt: { gte: todayStart, lt: tomorrowStart },
+      },
+      select: { amount: true, rawCrmJson: true },
+    });
+
+    for (const q of crmToday as any[]) {
+      const raw = ((q.rawCrmJson as any)?.raw ?? {}) as Record<string, unknown>;
+      const stage = raw.stage as string | undefined;
+      const status = crmStageToOrderStatus(stage);
+      if (status !== "cancelado") {
+        pedidosDeHoy++;
+        valorPedidosHoy += Number(raw.total_amount ?? q.amount ?? 0);
+      }
+    }
+  } catch {
+    // CRMQuote not available
+  }
+
+  // ── CustomerOrderRecord — aggregate queries, no take limit ─────────────
+  // SAG_HISTORICAL: never counts for pendientes/sincronizados AGENTIK KPIs.
+  // Only contributes to today + total.
+  try {
+    const corTotal = await prisma.customerOrderRecord.count({
+      where: { organizationId: orgId },
+    });
+    totalOrders += corTotal;
+
+    // COR today (non-cancelled)
+    const corTodayCount = await prisma.customerOrderRecord.count({
+      where: {
+        organizationId: orgId,
+        orderDate: { gte: todayStart, lt: tomorrowStart },
+        status: { not: "CANCELADO" },
+      },
+    });
+    pedidosDeHoy += corTodayCount;
+
+    // COR today value
+    const corTodayAgg = await prisma.customerOrderRecord.aggregate({
+      where: {
+        organizationId: orgId,
+        orderDate: { gte: todayStart, lt: tomorrowStart },
+        status: { not: "CANCELADO" },
+      },
+      _sum: { amount: true },
+    });
+    valorPedidosHoy += Number(corTodayAgg._sum?.amount ?? 0);
+  } catch {
+    // CustomerOrderRecord not available
+  }
+
+  return {
+    valorPedidosHoy,
+    pedidosDeHoy,
+    pendientesEnvioSag,
+    sincronizadosAgentik,
+    conConflicto,
+    totalOrders,
+    loadedOrders: 0, // Set by caller after listOrders
+    generatedAt: now.toISOString(),
+    timezone: "America/Bogota",
+    currency: "COP",
+  };
+}
+
 // ── Customer search (for wizard client picker) ─────────────────────────────
 
 export interface CustomerProfile {

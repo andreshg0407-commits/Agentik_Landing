@@ -10,7 +10,7 @@
  */
 
 import { requireOrgAccess } from "@/lib/auth/org-access";
-import { getOrderStats, listOrders, getMaxCustomerOrderDate } from "@/lib/comercial/pedidos/order-service";
+import { getOrderStats, listOrders, getMaxCustomerOrderDate, computeServerKpiStats } from "@/lib/comercial/pedidos/order-service";
 import { getOrganizationBranding } from "@/lib/tenant/branding";
 import { PedidosClient } from "./pedidos-client";
 
@@ -23,12 +23,16 @@ export default async function PedidosPage({
   const { organization } = await requireOrgAccess(orgSlug);
   const orgId            = organization.id;
 
-  const [stats, orders, branding, maxSagOrderDate] = await Promise.all([
+  const [stats, orders, branding, maxSagOrderDate, serverKpiStats] = await Promise.all([
     getOrderStats(orgId),
     listOrders(orgId),
     getOrganizationBranding(orgId),
     getMaxCustomerOrderDate(orgId),
+    computeServerKpiStats(orgId),
   ]);
+
+  // Patch loadedOrders with the actual list length
+  serverKpiStats.loadedOrders = orders.length;
 
   return (
     <PedidosClient
@@ -36,6 +40,7 @@ export default async function PedidosPage({
       orgId={orgId}
       initialStats={stats}
       initialOrders={orders}
+      initialServerKpiStats={serverKpiStats}
       maxSagOrderDate={maxSagOrderDate}
       branding={{
         commercialName: branding.commercialName,

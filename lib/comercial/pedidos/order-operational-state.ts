@@ -183,7 +183,291 @@ export function resolveSellerDisplayText(
   return { text: "No informado por SAG", secondary: null, status: "UNAVAILABLE" };
 }
 
-// ── Operational KPI filter keys ──────────────────────────────────────────────
+// ── Calibrated KPI system (AGENTIK-ORDERS-KPI-CALIBRATION-01) ───────────────
+
+export type CalibratedKpiKey =
+  | "valor_pedidos_hoy"
+  | "pedidos_de_hoy"
+  | "pendientes_envio_sag"
+  | "sincronizados_agentik"
+  | "con_conflicto";
+
+export interface CalibratedKpi {
+  key: CalibratedKpiKey;
+  label: string;
+  value: number;
+  formatted: string;
+  tooltip: string;
+  /** Whether this is a monetary KPI */
+  monetary: boolean;
+}
+
+export interface CalibratedKpiStats {
+  valorPedidosHoy: number;
+  pedidosDeHoy: number;
+  pendientesEnvioSag: number;
+  sincronizadosAgentik: number;
+  conConflicto: number;
+}
+
+/** Minimal order shape for KPI computation */
+export interface OrderKpiInput {
+  status: OrderStatus;
+  origin: OrderOrigin;
+  syncState: OrderSyncState;
+  totalValue: number;
+  createdAt: string;
+  sagOrderId?: string | null;
+  sagError?: string | null;
+  /** Whether reservation conflict exists */
+  hasConflict?: boolean;
+  /** Whether reservation has expired */
+  reservationExpired?: boolean;
+}
+
+/**
+ * Returns true if origin is AGENTIK_NATIVE (canonical or legacy).
+ */
+function isAgentikNative(origin: string): boolean {
+  return origin === "AGENTIK_NATIVE" || origin === "agentik";
+}
+
+/**
+ * Returns true if order's commercial date falls on the given calendar day.
+ * Uses createdAt as proxy for commercial date (header.orderDate is only in OrderDraft).
+ * The `todayStart` is pre-computed in tenant timezone.
+ */
+function isOrderToday(createdAt: string, todayStart: Date, tomorrowStart: Date): boolean {
+  const d = new Date(createdAt);
+  return d >= todayStart && d < tomorrowStart;
+}
+
+/**
+ * Computes calibrated KPI stats from the FULL (unfiltered) order dataset.
+ *
+ * Rules:
+ * - "Valor pedidos hoy" / "Pedidos de hoy": commercial date = today, excludes cancelados.
+ * - "Pendientes de envio a SAG": AGENTIK_NATIVE only, status in [listo_para_enviar, pendiente_sag, conflicto without terminal rejection].
+ *   Excludes SAG_HISTORICAL, CRM_LEGACY, borradores, sincronizados, cancelados.
+ * - "Sincronizados con SAG": AGENTIK_NATIVE only, status === sincronizado.
+ *   Does NOT include SAG_HISTORICAL (those 9,562 go to origin filter, not this KPI).
+ * - "Con conflicto": any origin, orders requiring intervention — conflicto, reserva_expirada, reservation conflict.
+ *
+ * @param allOrders  The COMPLETE unfiltered order list — never a page or filtered subset.
+ * @param tenantTimezoneOffset  Timezone offset in minutes (e.g., -300 for COT America/Bogota).
+ */
+export function computeCalibratedKpiStats(
+  allOrders: OrderKpiInput[],
+  tenantTimezoneOffset: number = -300,
+): CalibratedKpiStats {
+  // Compute today boundaries in tenant timezone
+  const now = new Date();
+  const utcMs = now.getTime() + now.getTimezoneOffset() * 60_000;
+  const tenantMs = utcMs - tenantTimezoneOffset * 60_000;
+  const tenantNow = new Date(tenantMs);
+  const todayStart = new Date(Date.UTC(
+    tenantNow.getUTCFullYear(), tenantNow.getUTCMonth(), tenantNow.getUTCDate(),
+  ));
+  // Adjust back to UTC
+  todayStart.setMinutes(todayStart.getMinutes() + tenantTimezoneOffset);
+  const tomorrowStart = new Date(todayStart.getTime() + 24 * 60 * 60_000);
+
+  let valorHoy = 0;
+  let pedidosHoy = 0;
+  let pendientesSag = 0;
+  let sincronizadosAgentik = 0;
+  let conConflicto = 0;
+
+  for (const o of allOrders) {
+    const cancelled = o.status === "cancelado";
+
+    // Today KPIs: any non-cancelled order with today's commercial date
+    if (!cancelled && isOrderToday(o.createdAt, todayStart, tomorrowStart)) {
+      pedidosHoy++;
+      valorHoy += o.totalValue;
+    }
+
+    // Pendientes de envio a SAG: AGENTIK_NATIVE only
+    if (isAgentikNative(o.origin) && !cancelled) {
+      if (o.status === "listo_para_enviar" || o.status === "pendiente_sag") {
+        pendientesSag++;
+      }
+      // Conflicto that is retryable (SAG rejected but can be fixed)
+      if (o.status === "conflicto" && !o.sagError) {
+        pendientesSag++;
+      }
+    }
+
+    // Sincronizados con SAG: AGENTIK_NATIVE only, successful sync
+    if (isAgentikNative(o.origin) && o.status === "sincronizado") {
+      sincronizadosAgentik++;
+    }
+
+    // Con conflicto: any origin, requires intervention
+    if (o.status === "conflicto") {
+      conConflicto++;
+    }
+    if (o.hasConflict && o.status !== "sincronizado" && o.status !== "cancelado") {
+      // Reservation conflict not already counted
+      if (o.status !== "conflicto") conConflicto++;
+    }
+    if (o.reservationExpired && o.status !== "sincronizado" && o.status !== "cancelado") {
+      conConflicto++;
+    }
+  }
+
+  return {
+    valorPedidosHoy: valorHoy,
+    pedidosDeHoy: pedidosHoy,
+    pendientesEnvioSag: pendientesSag,
+    sincronizadosAgentik,
+    conConflicto,
+  };
+}
+
+/**
+ * Formats a monetary value for display.
+ */
+function formatCurrency(value: number): string {
+  if (value === 0) return "\u2014";
+  return "$" + Math.round(value).toLocaleString("es-CO");
+}
+
+export function buildCalibratedKpis(stats: CalibratedKpiStats): CalibratedKpi[] {
+  return [
+    {
+      key: "valor_pedidos_hoy",
+      label: "Valor pedidos hoy",
+      value: stats.valorPedidosHoy,
+      formatted: formatCurrency(stats.valorPedidosHoy),
+      tooltip: "Suma del valor total de pedidos con fecha comercial de hoy. Excluye cancelados.",
+      monetary: true,
+    },
+    {
+      key: "pedidos_de_hoy",
+      label: "Pedidos de hoy",
+      value: stats.pedidosDeHoy,
+      formatted: stats.pedidosDeHoy > 0 ? String(stats.pedidosDeHoy) : "\u2014",
+      tooltip: "Cantidad de pedidos con fecha comercial de hoy. Excluye cancelados.",
+      monetary: false,
+    },
+    {
+      key: "pendientes_envio_sag",
+      label: "Pendientes de envio a SAG",
+      value: stats.pendientesEnvioSag,
+      formatted: stats.pendientesEnvioSag > 0 ? String(stats.pendientesEnvioSag) : "\u2014",
+      tooltip: "Pedidos creados en Agentik listos o en proceso de envio a SAG. No incluye borradores ni historicos.",
+      monetary: false,
+    },
+    {
+      key: "sincronizados_agentik",
+      label: "Sincronizados con SAG",
+      value: stats.sincronizadosAgentik,
+      formatted: stats.sincronizadosAgentik > 0 ? String(stats.sincronizadosAgentik) : "\u2014",
+      tooltip: "Pedidos creados en Agentik y aceptados por SAG. No incluye pedidos historicos importados.",
+      monetary: false,
+    },
+    {
+      key: "con_conflicto",
+      label: "Con conflicto",
+      value: stats.conConflicto,
+      formatted: stats.conConflicto > 0 ? String(stats.conConflicto) : "\u2014",
+      tooltip: "Pedidos con conflicto de reserva, rechazo SAG, o error que requiere intervencion.",
+      monetary: false,
+    },
+  ];
+}
+
+/**
+ * Quick filter type for the orders table.
+ * "Borradores" becomes "Pedidos por completar" and is a quick filter, not a KPI.
+ */
+export type QuickFilterKey =
+  | "todos"
+  | "hoy"
+  | "por_completar"
+  | "pendientes_sag"
+  | "sincronizados"
+  | "conflictos";
+
+export const QUICK_FILTER_LABELS: Record<QuickFilterKey, string> = {
+  todos:           "Todos",
+  hoy:             "Hoy",
+  por_completar:   "Por completar",
+  pendientes_sag:  "Pendientes SAG",
+  sincronizados:   "Confirmados",
+  conflictos:      "Conflictos",
+};
+
+/**
+ * Client-side filter predicate for quick filters.
+ * Operates on the full dataset without server round-trips.
+ *
+ * @param allOrders  Complete unfiltered order list.
+ * @param filter     Active quick filter.
+ * @param tenantTimezoneOffset  Timezone offset in minutes.
+ */
+export function applyQuickFilter(
+  allOrders: OrderKpiInput[],
+  filter: QuickFilterKey,
+  tenantTimezoneOffset: number = -300,
+): OrderKpiInput[] {
+  if (filter === "todos") return allOrders;
+
+  // Compute today boundaries
+  const now = new Date();
+  const utcMs = now.getTime() + now.getTimezoneOffset() * 60_000;
+  const tenantMs = utcMs - tenantTimezoneOffset * 60_000;
+  const tenantNow = new Date(tenantMs);
+  const todayStart = new Date(Date.UTC(
+    tenantNow.getUTCFullYear(), tenantNow.getUTCMonth(), tenantNow.getUTCDate(),
+  ));
+  todayStart.setMinutes(todayStart.getMinutes() + tenantTimezoneOffset);
+  const tomorrowStart = new Date(todayStart.getTime() + 24 * 60 * 60_000);
+
+  switch (filter) {
+    case "hoy":
+      return allOrders.filter(o =>
+        o.status !== "cancelado" && isOrderToday(o.createdAt, todayStart, tomorrowStart),
+      );
+    case "por_completar":
+      return allOrders.filter(o =>
+        isAgentikNative(o.origin) && o.status === "borrador",
+      );
+    case "pendientes_sag":
+      return allOrders.filter(o =>
+        isAgentikNative(o.origin)
+        && o.status !== "cancelado"
+        && (o.status === "listo_para_enviar" || o.status === "pendiente_sag"
+          || (o.status === "conflicto" && !o.sagError)),
+      );
+    case "sincronizados":
+      return allOrders.filter(o => o.status === "sincronizado");
+    case "conflictos":
+      return allOrders.filter(o =>
+        o.status === "conflicto"
+        || (o.hasConflict && o.status !== "sincronizado" && o.status !== "cancelado")
+        || (o.reservationExpired && o.status !== "sincronizado" && o.status !== "cancelado"),
+      );
+    default:
+      return allOrders;
+  }
+}
+
+/**
+ * Maps a calibrated KPI key to the corresponding quick filter.
+ */
+export function kpiKeyToQuickFilter(key: CalibratedKpiKey): QuickFilterKey {
+  switch (key) {
+    case "valor_pedidos_hoy":     return "hoy";
+    case "pedidos_de_hoy":        return "hoy";
+    case "pendientes_envio_sag":  return "pendientes_sag";
+    case "sincronizados_agentik": return "sincronizados";
+    case "con_conflicto":         return "conflictos";
+  }
+}
+
+// ── Legacy KPI exports (kept for test backward compatibility) ────────────────
 
 export type OperationalKpiKey =
   | "borradores"
@@ -208,10 +492,6 @@ export interface OperationalStats {
   total: number;
 }
 
-/**
- * Computes operational KPIs from a list of OrderCards.
- * Pure function — no DB.
- */
 export function computeOperationalStats(
   orders: Array<{ status: OrderStatus; origin: OrderOrigin }>,
 ): OperationalStats {
@@ -243,42 +523,14 @@ export function computeOperationalStats(
 
 export function buildOperationalKpis(stats: OperationalStats): OperationalKpi[] {
   return [
-    {
-      key: "borradores",
-      label: "Borradores",
-      count: stats.borradores,
-      tooltip: "Pedidos en borrador pendientes de completar",
-    },
-    {
-      key: "listos_para_sag",
-      label: "Listos para SAG",
-      count: stats.listos_para_sag,
-      tooltip: "Pedidos listos para enviar a SAG",
-    },
-    {
-      key: "en_simulacion",
-      label: "En simulacion",
-      count: stats.en_simulacion,
-      tooltip: "Pedidos en modo simulacion SAG",
-    },
-    {
-      key: "sincronizados",
-      label: "Sincronizados",
-      count: stats.sincronizados,
-      tooltip: "Pedidos confirmados en SAG",
-    },
-    {
-      key: "con_conflicto",
-      label: "Con conflicto",
-      count: stats.con_conflicto,
-      tooltip: "Pedidos con conflicto que requieren revision",
-    },
+    { key: "borradores",      label: "Borradores",      count: stats.borradores,      tooltip: "Pedidos en borrador pendientes de completar" },
+    { key: "listos_para_sag", label: "Listos para SAG",  count: stats.listos_para_sag, tooltip: "Pedidos listos para enviar a SAG" },
+    { key: "en_simulacion",   label: "En simulacion",    count: stats.en_simulacion,   tooltip: "Pedidos en modo simulacion SAG" },
+    { key: "sincronizados",   label: "Sincronizados",    count: stats.sincronizados,   tooltip: "Pedidos confirmados en SAG" },
+    { key: "con_conflicto",   label: "Con conflicto",    count: stats.con_conflicto,   tooltip: "Pedidos con conflicto que requieren revision" },
   ];
 }
 
-/**
- * Maps a KPI filter key to order status for API filtering.
- */
 export function kpiKeyToStatusFilter(key: OperationalKpiKey): OrderStatus | null {
   switch (key) {
     case "borradores":       return "borrador";

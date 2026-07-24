@@ -26,6 +26,7 @@ import {
   returnToDraft,
   checkDuplicateOrder,
   getOrderStats,
+  computeServerKpiStats,
 } from "@/lib/comercial/pedidos/order-service";
 import { sendOrderToSagQueue } from "@/lib/comercial/pedidos/order-sag-bridge";
 import { buildSellerDirectory } from "@/lib/comercial/foundation/seller-directory";
@@ -135,6 +136,11 @@ export async function POST(
     case "stats": {
       const stats = await getOrderStats(orgId);
       return NextResponse.json({ stats });
+    }
+
+    case "kpi_stats": {
+      const kpiStats = await computeServerKpiStats(orgId);
+      return NextResponse.json({ kpiStats });
     }
 
     case "send_to_sag": {

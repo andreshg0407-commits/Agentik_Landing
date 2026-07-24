@@ -68,27 +68,45 @@ import {
   type OrderSharePayload,
 } from "@/lib/comercial/pedidos/order-share";
 import {
-  computeOperationalStats,
-  buildOperationalKpis,
-  kpiKeyToStatusFilter,
+  buildCalibratedKpis,
+  kpiKeyToQuickFilter,
+  applyQuickFilter,
   resolveSellerDisplayText,
   resolveOperationalState,
   emptyOrderExplanation,
   OPERATIONAL_STATE_LABEL,
   OPERATIONAL_STATE_COLOR,
-  type OperationalKpiKey,
+  QUICK_FILTER_LABELS,
+  type CalibratedKpiKey,
+  type CalibratedKpiStats,
+  type QuickFilterKey,
   type OperationalState,
 } from "@/lib/comercial/pedidos/order-operational-state";
 
 // ── Props ────────────────────────────────────────────────────────────────────
 
+/** Server-side KPI stats computed from the FULL database (no take limits). */
+interface ServerKpiStatsShape {
+  valorPedidosHoy: number;
+  pedidosDeHoy: number;
+  pendientesEnvioSag: number;
+  sincronizadosAgentik: number;
+  conConflicto: number;
+  totalOrders: number;
+  loadedOrders: number;
+  generatedAt: string;
+  timezone: string;
+  currency: string;
+}
+
 interface Props {
-  orgSlug:            string;
-  orgId:              string;
-  initialStats:       OrderStats;
-  initialOrders:      OrderCard[];
-  maxSagOrderDate?:   string | null;
-  branding?:          OrderShareBranding;
+  orgSlug:                string;
+  orgId:                  string;
+  initialStats:           OrderStats;
+  initialOrders:          OrderCard[];
+  initialServerKpiStats:  ServerKpiStatsShape;
+  maxSagOrderDate?:       string | null;
+  branding?:              OrderShareBranding;
 }
 
 interface OrderStats {
@@ -230,12 +248,17 @@ type WizardStep = "cliente" | "productos" | "resumen";
 
 // ── Main component ──────────────────────────────────────────────────────────
 
-type ViewFilter = "todos" | "hoy" | "borradores" | "pendientes" | "sincronizados" | "conflictos";
-
-export function PedidosClient({ orgSlug, initialStats, initialOrders, maxSagOrderDate, branding }: Props) {
+export function PedidosClient({ orgSlug, initialStats, initialOrders, initialServerKpiStats, maxSagOrderDate, branding }: Props) {
   const [stats, setStats]     = useState<OrderStats>(initialStats);
-  const [orders, setOrders]   = useState<OrderCard[]>(initialOrders);
-  const [filter, setFilter]   = useState<ViewFilter>("todos");
+  // serverKpiStats: KPI values from the FULL database (server-side aggregates).
+  // This is the SINGLE SOURCE OF TRUTH for KPI cards. Never recomputed from table rows.
+  const [serverKpiStats, setServerKpiStats] = useState<ServerKpiStatsShape>(initialServerKpiStats);
+  // allOrders: paginated dataset for table display only — NOT used for KPIs.
+  const [allOrders, setAllOrders]       = useState<OrderCard[]>(initialOrders);
+  // quickFilter: active filter for the table (unified with KPI selection)
+  const [quickFilter, setQuickFilter]   = useState<QuickFilterKey>("todos");
+  // activeKpi: currently selected KPI — drives quickFilter, never independent
+  const [activeKpi, setActiveKpi]       = useState<CalibratedKpiKey | null>(null);
 
   // Wizard state
   const [wizardOpen, setWizardOpen]       = useState(false);
@@ -255,8 +278,16 @@ export function PedidosClient({ orgSlug, initialStats, initialOrders, maxSagOrde
   // Edit mode: when editing an existing draft instead of creating new
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
 
-  // Operational KPI filter
-  const [kpiFilter, setKpiFilter] = useState<OperationalKpiKey | null>(null);
+  // filteredOrders: derived from allOrders + quickFilter — no server round-trip
+  const filteredOrders = quickFilter === "todos"
+    ? allOrders
+    : allOrders.filter(o => {
+      const input = {
+        status: o.status, origin: o.origin, syncState: o.syncState,
+        totalValue: o.totalValue, createdAt: o.createdAt,
+      };
+      return applyQuickFilter([input], quickFilter).length > 0;
+    });
 
   // Feedback
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
@@ -305,10 +336,17 @@ export function PedidosClient({ orgSlug, initialStats, initialOrders, maxSagOrde
     }
   }
 
-  // Load orders
-  const loadOrders = useCallback(async (statusFilter?: string, today?: boolean) => {
-    const data = await orderApi(orgSlug, { action: "list", status: statusFilter, today });
-    setOrders(data.orders ?? []);
+  // Reload table data AND server KPI stats from server (after mutations)
+  const reloadAllOrders = useCallback(async () => {
+    const [listData, kpiData] = await Promise.all([
+      orderApi(orgSlug, { action: "list" }),
+      orderApi(orgSlug, { action: "kpi_stats" }),
+    ]);
+    const orders = listData.orders ?? [];
+    setAllOrders(orders);
+    if (kpiData.kpiStats) {
+      setServerKpiStats({ ...kpiData.kpiStats, loadedOrders: orders.length });
+    }
   }, [orgSlug]);
 
   async function loadStats() {
@@ -316,15 +354,30 @@ export function PedidosClient({ orgSlug, initialStats, initialOrders, maxSagOrde
     if (data.stats) setStats(data.stats);
   }
 
-  async function applyFilter(f: ViewFilter) {
-    setFilter(f);
-    switch (f) {
-      case "hoy":           await loadOrders(undefined, true); break;
-      case "borradores":    await loadOrders("borrador"); break;
-      case "pendientes":    await loadOrders("pendiente_sag"); break;
-      case "sincronizados": await loadOrders("sincronizado"); break;
-      case "conflictos":    await loadOrders("conflicto"); break;
-      default:              await loadOrders(); break;
+  /** Apply a quick filter — client-side only, no server call.
+   *  Also synchronizes activeKpi: if the quick filter matches a KPI's filter, highlight it. */
+  function handleQuickFilter(f: QuickFilterKey) {
+    setQuickFilter(f);
+    // Synchronize: find KPI that maps to this filter, or clear
+    const kpiForFilter: CalibratedKpiKey | null =
+      f === "hoy"            ? "valor_pedidos_hoy"
+      : f === "pendientes_sag" ? "pendientes_envio_sag"
+      : f === "sincronizados"  ? "sincronizados_agentik"
+      : f === "conflictos"     ? "con_conflicto"
+      : null;
+    setActiveKpi(kpiForFilter);
+  }
+
+  /** Handle KPI click — drives quickFilter, never independent.
+   *  KPI click and quick filter "Hoy" share the same state. */
+  function handleKpiClick(key: CalibratedKpiKey) {
+    if (activeKpi === key) {
+      // Second click: deactivate both
+      setActiveKpi(null);
+      setQuickFilter("todos");
+    } else {
+      setActiveKpi(key);
+      setQuickFilter(kpiKeyToQuickFilter(key));
     }
   }
 
@@ -413,7 +466,7 @@ export function PedidosClient({ orgSlug, initialStats, initialOrders, maxSagOrde
             setEditingOrderId(null);
           }
           // On conflict: keep wizard open so user can adjust quantities
-          await loadOrders();
+          await reloadAllOrders();
           await loadStats();
         }
       } else {
@@ -438,7 +491,7 @@ export function PedidosClient({ orgSlug, initialStats, initialOrders, maxSagOrde
           if (hasConflict && data.order.id) {
             setEditingOrderId(data.order.id);
           }
-          await loadOrders();
+          await reloadAllOrders();
           await loadStats();
         }
       }
@@ -480,7 +533,7 @@ export function PedidosClient({ orgSlug, initialStats, initialOrders, maxSagOrde
             showFeedback("Pedido enviado y unidades reservadas.");
             setWizardOpen(false);
           }
-          await loadOrders();
+          await reloadAllOrders();
           await loadStats();
         }
       }
@@ -524,7 +577,7 @@ export function PedidosClient({ orgSlug, initialStats, initialOrders, maxSagOrde
         showFeedback("Borrador eliminado.");
         setDetailDrawerOpen(false);
         setSelectedOrder(null);
-        await loadOrders();
+        await reloadAllOrders();
         await loadStats();
       } else {
         showFeedback(data.error ?? "No se pudo eliminar el pedido.");
@@ -535,7 +588,7 @@ export function PedidosClient({ orgSlug, initialStats, initialOrders, maxSagOrde
     if (data.order) {
       setSelectedOrder(data.order);
       showFeedback(`Pedido actualizado: ${STATUS_LABEL[data.order.status as OrderStatus] ?? data.order.status}`);
-      await loadOrders();
+      await reloadAllOrders();
       await loadStats();
       if (action === "cancel") {
         setDetailDrawerOpen(false);
@@ -572,12 +625,12 @@ export function PedidosClient({ orgSlug, initialStats, initialOrders, maxSagOrde
         status={stats.conflicts > 0 ? "critical"
               : stats.pendingSag > 0 ? "warning"
               : "ok"}
-        statusLabel={`${stats.today} pedidos · ${stats.fromSag} desde SAG${maxSagOrderDate ? ` · Ultimo: ${new Date(maxSagOrderDate).toISOString().slice(0, 10)}` : ""}`}
+        statusLabel={`Mostrando ${serverKpiStats.loadedOrders.toLocaleString("es-CO")} de ${serverKpiStats.totalOrders.toLocaleString("es-CO")} pedidos${maxSagOrderDate ? ` · Ultimo SAG: ${new Date(maxSagOrderDate).toISOString().slice(0, 10)}` : ""}`}
       />
 
-      {/* ── SAG Sync Notice ──────────────────────────────────────────────── */}
+      {/* ── SAG Connector Status (KPI-CALIBRATION-01) ───────────────────── */}
       <div style={{
-        padding: `${S[3]}px ${S[4]}px`,
+        padding: `${S[2]}px ${S[4]}px`,
         marginBottom: S[4],
         background: `${C.blueDark}08`,
         border: `1px solid ${C.blueDark}25`,
@@ -588,64 +641,78 @@ export function PedidosClient({ orgSlug, initialStats, initialOrders, maxSagOrde
       }}>
         <span style={{
           width: 8, height: 8, borderRadius: "50%",
-          background: C.blueDark, display: "inline-block", flexShrink: 0,
+          background: C.amber, display: "inline-block", flexShrink: 0,
         }} />
-        <div>
-          <div style={{
-            fontFamily: T.mono, fontSize: T.sz.xs,
-            fontWeight: T.wt.semibold, color: C.blueDark,
-          }}>
-            Pedidos importados desde SAG. Sincronizacion en validacion.
-          </div>
-          <div style={{
-            fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, marginTop: 2,
-          }}>
-            Los datos reflejan el ultimo snapshot disponible. La sincronizacion automatica esta pendiente de activacion.
-          </div>
+        <div style={{
+          fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid,
+          display: "flex", alignItems: "center", gap: S[2],
+        }}>
+          <span style={{ fontWeight: T.wt.semibold, color: C.ink }}>
+            Sincronizacion SAG
+          </span>
+          <span style={{
+            fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+            padding: "1px 6px", borderRadius: R.sm,
+            background: C.amberLight, color: C.amber,
+          }}
+            title="Los pedidos se validan y preparan, pero todavia no se envian al entorno productivo de SAG."
+          >
+            Modo simulacion
+          </span>
+          {maxSagOrderDate && (
+            <span style={{ fontSize: T.sz["2xs"], color: C.inkFaint }}>
+              Ultimo SAG: {new Date(maxSagOrderDate).toISOString().slice(0, 10)}
+            </span>
+          )}
         </div>
       </div>
 
-      {/* Operational KPIs (OPERATIONS-REFINEMENT-01) */}
+      {/* ── Calibrated KPIs (KPI-CALIBRATION-01) — from server-side aggregates ── */}
       {(() => {
-        const opStats = computeOperationalStats(orders);
-        const kpis = buildOperationalKpis(opStats);
+        const kpiStats: CalibratedKpiStats = {
+          valorPedidosHoy: serverKpiStats.valorPedidosHoy,
+          pedidosDeHoy: serverKpiStats.pedidosDeHoy,
+          pendientesEnvioSag: serverKpiStats.pendientesEnvioSag,
+          sincronizadosAgentik: serverKpiStats.sincronizadosAgentik,
+          conConflicto: serverKpiStats.conConflicto,
+        };
+        const kpis = buildCalibratedKpis(kpiStats);
         return (
           <div style={{
             display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: S[3],
             marginBottom: S[4],
           }}>
             {kpis.map(kpi => {
-              const isActive = kpiFilter === kpi.key;
-              const alertColor = kpi.key === "con_conflicto" && kpi.count > 0 ? C.red
-                : kpi.key === "listos_para_sag" && kpi.count > 0 ? C.blueDark
-                : kpi.key === "sincronizados" && kpi.count > 0 ? C.green
-                : kpi.count > 0 ? C.ink : C.inkFaint;
+              const isActive = activeKpi === kpi.key;
+              const alertColor = kpi.key === "con_conflicto" && kpi.value > 0 ? C.red
+                : kpi.key === "sincronizados_agentik" && kpi.value > 0 ? C.green
+                : kpi.key === "pendientes_envio_sag" && kpi.value > 0 ? C.blueDark
+                : kpi.key === "valor_pedidos_hoy" && kpi.value > 0 ? C.ink
+                : kpi.value > 0 ? C.ink : C.inkFaint;
               return (
                 <button
                   key={kpi.key}
-                  onClick={() => {
-                    if (isActive) {
-                      setKpiFilter(null);
-                      applyFilter("todos");
-                    } else {
-                      setKpiFilter(kpi.key);
-                      const statusFilter = kpiKeyToStatusFilter(kpi.key);
-                      if (statusFilter) loadOrders(statusFilter);
-                      else loadOrders();
-                    }
-                  }}
+                  onClick={() => handleKpiClick(kpi.key)}
                   title={kpi.tooltip}
                   style={{
                     ...panel, padding: S[4], textAlign: "center",
-                    cursor: "pointer", border: isActive ? `2px solid ${C.blueDark}` : `1px solid ${C.line}`,
+                    cursor: "pointer",
+                    border: isActive ? `2px solid ${C.blueDark}` : `1px solid ${C.line}`,
                     background: isActive ? `${C.blueDark}08` : C.white,
                   }}
                 >
-                  <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginBottom: S[1] }}>
+                  <div style={{
+                    fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginBottom: S[1],
+                  }}>
                     {kpi.label}
                   </div>
-                  <div style={{ fontFamily: T.mono, fontSize: T.sz["2xl"], fontWeight: T.wt.bold, color: alertColor }}>
-                    {kpi.count > 0 ? kpi.count : "\u2014"}
+                  <div style={{
+                    fontFamily: T.mono,
+                    fontSize: kpi.monetary ? T.sz.lg : T.sz["2xl"],
+                    fontWeight: T.wt.bold,
+                    color: alertColor,
+                  }}>
+                    {kpi.formatted}
                   </div>
                 </button>
               );
@@ -721,46 +788,42 @@ export function PedidosClient({ orgSlug, initialStats, initialOrders, maxSagOrde
         <div style={{ flex: 1 }} />
       </div>
 
-      {/* Filter bar */}
+      {/* Quick filter bar (KPI-CALIBRATION-01) */}
       <div style={{ display: "flex", gap: S[2], marginBottom: S[4], alignItems: "center", flexWrap: "wrap" }}>
-        {/* Filters */}
-        {(["todos", "hoy", "borradores", "pendientes", "sincronizados", "conflictos"] as ViewFilter[]).map(f => (
+        {(["todos", "hoy", "por_completar", "pendientes_sag", "sincronizados", "conflictos"] as QuickFilterKey[]).map(f => (
           <button
             key={f}
-            onClick={() => applyFilter(f)}
+            onClick={() => handleQuickFilter(f)}
             className="ag-action-secondary"
             style={{
               fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
               padding: `${S[1]}px ${S[2]}px`, borderRadius: R.sm, cursor: "pointer",
-              background: filter === f ? C.blueDark : C.surface,
-              color:      filter === f ? C.white : C.inkMid,
-              border:     `1px solid ${filter === f ? C.blueDark : C.line}`,
+              background: quickFilter === f ? C.blueDark : C.surface,
+              color:      quickFilter === f ? C.white : C.inkMid,
+              border:     `1px solid ${quickFilter === f ? C.blueDark : C.line}`,
             }}
           >
-            {{
-              todos: "Todos", hoy: "Hoy", borradores: "Borradores",
-              pendientes: "Pendientes", sincronizados: "Confirmados", conflictos: "Conflictos",
-            }[f]}
+            {QUICK_FILTER_LABELS[f]}
           </button>
         ))}
       </div>
 
       {/* Orders list */}
-      {orders.length === 0 ? (
+      {filteredOrders.length === 0 ? (
         <div style={{
           ...panel, padding: S[8], textAlign: "center",
         }}>
           <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.semibold, color: C.inkMid, marginBottom: S[2] }}>
-            {filter === "todos"
+            {quickFilter === "todos"
               ? "No hay pedidos registrados ni importados desde SAG"
               : "Sin pedidos en este filtro"}
           </div>
           <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight, marginBottom: S[4] }}>
-            {filter === "todos"
+            {quickFilter === "todos"
               ? "Los pedidos creados en Agentik y los importados desde SAG aparecen aqui."
               : "Cambia el filtro o crea un nuevo pedido."}
           </div>
-          {filter === "todos" && (
+          {quickFilter === "todos" && (
             <button onClick={openWizard} className="ag-action-primary" style={{
               fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold,
               color: C.white, background: C.blueDark, border: "none",
@@ -771,7 +834,7 @@ export function PedidosClient({ orgSlug, initialStats, initialOrders, maxSagOrde
           )}
         </div>
       ) : (
-        <OrdersTable orders={orders} onOpen={openOrderDetail} />
+        <OrdersTable orders={filteredOrders} onOpen={openOrderDetail} />
       )}
 
       {/* New Order Wizard — Wholesale matrix mode */}
