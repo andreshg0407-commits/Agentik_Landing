@@ -193,6 +193,10 @@ function rowToCard(row: any): OrderCard {
     syncState:       (meta.syncState as OrderSyncState) ?? "nunca_sincronizado",
     createdAt:       row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
     lastSyncAt:      (meta.lastSyncAt as string | null) ?? null,
+    sellerSource:     (meta.sellerSource as string | null) ?? null,
+    sellerConfidence: (meta.sellerConfidence as string | null) ?? null,
+    deliveryScope:    header?.deliveryScope ?? null,
+    channel:          header?.channel ?? null,
   };
 }
 
@@ -355,8 +359,11 @@ export async function getOrder(
   }
 
   // Resolve seller for SAG orders via ka_nl_tercero_vend (VENDEDOR-RESOLUTION-01)
-  // Skip SOAP call if seller is already persisted on CustomerOrderRecord (SAG-HISTORICAL-READ-COMPLETENESS-01)
-  if (draft && (draft.origin === "sag_customer_order" || draft.origin === "SAG_HISTORICAL") && !draft.header.sellerName) {
+  // Skip SOAP if seller already persisted OR if resolution was already attempted (sellerSource set).
+  // This prevents repeated SOAP calls for the ~35.8% historical orders where SAG has no seller.
+  // Sprint: AGENTIK-ORDERS-OPERATIONS-REFINEMENT-01
+  if (draft && (draft.origin === "sag_customer_order" || draft.origin === "SAG_HISTORICAL")
+    && !draft.header.sellerName && !draft.sellerSource) {
     try {
       const resolved = await resolveSellerForSagOrder(orgId, draft.sagOrderId, draft.header.customerCode);
       if (resolved.sellerName && (resolved.confidence === "high" || resolved.confidence === "medium")) {
@@ -364,6 +371,24 @@ export async function getOrder(
         draft.header.sellerId = resolved.sellerCode ?? "";
         draft.sellerSource = resolved.source;
         draft.sellerConfidence = resolved.confidence;
+      } else {
+        // Resolution attempted but no seller found — persist "none" to avoid repeat SOAP
+        draft.sellerSource = "none";
+        draft.sellerConfidence = "unknown";
+      }
+      // Persist resolution result to CustomerOrderRecord so next open skips SOAP
+      try {
+        await prisma.customerOrderRecord.updateMany({
+          where: { id: orderId, organizationId: orgId },
+          data: {
+            sellerName:       draft.header.sellerName || null,
+            sellerTerceroId:  draft.header.sellerId ? parseInt(draft.header.sellerId, 10) || null : null,
+            sellerSource:     draft.sellerSource ?? null,
+            sellerConfidence: draft.sellerConfidence ?? null,
+          },
+        });
+      } catch {
+        // Persist failed — non-blocking, will just re-attempt SOAP next time
       }
     } catch {
       // SOAP resolution failed — continue without seller rather than blocking drawer
@@ -378,6 +403,11 @@ export async function getOrder(
   // Enrich lines with variant data: color names, subgrupo, productLine (VARIANT-ENRICHMENT-01)
   if (draft && draft.lines.length > 0) {
     await enrichOrderLinesWithVariants(orgId, draft.lines);
+  }
+
+  // Enrich lines with hero image thumbnails (OPERATIONS-REFINEMENT-01)
+  if (draft && draft.lines.length > 0) {
+    draft = await enrichDraftWithThumbnails(orgId, draft);
   }
 
   return draft;
@@ -498,6 +528,79 @@ async function enrichDraftWithInventory(
   }
 }
 
+// ── Thumbnail enrichment (OPERATIONS-REFINEMENT-01) ─────────────────────────
+
+/**
+ * Batch-enriches order lines with hero image thumbnails.
+ * Single batch query via ProductAssetLink — never per-row.
+ */
+async function enrichDraftWithThumbnails(
+  orgId: string,
+  draft: OrderDraft,
+): Promise<OrderDraft> {
+  const activeLines = draft.lines.filter(l => !l.removed);
+  if (activeLines.length === 0) return draft;
+
+  // Already have thumbnails (Agentik-created orders carry them from wizard)
+  if (activeLines.some(l => l.thumbnailUrl)) return draft;
+
+  try {
+    // Collect unique reference codes
+    const refCodes = [...new Set(activeLines.map(l => l.referenceCode).filter(Boolean))];
+    if (refCodes.length === 0) return draft;
+
+    // Batch: refCode → ProductEntity
+    const products = await prisma.productEntity.findMany({
+      where: { organizationId: orgId, sku: { in: refCodes } },
+      select: { id: true, sku: true },
+    });
+    if (products.length === 0) return draft;
+
+    const skuToProductId = new Map<string, string>();
+    const productIds: string[] = [];
+    for (const p of products) {
+      if (p.sku) {
+        skuToProductId.set(p.sku.toUpperCase(), p.id);
+        productIds.push(p.id);
+      }
+    }
+
+    // Batch: productId → hero assetUrl
+    const heroLinks = await (prisma as any).productAssetLink.findMany({
+      where: { organizationId: orgId, productId: { in: productIds }, role: "hero" },
+      select: { productId: true, assetId: true },
+    });
+    if (heroLinks.length === 0) return draft;
+
+    const assetIds = heroLinks.map((l: any) => l.assetId);
+    const assets = await (prisma as any).generatedAsset.findMany({
+      where: { id: { in: assetIds } },
+      select: { id: true, assetUrl: true },
+    });
+    const assetMap = new Map<string, string>();
+    for (const a of assets) { if (a.assetUrl) assetMap.set(a.id, a.assetUrl); }
+
+    const heroImageMap = new Map<string, string>();
+    for (const link of heroLinks) {
+      const url = assetMap.get(link.assetId);
+      if (url) heroImageMap.set(link.productId, url);
+    }
+
+    // Merge thumbnails into lines
+    const newLines = draft.lines.map(line => {
+      if (line.removed || line.thumbnailUrl) return line;
+      const pid = skuToProductId.get(line.referenceCode.toUpperCase());
+      if (!pid) return line;
+      const url = heroImageMap.get(pid);
+      return url ? { ...line, thumbnailUrl: url } : line;
+    });
+
+    return { ...draft, lines: newLines };
+  } catch {
+    return draft;
+  }
+}
+
 // ── CRM stage → OrderStatus mapping ──────────────────────────────────────────
 
 function crmStageToOrderStatus(stage: string | undefined): OrderStatus {
@@ -564,6 +667,8 @@ export async function listCustomerOrderRecords(
         syncState:       "sincronizado",
         createdAt:       orderDate,
         lastSyncAt:      r.syncedAt instanceof Date ? r.syncedAt.toISOString() : String(r.syncedAt),
+        sellerSource:     r.sellerSource ?? null,
+        sellerConfidence: r.sellerConfidence ?? null,
       };
     });
   } catch {

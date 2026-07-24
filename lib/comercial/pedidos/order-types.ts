@@ -237,6 +237,13 @@ export interface OrderCard {
   syncState:       OrderSyncState;
   createdAt:       string;
   lastSyncAt:      string | null;
+  // Seller resolution metadata (OPERATIONS-REFINEMENT-01)
+  sellerSource?:     string | null;
+  sellerConfidence?: string | null;
+  // Delivery scope (OPERATIONS-REFINEMENT-01)
+  deliveryScope?:    string | null;
+  // Channel (OPERATIONS-REFINEMENT-01)
+  channel?:          string | null;
 }
 
 // ── Duplicate check ───────────────────────────────────────────────────────────

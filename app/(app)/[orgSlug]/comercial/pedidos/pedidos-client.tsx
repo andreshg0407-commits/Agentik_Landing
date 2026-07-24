@@ -56,11 +56,7 @@ import type {
 } from "@/lib/comercial/pedidos/order-product-types";
 import type {
   CustomerOrderHistory,
-  SellerOrderHistory,
 } from "@/lib/comercial/pedidos/order-history-types";
-import type {
-  SellerPerformance,
-} from "@/lib/comercial/pedidos/seller-performance-service";
 import type {
   OrderFulfillmentStatus,
   CustomerCommercialMemory,
@@ -71,23 +67,26 @@ import {
   type OrderShareBranding,
   type OrderSharePayload,
 } from "@/lib/comercial/pedidos/order-share";
+import {
+  computeOperationalStats,
+  buildOperationalKpis,
+  kpiKeyToStatusFilter,
+  resolveSellerDisplayText,
+  resolveOperationalState,
+  emptyOrderExplanation,
+  OPERATIONAL_STATE_LABEL,
+  OPERATIONAL_STATE_COLOR,
+  type OperationalKpiKey,
+  type OperationalState,
+} from "@/lib/comercial/pedidos/order-operational-state";
 
 // ── Props ────────────────────────────────────────────────────────────────────
-
-interface CommercialHealth {
-  pedidosImportados:      number;
-  pedidosConLineas:       number;
-  lineasRegistradas:      number;
-  productosDisponibles:   number;
-  productosSinInventario: number;
-}
 
 interface Props {
   orgSlug:            string;
   orgId:              string;
   initialStats:       OrderStats;
   initialOrders:      OrderCard[];
-  commercialHealth?:  CommercialHealth;
   maxSagOrderDate?:   string | null;
   branding?:          OrderShareBranding;
 }
@@ -233,7 +232,7 @@ type WizardStep = "cliente" | "productos" | "resumen";
 
 type ViewFilter = "todos" | "hoy" | "borradores" | "pendientes" | "sincronizados" | "conflictos";
 
-export function PedidosClient({ orgSlug, initialStats, initialOrders, commercialHealth, maxSagOrderDate, branding }: Props) {
+export function PedidosClient({ orgSlug, initialStats, initialOrders, maxSagOrderDate, branding }: Props) {
   const [stats, setStats]     = useState<OrderStats>(initialStats);
   const [orders, setOrders]   = useState<OrderCard[]>(initialOrders);
   const [filter, setFilter]   = useState<ViewFilter>("todos");
@@ -256,21 +255,8 @@ export function PedidosClient({ orgSlug, initialStats, initialOrders, commercial
   // Edit mode: when editing an existing draft instead of creating new
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
 
-  // Demand intelligence (PEDIDOS-DEMANDA-PRODUCCION-01)
-  const [demandSummary, setDemandSummary] = useState<any>(null);
-  const demandLoaded = useRef(false);
-  useEffect(() => {
-    if (demandLoaded.current) return;
-    demandLoaded.current = true;
-    fetch(`/api/orgs/${orgSlug}/comercial/demand`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "snapshot" }),
-    })
-      .then(r => r.json())
-      .then(d => setDemandSummary(d.snapshot ?? null))
-      .catch(() => {});
-  }, [orgSlug]);
+  // Operational KPI filter
+  const [kpiFilter, setKpiFilter] = useState<OperationalKpiKey | null>(null);
 
   // Feedback
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
@@ -619,74 +605,51 @@ export function PedidosClient({ orgSlug, initialStats, initialOrders, commercial
         </div>
       </div>
 
-      {/* Stats strip */}
-      <div style={{
-        display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: S[3],
-        marginBottom: S[4],
-      }}>
-        <StatCard label="Total pedidos" value={stats.today} color={C.ink} />
-        <StatCard label="Pendientes de envio" value={stats.pendingSag} color={stats.pendingSag > 0 ? C.amber : C.inkFaint} />
-        <StatCard label="Confirmados" value={stats.synced} color={stats.synced > 0 ? C.green : C.inkFaint} />
-        <StatCard label="Desde SAG" value={stats.fromSag} color={stats.fromSag > 0 ? C.blueDark : C.inkFaint} />
-      </div>
-
-      {/* Salud comercial */}
-      {commercialHealth && (
-        <div style={{
-          ...panel, padding: S[3], marginBottom: S[3],
-        }}>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink, marginBottom: S[2] }}>
-            Salud comercial
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: S[2] }}>
-            <HealthStat label="Pedidos importados" value={commercialHealth.pedidosImportados} />
-            <HealthStat label="Pedidos con lineas" value={commercialHealth.pedidosConLineas} />
-            <HealthStat label="Lineas registradas" value={commercialHealth.lineasRegistradas} />
-            <HealthStat label="Productos disponibles" value={commercialHealth.productosDisponibles} />
-            <HealthStat label="Sin inventario" value={commercialHealth.productosSinInventario} alert={commercialHealth.productosSinInventario > 0} />
-          </div>
-          {stats.conflicts > 0 && (
-            <div style={{
-              fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.red, marginTop: S[2],
-              padding: `${S[1]}px ${S[2]}px`, background: C.redLight, borderRadius: R.sm,
-            }}>
-              {stats.conflicts} {stats.conflicts === 1 ? "pedido requiere" : "pedidos requieren"} revision
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Inteligencia de demanda (PEDIDOS-DEMANDA-PRODUCCION-01) */}
-      {demandSummary && (
-        <div style={{ ...panel, padding: S[3], marginBottom: S[3] }}>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink, marginBottom: S[2] }}>
-            Inteligencia de demanda
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))", gap: S[2] }}>
-            <HealthStat label="Refs con demanda" value={demandSummary.refsWithDemand ?? 0} />
-            <HealthStat label="Sin stock" value={demandSummary.refsInStockout ?? 0} alert={(demandSummary.refsInStockout ?? 0) > 0} />
-            <HealthStat label="Ruptura" value={demandSummary.refsRuptureImminent ?? 0} alert={(demandSummary.refsRuptureImminent ?? 0) > 0} />
-            <HealthStat label="Vel. diaria" value={demandSummary.avgDailyVelocity ?? 0} />
-            <HealthStat label="Stock total" value={demandSummary.totalStock ?? 0} />
-          </div>
-        </div>
-      )}
-
-      {/* Seller resolution note (PEDIDOS-VENDEDOR-RESOLUTION-01) */}
-      {orders.length > 0 && (() => {
-        const noSeller = orders.filter(o => !o.sellerName).length;
-        if (noSeller === 0) return null;
+      {/* Operational KPIs (OPERATIONS-REFINEMENT-01) */}
+      {(() => {
+        const opStats = computeOperationalStats(orders);
+        const kpis = buildOperationalKpis(opStats);
         return (
           <div style={{
-            ...panel, padding: `${S[2]}px ${S[3]}px`, marginBottom: S[3],
-            background: C.amberLight, borderColor: C.amberBorder,
+            display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: S[3],
+            marginBottom: S[4],
           }}>
-            <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.amber }}>
-              Pedidos sin vendedor identificado: {noSeller}
-            </span>
-            <span style={{ fontFamily: T.mono, fontSize: "9px", color: C.inkFaint, marginLeft: S[2] }}>
-              SAG no incluye vendedor en todos los documentos PD
-            </span>
+            {kpis.map(kpi => {
+              const isActive = kpiFilter === kpi.key;
+              const alertColor = kpi.key === "con_conflicto" && kpi.count > 0 ? C.red
+                : kpi.key === "listos_para_sag" && kpi.count > 0 ? C.blueDark
+                : kpi.key === "sincronizados" && kpi.count > 0 ? C.green
+                : kpi.count > 0 ? C.ink : C.inkFaint;
+              return (
+                <button
+                  key={kpi.key}
+                  onClick={() => {
+                    if (isActive) {
+                      setKpiFilter(null);
+                      applyFilter("todos");
+                    } else {
+                      setKpiFilter(kpi.key);
+                      const statusFilter = kpiKeyToStatusFilter(kpi.key);
+                      if (statusFilter) loadOrders(statusFilter);
+                      else loadOrders();
+                    }
+                  }}
+                  title={kpi.tooltip}
+                  style={{
+                    ...panel, padding: S[4], textAlign: "center",
+                    cursor: "pointer", border: isActive ? `2px solid ${C.blueDark}` : `1px solid ${C.line}`,
+                    background: isActive ? `${C.blueDark}08` : C.white,
+                  }}
+                >
+                  <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginBottom: S[1] }}>
+                    {kpi.label}
+                  </div>
+                  <div style={{ fontFamily: T.mono, fontSize: T.sz["2xl"], fontWeight: T.wt.bold, color: alertColor }}>
+                    {kpi.count > 0 ? kpi.count : "\u2014"}
+                  </div>
+                </button>
+              );
+            })}
           </div>
         );
       })()}
@@ -831,6 +794,7 @@ export function PedidosClient({ orgSlug, initialStats, initialOrders, commercial
       {/* Order detail drawer */}
       {detailDrawerOpen && selectedOrder && (
         <OrderDetailDrawer
+          key={selectedOrder.id}
           orgSlug={orgSlug}
           order={selectedOrder}
           branding={branding}
@@ -859,22 +823,6 @@ function StatCard({ label, value, color }: { label: string; value: number; color
   );
 }
 
-function HealthStat({ label, value, alert = false }: { label: string; value: number; alert?: boolean }) {
-  return (
-    <div style={{ textAlign: "center" }}>
-      <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginBottom: 2 }}>
-        {label}
-      </div>
-      <div style={{
-        fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold,
-        color: alert ? C.red : value > 0 ? C.ink : C.inkFaint,
-      }}>
-        {value > 0 ? value.toLocaleString() : "\u2014"}
-      </div>
-    </div>
-  );
-}
-
 // ── Orders Table ────────────────────────────────────────────────────────────
 
 function OrdersTable({ orders, onOpen }: { orders: OrderCard[]; onOpen: (id: string) => void }) {
@@ -895,7 +843,6 @@ function OrdersTable({ orders, onOpen }: { orders: OrderCard[]; onOpen: (id: str
       </div>
 
       {orders.map(o => {
-        const sc = STATUS_COLOR[o.status];
         const isSagCor = o.origin === "SAG_HISTORICAL" || o.origin === "sag_customer_order";
         const isCrm    = o.origin === "CRM_LEGACY" || o.origin === "sag";
         const originBadge = isSagCor
@@ -904,6 +851,14 @@ function OrdersTable({ orders, onOpen }: { orders: OrderCard[]; onOpen: (id: str
           ? { label: "CRM",  bg: C.amberLight,  fg: C.amber }
           : { label: "AGK",  bg: C.blueLight,   fg: C.blueDark };
         const displayNum = o.consecutivo > 0 ? o.consecutivo : "\u2014";
+        // Operational state badge
+        const opState = resolveOperationalState({
+          status: o.status, origin: o.origin, syncState: o.syncState,
+          sagOrderId: null, sagError: null, fulfillmentStatus: "sin_factura",
+        });
+        const opColor = OPERATIONAL_STATE_COLOR[opState];
+        // Seller display
+        const sellerDisplay = resolveSellerDisplayText(o.origin, o.sellerName, o.sellerSource, o.sellerConfidence);
         return (
           <div key={o.id} className="ag-op-row" style={{ ...dataRow, fontSize: T.sz.sm, fontFamily: T.mono }}>
             <span style={{ width: 60, color: C.inkFaint }}>{displayNum}</span>
@@ -920,16 +875,24 @@ function OrdersTable({ orders, onOpen }: { orders: OrderCard[]; onOpen: (id: str
             <div style={{ flex: 2 }}>
               <div style={{ fontWeight: T.wt.medium, color: C.ink }}>{o.customerName || "\u2014"}</div>
             </div>
-            <span style={{ flex: 1, color: C.inkMid }}>{o.sellerName || "\u2014"}</span>
+            <div style={{ flex: 1 }}>
+              <span style={{ color: C.inkMid }}>{sellerDisplay.text}</span>
+              {sellerDisplay.secondary && (
+                <span style={{ fontFamily: T.mono, fontSize: "9px", color: C.inkFaint, marginLeft: 4 }}>
+                  {sellerDisplay.secondary}
+                </span>
+              )}
+            </div>
             <span style={{ width: 90, textAlign: "right", fontWeight: T.wt.semibold, color: C.ink }}>
               ${o.totalValue.toLocaleString()}
             </span>
             <span style={{ width: 110, textAlign: "center" }}>
               <span style={{
                 fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                padding: "2px 6px", borderRadius: R.pill, background: sc.bg, color: sc.text,
+                padding: "2px 6px", borderRadius: R.pill,
+                background: opColor.bg, color: opColor.text,
               }}>
-                {STATUS_LABEL[o.status]}
+                {OPERATIONAL_STATE_LABEL[opState]}
               </span>
             </span>
             <span style={{ width: 80, textAlign: "right", color: C.inkFaint }}>
@@ -2748,8 +2711,16 @@ function stockLabel(line: OrderLine): { text: string; color: string } {
 
 // ── Drawer Lines Tab (ORDER-DETAIL-LINES-CLARITY-01) ────────────────────────
 
+const LARGE_ORDER_THRESHOLD = 100;
+
 function DrawerLinesTab({ activeLines, order }: { activeLines: OrderLine[]; order: OrderDraft }) {
-  const [collapsedRefs, setCollapsedRefs] = useState<Set<string>>(new Set());
+  // Auto-collapse all groups for large orders (progressive rendering)
+  const [collapsedRefs, setCollapsedRefs] = useState<Set<string>>(() => {
+    if (activeLines.length <= LARGE_ORDER_THRESHOLD) return new Set();
+    const allRefs = new Set<string>();
+    for (const l of activeLines) allRefs.add(l.referenceCode);
+    return allRefs;
+  });
 
   const toggleRef = (ref: string) =>
     setCollapsedRefs(prev => {
@@ -2794,8 +2765,34 @@ function DrawerLinesTab({ activeLines, order }: { activeLines: OrderLine[]; orde
     fontWeight: T.wt.semibold,
   };
 
+  const allCollapsed = collapsedRefs.size === groups.length;
+  const expandAll = () => setCollapsedRefs(new Set());
+  const collapseAll = () => setCollapsedRefs(new Set(groups.map(g => g.referenceCode)));
+
   return (
     <>
+      {/* Large order hint + expand/collapse all */}
+      {activeLines.length > LARGE_ORDER_THRESHOLD && (
+        <div style={{
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+          padding: `${S[2]}px ${S[3]}px`, marginBottom: S[2],
+          background: C.blueLight, borderRadius: R.sm,
+          fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.blueDark,
+        }}>
+          <span>{groups.length} referencias · {totalVariants} variantes</span>
+          <button
+            onClick={allCollapsed ? expandAll : collapseAll}
+            style={{
+              fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+              color: C.blueDark, background: "transparent", border: "none",
+              cursor: "pointer", textDecoration: "underline",
+            }}
+          >
+            {allCollapsed ? "Expandir todas" : "Colapsar todas"}
+          </button>
+        </div>
+      )}
+
       {/* Groups */}
       {groups.map(group => {
         const isCollapsed = collapsedRefs.has(group.referenceCode);
@@ -3041,20 +3038,9 @@ function DrawerCommercialConditions({ order }: { order: OrderDraft }) {
 // ── Product Thumbnail (PRODUCTOS-MOBILE-03) ─────────────────────────────────
 
 function ProductThumb({ url, code, size = 48 }: { url: string | null; code: string; size?: number }) {
-  if (url) {
-    return (
-      <img
-        src={url}
-        alt={code}
-        style={{
-          width: size, height: size, borderRadius: R.sm,
-          objectFit: "cover", flexShrink: 0,
-          background: C.surface, border: `1px solid ${C.line}`,
-        }}
-      />
-    );
-  }
-  return (
+  const [broken, setBroken] = useState(false);
+
+  const placeholder = (
     <div style={{
       width: size, height: size, borderRadius: R.sm,
       background: C.surface, border: `1px solid ${C.line}`,
@@ -3064,6 +3050,21 @@ function ProductThumb({ url, code, size = 48 }: { url: string | null; code: stri
     }}>
       {code.slice(0, 3)}
     </div>
+  );
+
+  if (!url || broken) return placeholder;
+
+  return (
+    <img
+      src={url}
+      alt={code}
+      onError={() => setBroken(true)}
+      style={{
+        width: size, height: size, borderRadius: R.sm,
+        objectFit: "cover", flexShrink: 0,
+        background: C.surface, border: `1px solid ${C.line}`,
+      }}
+    />
   );
 }
 
@@ -3141,7 +3142,7 @@ function DraftDeleteInline({
 
 // ── Order Detail Drawer ─────────────────────────────────────────────────────
 
-type DetailTab = "lineas" | "cumplimiento" | "historial_cliente" | "desempeno_vendedor" | "variantes" | "demanda";
+type DetailTab = "pedido" | "cumplimiento" | "historial_cliente";
 
 function OrderDetailDrawer({
   orgSlug,
@@ -3162,11 +3163,8 @@ function OrderDetailDrawer({
   const activeLines = order.lines.filter(l => !l.removed);
   const fulfillment = evaluateOrderFulfillment(order);
 
-  const [activeTab, setActiveTab]     = useState<DetailTab>("lineas");
+  const [activeTab, setActiveTab]     = useState<DetailTab>("pedido");
   const [customerHist, setCustomerHist] = useState<CustomerOrderHistory | null>(null);
-  const [sellerPerf, setSellerPerf]     = useState<SellerPerformance | null>(null);
-  const [variantMetrics, setVariantMetrics] = useState<any>(null);
-  const [demandData, setDemandData]         = useState<any>(null);
   const [histLoading, setHistLoading]   = useState(false);
   const [pdfLoading, setPdfLoading]     = useState(false);
   const [feedback, setFeedback]         = useState<string | null>(null);
@@ -3179,42 +3177,6 @@ function OrderDetailDrawer({
       setHistLoading(true);
       const data = await historyApi(orgSlug, { action: "customer", customerCode: order.header.customerCode });
       setCustomerHist(data.history ?? null);
-      setHistLoading(false);
-    }
-    if (tab === "desempeno_vendedor" && !sellerPerf) {
-      setHistLoading(true);
-      try {
-        const data = await historyApi(orgSlug, {
-          action: "seller_performance",
-          sellerName: order.header.sellerName ?? "",
-          sellerCode: order.header.sellerId ?? null,
-          source: order.sellerSource ?? "unknown",
-        });
-        setSellerPerf(data.performance ?? null);
-      } catch (err) {
-        console.error("[desempeno_vendedor] fetch error", err);
-        setSellerPerf(null);
-      } finally {
-        setHistLoading(false);
-      }
-    }
-    if (tab === "variantes" && !variantMetrics) {
-      setHistLoading(true);
-      const data = await historyApi(orgSlug, { action: "variant_metrics" });
-      setVariantMetrics(data.metrics ?? null);
-      setHistLoading(false);
-    }
-    if (tab === "demanda" && !demandData) {
-      setHistLoading(true);
-      try {
-        const res = await fetch(`/api/orgs/${orgSlug}/comercial/demand`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "snapshot" }),
-        });
-        const json = await res.json();
-        setDemandData(json.snapshot ?? null);
-      } catch { setDemandData(null); }
       setHistLoading(false);
     }
   }
@@ -3315,23 +3277,20 @@ function OrderDetailDrawer({
             <div style={{ fontFamily: T.mono, fontSize: T.sz.xl, fontWeight: T.wt.bold, color: C.ink }}>
               Pedido #{order.consecutivo}
             </div>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight, marginTop: 2 }}>
-              {order.header.customerName}
-              {order.header.sellerName ? (
-                <>
-                  {" · "}{order.header.sellerName}
-                  {order.sellerSource && (
+            {(() => {
+              const sellerInfo = resolveSellerDisplayText(order.origin, order.header.sellerName, order.sellerSource, order.sellerConfidence);
+              return (
+                <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight, marginTop: 2 }}>
+                  {order.header.customerName}
+                  {" · "}<span style={{ color: sellerInfo.status === "UNAVAILABLE" ? C.inkFaint : C.inkMid }}>{sellerInfo.text}</span>
+                  {sellerInfo.secondary && (
                     <span style={{ fontFamily: T.mono, fontSize: "9px", color: C.inkFaint, marginLeft: S[1] }}>
-                      ({order.sellerSource === "sag_movimientos" ? "SAG" : "CRM"} · {order.sellerConfidence === "high" ? "alta" : "media"})
+                      ({sellerInfo.secondary})
                     </span>
                   )}
-                </>
-              ) : (
-                <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginLeft: S[1] }}>
-                   · Vendedor no identificado en SAG
-                </span>
-              )}
-            </div>
+                </div>
+              );
+            })()}
             {order.commercialJourneyId && (
               <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginTop: 1 }}>
                 {order.commercialJourneyId}
@@ -3427,21 +3386,45 @@ function OrderDetailDrawer({
 
       {/* Tab bar */}
       <div style={{ display: "flex", gap: S[1], padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}` }}>
-        {tabBtn("lineas", "Lineas")}
+        {tabBtn("pedido", "Pedido")}
         {tabBtn("cumplimiento", "Cumplimiento")}
-        {tabBtn("variantes", "Variantes")}
         {tabBtn("historial_cliente", "Historial cliente")}
-        {tabBtn("desempeno_vendedor", "Desempe\u00f1o vendedor")}
-        {tabBtn("demanda", "Demanda")}
       </div>
 
       {/* Tab content */}
       <div style={{ flex: 1, overflow: "auto", padding: S[4] }}>
 
-        {/* Lineas tab */}
-        {activeTab === "lineas" && (
+        {/* Pedido tab (header + lines + commercial conditions + EMPTY_CONFIRMED) */}
+        {activeTab === "pedido" && (
           <>
-            <DrawerLinesTab activeLines={activeLines} order={order} />
+            {/* EMPTY_CONFIRMED handling */}
+            {activeLines.length === 0 && (() => {
+              const explanation = emptyOrderExplanation(activeLines.length, order.origin, order.status);
+              if (explanation) {
+                return (
+                  <div style={{
+                    ...panel, padding: S[4], marginBottom: S[3],
+                    background: C.surface, textAlign: "center",
+                  }}>
+                    <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid }}>
+                      {explanation}
+                    </div>
+                  </div>
+                );
+              }
+              return (
+                <div style={{
+                  ...panel, padding: S[4], marginBottom: S[3], textAlign: "center",
+                }}>
+                  <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkFaint }}>
+                    Sin lineas en este pedido.
+                  </div>
+                </div>
+              );
+            })()}
+            {activeLines.length > 0 && (
+              <DrawerLinesTab activeLines={activeLines} order={order} />
+            )}
             <DrawerCommercialConditions order={order} />
           </>
         )}
@@ -3451,24 +3434,9 @@ function OrderDetailDrawer({
           <FulfillmentPanel order={order} fulfillment={fulfillment} />
         )}
 
-        {/* Variant metrics tab */}
-        {activeTab === "variantes" && (
-          <VariantMetricsPanel metrics={variantMetrics} loading={histLoading} />
-        )}
-
-        {/* Customer history tab */}
+        {/* Customer history tab (lazy-loaded) */}
         {activeTab === "historial_cliente" && (
           <CustomerHistoryPanel history={customerHist} loading={histLoading} />
-        )}
-
-        {/* Seller performance tab (PEDIDOS-VENDEDOR-PERFORMANCE-01) */}
-        {activeTab === "desempeno_vendedor" && (
-          <SellerPerformancePanel performance={sellerPerf} loading={histLoading} />
-        )}
-
-        {/* Demand intelligence tab (PEDIDOS-DEMANDA-PRODUCCION-01) */}
-        {activeTab === "demanda" && (
-          <DemandIntelligencePanel data={demandData} loading={histLoading} refCode={order.lines[0]?.referenceCode} />
         )}
       </div>
 
@@ -4034,271 +4002,9 @@ function FulfillmentPanel({ order, fulfillment }: { order: OrderDraft; fulfillme
   );
 }
 
-// ── Variant Metrics Panel (PEDIDOS-VARIANT-ENRICHMENT-01) ────────────────────
+// VariantMetricsPanel removed — tab eliminated in OPERATIONS-REFINEMENT-01
 
-function VariantMetricsPanel({
-  metrics,
-  loading,
-}: {
-  metrics: any;
-  loading: boolean;
-}) {
-  if (loading) {
-    return (
-      <div style={{ ...panel, padding: S[4], textAlign: "center" }}>
-        <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid }}>Cargando metricas...</div>
-      </div>
-    );
-  }
-
-  if (!metrics) {
-    return (
-      <div style={{ ...panel, padding: S[4], textAlign: "center" }}>
-        <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid }}>Sin datos de variantes</div>
-      </div>
-    );
-  }
-
-  const rankStyle = {
-    fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint,
-    width: 20, textAlign: "right" as const, flexShrink: 0,
-  };
-  const nameStyle = {
-    fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink,
-    flex: 1, overflow: "hidden" as const, textOverflow: "ellipsis" as const,
-    whiteSpace: "nowrap" as const,
-  };
-  const valStyle = {
-    fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
-    color: C.ink, textAlign: "right" as const, width: 60, flexShrink: 0,
-  };
-  const ordStyle = {
-    fontFamily: T.mono, fontSize: "9px", color: C.inkFaint,
-    textAlign: "right" as const, width: 50, flexShrink: 0,
-  };
-
-  const renderRank = (title: string, items: Array<{ value: string; units: number; orders: number }>) => (
-    <div style={{ ...panel, marginBottom: S[3] }}>
-      <div style={{
-        fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold,
-        color: C.ink, padding: `${S[2]}px ${S[3]}px`,
-        borderBottom: `1px solid ${C.line}`, background: C.surfaceAlt,
-      }}>
-        {title}
-      </div>
-      {items.length === 0 ? (
-        <div style={{ padding: S[3], fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint }}>
-          Sin datos
-        </div>
-      ) : items.map((item, i) => (
-        <div key={i} style={{
-          display: "flex", alignItems: "center", gap: S[2],
-          padding: `${S[1]}px ${S[3]}px`,
-          borderBottom: i < items.length - 1 ? `1px solid ${C.lineSubtle}` : "none",
-        }}>
-          <span style={rankStyle}>{i + 1}</span>
-          <span style={nameStyle}>{item.value}</span>
-          <span style={valStyle}>{Math.round(item.units).toLocaleString()}</span>
-          <span style={ordStyle}>{item.orders} ped</span>
-        </div>
-      ))}
-    </div>
-  );
-
-  return (
-    <>
-      <div style={{
-        fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint,
-        marginBottom: S[2],
-      }}>
-        Ultimos 30 dias
-      </div>
-      {renderRank("Top tallas vendidas", metrics.topSizes ?? [])}
-      {renderRank("Top colores vendidos", metrics.topColors ?? [])}
-      {renderRank("Top subgrupos vendidos", metrics.topSubgrupos ?? [])}
-    </>
-  );
-}
-
-// ── Demand Intelligence Panel (PEDIDOS-DEMANDA-PRODUCCION-01) ───────────────
-
-function DemandIntelligencePanel({
-  data,
-  loading,
-  refCode,
-}: {
-  data: any;
-  loading: boolean;
-  refCode?: string;
-}) {
-  if (loading) {
-    return (
-      <div style={{ ...panel, padding: S[4], textAlign: "center" }}>
-        <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid }}>Cargando inteligencia de demanda...</div>
-      </div>
-    );
-  }
-
-  if (!data) {
-    return (
-      <div style={{ ...panel, padding: S[4], textAlign: "center" }}>
-        <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid }}>Sin datos de demanda</div>
-      </div>
-    );
-  }
-
-  const kpiCard = (label: string, value: string | number, sub?: string) => (
-    <div style={{
-      ...panel, padding: `${S[2]}px ${S[3]}px`, flex: 1, minWidth: 100,
-    }}>
-      <div style={{ fontFamily: T.mono, fontSize: "9px", color: C.inkFaint, textTransform: "uppercase" as const }}>{label}</div>
-      <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: C.ink }}>{value}</div>
-      {sub && <div style={{ fontFamily: T.mono, fontSize: "9px", color: C.inkFaint }}>{sub}</div>}
-    </div>
-  );
-
-  const coverageBadge = (status: string) => {
-    const colors: Record<string, string> = {
-      sin_stock: C.red, ruptura_inminente: C.amber, cobertura_baja: C.amber,
-      cobertura_estable: C.green, cobertura_alta: C.green, sin_demanda: C.inkFaint,
-    };
-    const labels: Record<string, string> = {
-      sin_stock: "Sin stock", ruptura_inminente: "Ruptura inminente",
-      cobertura_baja: "Cobertura baja", cobertura_estable: "Estable",
-      cobertura_alta: "Alta", sin_demanda: "Sin demanda",
-    };
-    return (
-      <span style={{
-        fontFamily: T.mono, fontSize: "9px", fontWeight: T.wt.semibold,
-        color: colors[status] ?? C.inkMid,
-      }}>
-        {labels[status] ?? status}
-      </span>
-    );
-  };
-
-  // Find current order's ref in the snapshot
-  const orderRef = refCode ? (data.entries as any[])?.find((e: any) => e.refCode === refCode) : null;
-
-  return (
-    <>
-      {/* Summary KPIs */}
-      <div style={{ display: "flex", gap: S[2], marginBottom: S[3], flexWrap: "wrap" }}>
-        {kpiCard("Refs activos", data.totalRefs?.toLocaleString() ?? "\u2014")}
-        {kpiCard("Con demanda", data.refsWithDemand?.toLocaleString() ?? "\u2014")}
-        {kpiCard("Sin stock", data.refsInStockout ?? "\u2014", data.refsRuptureImminent ? `${data.refsRuptureImminent} ruptura` : undefined)}
-        {kpiCard("Vel. diaria", `${data.avgDailyVelocity?.toLocaleString() ?? "\u2014"} uds`)}
-      </div>
-
-      {/* 30d summary strip */}
-      <div style={{
-        ...panel, padding: `${S[2]}px ${S[3]}px`, marginBottom: S[3],
-        display: "flex", gap: S[4], flexWrap: "wrap",
-      }}>
-        <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>
-          30d: <strong style={{ color: C.ink }}>{(data.totalUnits30d ?? 0).toLocaleString()}</strong> uds
-        </span>
-        <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>
-          <strong style={{ color: C.ink }}>{(data.totalOrders30d ?? 0).toLocaleString()}</strong> pedidos
-        </span>
-        <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>
-          Stock total: <strong style={{ color: C.ink }}>{(data.totalStock ?? 0).toLocaleString()}</strong>
-        </span>
-      </div>
-
-      {/* Current order ref context */}
-      {orderRef && (
-        <div style={{
-          ...panel, marginBottom: S[3], background: C.surfaceAlt,
-          borderLeft: `3px solid ${C.blueDark}`,
-        }}>
-          <div style={{
-            padding: `${S[2]}px ${S[3]}px`,
-            fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.blueDark,
-          }}>
-            Ref del pedido: {orderRef.refCode}
-          </div>
-          <div style={{ padding: `0 ${S[3]}px ${S[2]}px`, display: "flex", gap: S[4], flexWrap: "wrap" }}>
-            <span style={{ fontFamily: T.mono, fontSize: "9px", color: C.inkMid }}>
-              Stock: <strong>{orderRef.currentStock}</strong>
-            </span>
-            <span style={{ fontFamily: T.mono, fontSize: "9px", color: C.inkMid }}>
-              Vel: <strong>{orderRef.dailyVelocity}</strong> uds/dia
-            </span>
-            <span style={{ fontFamily: T.mono, fontSize: "9px", color: C.inkMid }}>
-              Cob: <strong>{orderRef.coverageDays ?? "\u2014"}</strong> dias
-            </span>
-            {coverageBadge(orderRef.coverageStatus)}
-          </div>
-        </div>
-      )}
-
-      {/* Top demand refs */}
-      <div style={{ ...panel, marginBottom: S[3] }}>
-        <div style={{
-          fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold,
-          color: C.ink, padding: `${S[2]}px ${S[3]}px`,
-          borderBottom: `1px solid ${C.line}`, background: C.surfaceAlt,
-        }}>
-          Top refs por velocidad de demanda
-        </div>
-        {(data.entries as any[])?.slice(0, 10).map((e: any, i: number) => (
-          <div key={e.refCode} style={{
-            display: "flex", alignItems: "center", gap: S[2],
-            padding: `${S[1]}px ${S[3]}px`,
-            borderBottom: i < 9 ? `1px solid ${C.lineSubtle}` : "none",
-            background: e.refCode === refCode ? `${C.blueDark}08` : "transparent",
-          }}>
-            <span style={{ fontFamily: T.mono, fontSize: "9px", color: C.inkFaint, width: 18, textAlign: "right" }}>{i + 1}</span>
-            <span style={{
-              fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink,
-              flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-            }} title={e.productName}>
-              {e.refCode}
-            </span>
-            <span style={{ fontFamily: T.mono, fontSize: "9px", color: C.inkFaint, width: 45, textAlign: "right" }}>
-              {e.dailyVelocity} /d
-            </span>
-            <span style={{ fontFamily: T.mono, fontSize: "9px", color: C.inkFaint, width: 40, textAlign: "right" }}>
-              stk {e.currentStock}
-            </span>
-            <span style={{ width: 65 }}>{coverageBadge(e.coverageStatus)}</span>
-          </div>
-        ))}
-      </div>
-
-      {/* Critical stockouts */}
-      {(data.refsInStockout ?? 0) > 0 && (
-        <div style={{ ...panel }}>
-          <div style={{
-            fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold,
-            color: C.red, padding: `${S[2]}px ${S[3]}px`,
-            borderBottom: `1px solid ${C.line}`, background: C.redLight,
-          }}>
-            Stockouts con demanda activa ({data.refsInStockout})
-          </div>
-          {(data.entries as any[])
-            ?.filter((e: any) => e.coverageStatus === "sin_stock" && e.dailyVelocity > 0)
-            .slice(0, 8)
-            .map((e: any, i: number) => (
-              <div key={e.refCode} style={{
-                display: "flex", alignItems: "center", gap: S[2],
-                padding: `${S[1]}px ${S[3]}px`,
-                borderBottom: `1px solid ${C.lineSubtle}`,
-              }}>
-                <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink, flex: 1 }} title={e.productName}>
-                  {e.refCode}
-                </span>
-                <span style={{ fontFamily: T.mono, fontSize: "9px", color: C.red }}>
-                  {e.dailyVelocity} uds/dia sin stock
-                </span>
-              </div>
-            ))}
-        </div>
-      )}
-    </>
-  );
-}
+// DemandIntelligencePanel removed — tab eliminated in OPERATIONS-REFINEMENT-01
 
 // ── Customer History Panel ──────────────────────────────────────────────────
 
@@ -4422,166 +4128,7 @@ function CustomerHistoryPanel({
   );
 }
 
-// ── Seller Performance Panel (PEDIDOS-VENDEDOR-PERFORMANCE-01) ────────────
-
-function SellerPerformancePanel({
-  performance,
-  loading,
-}: {
-  performance: SellerPerformance | null;
-  loading: boolean;
-}) {
-  if (loading) {
-    return <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkFaint, textAlign: "center", padding: S[6] }}>
-      Cargando desempe\u00f1o del vendedor...
-    </div>;
-  }
-
-  if (!performance || performance.kpis.totalOrders === 0) {
-    return <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight, textAlign: "center", padding: S[6] }}>
-      Informaci\u00f3n de desempe\u00f1o en construcci\u00f3n. Los datos se calculan con pedidos SAG que tengan vendedor asignado.
-    </div>;
-  }
-
-  const { kpis, recentOrders, topClients, topSubgrupos, topSizes, topColors, alerts } = performance;
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-      {/* Seller identity */}
-      <div style={{ ...panel, padding: S[3], display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold, color: C.ink }}>
-            {performance.sellerName}
-          </div>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
-            {performance.source === "sag_movimientos" ? "Fuente: SAG" : performance.source === "crm_quote_history" ? "Fuente: CRM" : "Fuente: desconocida"}
-            {performance.sellerCode ? ` \u00b7 C\u00f3digo: ${performance.sellerCode}` : ""}
-          </div>
-        </div>
-      </div>
-
-      {/* KPIs */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: S[2] }}>
-        <MiniStat label="Pedidos" value={String(kpis.totalOrders)} color={C.ink} />
-        <MiniStat label="Unidades" value={kpis.totalUnits > 0 ? kpis.totalUnits.toLocaleString() : "\u2014"} color={C.ink} />
-        <MiniStat label="Valor total" value={kpis.totalValue > 0 ? `$${kpis.totalValue.toLocaleString()}` : "\u2014"} color={C.green} />
-        <MiniStat label="Clientes" value={String(kpis.totalCustomers)} color={C.blueDark} />
-        <MiniStat label="Ticket promedio" value={kpis.avgTicket > 0 ? `$${kpis.avgTicket.toLocaleString()}` : "\u2014"} color={C.inkMid} />
-      </div>
-
-      {/* Alerts */}
-      {alerts.length > 0 && (
-        <div style={{ ...panel, padding: S[3] }}>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink, marginBottom: S[2] }}>
-            Alertas
-          </div>
-          {alerts.map((a, i) => (
-            <div key={i} style={{
-              ...dataRow, fontFamily: T.mono, fontSize: T.sz.xs,
-              display: "flex", alignItems: "center", gap: S[2],
-            }}>
-              <span style={{
-                fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                padding: "1px 6px", borderRadius: R.sm,
-                background: a.type === "stockout" ? `${C.red}14` : a.type === "inactive_client" ? `${C.amber}14` : C.surfaceAlt,
-                color: a.type === "stockout" ? C.red : a.type === "inactive_client" ? C.amber : C.inkMid,
-              }}>
-                {a.type === "stockout" ? "Sin stock" : a.type === "inactive_client" ? "Inactivo" : a.type}
-              </span>
-              <span style={{ color: C.ink }}>{a.label}</span>
-              <span style={{ color: C.inkFaint, marginLeft: "auto" }}>{a.detail}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Recent orders */}
-      {recentOrders.length > 0 && (
-        <div style={{ ...panel, padding: S[3] }}>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink, marginBottom: S[2] }}>
-            \u00daltimos pedidos
-          </div>
-          {recentOrders.map((o, i) => (
-            <div key={i} style={{
-              ...dataRow, fontFamily: T.mono, fontSize: T.sz.xs,
-              display: "flex", justifyContent: "space-between", alignItems: "center",
-            }}>
-              <span style={{ color: C.ink }}>#{o.consecutivo} \u00b7 {o.customerName}</span>
-              <span style={{ color: C.inkMid }}>
-                {o.totalUnits > 0 ? `${o.totalUnits} uds` : ""} \u00b7 ${o.totalValue.toLocaleString()}
-              </span>
-              <span style={{ color: C.inkFaint, fontSize: T.sz["2xs"] }}>
-                {formatDateShort(o.orderDate)}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Top clients + Top subgrupos side-by-side */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
-        {topClients.length > 0 && (
-          <div style={{ ...panel, padding: S[3] }}>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink, marginBottom: S[2] }}>
-              Top clientes
-            </div>
-            {topClients.map((c, i) => (
-              <div key={i} style={{ ...dataRow, fontFamily: T.mono, fontSize: T.sz.xs, display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: C.ink }}>{c.customerName}</span>
-                <span style={{ color: C.inkMid }}>{c.orders} ped \u00b7 ${c.totalValue.toLocaleString()}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {topSubgrupos.length > 0 && (
-          <div style={{ ...panel, padding: S[3] }}>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink, marginBottom: S[2] }}>
-              Top subgrupos
-            </div>
-            {topSubgrupos.map((s, i) => (
-              <div key={i} style={{ ...dataRow, fontFamily: T.mono, fontSize: T.sz.xs, display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: C.ink }}>{s.label}</span>
-                <span style={{ color: C.inkMid }}>{s.units} uds \u00b7 {s.pct}%</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Top sizes + Top colors side-by-side */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
-        {topSizes.length > 0 && (
-          <div style={{ ...panel, padding: S[3] }}>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink, marginBottom: S[2] }}>
-              Top tallas
-            </div>
-            {topSizes.map((s, i) => (
-              <div key={i} style={{ ...dataRow, fontFamily: T.mono, fontSize: T.sz.xs, display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: C.ink }}>{s.label}</span>
-                <span style={{ color: C.inkMid }}>{s.units} uds \u00b7 {s.pct}%</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {topColors.length > 0 && (
-          <div style={{ ...panel, padding: S[3] }}>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink, marginBottom: S[2] }}>
-              Top colores
-            </div>
-            {topColors.map((c, i) => (
-              <div key={i} style={{ ...dataRow, fontFamily: T.mono, fontSize: T.sz.xs, display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: C.ink }}>{c.label}</span>
-                <span style={{ color: C.inkMid }}>{c.units} uds \u00b7 {c.pct}%</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+// SellerPerformancePanel removed — tab eliminated in OPERATIONS-REFINEMENT-01
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
 
