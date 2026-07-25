@@ -39,7 +39,7 @@ import { inferProductClass } from "./active-inventory";
  * Infer commercial size class from product attributes.
  *
  * Heuristic based on product class and category:
- *   bulky (cunas, coches, muebles) → large/oversized
+ *   bulky (cunas, coches, muebles) → large
  *   accessory (bolsos, maletas)    → small/medium
  *   other                          → medium (default)
  */
@@ -52,9 +52,7 @@ export function inferSizeClass(v: {
   const pc = v.productClass ?? inferProductClass({ ...v, size: "", color: "" });
 
   if (pc === "bulky") {
-    if (/CUNA|COCHE/.test(cat)) return "large";
-    if (/MUEBLE|EXHIB/.test(cat)) return "oversized";
-    if (/SILLA|CORRAL|CAMINADOR|MOTO/.test(cat)) return "large";
+    // All bulky products map to "large" — canonical sizeClass = GRANDE
     return "large";
   }
 
@@ -251,7 +249,6 @@ const LABEL_SIZE: Record<string, string> = {
   small:     "pequenos",
   medium:    "medianos",
   large:     "grandes",
-  oversized: "extra grandes",
 };
 
 const LABEL_CLASS: Record<string, string> = {

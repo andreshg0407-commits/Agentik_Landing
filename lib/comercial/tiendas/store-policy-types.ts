@@ -34,12 +34,15 @@ export type StoreProductClass = "textile" | "bulky" | "accessory" | "other";
 /**
  * Commercial size class — determines space constraints for non-textile products.
  *
- *   small     — productos pequenos (accesorios, bolsos)
- *   medium    — productos medianos (maletas medianas, sillas)
- *   large     — productos grandes (cunas, coches)
- *   oversized — productos extra grandes (muebles, exhibidores)
+ *   small     — PEQUENO (accesorios, bolsos)
+ *   medium    — MEDIANO (maletas medianas, sillas)
+ *   large     — GRANDE (cunas, coches, muebles)
+ *
+ * Canonical source: ProductEntity.handlingUnit normalized by Inventario Canonico.
+ * Shared by: Inventario, Maletas, Importaciones, Tiendas.
+ * Tiendas NEVER resolves sizeClass locally — it consumes the canonical value.
  */
-export type StoreSizeClass = "small" | "medium" | "large" | "oversized";
+export type StoreSizeClass = "small" | "medium" | "large";
 
 // ── Policy scope ────────────────────────────────────────────────────────────
 
@@ -127,6 +130,12 @@ export interface StorePolicyRule {
 
   /** How this rule defines coverage — SUBGROUP (textil) or SIZE (importacion) */
   coverageStrategy?: CoverageStrategy;
+
+  /** Vigencia — optional temporal applicability */
+  validFrom?: string | null;
+  validTo?:   string | null;
+  season?:    string | null;
+  notes?:     string | null;
 }
 
 // ── Store policy (aggregate) ────────────────────────────────────────────────

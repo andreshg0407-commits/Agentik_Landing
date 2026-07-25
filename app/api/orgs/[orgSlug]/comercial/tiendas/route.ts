@@ -32,17 +32,56 @@ import {
   getMainWarehouse,
   getMainWarehouseAvailability,
 } from "@/lib/comercial/tiendas/sag-store-adapter";
+import {
+  buildCanonicalStoreDistribution,
+  getCanonicalStoreDetail,
+} from "@/lib/comercial/tiendas/store-distribution-service";
+import {
+  getEffectiveStoreConfig,
+  previewRuleImpact,
+  saveDistributionConfig,
+  canEditDistributionConfig,
+} from "@/lib/comercial/tiendas/store-distribution-actions";
+import {
+  resolveActiveStores,
+  resolveInactiveStores,
+  activateStore,
+  deactivateStore,
+  canManageStoreGovernance,
+  assertStoreActive,
+} from "@/lib/comercial/tiendas/store-governance-service";
+import { STORE_INACTIVE_CODE, STORE_INACTIVE_MESSAGE } from "@/lib/comercial/tiendas/store-governance-types";
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ orgSlug: string }> },
 ) {
   const { orgSlug } = await params;
-  const { organization } = await requireOrgAccess(orgSlug);
+  const { organization, membership, user } = await requireOrgAccess(orgSlug);
   const orgId = organization.id;
 
   const body = await req.json();
   const action = body.action as string;
+
+  // TERCERO — Guard: reject operational actions for inactive stores
+  const GUARDED_ACTIONS = new Set([
+    "store_detail", "store_summary", "store_inventory",
+    "store_shortages", "store_suggestions", "store_textile_coverage",
+    "store_distribution_detail", "distribution_effective_config",
+    "distribution_preview_impact", "distribution_save_config",
+  ]);
+  if (GUARDED_ACTIONS.has(action) && body.storeId) {
+    try {
+      await assertStoreActive(orgId, body.storeId as string);
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message === "STORE_INACTIVE") {
+        return NextResponse.json(
+          { error: STORE_INACTIVE_MESSAGE, code: STORE_INACTIVE_CODE },
+          { status: 409 },
+        );
+      }
+    }
+  }
 
   switch (action) {
     case "store_detail": {
@@ -183,6 +222,120 @@ export async function POST(
         return NextResponse.json({ results: results.slice(0, 100) });
       } catch {
         return NextResponse.json({ results: [] });
+      }
+    }
+
+    case "store_distribution": {
+      try {
+        const distribution = await buildCanonicalStoreDistribution(orgId);
+        return NextResponse.json({ distribution });
+      } catch {
+        return NextResponse.json({ distribution: null });
+      }
+    }
+
+    case "store_distribution_detail": {
+      const storeId = body.storeId as string;
+      if (!storeId) return NextResponse.json({ error: "Missing storeId" }, { status: 400 });
+      try {
+        const detail = await getCanonicalStoreDetail(orgId, storeId);
+        return NextResponse.json({ detail });
+      } catch {
+        return NextResponse.json({ detail: null });
+      }
+    }
+
+    case "distribution_effective_config": {
+      const storeId = body.storeId as string;
+      if (!storeId) return NextResponse.json({ error: "Missing storeId" }, { status: 400 });
+      try {
+        const config = await getEffectiveStoreConfig(orgId, storeId);
+        const editable = canEditDistributionConfig(membership.role);
+        return NextResponse.json({ config, editable });
+      } catch {
+        return NextResponse.json({ config: null, editable: false });
+      }
+    }
+
+    case "distribution_preview_impact": {
+      const storeId = body.storeId as string;
+      const proposedConfig = body.proposedConfig;
+      if (!storeId || !proposedConfig) {
+        return NextResponse.json({ error: "Missing storeId or proposedConfig" }, { status: 400 });
+      }
+      try {
+        const preview = await previewRuleImpact(orgId, storeId, proposedConfig);
+        return NextResponse.json({ preview });
+      } catch {
+        return NextResponse.json({ preview: null });
+      }
+    }
+
+    case "distribution_save_config": {
+      const storeId = body.storeId as string;
+      const storeName = body.storeName as string;
+      const config = body.config;
+      const motivo = (body.motivo as string) || "Sin motivo especificado";
+      if (!storeId || !config) {
+        return NextResponse.json({ error: "Missing storeId or config" }, { status: 400 });
+      }
+      const result = await saveDistributionConfig({
+        orgId,
+        storeId,
+        storeName: storeName || storeId,
+        userId: user.id,
+        role: membership.role,
+        config,
+        motivo,
+      });
+      if (!result.ok) {
+        // Validation errors → 400; permission errors → 403
+        const status = result.validationErrors ? 400 : 403;
+        return NextResponse.json({ error: result.error, validationErrors: result.validationErrors }, { status });
+      }
+      return NextResponse.json({ ok: true, config: result.config });
+    }
+
+    // ── GOVERNANCE (AGENTIK-STORES-ACTIVE-STORE-GOVERNANCE-01) ──────────────
+
+    case "store_governance_list": {
+      const active   = await resolveActiveStores(orgId);
+      const inactive = await resolveInactiveStores(orgId);
+      const canManage = canManageStoreGovernance(membership.role);
+      return NextResponse.json({ active, inactive, canManage });
+    }
+
+    case "store_activate": {
+      if (!canManageStoreGovernance(membership.role)) {
+        return NextResponse.json({ error: "Permiso insuficiente" }, { status: 403 });
+      }
+      const storeId = body.storeId as string;
+      if (!storeId) return NextResponse.json({ error: "Missing storeId" }, { status: 400 });
+      try {
+        const record = await activateStore(orgId, storeId, user.id, membership.role);
+        return NextResponse.json({ ok: true, store: record });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Error";
+        return NextResponse.json({ error: msg }, { status: 422 });
+      }
+    }
+
+    case "store_deactivate": {
+      if (!canManageStoreGovernance(membership.role)) {
+        return NextResponse.json({ error: "Permiso insuficiente" }, { status: 403 });
+      }
+      const storeId = body.storeId as string;
+      const reason  = body.reason as string;
+      if (!storeId) return NextResponse.json({ error: "Missing storeId" }, { status: 400 });
+      if (!reason || reason.trim().length === 0) {
+        return NextResponse.json({ error: "Motivo obligatorio al desactivar" }, { status: 400 });
+      }
+      try {
+        const record = await deactivateStore(orgId, storeId, reason, user.id, membership.role);
+        return NextResponse.json({ ok: true, store: record });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Error";
+        return NextResponse.json({ error: msg }, { status: 422 });
       }
     }
 

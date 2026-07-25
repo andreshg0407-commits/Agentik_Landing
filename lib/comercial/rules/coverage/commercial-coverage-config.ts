@@ -23,7 +23,6 @@ export const SIZE_LABEL: Record<StoreSizeClass, string> = {
   small: "Pequeno",
   medium: "Mediano",
   large: "Grande",
-  oversized: "Extra grande",
 };
 
 // ── Scope priority (lower = more specific = wins) ───────────────────────────

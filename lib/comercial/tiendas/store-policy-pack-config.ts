@@ -32,6 +32,16 @@ export const CASTILLITOS_TEXTILE_COVERAGE: TextileCoverageConfig = {
   maximumUnits: 12,
 };
 
+/**
+ * Latin Kids textile defaults — independent from Castillitos.
+ * Initially identical values; can be configured independently per tenant.
+ */
+export const LATIN_KIDS_TEXTILE_COVERAGE: TextileCoverageConfig = {
+  minimumUnits: 8,
+  idealUnits: 10,
+  maximumUnits: 12,
+};
+
 // ── FASE 3: Global Low Stock (Rule 36) ──────────────────────────────────────
 
 export interface GlobalLowStockConfig {
@@ -61,7 +71,6 @@ export const CASTILLITOS_ACCESSORY_COVERAGE: AccessoryCoverageConfig = {
     small: 6,
     medium: 4,
     large: 1,
-    oversized: 1,
   },
 };
 
@@ -122,26 +131,61 @@ export const CASTILLITOS_SLOW_ROTATION: SlowRotationConfig = {
   minimumDaysThreshold: 90,
 };
 
+// ── FASE 8: Replacement / Substitution Config ─────────────────────────────
+
+export type ReplacementMatchMode = "SAME_GROUP_AND_SUBGROUP" | "SAME_SUBGROUP";
+
+export interface ReplacementLineConfig {
+  /** Allow substitution when same-reference stock is exhausted */
+  allowReplacementWhenNoStock: boolean;
+  /** Matching mode for substitution candidates */
+  replacementMatchMode: ReplacementMatchMode;
+  /** Max candidates to return per need */
+  maxCandidates: number;
+}
+
+export interface ReplacementConfig {
+  castillitos: ReplacementLineConfig;
+  latinKids: ReplacementLineConfig;
+}
+
+export const CASTILLITOS_REPLACEMENT_CONFIG: ReplacementConfig = {
+  castillitos: {
+    allowReplacementWhenNoStock: true,
+    replacementMatchMode: "SAME_GROUP_AND_SUBGROUP",
+    maxCandidates: 3,
+  },
+  latinKids: {
+    allowReplacementWhenNoStock: true,
+    replacementMatchMode: "SAME_SUBGROUP",
+    maxCandidates: 3,
+  },
+};
+
 // ── Full Policy Pack Config ─────────────────────────────────────────────────
 
 export interface StorePolicyPackConfig {
   tenantId: string;
   version: string;
   textileCoverage: TextileCoverageConfig;
+  latinKidsTextileCoverage: TextileCoverageConfig;
   globalLowStock: GlobalLowStockConfig;
   accessoryCoverage: AccessoryCoverageConfig;
   specialProducts: SpecialProductConfig;
   automaticMarkdown: AutomaticMarkdownConfig;
   slowRotation: SlowRotationConfig;
+  replacement: ReplacementConfig;
 }
 
 export const CASTILLITOS_STORE_POLICY_PACK_CONFIG: StorePolicyPackConfig = {
   tenantId: "castillitos",
-  version: "1.0.0",
+  version: "1.1.0",
   textileCoverage: CASTILLITOS_TEXTILE_COVERAGE,
+  latinKidsTextileCoverage: LATIN_KIDS_TEXTILE_COVERAGE,
   globalLowStock: CASTILLITOS_GLOBAL_LOW_STOCK,
   accessoryCoverage: CASTILLITOS_ACCESSORY_COVERAGE,
   specialProducts: CASTILLITOS_SPECIAL_PRODUCTS,
   automaticMarkdown: CASTILLITOS_AUTOMATIC_MARKDOWN,
   slowRotation: CASTILLITOS_SLOW_ROTATION,
+  replacement: CASTILLITOS_REPLACEMENT_CONFIG,
 };
