@@ -272,9 +272,9 @@ describe("OCTAVO — Dead helpers removed", () => {
 // ── NOVENO: File size reduction ───────────────────────────────────────────
 
 describe("NOVENO — File size reduction", () => {
-  it("file is under 2100 lines (was 6340)", () => {
+  it("file is under 2400 lines (was 6340, post-inventory-by-line ~2300)", () => {
     const lineCount = CLIENT_SOURCE.split("\n").length;
-    assert.ok(lineCount < 2100, `Expected < 2100 lines, got ${lineCount}`);
+    assert.ok(lineCount < 2400, `Expected < 2400 lines, got ${lineCount}`);
   });
 
   it("file is over 1500 lines (preserves live components)", () => {

@@ -30,6 +30,89 @@ import type {
 } from "@/lib/comercial/tiendas/store-distribution-types";
 import { ACTIVE_STORE_SLUGS } from "@/lib/comercial/tiendas/store-distribution-types";
 import type { StoreGovernanceRecord } from "@/lib/comercial/tiendas/store-governance-types";
+import { StoreSupplyRulesTab } from "@/components/comercial/store-supply-rules-tab";
+
+// ── Inventory-by-line types (client-side, mirrors server types) ──────────────
+
+interface InvReplacementVariant {
+  variantKey: string;
+  size: string | null;
+  color: string | null;
+  mainWarehouseQty: number;
+  availableQty: number | null;
+  stockQuality: string;
+}
+
+interface InvReplacementBrief {
+  candidateRef: string;
+  candidateDesc: string;
+  candidateImageUrl: string | null;
+  suggestedQty: number;
+  ruleSource: string;
+  shortageQty: number;
+  candidateMainStock: number;
+  candidateStoreStock: number;
+  coveredQty: number;
+  remainingShortageQty: number;
+  stockQuality: string;
+  evidenceDate: string;
+  // Variant detail (REPLACEMENT-VARIANTS-01)
+  replacementVariants: InvReplacementVariant[];
+  totalVariantCount: number;
+  displayedVariantCount: number;
+  totalVariantUnits: number;
+  variantEvidenceDate: string;
+}
+
+interface InvConsolidatedRef {
+  referenceCode: string;
+  productName: string;
+  imageUrl: string | null;
+  line: string;
+  canonicalLine: string;
+  world: string;
+  group: string;
+  subgroup: string;
+  sizeClass: string | null;
+  currentStoreQty: number;
+  mainWarehouseQty: number;
+  minUnits: number;
+  idealUnits: number;
+  maxUnits: number;
+  inventoryState: string;
+  configState: string;
+  unclassifiedReason: string | null;
+  variantCount: number;
+  hasReplacement: boolean;
+  replacementBrief: InvReplacementBrief | null;
+}
+
+type InvSortBy = "QUANTITY_ASC" | "QUANTITY_DESC" | "REFERENCE_ASC" | "REFERENCE_DESC";
+type InvKpiFilter = "ALL" | "BELOW_MINIMUM" | "HEALTHY" | "HAS_REPLACEMENT";
+
+interface InvVariant {
+  referenceCode: string;
+  size: string;
+  color: string;
+  storeQty: number;
+  mainQty: number;
+  inventoryState: string;
+}
+
+interface InvByLineResponse {
+  line: string;
+  summary: { type: string; data: Record<string, unknown> };
+  items: InvConsolidatedRef[];
+  pagination: { page: number; pageSize: number; total: number; totalPages: number };
+  availableFilters: {
+    groups: string[];
+    subgroups: string[];
+    sizeClasses: string[];
+    inventoryStates: string[];
+    unclassifiedReasons: string[];
+  };
+  dataFreshness: string | null;
+}
 
 // ── Props (STABILIZATION-PERFORMANCE-01) ─────────────────────────────────────
 // page.tsx only passes orgSlug + orgId. All data loads lazily via API.
@@ -50,7 +133,12 @@ async function tiendaApi(orgSlug: string, body: Record<string, unknown>) {
     headers: { "Content-Type": "application/json" },
     body:    JSON.stringify(body),
   });
-  return res.json();
+  const data = await res.json();
+  if (!res.ok) {
+    // Propagate server error as part of the response so callers can check data.error
+    return { ...data, _httpStatus: res.status };
+  }
+  return data;
 }
 
 
@@ -62,10 +150,8 @@ export function TiendasClient({ orgSlug }: Props) {
   const [distLoading, setDistLoading]   = useState(true);
   const [distError, setDistError]       = useState(false);
 
-  // ── Drawer state (QUINTO — progressive per-store loading) ─────────────────
+  // ── Drawer state (QUINTO — lazy per-store loading) ──────────────────────
   const [selectedStoreCard, setSelectedStoreCard] = useState<CanonicalStoreCard | null>(null);
-  const [storeDetail, setStoreDetail]             = useState<CanonicalStoreDetail | null>(null);
-  const [detailLoading, setDetailLoading]         = useState(false);
 
   // ── Governance: inactive stores (GOVERNANCE-01) ──────────────────────────
   const [inactiveStores, setInactiveStores] = useState<StoreGovernanceRecord[]>([]);
@@ -125,26 +211,13 @@ export function TiendasClient({ orgSlug }: Props) {
     return () => { cancelled = true; };
   }, [orgSlug]);
 
-  // ── QUINTO: Open store drawer (progressive) ──────────────────────────────
-  async function openStoreDrawer(card: CanonicalStoreCard) {
+  // ── QUINTO: Open store drawer (lazy — detail loaded by drawer on demand) ──
+  function openStoreDrawer(card: CanonicalStoreCard) {
     setSelectedStoreCard(card);
-    setStoreDetail(null);
-    setDetailLoading(true);
-    try {
-      const res = await fetch(`/api/orgs/${orgSlug}/comercial/tiendas`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "store_distribution_detail", storeId: card.store.id }),
-      });
-      const data = await res.json();
-      if (data.detail) setStoreDetail(data.detail);
-    } catch { /* silent */ }
-    setDetailLoading(false);
   }
 
   function closeDrawer() {
     setSelectedStoreCard(null);
-    setStoreDetail(null);
   }
 
   // ── Retry distribution load ──────────────────────────────────────────────
@@ -521,8 +594,6 @@ export function TiendasClient({ orgSlug }: Props) {
             <DistributionStoreDrawer
               orgSlug={orgSlug}
               storeCard={selectedStoreCard}
-              detail={storeDetail}
-              detailLoading={detailLoading}
               onClose={closeDrawer}
             />
           )}
@@ -1436,6 +1507,165 @@ const DIST_HEALTH_LABEL: Record<StoreDistributionHealthStatus, string> = {
   sin_reglas:       "Sin reglas",
 };
 
+// ── Inventory-by-line constants (AGENTIK-STORES-INVENTORY-BY-LINE-01) ────────
+
+const INV_STATE_LABEL: Record<string, string> = {
+  BAJO_MINIMO:             "Bajo minimo",
+  EN_RANGO:                "En rango",
+  EXCESO:                  "Exceso",
+  SIN_REGLA:               "Sin regla",
+  AGOTADO:                 "Agotado",
+  CLASIFICACION_PENDIENTE: "Clasificacion pendiente",
+};
+
+const INV_STATE_COLOR: Record<string, { bg: string; text: string }> = {
+  BAJO_MINIMO:             { bg: C.redLight,    text: C.red },
+  EN_RANGO:                { bg: C.greenLight,  text: C.green },
+  EXCESO:                  { bg: C.amberLight,  text: C.amber },
+  SIN_REGLA:               { bg: C.surface,     text: C.inkFaint },
+  AGOTADO:                 { bg: C.redLight,    text: C.red },
+  CLASIFICACION_PENDIENTE: { bg: C.amberLight,  text: C.amber },
+};
+
+const INV_SIZE_LABEL: Record<string, string> = {
+  small:  "Pequeno",
+  medium: "Mediano",
+  large:  "Grande",
+};
+
+const INV_UNCLASSIFIED_LABEL: Record<string, string> = {
+  linea_ausente:           "Linea comercial ausente",
+  grupo_ausente:           "Grupo SAG ausente",
+  subgrupo_ausente:        "Subgrupo SAG ausente",
+  tamano_ausente:          "Tamano no asignado",
+  clasificacion_ambigua:   "Clasificacion ambigua",
+  producto_no_elegible:    "Producto no elegible",
+  dato_canonico_incompleto: "Dato canonico incompleto",
+};
+
+function InvLineSummaryStrip({ summary, activeKpi, onKpiClick, sortBy, onSortChange }: {
+  summary: { type: string; data: Record<string, unknown> };
+  activeKpi: InvKpiFilter;
+  onKpiClick: (kpi: InvKpiFilter) => void;
+  sortBy: InvSortBy;
+  onSortChange: (s: InvSortBy) => void;
+}) {
+  const d = summary.data;
+
+  // Build KPI items based on summary type
+  type KpiItem = { key: InvKpiFilter; label: string; value: number; color: string };
+  let kpis: KpiItem[] = [];
+
+  if (summary.type === "textile") {
+    kpis = [
+      { key: "ALL",             label: "Referencias",   value: Number(d.referenciasActivas ?? 0), color: C.ink },
+      { key: "ALL",             label: "Unidades",      value: Number(d.unidades ?? 0),           color: C.ink },
+      { key: "BELOW_MINIMUM",   label: "Bajo minimo",   value: Number(d.bajoMinimo ?? 0),         color: C.red },
+      { key: "HAS_REPLACEMENT", label: "Reemplazos",    value: Number(d.reemplazos ?? 0),         color: C.blue },
+      { key: "HEALTHY",         label: "Saludables",     value: Number(d.saludables ?? 0),         color: C.green },
+    ];
+  } else if (summary.type === "accessory") {
+    kpis = [
+      { key: "ALL",             label: "Referencias",   value: Number(d.referenciasActivas ?? 0), color: C.ink },
+      { key: "ALL",             label: "Unidades",      value: Number(d.unidades ?? 0),           color: C.ink },
+      { key: "BELOW_MINIMUM",   label: "Bajo objetivo", value: Number(d.bajoObjetivo ?? 0),       color: C.red },
+      { key: "HAS_REPLACEMENT", label: "Reemplazos",    value: Number(d.reemplazos ?? 0),         color: C.blue },
+      { key: "HEALTHY",         label: "Saludables",     value: Number(d.saludables ?? 0),         color: C.green },
+    ];
+  } else if (summary.type === "unclassified") {
+    kpis = [
+      { key: "ALL", label: "Total",        value: Number(d.total ?? 0),       color: C.amber },
+      { key: "ALL", label: "Unidades",     value: Number(d.unidades ?? 0),    color: C.ink },
+      { key: "ALL", label: "Sin linea",    value: Number(d.sinLinea ?? 0),    color: C.red },
+      { key: "ALL", label: "Sin grupo",    value: Number(d.sinGrupo ?? 0),    color: C.amber },
+      { key: "ALL", label: "Ambiguas",     value: Number(d.ambiguas ?? 0),    color: C.inkFaint },
+    ];
+  } else if (summary.type === "out_of_stock") {
+    kpis = [
+      { key: "ALL", label: "Total agotados", value: Number(d.total ?? 0),       color: C.red },
+      { key: "ALL", label: "Castillitos",    value: Number(d.castillitos ?? 0), color: C.ink },
+      { key: "ALL", label: "Latin Kids",     value: Number(d.latinKids ?? 0),   color: C.ink },
+      { key: "ALL", label: "Accesorios",     value: Number(d.accesorios ?? 0),  color: C.ink },
+    ];
+  }
+
+  const isActionable = summary.type === "textile" || summary.type === "accessory";
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
+      <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
+        {kpis.map((kpi, idx) => {
+          // "Referencias" clears filter; "Unidades" toggles sort; others are state filters
+          const isRefsKpi = idx === 0;
+          const isUnitsKpi = idx === 1;
+          const isFilterKpi = !isRefsKpi && !isUnitsKpi;
+          const isActive = isFilterKpi && activeKpi === kpi.key && activeKpi !== "ALL";
+          // For Unidades, show sort indicator
+          const unitsSortActive = isUnitsKpi && (sortBy === "QUANTITY_ASC" || sortBy === "QUANTITY_DESC");
+          const showActive = isActive || (isRefsKpi && activeKpi === "ALL" && isActionable);
+
+          return (
+            <button
+              key={idx}
+              onClick={() => {
+                if (!isActionable) return;
+                if (isRefsKpi) {
+                  // Clear all filters
+                  onKpiClick("ALL");
+                } else if (isUnitsKpi) {
+                  // Toggle sort direction
+                  onSortChange(sortBy === "QUANTITY_ASC" ? "QUANTITY_DESC" : "QUANTITY_ASC");
+                } else {
+                  // Toggle filter: second click deactivates
+                  onKpiClick(activeKpi === kpi.key ? "ALL" : kpi.key);
+                }
+              }}
+              style={{
+                ...panel, padding: `${S[2]}px ${S[3]}px`, display: "flex", flexDirection: "column", gap: 2,
+                flex: 1, minWidth: 80, textAlign: "left" as const,
+                cursor: isActionable ? "pointer" : "default",
+                border: isActive ? `2px solid ${C.blueDark}` : `1px solid ${C.line}`,
+                background: isActive ? C.blueLight : C.white,
+              }}
+            >
+              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase" as const }}>
+                {kpi.label}
+                {isUnitsKpi && unitsSortActive && (
+                  <span style={{ marginLeft: 4 }}>{sortBy === "QUANTITY_ASC" ? "↑" : "↓"}</span>
+                )}
+              </span>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: kpi.color }}>
+                {kpi.value}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Sort selector — only for textile/accessory */}
+      {isActionable && (
+        <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Ordenar por</span>
+          <select
+            value={sortBy}
+            onChange={e => onSortChange(e.target.value as InvSortBy)}
+            style={{
+              fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "2px 6px",
+              borderRadius: R.sm, border: `1px solid ${C.line}`,
+              background: C.white, color: C.ink,
+            }}
+          >
+            <option value="QUANTITY_ASC">Menor inventario</option>
+            <option value="QUANTITY_DESC">Mayor inventario</option>
+            <option value="REFERENCE_ASC">Referencia A–Z</option>
+            <option value="REFERENCE_DESC">Referencia Z–A</option>
+          </select>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Replacement Candidates Panel (TERCERO) ────────────────────────────────────
 
 function ReplacementCandidatesPanel({ replacement, canonicalLine }: {
@@ -1540,6 +1770,80 @@ function ReplacementCandidatesPanel({ replacement, canonicalLine }: {
   );
 }
 
+// ── Variant allocation table (VARIANT-BALANCING-01) ───────────────────────────
+
+const BALANCE_QUALITY_LABEL: Record<string, { label: string; color: string }> = {
+  BALANCED:                 { label: "Balanceado",          color: C.green },
+  PARTIAL:                  { label: "Parcial",             color: C.amber },
+  INSUFFICIENT_STOCK:       { label: "Stock insuficiente",  color: C.red },
+  INCOMPLETE_VARIANT_DATA:  { label: "Datos incompletos",   color: C.inkFaint },
+  NOT_APPLICABLE:           { label: "No aplica",           color: C.inkFaint },
+};
+
+interface VariantAllocationForUI {
+  totalRequestedQty: number;
+  totalAllocatedQty: number;
+  unallocatedQty: number;
+  allocations: Array<{
+    variantKey: string;
+    size: string;
+    color: string;
+    storeQtyBefore: number;
+    warehouseAvailableQty: number;
+    suggestedQty: number;
+    storeQtyAfter: number;
+    reason: string;
+  }>;
+  balanceQuality: string;
+  evidenceDate: string;
+}
+
+function VariantAllocationTable({ allocation, paddingLeft }: { allocation: VariantAllocationForUI; paddingLeft: number }) {
+  const quality = BALANCE_QUALITY_LABEL[allocation.balanceQuality] ?? BALANCE_QUALITY_LABEL.NOT_APPLICABLE;
+  return (
+    <div style={{ paddingLeft, marginTop: S[2] }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: S[1] }}>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkMid }}>
+          Distribucion sugerida por variantes
+        </span>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: quality.color }}>
+          {quality.label}
+        </span>
+      </div>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: T.mono, fontSize: T.sz["2xs"] }}>
+        <thead>
+          <tr style={{ borderBottom: `1px solid ${C.line}` }}>
+            <th style={{ textAlign: "left", padding: "2px 4px", color: C.inkMid, fontWeight: T.wt.semibold }}>Talla</th>
+            <th style={{ textAlign: "left", padding: "2px 4px", color: C.inkMid, fontWeight: T.wt.semibold }}>Color</th>
+            <th style={{ textAlign: "right", padding: "2px 4px", color: C.inkMid, fontWeight: T.wt.semibold }}>Tienda</th>
+            <th style={{ textAlign: "right", padding: "2px 4px", color: C.inkMid, fontWeight: T.wt.semibold }}>Bodega</th>
+            <th style={{ textAlign: "right", padding: "2px 4px", color: C.inkMid, fontWeight: T.wt.semibold }}>Sugerido</th>
+            <th style={{ textAlign: "right", padding: "2px 4px", color: C.inkMid, fontWeight: T.wt.semibold }}>Quedaria</th>
+          </tr>
+        </thead>
+        <tbody>
+          {allocation.allocations.map((a, i) => (
+            <tr key={i} style={{ borderBottom: `1px solid ${C.line}` }} title={a.reason}>
+              <td style={{ padding: "3px 4px", color: C.ink }}>{a.size === "SIN_TALLA" ? "\u2014" : a.size}</td>
+              <td style={{ padding: "3px 4px", color: C.ink }}>{a.color === "SIN_COLOR" ? "\u2014" : a.color}</td>
+              <td style={{ padding: "3px 4px", textAlign: "right", color: C.inkMid }}>{a.storeQtyBefore}</td>
+              <td style={{ padding: "3px 4px", textAlign: "right", color: a.warehouseAvailableQty > 0 ? C.green : C.inkFaint }}>{a.warehouseAvailableQty}</td>
+              <td style={{ padding: "3px 4px", textAlign: "right", fontWeight: T.wt.bold, color: C.blueDark }}>{a.suggestedQty}</td>
+              <td style={{ padding: "3px 4px", textAlign: "right", color: C.inkMid }}>{a.storeQtyAfter}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ display: "flex", gap: S[3], fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginTop: S[1] }}>
+        <span>Sugerido: <strong style={{ color: C.blueDark }}>{allocation.totalAllocatedQty}</strong> uds</span>
+        {allocation.unallocatedQty > 0 && (
+          <span style={{ color: C.amber }}>Pendiente: {allocation.unallocatedQty} uds</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Distribution Store Drawer (NOVENO + SEGUNDO) ──────────────────────────────
 
 type DistDrawerTab = "inventario" | "necesidades" | "derrotero" | "inteligencia";
@@ -1547,20 +1851,162 @@ type DistDrawerTab = "inventario" | "necesidades" | "derrotero" | "inteligencia"
 function DistributionStoreDrawer({
   orgSlug,
   storeCard,
-  detail,
-  detailLoading,
   onClose,
 }: {
   orgSlug: string;
   storeCard: CanonicalStoreCard;
-  detail: CanonicalStoreDetail | null;
-  detailLoading: boolean;
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<DistDrawerTab>("inventario");
   const [actionFilter, setActionFilter] = useState<StoreDistributionAction | "ALL">("ALL");
   const [domainFilter, setDomainFilter] = useState<DistDomainFilter>("ALL");
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
+  // expandedNeedRef / expandedVariantKey removed — replaced by ndExpandedRef / ndExpandedVariantKey (NEEDS-BY-LINE-01)
+
+  // ── Lazy detail loading: only fetch when necesidades/inteligencia tab is active ──
+  const [detail, setDetail] = useState<CanonicalStoreDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailLoaded, setDetailLoaded] = useState(false);
+
+  useEffect(() => {
+    const needsDetail = tab === "inteligencia";
+    if (!needsDetail || detailLoaded) return;
+    let cancelled = false;
+    setDetailLoading(true);
+    tiendaApi(orgSlug, { action: "store_distribution_detail", storeId: storeCard.store.id })
+      .then((data: { detail?: CanonicalStoreDetail }) => {
+        if (cancelled) return;
+        if (data.detail) setDetail(data.detail);
+        setDetailLoaded(true);
+      })
+      .catch(() => { if (!cancelled) setDetailLoaded(true); })
+      .finally(() => { if (!cancelled) setDetailLoading(false); });
+    return () => { cancelled = true; };
+  }, [tab, storeCard.store.id, orgSlug, detailLoaded]);
+
+  // ── Inventory-by-line state (AGENTIK-STORES-INVENTORY-BY-LINE-01) ──────
+  type InvLine = "CASTILLITOS" | "LATIN_KIDS" | "ACCESSORIES" | "UNCLASSIFIED" | "OUT_OF_STOCK";
+  type InvState = "BAJO_MINIMO" | "EN_RANGO" | "EXCESO" | "SIN_REGLA" | "AGOTADO" | "CLASIFICACION_PENDIENTE";
+
+  const [invLine, setInvLine] = useState<InvLine>("CASTILLITOS");
+  const [invLineCounts, setInvLineCounts] = useState<{ line: InvLine; count: number }[]>([]);
+  const [invLineCountsLoading, setInvLineCountsLoading] = useState(false);
+  const [invData, setInvData] = useState<InvByLineResponse | null>(null);
+  const [invLoading, setInvLoading] = useState(false);
+  const [invPage, setInvPage] = useState(1);
+  const [invSearch, setInvSearch] = useState("");
+  const [invSearchDebounced, setInvSearchDebounced] = useState("");
+  const [invGroup, setInvGroup] = useState<string | undefined>();
+  const [invSubgroup, setInvSubgroup] = useState<string | undefined>();
+  const [invSizeClass, setInvSizeClass] = useState<string | undefined>();
+  const [invInvState, setInvInvState] = useState<InvState | undefined>();
+  const [invExpandedRefs, setInvExpandedRefs] = useState<Set<string>>(new Set());
+  const [invVariants, setInvVariants] = useState<Record<string, InvVariant[]>>({});
+  const [invVariantsLoading, setInvVariantsLoading] = useState<Set<string>>(new Set());
+  const [invError, setInvError] = useState<string | null>(null);
+  const [invRetry, setInvRetry] = useState(0);
+  const [invSortBy, setInvSortBy] = useState<InvSortBy>("QUANTITY_ASC");
+  const [invKpiFilter, setInvKpiFilter] = useState<InvKpiFilter>("ALL");
+
+  // ── Needs-by-line state (AGENTIK-STORES-NEEDS-BY-LINE-01) ──────────────
+  type NdLine = "CASTILLITOS" | "LATIN_KIDS" | "ACCESSORIES" | "UNCLASSIFIED";
+  type NdNeedType = "ALL" | "DIRECT_REPLENISHMENT" | "PARTIAL_DIRECT_PLUS_REPLACEMENT" | "REPLACEMENT" | "NO_ALTERNATIVE" | "CLASSIFICATION_INCOMPLETE";
+  type NdSortBy = "SHORTAGE_DESC" | "SHORTAGE_ASC" | "MAIN_STOCK_DESC" | "REFERENCE_ASC" | "REFERENCE_DESC";
+  type NdSizeClass = "ALL" | "SMALL" | "MEDIUM" | "LARGE" | "UNCLASSIFIED";
+
+  interface NdNeedItem {
+    referenceCode: string;
+    productName: string;
+    imageUrl: string | null;
+    canonicalLine: string;
+    group: string;
+    subgroup: string;
+    sizeClass: string | null;
+    world: string;
+    currentUnits: number;
+    minUnits: number;
+    idealUnits: number;
+    maxUnits: number;
+    shortageQty: number;
+    mainWarehouseAvailable: number;
+    needType: "DIRECT_REPLENISHMENT" | "PARTIAL_DIRECT_PLUS_REPLACEMENT" | "REPLACEMENT" | "NO_ALTERNATIVE" | "CLASSIFICATION_INCOMPLETE";
+    needTypeLabel: string;
+    suggestedReplenishment: number;
+    candidates: InvReplacementCandidate[];
+    totalCandidatesFound: number;
+    hasMoreCandidates: boolean;
+    rule36BlockedCount: number;
+    replacementShortageQty: number;
+    resolution: {
+      resolutionType: string;
+      coverageStatus: string;
+      totalShortageQty: number;
+      sameRefCoverageQty: number;
+      replacementCoverageQty: number;
+      totalCoveredQty: number;
+      remainingShortageQty: number;
+      coveragePercent: number;
+    } | null;
+    variantAllocation: VariantAllocationForUI | null;
+    actionReason: string;
+  }
+
+  interface InvReplacementCandidate {
+    referenceCode: string;
+    description: string;
+    imageUrl: string | null;
+    canonicalLine: string;
+    group: string;
+    subgroup: string;
+    storeStock: number;
+    mainWarehouseAvailableQty: number;
+    suggestedQty: number;
+    reason: string;
+    evidence: string;
+    quality: string;
+    classificationSource: string;
+    groupSource: string;
+    subgroupSource: string;
+    dataQuality: string;
+    replacementVariants: InvReplacementVariant[];
+    totalVariantCount: number;
+    displayedVariantCount: number;
+    totalVariantUnits: number;
+    variantEvidenceDate: string;
+  }
+
+  interface NdSummary {
+    directReplenishment: number;
+    partialDirectPlusReplacement: number;
+    replacement: number;
+    noAlternative: number;
+    classificationIncomplete: number;
+    total: number;
+  }
+
+  interface NdResponse {
+    line: string;
+    summary: NdSummary;
+    items: NdNeedItem[];
+    pagination: { page: number; pageSize: number; total: number; totalPages: number };
+    lineCounts: { line: NdLine; count: number }[];
+    availableSizeClasses: string[];
+    dataFreshness: string | null;
+  }
+
+  const [ndLine, setNdLine] = useState<NdLine>("CASTILLITOS");
+  const [ndData, setNdData] = useState<NdResponse | null>(null);
+  const [ndLoading, setNdLoading] = useState(false);
+  const [ndError, setNdError] = useState<string | null>(null);
+  const [ndNeedType, setNdNeedType] = useState<NdNeedType>("ALL");
+  const [ndSortBy, setNdSortBy] = useState<NdSortBy>("SHORTAGE_DESC");
+  const [ndSizeClass, setNdSizeClass] = useState<NdSizeClass>("ALL");
+  const [ndSearch, setNdSearch] = useState("");
+  const [ndSearchDebounced, setNdSearchDebounced] = useState("");
+  const [ndPage, setNdPage] = useState(1);
+  const [ndExpandedRef, setNdExpandedRef] = useState<string | null>(null);
+  const [ndExpandedVariantKey, setNdExpandedVariantKey] = useState<string | null>(null);
+  const [ndInitialLineSet, setNdInitialLineSet] = useState(false);
 
   // Reset state on store change
   useEffect(() => {
@@ -1568,7 +2014,189 @@ function DistributionStoreDrawer({
     setActionFilter("ALL");
     setDomainFilter("ALL");
     setExpandedRows(new Set());
+    setDetail(null);
+    setDetailLoaded(false);
+    setDetailLoading(false);
+    setInvLine("CASTILLITOS");
+    setInvLineCounts([]);
+    setInvData(null);
+    setInvError(null);
+    setInvPage(1);
+    setInvSearch("");
+    setInvSearchDebounced("");
+    setInvGroup(undefined);
+    setInvSubgroup(undefined);
+    setInvSizeClass(undefined);
+    setInvInvState(undefined);
+    setInvExpandedRefs(new Set());
+    setInvVariants({});
+    setInvSortBy("QUANTITY_ASC");
+    setInvKpiFilter("ALL");
+    // Reset needs state
+    setNdLine("CASTILLITOS");
+    setNdData(null);
+    setNdError(null);
+    setNdNeedType("ALL");
+    setNdSortBy("SHORTAGE_DESC");
+    setNdSizeClass("ALL");
+    setNdSearch("");
+    setNdSearchDebounced("");
+    setNdPage(1);
+    setNdExpandedRef(null);
+    setNdExpandedVariantKey(null);
+    setNdInitialLineSet(false);
   }, [storeCard.store.id]);
+
+  // ── Load line counts when inventario tab is active ─────────────────────
+  useEffect(() => {
+    if (tab !== "inventario") return;
+    let cancelled = false;
+    setInvLineCountsLoading(true);
+    setInvError(null);
+    tiendaApi(orgSlug, { action: "store_inventory_by_line", sub: "counts", storeId: storeCard.store.id })
+      .then((data: { counts?: { line: InvLine; count: number }[]; error?: string; code?: string }) => {
+        if (cancelled) return;
+        if (data.error) {
+          console.error("[INV-BY-LINE] counts API error:", data.error, data.code);
+          setInvError(data.code === "STORE_INACTIVE" ? "Tienda desactivada" : `Error: ${data.error}`);
+          return;
+        }
+        if (data.counts) {
+          setInvLineCounts(data.counts);
+          // Consistency check: if summary has references but all counts are 0, flag it
+          const totalCounted = data.counts.reduce((s: number, c: { count: number }) => s + c.count, 0);
+          if (totalCounted === 0 && storeCard.totalReferences > 0) {
+            console.warn("[INV-BY-LINE] inconsistency: summary has", storeCard.totalReferences, "refs but counts total 0");
+            setInvError("Inconsistencia: el resumen muestra referencias pero la clasificacion retorno 0. Intente recargar.");
+          }
+        }
+      })
+      .catch((err: unknown) => {
+        console.error("[INV-BY-LINE] counts fetch error:", err);
+        if (!cancelled) setInvError("Error de conexion al cargar conteos");
+      })
+      .finally(() => { if (!cancelled) setInvLineCountsLoading(false); });
+    return () => { cancelled = true; };
+  }, [tab, storeCard.store.id, orgSlug, invRetry]);
+
+  // ── Load inventory data when line/filters/page change ──────────────────
+  useEffect(() => {
+    if (tab !== "inventario") return;
+    let cancelled = false;
+    setInvLoading(true);
+    setInvExpandedRefs(new Set());
+    tiendaApi(orgSlug, {
+      action: "store_inventory_by_line", sub: "load",
+      storeId: storeCard.store.id, line: invLine,
+      group: invGroup, subgroup: invSubgroup, sizeClass: invSizeClass,
+      inventoryState: invInvState,
+      kpiFilter: invKpiFilter !== "ALL" ? invKpiFilter : undefined,
+      sortBy: invSortBy,
+      search: invSearchDebounced || undefined,
+      page: invPage, pageSize: 25,
+    })
+      .then((data: InvByLineResponse & { error?: string }) => {
+        if (cancelled) return;
+        if (data.error) {
+          console.error("[INV-BY-LINE] load API error:", data.error);
+          setInvError(`Error: ${data.error}`);
+          return;
+        }
+        setInvData(data);
+      })
+      .catch((err: unknown) => {
+        console.error("[INV-BY-LINE] load fetch error:", err);
+        if (!cancelled) setInvError("Error de conexion al cargar inventario");
+      })
+      .finally(() => { if (!cancelled) setInvLoading(false); });
+    return () => { cancelled = true; };
+  }, [tab, storeCard.store.id, orgSlug, invLine, invGroup, invSubgroup, invSizeClass, invInvState, invKpiFilter, invSortBy, invSearchDebounced, invPage, invRetry]);
+
+  // ── Debounce search ─────────────────────────────────────────────────────
+  useEffect(() => {
+    const t = setTimeout(() => { setInvSearchDebounced(invSearch); setInvPage(1); }, 300);
+    return () => clearTimeout(t);
+  }, [invSearch]);
+
+  // ── Load variants on expand ─────────────────────────────────────────────
+  function toggleInvRef(ref: string) {
+    setInvExpandedRefs(prev => {
+      const next = new Set(prev);
+      if (next.has(ref)) { next.delete(ref); }
+      else {
+        next.add(ref);
+        if (!invVariants[ref]) loadVariants(ref);
+      }
+      return next;
+    });
+  }
+
+  function loadVariants(ref: string) {
+    setInvVariantsLoading(prev => new Set(prev).add(ref));
+    tiendaApi(orgSlug, {
+      action: "store_inventory_by_line", sub: "variants",
+      storeId: storeCard.store.id, referenceCode: ref,
+    })
+      .then((data: { variants?: InvVariant[] }) => {
+        setInvVariants(prev => ({ ...prev, [ref]: data.variants || [] }));
+      })
+      .catch(() => {})
+      .finally(() => {
+        setInvVariantsLoading(prev => { const n = new Set(prev); n.delete(ref); return n; });
+      });
+  }
+
+  // ── Load needs-by-line data (AGENTIK-STORES-NEEDS-BY-LINE-01) ────────────
+  useEffect(() => {
+    if (tab !== "necesidades") return;
+    let cancelled = false;
+    setNdLoading(true);
+    setNdError(null);
+    setNdExpandedRef(null);
+    setNdExpandedVariantKey(null);
+    tiendaApi(orgSlug, {
+      action: "store_needs_by_line",
+      storeId: storeCard.store.id,
+      line: ndLine,
+      needType: ndNeedType !== "ALL" ? ndNeedType : undefined,
+      sortBy: ndSortBy,
+      sizeClass: ndLine === "ACCESSORIES" && ndSizeClass !== "ALL" ? ndSizeClass : undefined,
+      search: ndSearchDebounced || undefined,
+      page: ndPage,
+      pageSize: 25,
+    })
+      .then((data: NdResponse & { error?: string; code?: string }) => {
+        if (cancelled) return;
+        if (data.error) {
+          setNdError(data.code === "STORE_INACTIVE" ? "Tienda desactivada" : `Error: ${data.error}`);
+          return;
+        }
+        setNdData(data);
+        // Auto-select first line with needs on initial load
+        if (!ndInitialLineSet && data.lineCounts) {
+          setNdInitialLineSet(true);
+          const preferredOrder: NdLine[] = ["CASTILLITOS", "LATIN_KIDS", "ACCESSORIES", "UNCLASSIFIED"];
+          const firstWithNeeds = preferredOrder.find(l => {
+            const lc = data.lineCounts.find(c => c.line === l);
+            return lc && lc.count > 0;
+          });
+          if (firstWithNeeds && firstWithNeeds !== ndLine) {
+            setNdLine(firstWithNeeds);
+            // Don't set data — the line change will trigger a re-fetch
+            return;
+          }
+        }
+      })
+      .catch(() => { if (!cancelled) setNdError("Error de conexion al cargar necesidades"); })
+      .finally(() => { if (!cancelled) setNdLoading(false); });
+    return () => { cancelled = true; };
+  }, [tab, storeCard.store.id, orgSlug, ndLine, ndNeedType, ndSortBy, ndSizeClass, ndSearchDebounced, ndPage]);
+
+  // Debounce needs search
+  useEffect(() => {
+    const t = setTimeout(() => { setNdSearchDebounced(ndSearch); setNdPage(1); }, 300);
+    return () => clearTimeout(t);
+  }, [ndSearch]);
 
   // SÉPTIMO — Domain counts
   const domainCounts = useMemo(() => {
@@ -1647,128 +2275,186 @@ function DistributionStoreDrawer({
         ))}
       </div>
 
-      {/* TAB: Inventario — distribution items */}
+      {/* TAB: Inventario — organized by commercial line (AGENTIK-STORES-INVENTORY-BY-LINE-01) */}
       {tab === "inventario" && (
         <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-          {detailLoading && (
+          {/* LINE NAVIGATION — 5 commercial lines */}
+          <div style={{ display: "flex", gap: S[1], flexWrap: "wrap" }}>
+            {([
+              { key: "CASTILLITOS" as InvLine, label: "Castillitos" },
+              { key: "LATIN_KIDS" as InvLine, label: "Latin Kids" },
+              { key: "ACCESSORIES" as InvLine, label: "Accesorios" },
+              { key: "UNCLASSIFIED" as InvLine, label: "Sin clasificar" },
+              { key: "OUT_OF_STOCK" as InvLine, label: "Agotados" },
+            ]).map(ln => {
+              const cnt = invLineCounts.find(c => c.line === ln.key)?.count ?? 0;
+              const isActive = invLine === ln.key;
+              return (
+                <button
+                  key={ln.key}
+                  onClick={() => { setInvLine(ln.key); setInvPage(1); setInvGroup(undefined); setInvSubgroup(undefined); setInvSizeClass(undefined); setInvInvState(undefined); setInvKpiFilter("ALL"); setInvSortBy("QUANTITY_ASC"); setInvExpandedRefs(new Set()); }}
+                  style={{
+                    fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                    padding: "3px 10px", borderRadius: R.pill, cursor: "pointer",
+                    background: isActive ? C.blueDark : C.surface,
+                    color: isActive ? C.white : C.inkMid,
+                    border: `1px solid ${isActive ? C.blueDark : C.line}`,
+                  }}
+                >
+                  {ln.label} ({invLineCountsLoading ? "\u2014" : cnt})
+                </button>
+              );
+            })}
+          </div>
+
+          {/* ERROR STATE — differentiate empty vs error (OCTAVO) */}
+          {invError && (
+            <div style={{
+              fontFamily: T.mono, fontSize: T.sz.sm, color: C.red,
+              padding: `${S[2]}px ${S[3]}px`, background: C.redLight,
+              borderRadius: R.sm, border: `1px solid ${C.red}`,
+              display: "flex", alignItems: "center", justifyContent: "space-between", gap: S[2],
+            }}>
+              <span>{invError}</span>
+              <button
+                onClick={() => { setInvError(null); setInvLineCounts([]); setInvData(null); setInvRetry(n => n + 1); }}
+                style={{
+                  fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "2px 8px",
+                  borderRadius: R.sm, border: `1px solid ${C.red}`, background: "transparent",
+                  color: C.red, cursor: "pointer", whiteSpace: "nowrap",
+                }}
+              >
+                Reintentar
+              </button>
+            </div>
+          )}
+
+          {/* LINE SUMMARY — 5 clickable KPIs (KPI-ACTIONS-AND-SORTING-01) */}
+          {invData?.summary && (
+            <InvLineSummaryStrip
+              summary={invData.summary}
+              activeKpi={invKpiFilter}
+              onKpiClick={(kpi) => { setInvKpiFilter(kpi); setInvPage(1); }}
+              sortBy={invSortBy}
+              onSortChange={(s) => { setInvSortBy(s); setInvPage(1); }}
+            />
+          )}
+
+          {/* SEARCH */}
+          <div style={{ display: "flex", gap: S[2], alignItems: "center" }}>
+            <input
+              type="text"
+              placeholder="Buscar referencia o descripcion..."
+              value={invSearch}
+              onChange={e => setInvSearch(e.target.value)}
+              style={{
+                flex: 1, fontFamily: T.mono, fontSize: T.sz.xs,
+                padding: `${S[1]}px ${S[2]}px`, borderRadius: R.sm,
+                border: `1px solid ${C.line}`, background: C.white, color: C.ink,
+                outline: "none",
+              }}
+            />
+            {invSearch && (
+              <button onClick={() => { setInvSearch(""); setInvSearchDebounced(""); }} style={{
+                fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "2px 6px",
+                borderRadius: R.sm, border: `1px solid ${C.line}`,
+                background: C.surface, color: C.inkMid, cursor: "pointer",
+              }}>Limpiar</button>
+            )}
+          </div>
+
+          {/* SECONDARY FILTERS */}
+          {invData?.availableFilters && (
+            <div style={{ display: "flex", gap: S[1], flexWrap: "wrap" }}>
+              {invData.availableFilters.groups.length > 1 && (
+                <select
+                  value={invGroup || ""}
+                  onChange={e => { setInvGroup(e.target.value || undefined); setInvPage(1); }}
+                  style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "2px 6px", borderRadius: R.sm, border: `1px solid ${C.line}`, background: C.white, color: C.ink }}
+                >
+                  <option value="">Todos los grupos</option>
+                  {invData.availableFilters.groups.map(g => <option key={g} value={g}>{g}</option>)}
+                </select>
+              )}
+              {invData.availableFilters.subgroups.length > 1 && (
+                <select
+                  value={invSubgroup || ""}
+                  onChange={e => { setInvSubgroup(e.target.value || undefined); setInvPage(1); }}
+                  style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "2px 6px", borderRadius: R.sm, border: `1px solid ${C.line}`, background: C.white, color: C.ink }}
+                >
+                  <option value="">Todos los subgrupos</option>
+                  {invData.availableFilters.subgroups.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              )}
+              {invData.availableFilters.sizeClasses.length > 1 && (
+                <select
+                  value={invSizeClass || ""}
+                  onChange={e => { setInvSizeClass(e.target.value || undefined); setInvPage(1); }}
+                  style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "2px 6px", borderRadius: R.sm, border: `1px solid ${C.line}`, background: C.white, color: C.ink }}
+                >
+                  <option value="">Todos los tamanos</option>
+                  {invData.availableFilters.sizeClasses.map(s => <option key={s} value={s}>{INV_SIZE_LABEL[s] || s}</option>)}
+                </select>
+              )}
+              {invData.availableFilters.inventoryStates.length > 1 && (
+                <select
+                  value={invInvState || ""}
+                  onChange={e => { setInvInvState((e.target.value || undefined) as InvState | undefined); setInvPage(1); }}
+                  style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "2px 6px", borderRadius: R.sm, border: `1px solid ${C.line}`, background: C.white, color: C.ink }}
+                >
+                  <option value="">Todos los estados</option>
+                  {invData.availableFilters.inventoryStates.map(s => <option key={s} value={s}>{INV_STATE_LABEL[s] || s}</option>)}
+                </select>
+              )}
+              {(invGroup || invSubgroup || invSizeClass || invInvState) && (
+                <button onClick={() => { setInvGroup(undefined); setInvSubgroup(undefined); setInvSizeClass(undefined); setInvInvState(undefined); setInvPage(1); }} style={{
+                  fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "2px 6px",
+                  borderRadius: R.sm, border: `1px solid ${C.line}`,
+                  background: C.surface, color: C.inkMid, cursor: "pointer",
+                }}>Limpiar filtros</button>
+              )}
+            </div>
+          )}
+
+          {/* LOADING */}
+          {invLoading && (
             <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
-              {[1, 2, 3].map(n => (
-                <div key={n} style={{ height: 48, background: C.surface, borderRadius: R.sm, animation: "pulse 1.5s infinite" }} />
+              {[1, 2, 3, 4].map(n => (
+                <div key={n} style={{ height: 52, background: C.surface, borderRadius: R.sm, animation: "pulse 1.5s infinite" }} />
               ))}
             </div>
           )}
 
-          {detail && (
+          {/* ITEMS TABLE */}
+          {!invLoading && invData && (
             <>
-              {/* CUARTO — KPI breakdown */}
-              <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
-                <DistKpiCard label="Reposicion directa" value={String(actionCounts["SURTIR"] || 0)} color={C.blueDark} />
-                <DistKpiCard label="Reemplazos" value={String(actionCounts["SUGERIR_REEMPLAZO"] || 0)} color={C.blue} />
-                <DistKpiCard label="Excesos" value={String(actionCounts["RETIRAR"] || 0)} color={C.amber} />
-                <DistKpiCard label="Bloqueados" value={String(actionCounts["SIN_STOCK_ORIGEN"] || 0)} color={C.red} />
-                <DistKpiCard label="Config. pendiente" value={String((actionCounts["SIN_REGLA"] || 0) + (actionCounts["REQUIERE_CONFIGURACION"] || 0))} color={C.inkFaint} />
-              </div>
-
-              {/* SÉPTIMO — Domain filter (by line) */}
-              <div style={{ display: "flex", gap: S[1], flexWrap: "wrap" }}>
-                {(["ALL", "castillitos", "latin_kids", "acc_small", "acc_medium", "acc_large"] as DistDomainFilter[]).map(d => {
-                  const count = d === "ALL" ? detail.items.length : (domainCounts[d] || 0);
-                  if (d !== "ALL" && count === 0) return null;
-                  return (
-                    <button
-                      key={d}
-                      onClick={() => setDomainFilter(d)}
-                      style={{
-                        fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                        padding: "2px 8px", borderRadius: R.pill, cursor: "pointer",
-                        background: domainFilter === d ? C.blueDark : C.surface,
-                        color: domainFilter === d ? C.white : C.inkMid,
-                        border: `1px solid ${domainFilter === d ? C.blueDark : C.line}`,
-                      }}
-                    >
-                      {DIST_DOMAIN_LABEL[d]} ({count})
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* CUARTO — Action filter */}
-              <div style={{ display: "flex", gap: S[1], flexWrap: "wrap" }}>
-                {DIST_ACTION_FILTERS.map(f => {
-                  const count = f === "ALL" ? detail.items.length : (actionCounts[f] || 0);
-                  if (f !== "ALL" && count === 0) return null;
-                  return (
-                    <button
-                      key={f}
-                      onClick={() => setActionFilter(f)}
-                      style={{
-                        fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                        padding: "2px 8px", borderRadius: R.pill, cursor: "pointer",
-                        background: actionFilter === f ? C.blueDark : C.surface,
-                        color: actionFilter === f ? C.white : C.inkMid,
-                        border: `1px solid ${actionFilter === f ? C.blueDark : C.line}`,
-                      }}
-                    >
-                      {f === "ALL" ? `Todos (${count})` : `${DIST_ACTION_LABEL[f]} (${count})`}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Items list */}
-              {filteredItems.length === 0 ? (
-                <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkFaint, padding: `${S[2]}px 0` }}>
-                  Sin items en esta categoria
+              {invData.items.length === 0 ? (
+                <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkFaint, padding: `${S[4]}px 0`, textAlign: "center" }}>
+                  {invSearchDebounced ? "Sin resultados para esta busqueda" : "Sin referencias en esta linea"}
                 </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                  {filteredItems.slice(0, 200).map((item, idx) => {
-                    const ac = DIST_ACTION_COLOR[item.action];
-                    const isExpanded = expandedRows.has(idx);
-                    const hasReplacement = item.action === "SUGERIR_REEMPLAZO" && item.replacement;
-                    // SEXTO — Rule 36 blocking info
-                    const isRule36Blocked = item.action === "SIN_STOCK_ORIGEN" && item.actionReason.includes("escasez");
-
+                  {invData.items.map(item => {
+                    const isExpanded = invExpandedRefs.has(item.referenceCode);
+                    const stateColor = INV_STATE_COLOR[item.inventoryState] || { bg: C.surface, text: C.inkMid };
                     return (
-                      <div key={idx} style={{
-                        borderBottom: `1px solid ${C.line}`,
-                        background: isExpanded ? C.surfaceAlt : "transparent",
-                      }}>
-                        {/* Main row */}
+                      <div key={item.referenceCode} style={{ borderBottom: `1px solid ${C.line}`, background: isExpanded ? C.surfaceAlt : "transparent" }}>
                         <div
-                          style={{
-                            display: "flex", alignItems: "center", gap: S[2],
-                            padding: `${S[2]}px ${S[2]}px`,
-                            cursor: (hasReplacement || isRule36Blocked) ? "pointer" : "default",
-                          }}
-                          onClick={() => { if (hasReplacement || isRule36Blocked) toggleRow(idx); }}
+                          style={{ display: "flex", alignItems: "center", gap: S[2], padding: `${S[2]}px`, cursor: item.variantCount > 1 ? "pointer" : "default" }}
+                          onClick={() => { if (item.variantCount > 1) toggleInvRef(item.referenceCode); }}
                         >
-                          {/* OCTAVO — Thumbnail */}
-                          <CommercialReferenceThumbnail
-                            imageUrl={item.imageUrl}
-                            reference={item.referenceCode}
-                            description={item.productName}
-                            size={32}
-                          />
-
-                          {/* Ref + description */}
+                          <CommercialReferenceThumbnail imageUrl={item.imageUrl} reference={item.referenceCode} description={item.productName} size={32} />
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
-                              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink }}>
-                                {item.referenceCode}
-                              </span>
-                              {/* QUINTO — Line chip */}
-                              <span style={{
-                                fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "1px 5px", borderRadius: R.pill,
-                                background: item.world === "TEXTILE" ? C.blueLight : C.amberLight,
-                                color: item.world === "TEXTILE" ? C.blueDark : C.amber,
-                              }}>
-                                {item.canonicalLine === "latin_kids" ? "LK" : item.canonicalLine === "castillitos" ? "Cast" : item.sizeClass === "small" ? "Peq" : item.sizeClass === "medium" ? "Med" : "Gde"}
-                              </span>
-                              {/* QUINTO — Group/Subgroup */}
+                              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink }}>{item.referenceCode}</span>
                               {item.group !== "SIN_GRUPO_SAG" && (
                                 <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
                                   {item.group}{item.subgroup !== "SIN_SUBGRUPO_SAG" ? ` / ${item.subgroup}` : ""}
+                                </span>
+                              )}
+                              {item.sizeClass && (
+                                <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "1px 5px", borderRadius: R.pill, background: C.amberLight, color: C.amber }}>
+                                  {INV_SIZE_LABEL[item.sizeClass] || item.sizeClass}
                                 </span>
                               )}
                             </div>
@@ -1776,82 +2462,168 @@ function DistributionStoreDrawer({
                               {item.productName}
                             </div>
                           </div>
-
-                          {/* Stock numbers */}
                           <div style={{ display: "flex", gap: S[2], alignItems: "center", flexShrink: 0 }}>
                             <div style={{ textAlign: "center", minWidth: 36 }}>
                               <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Tienda</div>
-                              <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.ink }}>{item.currentUnits}</div>
+                              <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.ink }}>{item.currentStoreQty}</div>
                             </div>
-                            <div style={{ textAlign: "center", minWidth: 36 }}>
-                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Bodega</div>
-                              <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: item.mainWarehouseAvailable > 0 ? C.green : C.inkFaint }}>
-                                {item.mainWarehouseAvailable > 0 ? item.mainWarehouseAvailable : "\u2014"}
-                              </div>
+                            <div style={{ textAlign: "center", minWidth: 36 }} title={item.hasReplacement && item.replacementBrief ? "Stock de la referencia sugerida en bodega principal" : "Stock de esta referencia en bodega principal"}>
+                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Bodega ppal.</div>
+                              {(() => {
+                                const wqty = item.hasReplacement && item.replacementBrief && item.replacementBrief.candidateMainStock > 0
+                                  ? item.replacementBrief.candidateMainStock
+                                  : item.mainWarehouseQty;
+                                const qualityLabel = item.hasReplacement && item.replacementBrief
+                                  ? item.replacementBrief.stockQuality === "UNKNOWN" ? "Por confirmar"
+                                    : item.replacementBrief.stockQuality === "PHYSICAL_ONLY" ? `${wqty}`
+                                    : `${wqty} disp.`
+                                  : null;
+                                const qualityTitle = item.hasReplacement && item.replacementBrief
+                                  ? item.replacementBrief.stockQuality === "PHYSICAL_ONLY" ? "Stock físico. No descuenta compromisos."
+                                    : item.replacementBrief.stockQuality === "UNKNOWN" ? "Stock pendiente de confirmación"
+                                    : "Stock operativo confirmado"
+                                  : undefined;
+                                if (item.hasReplacement && item.replacementBrief && qualityLabel) {
+                                  return (
+                                    <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: wqty > 0 ? C.green : C.inkFaint }} title={qualityTitle}>
+                                      {wqty > 0 ? qualityLabel : "\u2014"}
+                                    </div>
+                                  );
+                                }
+                                return (
+                                  <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: wqty > 0 ? C.green : C.inkFaint }}>
+                                    {wqty > 0 ? wqty : "\u2014"}
+                                  </div>
+                                );
+                              })()}
                             </div>
                           </div>
-
-                          {/* Action chip */}
                           <span style={{
                             fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
                             padding: "2px 6px", borderRadius: R.pill, flexShrink: 0,
-                            background: ac.bg, color: ac.text,
+                            background: stateColor.bg, color: stateColor.text,
                           }}>
-                            {DIST_ACTION_LABEL[item.action]}
+                            {INV_STATE_LABEL[item.inventoryState] || item.inventoryState}
                           </span>
-
-                          {/* Expand arrow for replacement/rule36 rows */}
-                          {(hasReplacement || isRule36Blocked) && (
-                            <span style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint, flexShrink: 0 }}>
-                              {isExpanded ? "▼" : "▶"}
+                          {item.variantCount > 1 && (
+                            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, flexShrink: 0 }}>
+                              {item.variantCount} var {isExpanded ? "▼" : "▶"}
                             </span>
                           )}
                         </div>
 
-                        {/* Reason text */}
-                        <div style={{
-                          fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid,
-                          padding: `0 ${S[2]}px ${S[2]}px ${S[2] + 32 + S[2]}px`,
-                        }}>
-                          {item.actionReason}
-                        </div>
-
-                        {/* TERCERO — Expanded replacement candidates */}
-                        {isExpanded && hasReplacement && item.replacement && (
-                          <div style={{ padding: `0 ${S[2]}px ${S[3]}px ${S[2] + 32 + S[2]}px` }}>
-                            <ReplacementCandidatesPanel
-                              replacement={item.replacement}
-                              canonicalLine={item.canonicalLine}
-                            />
+                        {/* Unclassified reason */}
+                        {item.unclassifiedReason && (
+                          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.amber, padding: `0 ${S[2]}px ${S[1]}px ${S[2] + 32 + S[2]}px` }}>
+                            {INV_UNCLASSIFIED_LABEL[item.unclassifiedReason] || item.unclassifiedReason}
                           </div>
                         )}
 
-                        {/* SEXTO — Rule 36 blocking explanation */}
-                        {isExpanded && isRule36Blocked && (
+                        {/* Replacement brief with stock evidence */}
+                        {item.hasReplacement && item.replacementBrief && (
                           <div style={{
-                            padding: `0 ${S[2]}px ${S[3]}px ${S[2] + 32 + S[2]}px`,
+                            display: "flex", flexDirection: "column", gap: 2,
+                            padding: `${S[1]}px ${S[2]}px ${S[1]}px ${S[2] + 32 + S[2]}px`,
+                            fontFamily: T.mono, fontSize: T.sz["2xs"],
                           }}>
-                            <div style={{
-                              padding: S[3], background: C.redLight, borderRadius: R.sm,
-                              border: `1px solid ${C.redBorder}`,
-                            }}>
-                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.red, marginBottom: S[1] }}>
-                                Bloqueado por regla de escasez
-                              </div>
-                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, lineHeight: 1.5 }}>
-                                {item.actionReason}
-                              </div>
+                            <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
+                              <span style={{
+                                padding: "1px 6px", borderRadius: R.pill,
+                                background: C.blueLight, color: C.blueDark, fontWeight: T.wt.semibold,
+                              }}>
+                                Reemplazo disponible
+                              </span>
+                              <span style={{ color: C.inkMid }}>
+                                {item.replacementBrief.candidateRef}
+                              </span>
+                              <span style={{ color: C.inkFaint }}>
+                                {item.replacementBrief.ruleSource === "SAME_GROUP_AND_SUBGROUP" ? "Mismo grupo y subgrupo" : "Mismo subgrupo"}
+                              </span>
                             </div>
+                            <div style={{ display: "flex", alignItems: "center", gap: S[3], color: C.inkFaint }}>
+                              <span>Bodega: <strong style={{ color: C.inkMid }}>{item.replacementBrief.candidateMainStock}</strong> uds</span>
+                              <span style={{ color: C.line }}>|</span>
+                              <span>Sugerido: <strong style={{ color: C.blueDark }}>{item.replacementBrief.suggestedQty}</strong> uds</span>
+                              <span style={{ color: C.line }}>|</span>
+                              <span>Faltante: {item.replacementBrief.shortageQty} uds</span>
+                              {item.replacementBrief.remainingShortageQty > 0 && (
+                                <>
+                                  <span style={{ color: C.line }}>|</span>
+                                  <span style={{ color: C.amber }}>Pendiente: {item.replacementBrief.remainingShortageQty} uds</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Expanded variants */}
+                        {isExpanded && (
+                          <div style={{ padding: `0 ${S[2]}px ${S[2]}px ${S[2] + 32 + S[2]}px` }}>
+                            {invVariantsLoading.has(item.referenceCode) ? (
+                              <div style={{ height: 32, background: C.surface, borderRadius: R.sm, animation: "pulse 1.5s infinite" }} />
+                            ) : (invVariants[item.referenceCode] || []).length === 0 ? (
+                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Sin variantes</div>
+                            ) : (
+                              <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                                <div style={{ display: "flex", gap: S[2], padding: `2px 0`, fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, fontWeight: T.wt.semibold }}>
+                                  <span style={{ width: 80 }}>Talla</span>
+                                  <span style={{ width: 80 }}>Color</span>
+                                  <span style={{ width: 50, textAlign: "right" }}>Tienda</span>
+                                  <span style={{ width: 50, textAlign: "right" }}>Bodega</span>
+                                  <span style={{ flex: 1 }}>Estado</span>
+                                </div>
+                                {(invVariants[item.referenceCode] || []).map((v, vi) => (
+                                  <div key={vi} style={{ display: "flex", gap: S[2], padding: `2px 0`, fontFamily: T.mono, fontSize: T.sz["2xs"], borderTop: `1px solid ${C.lineSubtle}` }}>
+                                    <span style={{ width: 80, color: C.ink }}>{v.size || "\u2014"}</span>
+                                    <span style={{ width: 80, color: C.ink }}>{v.color || "\u2014"}</span>
+                                    <span style={{ width: 50, textAlign: "right", fontWeight: T.wt.semibold, color: C.ink }}>{v.storeQty}</span>
+                                    <span style={{ width: 50, textAlign: "right", color: v.mainQty > 0 ? C.green : C.inkFaint }}>{v.mainQty > 0 ? v.mainQty : "\u2014"}</span>
+                                    <span style={{ flex: 1, color: C.inkMid }}>{INV_STATE_LABEL[v.inventoryState] || v.inventoryState}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
                     );
                   })}
-                  {filteredItems.length > 200 && (
-                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, padding: S[2], textAlign: "center" }}>
-                      Mostrando 200 de {filteredItems.length} items
-                    </div>
-                  )}
+                </div>
+              )}
+
+              {/* PAGINATION */}
+              {invData.pagination.totalPages > 1 && (
+                <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: S[2], padding: `${S[2]}px 0` }}>
+                  <button
+                    disabled={invData.pagination.page <= 1}
+                    onClick={() => setInvPage(p => Math.max(1, p - 1))}
+                    style={{
+                      fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "3px 8px",
+                      borderRadius: R.sm, border: `1px solid ${C.line}`,
+                      background: C.surface, color: invData.pagination.page <= 1 ? C.inkFaint : C.ink,
+                      cursor: invData.pagination.page <= 1 ? "default" : "pointer",
+                    }}
+                  >Anterior</button>
+                  <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
+                    {invData.pagination.page} / {invData.pagination.totalPages} ({invData.pagination.total} refs)
+                  </span>
+                  <button
+                    disabled={invData.pagination.page >= invData.pagination.totalPages}
+                    onClick={() => setInvPage(p => Math.min(invData!.pagination.totalPages, p + 1))}
+                    style={{
+                      fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "3px 8px",
+                      borderRadius: R.sm, border: `1px solid ${C.line}`,
+                      background: C.surface, color: invData.pagination.page >= invData.pagination.totalPages ? C.inkFaint : C.ink,
+                      cursor: invData.pagination.page >= invData.pagination.totalPages ? "default" : "pointer",
+                    }}
+                  >Siguiente</button>
+                </div>
+              )}
+
+              {/* DATA FRESHNESS */}
+              {invData.dataFreshness && (
+                <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textAlign: "right" }}>
+                  Datos: {formatTimeAgo(invData.dataFreshness)}
                 </div>
               )}
             </>
@@ -1859,72 +2631,468 @@ function DistributionStoreDrawer({
         </div>
       )}
 
-      {/* TAB: Necesidades — items needing action (SURTIR, SUGERIR_REEMPLAZO, SIN_STOCK_ORIGEN) */}
+      {/* TAB: Necesidades — needs by line (AGENTIK-STORES-NEEDS-BY-LINE-01) */}
       {tab === "necesidades" && (
         <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-          {detailLoading && (
+          {/* Line navigation */}
+          {ndData?.lineCounts && (
+            <div style={{ display: "flex", gap: S[1], flexWrap: "wrap" }}>
+              {(["CASTILLITOS", "LATIN_KIDS", "ACCESSORIES", "UNCLASSIFIED"] as NdLine[]).map(line => {
+                const lc = ndData.lineCounts.find(c => c.line === line);
+                const count = lc?.count ?? 0;
+                const active = ndLine === line;
+                const label = line === "CASTILLITOS" ? "Castillitos"
+                  : line === "LATIN_KIDS" ? "Latin Kids"
+                  : line === "ACCESSORIES" ? "Accesorios"
+                  : "Sin clasificar";
+                return (
+                  <button key={line} onClick={() => {
+                    setNdLine(line); setNdPage(1); setNdNeedType("ALL"); setNdSizeClass("ALL");
+                    setNdSearch(""); setNdSearchDebounced(""); setNdExpandedRef(null); setNdExpandedVariantKey(null);
+                  }} style={{
+                    fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                    padding: "4px 10px", borderRadius: R.sm, cursor: "pointer",
+                    border: `1px solid ${active ? C.blueDark : C.line}`,
+                    background: active ? C.blueDark : "transparent",
+                    color: active ? C.white : C.inkMid,
+                  }}>
+                    {label} ({count})
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Loading */}
+          {ndLoading && !ndData && (
             <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
               {[1, 2, 3].map(n => (
                 <div key={n} style={{ height: 48, background: C.surface, borderRadius: R.sm, animation: "pulse 1.5s infinite" }} />
               ))}
             </div>
           )}
-          {detail && (() => {
-            const needItems = detail.items.filter(i =>
-              i.action === "SURTIR" || i.action === "SUGERIR_REEMPLAZO" || i.action === "SIN_STOCK_ORIGEN"
-            );
-            if (needItems.length === 0) return (
+
+          {/* Error */}
+          {ndError && (
+            <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.red, padding: `${S[4]}px 0`, textAlign: "center" }}>
+              {ndError}
+            </div>
+          )}
+
+          {ndData && (() => {
+            const { summary, items: needItems, pagination, availableSizeClasses } = ndData;
+
+            // Unclassified: special message
+            if (ndLine === "UNCLASSIFIED" && summary.total === 0) return (
               <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkFaint, padding: `${S[4]}px 0`, textAlign: "center" }}>
-                Sin necesidades pendientes para esta tienda
+                Sin referencias sin clasificar con necesidades pendientes
               </div>
             );
+
+            if (summary.total === 0) return (
+              <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkFaint, padding: `${S[4]}px 0`, textAlign: "center" }}>
+                Sin necesidades pendientes en esta linea
+              </div>
+            );
+
             return (
               <>
+                {/* KPIs */}
                 <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
-                  <DistKpiCard label="Reposicion directa" value={String(needItems.filter(i => i.action === "SURTIR").length)} color={C.blueDark} />
-                  <DistKpiCard label="Reemplazos" value={String(needItems.filter(i => i.action === "SUGERIR_REEMPLAZO").length)} color={C.blue} />
-                  <DistKpiCard label="Sin stock" value={String(needItems.filter(i => i.action === "SIN_STOCK_ORIGEN").length)} color={C.red} />
+                  {([
+                    { key: "DIRECT_REPLENISHMENT" as NdNeedType, label: "Reposicion directa", value: summary.directReplenishment, color: C.blueDark },
+                    { key: "PARTIAL_DIRECT_PLUS_REPLACEMENT" as NdNeedType, label: "Parcial + reemplazo", value: summary.partialDirectPlusReplacement ?? 0, color: "#6366f1" },
+                    { key: "REPLACEMENT" as NdNeedType, label: "Reemplazos", value: summary.replacement, color: C.blue },
+                    { key: "NO_ALTERNATIVE" as NdNeedType, label: "Sin alternativa", value: summary.noAlternative, color: C.red },
+                    { key: "CLASSIFICATION_INCOMPLETE" as NdNeedType, label: "Clasificacion incompleta", value: summary.classificationIncomplete ?? 0, color: C.inkFaint },
+                  ]).map(kpi => {
+                    const active = ndNeedType === kpi.key;
+                    return (
+                      <button key={kpi.key} onClick={() => {
+                        setNdNeedType(active ? "ALL" : kpi.key); setNdPage(1);
+                      }} style={{
+                        ...panel, padding: S[3], display: "flex", flexDirection: "column", gap: S[1],
+                        cursor: "pointer", border: active ? `2px solid ${kpi.color}` : `1px solid ${C.line}`,
+                        background: active ? C.blueLight : C.white,
+                      }}>
+                        <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase" as const }}>
+                          {kpi.label}
+                        </div>
+                        <div style={{ fontFamily: T.mono, fontSize: T.sz.xl, fontWeight: T.wt.bold, color: kpi.color }}>
+                          {kpi.value}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
+
+                {/* Accessories: size class filter */}
+                {ndLine === "ACCESSORIES" && availableSizeClasses.length > 0 && (
+                  <div style={{ display: "flex", gap: S[1], flexWrap: "wrap" }}>
+                    {(["ALL", "SMALL", "MEDIUM", "LARGE", "UNCLASSIFIED"] as NdSizeClass[]).map(sc => {
+                      const label = sc === "ALL" ? "Todos" : sc === "SMALL" ? "Pequenos" : sc === "MEDIUM" ? "Medianos" : sc === "LARGE" ? "Grandes" : "Sin tamano";
+                      const active = ndSizeClass === sc;
+                      return (
+                        <button key={sc} onClick={() => { setNdSizeClass(sc); setNdPage(1); }} style={{
+                          fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "3px 8px", borderRadius: R.sm,
+                          border: `1px solid ${active ? C.blueDark : C.line}`,
+                          background: active ? C.blueDark : "transparent",
+                          color: active ? C.white : C.inkMid, cursor: "pointer",
+                        }}>
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Search + Sort */}
+                <div style={{ display: "flex", gap: S[2], alignItems: "center" }}>
+                  <input
+                    type="text"
+                    placeholder="Buscar referencia, descripcion, grupo..."
+                    value={ndSearch}
+                    onChange={e => setNdSearch(e.target.value)}
+                    style={{
+                      flex: 1, fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "4px 8px",
+                      border: `1px solid ${C.line}`, borderRadius: R.sm, background: C.white, color: C.ink,
+                      outline: "none",
+                    }}
+                  />
+                  <select
+                    value={ndSortBy}
+                    onChange={e => { setNdSortBy(e.target.value as NdSortBy); setNdPage(1); }}
+                    style={{
+                      fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "4px 6px",
+                      border: `1px solid ${C.line}`, borderRadius: R.sm, background: C.white, color: C.ink,
+                    }}
+                  >
+                    <option value="SHORTAGE_DESC">Mayor faltante</option>
+                    <option value="SHORTAGE_ASC">Menor faltante</option>
+                    <option value="MAIN_STOCK_DESC">Mayor stock bodega</option>
+                    <option value="REFERENCE_ASC">Referencia A-Z</option>
+                    <option value="REFERENCE_DESC">Referencia Z-A</option>
+                  </select>
+                </div>
+
+                {/* Loading overlay */}
+                {ndLoading && (
+                  <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textAlign: "center", padding: S[1] }}>
+                    Cargando...
+                  </div>
+                )}
+
+                {/* Need items list */}
                 <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                  {needItems.slice(0, 100).map((item, idx) => {
-                    const ac = DIST_ACTION_COLOR[item.action];
+                  {needItems.map((item, idx) => {
+                    const needColor = item.needType === "DIRECT_REPLENISHMENT"
+                      ? { bg: `${C.blueDark}18`, text: C.blueDark }
+                      : item.needType === "PARTIAL_DIRECT_PLUS_REPLACEMENT"
+                        ? { bg: "#6366f118", text: "#6366f1" }
+                        : item.needType === "REPLACEMENT"
+                          ? { bg: `${C.blue}18`, text: C.blue }
+                          : item.needType === "CLASSIFICATION_INCOMPLETE"
+                            ? { bg: `${C.inkFaint}18`, text: C.inkFaint }
+                            : { bg: `${C.red}18`, text: C.red };
+                    const hasCandidates = (item.needType === "REPLACEMENT" || item.needType === "PARTIAL_DIRECT_PLUS_REPLACEMENT") && item.candidates.length > 0;
+                    const isExpanded = ndExpandedRef === `${item.referenceCode}|${idx}`;
+                    const candidates = hasCandidates ? item.candidates.slice(0, 5) : [];
+
+                    // Sin alternativa explanation
+                    const noAltReason = item.needType === "NO_ALTERNATIVE" ? ((): string => {
+                      if (item.rule36BlockedCount > 0) return `${item.rule36BlockedCount} candidato${item.rule36BlockedCount > 1 ? "s" : ""} excluido${item.rule36BlockedCount > 1 ? "s" : ""} por regla de concentracion`;
+                      if (!item.group || item.group === "SIN_GRUPO_SAG") return "Falta clasificacion de grupo";
+                      if (!item.subgroup || item.subgroup === "SIN_SUBGRUPO_SAG") return "Falta clasificacion de subgrupo";
+                      return "No se encontraron referencias compatibles con stock disponible";
+                    })() : null;
+
+                    // Unclassified: special message
+                    const isUnclassified = ndLine === "UNCLASSIFIED";
+
                     return (
                       <div key={idx} style={{ borderBottom: `1px solid ${C.line}`, padding: `${S[2]}px` }}>
                         <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
                           <CommercialReferenceThumbnail imageUrl={item.imageUrl} reference={item.referenceCode} description={item.productName} size={28} />
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink }}>{item.referenceCode}</span>
-                            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.productName}</div>
+                            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {item.productName}
+                            </div>
+                            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginTop: 1 }}>
+                              {item.group !== "SIN_GRUPO_SAG" ? item.group : "\u2014"} / {item.subgroup !== "SIN_SUBGRUPO_SAG" ? item.subgroup : "\u2014"}
+                              {ndLine === "ACCESSORIES" && item.sizeClass && <span> / {item.sizeClass}</span>}
+                            </div>
                           </div>
                           <div style={{ textAlign: "center", minWidth: 32 }}>
                             <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Tienda</div>
                             <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.ink }}>{item.currentUnits}</div>
                           </div>
-                          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, padding: "2px 6px", borderRadius: R.pill, background: ac.bg, color: ac.text }}>
-                            {DIST_ACTION_LABEL[item.action]}
+                          <div style={{ textAlign: "center", minWidth: 32 }}>
+                            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Min</div>
+                            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>{item.minUnits}</div>
+                          </div>
+                          <div style={{ textAlign: "center", minWidth: 32 }}>
+                            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Faltante</div>
+                            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.red }}>{item.shortageQty}</div>
+                          </div>
+                          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, padding: "2px 6px", borderRadius: R.pill, background: needColor.bg, color: needColor.text }}>
+                            {item.needTypeLabel}
                           </span>
                         </div>
+
+                        {/* Action reason */}
                         <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, paddingLeft: 28 + S[2], marginTop: 2 }}>
                           {item.actionReason}
                         </div>
+
+                        {/* Unclassified warning */}
+                        {isUnclassified && (
+                          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.amber, paddingLeft: 28 + S[2], marginTop: 2 }}>
+                            Requiere clasificacion antes de sugerir movimiento.
+                          </div>
+                        )}
+
+                        {/* Sin alternativa explanation */}
+                        {item.needType === "NO_ALTERNATIVE" && noAltReason && !isUnclassified && (
+                          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.red, paddingLeft: 28 + S[2], marginTop: 2 }}>
+                            {noAltReason}
+                          </div>
+                        )}
+
+                        {/* Clasificacion incompleta explanation */}
+                        {item.needType === "CLASSIFICATION_INCOMPLETE" && (
+                          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, paddingLeft: 28 + S[2], marginTop: 2 }}>
+                            Campos de clasificacion faltantes — no se puede buscar reemplazo compatible.
+                          </div>
+                        )}
+
+                        {/* Reposicion directa detail */}
+                        {item.needType === "DIRECT_REPLENISHMENT" && (
+                          <div style={{ paddingLeft: 28 + S[2], marginTop: S[1], fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
+                            <div style={{ display: "flex", gap: S[3] }}>
+                              <span>Bodega ppal: <strong style={{ color: C.green }}>{item.mainWarehouseAvailable}</strong> uds</span>
+                              <span>Sugerido: <strong style={{ color: C.blueDark }}>{item.suggestedReplenishment}</strong> uds</span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Variant allocation for SURTIR */}
+                        {item.needType === "DIRECT_REPLENISHMENT" && item.variantAllocation && item.variantAllocation.allocations.length > 0 && (
+                          <VariantAllocationTable allocation={item.variantAllocation} paddingLeft={28 + S[2]} />
+                        )}
+
+                        {/* PARTIAL_DIRECT_PLUS_REPLACEMENT detail (CASCADE-FIX-01) */}
+                        {item.needType === "PARTIAL_DIRECT_PLUS_REPLACEMENT" && item.resolution && (
+                          <div style={{ paddingLeft: 28 + S[2], marginTop: S[1], fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
+                            <div style={{ display: "flex", gap: S[3], flexWrap: "wrap" }}>
+                              <span>Misma ref: <strong style={{ color: C.blueDark }}>{item.resolution.sameRefCoverageQty}</strong> uds</span>
+                              <span>Reemplazos: <strong style={{ color: "#6366f1" }}>{item.resolution.replacementCoverageQty}</strong> uds</span>
+                              <span>Cobertura: <strong style={{ color: item.resolution.coverageStatus === "FULLY_COVERED" ? C.green : C.amber }}>{item.resolution.coveragePercent}%</strong></span>
+                              {item.resolution.remainingShortageQty > 0 && (
+                                <span>Faltante: <strong style={{ color: C.red }}>{item.resolution.remainingShortageQty}</strong> uds</span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                        {item.needType === "PARTIAL_DIRECT_PLUS_REPLACEMENT" && item.variantAllocation && item.variantAllocation.allocations.length > 0 && (
+                          <VariantAllocationTable allocation={item.variantAllocation} paddingLeft={28 + S[2]} />
+                        )}
+
+                        {/* Ver reemplazos button */}
+                        {hasCandidates && (
+                          <div style={{ paddingLeft: 28 + S[2], marginTop: S[1] }}>
+                            <button
+                              onClick={() => { setNdExpandedRef(isExpanded ? null : `${item.referenceCode}|${idx}`); setNdExpandedVariantKey(null); }}
+                              style={{
+                                fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                                padding: "2px 8px", borderRadius: R.sm,
+                                border: `1px solid ${C.blueDark}`, background: isExpanded ? C.blueDark : "transparent",
+                                color: isExpanded ? C.white : C.blueDark, cursor: "pointer",
+                              }}
+                            >
+                              {isExpanded ? "Ocultar reemplazos" : `Ver reemplazos (${candidates.length})`}
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Expanded candidate cards */}
+                        {isExpanded && candidates.length > 0 && (
+                          <div style={{ paddingLeft: 28 + S[2], marginTop: S[2], display: "flex", flexDirection: "column", gap: S[2] }}>
+                            {candidates.map((c, ci) => {
+                              const isRecommended = ci === 0 && c.mainWarehouseAvailableQty > 0 && c.suggestedQty > 0 && c.dataQuality === "CONFIRMED";
+                              const coveredSoFar = candidates.slice(0, ci + 1).reduce((s, x) => s + x.suggestedQty, 0);
+                              const shortage = item.replacementShortageQty;
+                              const remainingAfter = Math.max(0, shortage - coveredSoFar);
+
+                              // Variant data
+                              const allVariants: InvReplacementVariant[] = c.replacementVariants ?? [];
+                              const variantExpandKey = `${item.referenceCode}|${ci}`;
+                              const isVariantExpanded = ndExpandedVariantKey === variantExpandKey;
+                              const INITIAL_VARIANT_LIMIT = 8;
+                              const visibleVariants = isVariantExpanded ? allVariants : allVariants.slice(0, INITIAL_VARIANT_LIMIT);
+                              const hasMoreVariants = allVariants.length > INITIAL_VARIANT_LIMIT;
+                              const totalVarUnits = c.totalVariantUnits ?? allVariants.reduce((s, v) => s + v.mainWarehouseQty, 0);
+                              const variantCoverage = totalVarUnits >= c.suggestedQty ? "full" : "partial";
+
+                              return (
+                                <div key={ci} style={{
+                                  display: "flex", flexDirection: "column", padding: S[2],
+                                  background: isRecommended ? C.blueLight : C.surface,
+                                  borderRadius: R.sm,
+                                  border: `1px solid ${isRecommended ? C.blueDark : C.line}`,
+                                }}>
+                                  <div style={{ display: "flex", gap: S[2] }}>
+                                    <CommercialReferenceThumbnail imageUrl={c.imageUrl} reference={c.referenceCode} description={c.description} size={36} />
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                      <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
+                                        <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink }}>{c.referenceCode}</span>
+                                        {isRecommended && (
+                                          <span style={{
+                                            fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                                            padding: "1px 6px", borderRadius: R.pill, background: C.blueDark, color: C.white,
+                                          }}>
+                                            Recomendado
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                        {c.description}
+                                      </div>
+                                      <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, marginTop: 2 }}>
+                                        {c.group} / {c.subgroup}
+                                      </div>
+                                      <div style={{ display: "flex", gap: S[3], fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginTop: 2 }}>
+                                        <span>Bodega ppal: <strong style={{ color: C.green }}>{c.mainWarehouseAvailableQty}</strong> uds</span>
+                                        <span>Sugerido: <strong style={{ color: C.blueDark }}>{c.suggestedQty}</strong> uds</span>
+                                      </div>
+                                      <div style={{ display: "flex", gap: S[3], fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginTop: 1 }}>
+                                        <span>Cubre: {c.suggestedQty} de {shortage}</span>
+                                        {remainingAfter > 0 && (
+                                          <span style={{ color: C.amber }}>Pendiente: {remainingAfter} uds</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Variant table */}
+                                  {allVariants.length > 0 && (
+                                    <div style={{ marginTop: S[2] }}>
+                                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: S[1] }}>
+                                        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkMid }}>
+                                          Variantes disponibles
+                                        </span>
+                                        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: variantCoverage === "full" ? C.green : C.amber }}>
+                                          {variantCoverage === "full" ? `${totalVarUnits} uds disponibles` : `${totalVarUnits} de ${c.suggestedQty} uds \u2014 cobertura parcial`}
+                                        </span>
+                                      </div>
+                                      <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: T.mono, fontSize: T.sz["2xs"] }}>
+                                        <thead>
+                                          <tr style={{ borderBottom: `1px solid ${C.line}` }}>
+                                            <th style={{ textAlign: "left", padding: "2px 4px", color: C.inkMid, fontWeight: T.wt.semibold }}>Talla</th>
+                                            <th style={{ textAlign: "left", padding: "2px 4px", color: C.inkMid, fontWeight: T.wt.semibold }}>Color</th>
+                                            <th style={{ textAlign: "right", padding: "2px 4px", color: C.inkMid, fontWeight: T.wt.semibold }}>Bodega principal</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {visibleVariants.map((v, vi) => {
+                                            const qtyLabel = v.stockQuality === "PHYSICAL_ONLY"
+                                              ? `${v.mainWarehouseQty} uds f\u00edsicas`
+                                              : v.stockQuality === "UNKNOWN"
+                                                ? "Por confirmar"
+                                                : `${v.mainWarehouseQty} ud${v.mainWarehouseQty !== 1 ? "s" : ""} disponible${v.mainWarehouseQty !== 1 ? "s" : ""}`;
+                                            return (
+                                              <tr key={vi} style={{ borderBottom: `1px solid ${C.line}` }}
+                                                title={v.stockQuality === "PHYSICAL_ONLY" ? "No descuenta compromisos." : undefined}>
+                                                <td style={{ padding: "3px 4px", color: C.ink }}>{v.size ?? "\u2014"}</td>
+                                                <td style={{ padding: "3px 4px", color: C.ink }}>{v.color ?? "\u2014"}</td>
+                                                <td style={{ padding: "3px 4px", textAlign: "right", color: v.stockQuality === "UNKNOWN" ? C.inkFaint : C.green, fontWeight: T.wt.semibold }}>
+                                                  {qtyLabel}
+                                                </td>
+                                              </tr>
+                                            );
+                                          })}
+                                        </tbody>
+                                      </table>
+                                      {hasMoreVariants && !isVariantExpanded && (
+                                        <button onClick={() => setNdExpandedVariantKey(variantExpandKey)} style={{
+                                          fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.blueDark,
+                                          background: "transparent", border: "none", cursor: "pointer", padding: "4px 0", marginTop: 2,
+                                        }}>
+                                          Ver todas las variantes ({allVariants.length})
+                                        </button>
+                                      )}
+                                      {hasMoreVariants && isVariantExpanded && (
+                                        <button onClick={() => setNdExpandedVariantKey(null)} style={{
+                                          fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.blueDark,
+                                          background: "transparent", border: "none", cursor: "pointer", padding: "4px 0", marginTop: 2,
+                                        }}>
+                                          Ocultar variantes
+                                        </button>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                            {item.hasMoreCandidates && (
+                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textAlign: "center", padding: S[1] }}>
+                                Mostrando los {candidates.length} mejores de {item.totalCandidatesFound} candidatos
+                              </div>
+                            )}
+                            {item.rule36BlockedCount > 0 && (
+                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, fontStyle: "italic", padding: S[1] }}>
+                                {item.rule36BlockedCount} candidato{item.rule36BlockedCount > 1 ? "s" : ""} excluido{item.rule36BlockedCount > 1 ? "s" : ""} por regla de concentracion
+                              </div>
+                            )}
+                            {/* Variant allocation for replacement */}
+                            {item.variantAllocation && item.variantAllocation.allocations.length > 0 && (
+                              <VariantAllocationTable allocation={item.variantAllocation} paddingLeft={0} />
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
-                  {needItems.length > 100 && (
-                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, padding: S[2], textAlign: "center" }}>
-                      Mostrando 100 de {needItems.length} necesidades
-                    </div>
-                  )}
                 </div>
+
+                {/* Pagination */}
+                {pagination.totalPages > 1 && (
+                  <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: S[2], fontFamily: T.mono, fontSize: T.sz["2xs"] }}>
+                    <button
+                      disabled={pagination.page <= 1}
+                      onClick={() => setNdPage(p => Math.max(1, p - 1))}
+                      style={{
+                        padding: "3px 8px", borderRadius: R.sm, border: `1px solid ${C.line}`,
+                        background: C.white, color: pagination.page <= 1 ? C.inkFaint : C.ink, cursor: pagination.page <= 1 ? "default" : "pointer",
+                      }}
+                    >
+                      Anterior
+                    </button>
+                    <span style={{ color: C.inkMid }}>
+                      {pagination.page} / {pagination.totalPages} ({pagination.total} total)
+                    </span>
+                    <button
+                      disabled={pagination.page >= pagination.totalPages}
+                      onClick={() => setNdPage(p => Math.min(pagination.totalPages, p + 1))}
+                      style={{
+                        padding: "3px 8px", borderRadius: R.sm, border: `1px solid ${C.line}`,
+                        background: C.white, color: pagination.page >= pagination.totalPages ? C.inkFaint : C.ink,
+                        cursor: pagination.page >= pagination.totalPages ? "default" : "pointer",
+                      }}
+                    >
+                      Siguiente
+                    </button>
+                  </div>
+                )}
               </>
             );
           })()}
         </div>
       )}
 
-      {/* TAB: Derrotero — reuses DerroteroTab */}
+      {/* TAB: Derrotero — supply rules editor (AGENTIK-STORES-SUPPLY-RULES-RESET-01) */}
       {tab === "derrotero" && (
-        <DerroteroTab orgSlug={orgSlug} storeId={storeCard.store.id} storeName={storeCard.store.name} />
+        <StoreSupplyRulesTab orgSlug={orgSlug} storeId={storeCard.store.id} storeName={storeCard.store.name} />
       )}
 
       {/* TAB: Inteligencia — store health summary */}

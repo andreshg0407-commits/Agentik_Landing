@@ -55,7 +55,18 @@ export type DistributionRuleSource =
 
 // ── Replacement candidate (SUGERIR_REEMPLAZO) ──────────────────────────────
 
-export type ReplacementMatchMode = "SAME_GROUP_AND_SUBGROUP" | "SAME_SUBGROUP";
+export type ReplacementMatchMode = "SAME_GROUP_AND_SUBGROUP" | "SAME_SUBGROUP" | "SAME_SIZE_CLASS";
+
+export type ReplacementStockQuality = "OPERATIONAL_CONFIRMED" | "PHYSICAL_ONLY" | "UNKNOWN";
+
+export interface ReplacementVariant {
+  variantKey:        string;                  // "REF|SIZE|COLOR"
+  size:              string | null;
+  color:             string | null;
+  mainWarehouseQty:  number;
+  availableQty:      number | null;           // null when not tracked separately
+  stockQuality:      ReplacementStockQuality;
+}
 
 export interface ReplacementCandidate {
   referenceCode:              string;
@@ -74,17 +85,50 @@ export interface ReplacementCandidate {
   groupSource:                string;   // e.g. "ProductEntity.grupoSag"
   subgroupSource:             string;   // e.g. "ProductEntity.subgrupoSag"
   dataQuality:                ClassificationQuality;
+  // Variant-level detail (REPLACEMENT-VARIANTS-01)
+  replacementVariants:        ReplacementVariant[];
+  totalVariantCount:          number;
+  displayedVariantCount:      number;
+  totalVariantUnits:          number;
+  variantEvidenceDate:        string;   // ISO date
 }
 
 export interface ReplacementResult {
   replacementRequired:        boolean;
   replacementReason:          string;
   replacementShortageQty:     number;     // units still needed after same-ref check
-  replacementCandidates:      ReplacementCandidate[];  // max 3
+  replacementCandidates:      ReplacementCandidate[];  // max 5
   selectedReplacementCandidate: ReplacementCandidate | null;
   replacementConfidence:      number;     // 0-1
   replacementRuleSource:      ReplacementMatchMode;
   replacementCoveredQty:      number;     // total qty covered by all candidates
+  totalCandidatesFound:       number;     // total compatible refs found before limit
+  hasMoreCandidates:          boolean;    // true when more than maxCandidates exist
+  rule36BlockedCount:         number;     // count of candidates excluded by Rule 36
+}
+
+// ── Need resolution (CASCADE-FIX-01) ────────────────────────────────────────
+
+export type NeedResolutionType =
+  | "DIRECT_REPLENISHMENT"               // same ref covers full shortage
+  | "PARTIAL_DIRECT_PLUS_REPLACEMENT"    // partial same ref + replacement candidates
+  | "REPLACEMENT"                         // no same ref stock, replacement candidates found
+  | "NO_ALTERNATIVE";                     // nothing found
+
+export type CoverageStatus =
+  | "FULLY_COVERED"       // totalCoveredQty >= totalShortageQty
+  | "PARTIALLY_COVERED"   // 0 < totalCoveredQty < totalShortageQty
+  | "NO_COVERAGE";        // totalCoveredQty === 0
+
+export interface NeedResolution {
+  resolutionType:         NeedResolutionType;
+  coverageStatus:         CoverageStatus;
+  totalShortageQty:       number;
+  sameRefCoverageQty:     number;       // units from same reference
+  replacementCoverageQty: number;       // units from replacement candidates
+  totalCoveredQty:        number;       // sameRefCoverage + replacementCoverage
+  remainingShortageQty:   number;       // totalShortage - totalCovered
+  coveragePercent:        number;       // round(totalCovered / totalShortage * 100)
 }
 
 // ── Per-item distribution record ────────────────────────────────────────────
@@ -136,6 +180,50 @@ export interface StoreDistributionItem {
 
   // ── Replacement (SUGERIR_REEMPLAZO) ────────────────────────────────────
   replacement:     ReplacementResult | null;
+
+  // ── Need resolution (CASCADE-FIX-01) ─────────────────────────────────
+  needResolution:  NeedResolution | null;
+
+  // ── Variant balancing (VARIANT-BALANCING-01) ──────────────────────────
+  variantAllocation: VariantAllocationSuggestion | null;
+}
+
+// ── Store variant snapshot ───────────────────────────────────────────────────
+
+export interface StoreVariantSnapshot {
+  variantKey: string;      // "REF|SIZE|COLOR"
+  size:       string;
+  color:      string;
+  storeQty:   number;
+}
+
+// ── Variant allocation suggestion (VARIANT-BALANCING-01) ─────────────────────
+
+export type VariantBalanceQuality =
+  | "BALANCED"
+  | "PARTIAL"
+  | "INSUFFICIENT_STOCK"
+  | "INCOMPLETE_VARIANT_DATA"
+  | "NOT_APPLICABLE";
+
+export interface VariantAllocation {
+  variantKey:            string;
+  size:                  string;
+  color:                 string;
+  storeQtyBefore:        number;
+  warehouseAvailableQty: number;
+  suggestedQty:          number;
+  storeQtyAfter:         number;
+  reason:                string;
+}
+
+export interface VariantAllocationSuggestion {
+  totalRequestedQty:     number;
+  totalAllocatedQty:     number;
+  unallocatedQty:        number;
+  allocations:           VariantAllocation[];
+  balanceQuality:        VariantBalanceQuality;
+  evidenceDate:          string;
 }
 
 // ── Per-store detail ────────────────────────────────────────────────────────

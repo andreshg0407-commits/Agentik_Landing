@@ -133,11 +133,13 @@ export const CASTILLITOS_SLOW_ROTATION: SlowRotationConfig = {
 
 // ── FASE 8: Replacement / Substitution Config ─────────────────────────────
 
-export type ReplacementMatchMode = "SAME_GROUP_AND_SUBGROUP" | "SAME_SUBGROUP";
+export type ReplacementMatchMode = "SAME_GROUP_AND_SUBGROUP" | "SAME_SUBGROUP" | "SAME_SIZE_CLASS";
 
 export interface ReplacementLineConfig {
   /** Allow substitution when same-reference stock is exhausted */
   allowReplacementWhenNoStock: boolean;
+  /** Also search replacements when same-ref stock only partially covers the shortage */
+  allowReplacementWhenPartial: boolean;
   /** Matching mode for substitution candidates */
   replacementMatchMode: ReplacementMatchMode;
   /** Max candidates to return per need */
@@ -147,18 +149,27 @@ export interface ReplacementLineConfig {
 export interface ReplacementConfig {
   castillitos: ReplacementLineConfig;
   latinKids: ReplacementLineConfig;
+  accessories: ReplacementLineConfig;
 }
 
 export const CASTILLITOS_REPLACEMENT_CONFIG: ReplacementConfig = {
   castillitos: {
     allowReplacementWhenNoStock: true,
+    allowReplacementWhenPartial: true,
     replacementMatchMode: "SAME_GROUP_AND_SUBGROUP",
-    maxCandidates: 3,
+    maxCandidates: 5,
   },
   latinKids: {
     allowReplacementWhenNoStock: true,
+    allowReplacementWhenPartial: true,
     replacementMatchMode: "SAME_SUBGROUP",
-    maxCandidates: 3,
+    maxCandidates: 5,
+  },
+  accessories: {
+    allowReplacementWhenNoStock: true,
+    allowReplacementWhenPartial: true,
+    replacementMatchMode: "SAME_SIZE_CLASS",
+    maxCandidates: 5,
   },
 };
 

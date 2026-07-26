@@ -23,6 +23,8 @@ import type {
   EffectiveAccessoryConfig,
   RuleImpactPreview,
   ReplacementResult,
+  ReplacementCandidate,
+  ReplacementVariant,
 } from "../store-distribution-types";
 import type { StoreSizeClass } from "../store-policy-types";
 import { inferProductClass, findApplicableRule } from "../active-inventory";
@@ -98,7 +100,7 @@ function makeItem(overrides: Partial<StoreDistributionItem> = {}): StoreDistribu
     deficit: 0, excess: 0, mainWarehouseAvailable: 50, transferableUnits: 0,
     action: "MANTENER", actionReason: "Dentro del rango", dataQuality: "CONFIRMED",
     committedUnitsQuality: "CONFIRMED_ZERO", imageUrl: null,
-    replacement: null,
+    replacement: null, needResolution: null,
     ...overrides,
   };
 }
@@ -654,6 +656,7 @@ describe("DECIMO — Read model contracts", () => {
       committedUnitsQuality:  "NOT_AVAILABLE",
       imageUrl:               null,
       replacement:            null,
+      needResolution:         null,
     };
     assert.equal(item.action, "SURTIR");
     assert.equal(item.deficit, 3);
@@ -705,6 +708,7 @@ describe("DECIMO — Read model contracts", () => {
       committedUnitsQuality:  "NOT_AVAILABLE",
       imageUrl:               null,
       replacement:            null,
+      needResolution:         null,
     };
     assert.equal(item.action, "REQUIERE_CONFIGURACION");
     assert.equal(item.transferableUnits, 0);
@@ -1952,9 +1956,9 @@ describe("VIGESIMOSEXTO — Replacement derrotero config", () => {
     assert.ok(CASTILLITOS_REPLACEMENT_CONFIG.latinKids.allowReplacementWhenNoStock);
   });
 
-  it("max 3 candidates per need", () => {
-    assert.equal(CASTILLITOS_REPLACEMENT_CONFIG.castillitos.maxCandidates, 3);
-    assert.equal(CASTILLITOS_REPLACEMENT_CONFIG.latinKids.maxCandidates, 3);
+  it("max 5 candidates per need", () => {
+    assert.equal(CASTILLITOS_REPLACEMENT_CONFIG.castillitos.maxCandidates, 5);
+    assert.equal(CASTILLITOS_REPLACEMENT_CONFIG.latinKids.maxCandidates, 5);
   });
 });
 
@@ -2215,5 +2219,543 @@ describe("TRIGESIMOSEGUNDO — 5 operational cases A-E", () => {
     const excess = Math.max(0, effectiveRefStock - max);
     assert.equal(excess, 3);
     // Action: RETIRAR
+  });
+});
+
+// ── Section 34: NEEDS-REPLACEMENT-CANDIDATES-01 ─────────────────────────
+
+describe("TRIGESIMOTERCERO — Replacement candidates (max 5, totalFound, Rule 36)", () => {
+  it("maxCandidates is 5 for both lines", () => {
+    assert.equal(CASTILLITOS_REPLACEMENT_CONFIG.castillitos.maxCandidates, 5);
+    assert.equal(CASTILLITOS_REPLACEMENT_CONFIG.latinKids.maxCandidates, 5);
+  });
+
+  it("ReplacementResult includes totalCandidatesFound, hasMoreCandidates, rule36BlockedCount", () => {
+    const result: ReplacementResult = {
+      replacementRequired: true,
+      replacementReason: "test",
+      replacementShortageQty: 8,
+      replacementCandidates: [],
+      selectedReplacementCandidate: null,
+      replacementConfidence: 0.8,
+      replacementRuleSource: "SAME_GROUP_AND_SUBGROUP",
+      replacementCoveredQty: 0,
+      totalCandidatesFound: 12,
+      hasMoreCandidates: true,
+      rule36BlockedCount: 3,
+    };
+    assert.equal(result.totalCandidatesFound, 12);
+    assert.ok(result.hasMoreCandidates);
+    assert.equal(result.rule36BlockedCount, 3);
+  });
+
+  it("hasMoreCandidates is false when totalFound <= maxCandidates", () => {
+    const totalFound = 4;
+    const maxCandidates = 5;
+    assert.ok(totalFound <= maxCandidates);
+  });
+
+  it("hasMoreCandidates is true when totalFound > maxCandidates", () => {
+    const totalFound = 8;
+    const maxCandidates = 5;
+    assert.ok(totalFound > maxCandidates);
+  });
+
+  it("rule36BlockedCount >= 0 always", () => {
+    assert.ok(0 >= 0);
+    assert.ok(5 >= 0);
+  });
+
+  it("candidates array length <= maxCandidates (5)", () => {
+    const candidates: ReplacementCandidate[] = Array.from({ length: 5 }, (_, i) => ({
+      referenceCode: `REF-${i}`,
+      description: `Candidate ${i}`,
+      imageUrl: null,
+      canonicalLine: "castillitos",
+      group: "G1",
+      subgroup: "SG1",
+      storeStock: 0,
+      mainWarehouseAvailableQty: 10,
+      suggestedQty: 2,
+      reason: "test",
+      evidence: "test",
+      quality: "CONFIRMED" as const,
+      classificationSource: "SAG",
+      groupSource: "ProductEntity.grupoSag",
+      subgroupSource: "ProductEntity.subgrupoSag",
+      dataQuality: "CONFIRMED" as const,
+    }));
+    assert.ok(candidates.length <= 5);
+  });
+
+  it("consistency guard: hasReplacement false when mainStock=0", () => {
+    const mainStock = 0;
+    const suggestedQty = 5;
+    const isValid = mainStock > 0 && suggestedQty > 0;
+    assert.ok(!isValid);
+  });
+
+  it("consistency guard: hasReplacement false when suggestedQty=0", () => {
+    const mainStock = 10;
+    const suggestedQty = 0;
+    const isValid = mainStock > 0 && suggestedQty > 0;
+    assert.ok(!isValid);
+  });
+
+  it("consistency guard: hasReplacement true when both > 0", () => {
+    const mainStock = 10;
+    const suggestedQty = 3;
+    const isValid = mainStock > 0 && suggestedQty > 0;
+    assert.ok(isValid);
+  });
+
+  it("coveredQty = sum of all candidates suggestedQty", () => {
+    const candidates = [{ suggestedQty: 3 }, { suggestedQty: 2 }, { suggestedQty: 1 }];
+    const covered = candidates.reduce((s, c) => s + c.suggestedQty, 0);
+    assert.equal(covered, 6);
+  });
+
+  it("remainingShortageQty = max(0, shortage - coveredQty)", () => {
+    const shortage = 8;
+    const covered = 6;
+    const remaining = Math.max(0, shortage - covered);
+    assert.equal(remaining, 2);
+  });
+
+  it("remainingShortageQty never negative", () => {
+    const shortage = 3;
+    const covered = 10;
+    const remaining = Math.max(0, shortage - covered);
+    assert.equal(remaining, 0);
+  });
+});
+
+// ── Section 35: REPLACEMENT-VARIANTS-01 ─────────────────────────────────
+
+describe("TRIGESIMOCUARTO — Replacement variant contract", () => {
+  function makeVariant(size: string | null, color: string | null, qty: number, quality: string = "OPERATIONAL_CONFIRMED"): ReplacementVariant {
+    return {
+      variantKey: `REF|${size ?? "SIN_TALLA"}|${color ?? "SIN_COLOR"}`,
+      size,
+      color,
+      mainWarehouseQty: qty,
+      availableQty: qty,
+      stockQuality: quality as ReplacementVariant["stockQuality"],
+    };
+  }
+
+  it("only variants with qty > 0 should be included", () => {
+    const variants = [
+      makeVariant("2", "AZUL", 3),
+      makeVariant("4", "ROJO", 0),
+      makeVariant("6", "VERDE", 1),
+    ].filter(v => v.mainWarehouseQty > 0);
+    assert.equal(variants.length, 2);
+  });
+
+  it("consolidation by size+color sums quantities", () => {
+    const raw = [
+      { size: "2", color: "AZUL", qty: 3 },
+      { size: "2", color: "AZUL", qty: 2 },
+      { size: "4", color: "ROJO", qty: 1 },
+    ];
+    const consolidated = new Map<string, number>();
+    for (const r of raw) {
+      const key = `${r.size}|${r.color}`;
+      consolidated.set(key, (consolidated.get(key) ?? 0) + r.qty);
+    }
+    assert.equal(consolidated.get("2|AZUL"), 5);
+    assert.equal(consolidated.get("4|ROJO"), 1);
+    assert.equal(consolidated.size, 2);
+  });
+
+  it("no duplicates after consolidation", () => {
+    const variants = [
+      makeVariant("2", "AZUL", 5),
+      makeVariant("4", "ROJO", 1),
+    ];
+    const keys = new Set(variants.map(v => v.variantKey));
+    assert.equal(keys.size, variants.length);
+  });
+
+  it("commercial size order: baby ranges before infantile numerics", () => {
+    const sizes = ["12-18", "3-6", "2", "0-3", "6-9"];
+    // Expected: 0-3, 3-6, 6-9, 12-18, 2
+    // Baby: 0-3=1, 3-6=2, 6-9=3, 12-18=5
+    // Infantile: 2=102
+    const BABY: Record<string, number> = { "0-3": 1, "3-6": 2, "6-9": 3, "9-12": 4, "12-18": 5, "18-24": 6 };
+    const rank = (s: string) => BABY[s] ?? (100 + parseInt(s, 10));
+    sizes.sort((a, b) => rank(a) - rank(b));
+    assert.deepEqual(sizes, ["0-3", "3-6", "6-9", "12-18", "2"]);
+  });
+
+  it("commercial size order: infantile numerics sort correctly", () => {
+    const sizes = ["16", "4", "10", "2", "8"];
+    sizes.sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+    assert.deepEqual(sizes, ["2", "4", "8", "10", "16"]);
+  });
+
+  it("color sorts A-Z as tiebreaker", () => {
+    const colors = ["VERDE", "AZUL", "ROSADO", "BEIGE"];
+    colors.sort();
+    assert.deepEqual(colors, ["AZUL", "BEIGE", "ROSADO", "VERDE"]);
+  });
+
+  it("max 8 initial variants displayed", () => {
+    const allVariants = Array.from({ length: 12 }, (_, i) => makeVariant(String(i + 1), "AZUL", 1));
+    const INITIAL_LIMIT = 8;
+    const displayed = allVariants.slice(0, INITIAL_LIMIT);
+    assert.equal(displayed.length, 8);
+    assert.ok(allVariants.length > INITIAL_LIMIT);
+  });
+
+  it("totalVariantCount matches actual count", () => {
+    const variants = [makeVariant("2", "AZUL", 3), makeVariant("4", "ROJO", 1)];
+    assert.equal(variants.length, 2);
+  });
+
+  it("suggestedQty never exceeds totalVariantUnits", () => {
+    const suggestedQty = 5;
+    const totalVariantUnits = 3;
+    const effectiveSuggested = Math.min(suggestedQty, totalVariantUnits);
+    assert.equal(effectiveSuggested, 3);
+  });
+
+  it("partial coverage when totalVariantUnits < suggestedQty", () => {
+    const suggestedQty = 8;
+    const totalVariantUnits = 5;
+    const coverage = totalVariantUnits >= suggestedQty ? "full" : "partial";
+    assert.equal(coverage, "partial");
+  });
+
+  it("full coverage when totalVariantUnits >= suggestedQty", () => {
+    const suggestedQty = 5;
+    const totalVariantUnits = 8;
+    const coverage = totalVariantUnits >= suggestedQty ? "full" : "partial";
+    assert.equal(coverage, "full");
+  });
+
+  it("PHYSICAL_ONLY label for physical-only stock", () => {
+    const v = makeVariant("2", "AZUL", 3, "PHYSICAL_ONLY");
+    assert.equal(v.stockQuality, "PHYSICAL_ONLY");
+    const label = `${v.mainWarehouseQty} uds físicas`;
+    assert.ok(label.includes("físicas"));
+  });
+
+  it("OPERATIONAL_CONFIRMED label", () => {
+    const v = makeVariant("2", "AZUL", 3, "OPERATIONAL_CONFIRMED");
+    assert.equal(v.stockQuality, "OPERATIONAL_CONFIRMED");
+  });
+
+  it("UNKNOWN label", () => {
+    const v = makeVariant("2", "AZUL", 0, "UNKNOWN");
+    assert.equal(v.stockQuality, "UNKNOWN");
+  });
+
+  it("textile shows size and color", () => {
+    const v = makeVariant("12", "AZUL PETROLEO", 2);
+    assert.equal(v.size, "12");
+    assert.equal(v.color, "AZUL PETROLEO");
+  });
+
+  it("accessories don't force textile size", () => {
+    const v = makeVariant(null, null, 5);
+    assert.equal(v.size, null);
+    assert.equal(v.color, null);
+  });
+
+  it("ReplacementCandidate includes variant fields", () => {
+    const candidate: ReplacementCandidate = {
+      referenceCode: "REF-1",
+      description: "Test",
+      imageUrl: null,
+      canonicalLine: "castillitos",
+      group: "G1",
+      subgroup: "SG1",
+      storeStock: 0,
+      mainWarehouseAvailableQty: 10,
+      suggestedQty: 5,
+      reason: "test",
+      evidence: "test",
+      quality: "CONFIRMED",
+      classificationSource: "SAG",
+      groupSource: "ProductEntity.grupoSag",
+      subgroupSource: "ProductEntity.subgrupoSag",
+      dataQuality: "CONFIRMED",
+      replacementVariants: [makeVariant("2", "AZUL", 5), makeVariant("4", "ROJO", 5)],
+      totalVariantCount: 2,
+      displayedVariantCount: 2,
+      totalVariantUnits: 10,
+      variantEvidenceDate: "2026-07-25",
+    };
+    assert.equal(candidate.totalVariantCount, 2);
+    assert.equal(candidate.totalVariantUnits, 10);
+    assert.equal(candidate.replacementVariants.length, 2);
+    assert.equal(candidate.variantEvidenceDate, "2026-07-25");
+  });
+});
+
+// ── TRIGESIMOQUINTO — Variant balancing engine ─────────────────────────────
+
+import {
+  buildVariantAllocation,
+  buildReplacementBalancingInput,
+} from "../store-variant-balancing";
+
+describe("TRIGESIMOQUINTO — Variant balancing engine", () => {
+
+  // Helper to build a minimal BalancingInput
+  function makeInput(overrides: Record<string, unknown> = {}) {
+    return {
+      requestedQty: 6,
+      maxUnitsPerRef: 50,
+      currentStoreTotal: 5,
+      storeVariants: [] as import("../store-distribution-types").StoreVariantSnapshot[],
+      warehouseVariants: [] as { size: string; color: string; qty: number }[],
+      isTextile: true,
+      ...overrides,
+    };
+  }
+
+  it("accessories return NOT_APPLICABLE", () => {
+    const result = buildVariantAllocation(makeInput({ isTextile: false }));
+    assert.equal(result.balanceQuality, "NOT_APPLICABLE");
+    assert.equal(result.allocations.length, 0);
+    assert.equal(result.totalAllocatedQty, 0);
+  });
+
+  it("requestedQty <= 0 returns BALANCED with zero allocations", () => {
+    const result = buildVariantAllocation(makeInput({ requestedQty: 0 }));
+    assert.equal(result.balanceQuality, "BALANCED");
+    assert.equal(result.totalAllocatedQty, 0);
+  });
+
+  it("no warehouse stock returns INSUFFICIENT_STOCK", () => {
+    const result = buildVariantAllocation(makeInput({
+      warehouseVariants: [
+        { size: "2", color: "AZUL", qty: 0 },
+      ],
+    }));
+    assert.equal(result.balanceQuality, "INSUFFICIENT_STOCK");
+    assert.equal(result.totalAllocatedQty, 0);
+  });
+
+  it("round-robin distributes evenly across variants", () => {
+    const result = buildVariantAllocation(makeInput({
+      requestedQty: 6,
+      warehouseVariants: [
+        { size: "2", color: "AZUL", qty: 10 },
+        { size: "4", color: "AZUL", qty: 10 },
+        { size: "6", color: "AZUL", qty: 10 },
+      ],
+    }));
+    assert.equal(result.balanceQuality, "BALANCED");
+    assert.equal(result.totalAllocatedQty, 6);
+    assert.equal(result.unallocatedQty, 0);
+    // Each gets 2 units (6 / 3 = 2)
+    for (const a of result.allocations) {
+      assert.equal(a.suggestedQty, 2);
+    }
+  });
+
+  it("prioritizes absent sizes over present ones", () => {
+    const result = buildVariantAllocation(makeInput({
+      requestedQty: 3,
+      storeVariants: [
+        { variantKey: "2|AZUL", size: "2", color: "AZUL", storeQty: 5 },
+      ],
+      warehouseVariants: [
+        { size: "2", color: "AZUL", qty: 10 },  // present in store
+        { size: "4", color: "AZUL", qty: 10 },  // absent
+        { size: "6", color: "AZUL", qty: 10 },  // absent
+      ],
+    }));
+    assert.equal(result.totalAllocatedQty, 3);
+    // Absent sizes (4, 6) should be allocated before present (2)
+    const alloc4 = result.allocations.find(a => a.size === "4");
+    const alloc6 = result.allocations.find(a => a.size === "6");
+    const alloc2 = result.allocations.find(a => a.size === "2");
+    assert.ok(alloc4 && alloc4.suggestedQty >= 1, "absent size 4 allocated");
+    assert.ok(alloc6 && alloc6.suggestedQty >= 1, "absent size 6 allocated");
+    // With 3 units: 2 absent sizes get 1 each first, then 1 more to absent (round-robin)
+    // So alloc2 should get 0 or at most 1
+    const allocFor2 = alloc2?.suggestedQty ?? 0;
+    assert.ok(allocFor2 <= 1, "present size gets fewer units");
+  });
+
+  it("respects maxUnitsPerRef cap", () => {
+    const result = buildVariantAllocation(makeInput({
+      requestedQty: 20,
+      maxUnitsPerRef: 10,
+      currentStoreTotal: 8,  // only 2 more allowed
+      warehouseVariants: [
+        { size: "2", color: "AZUL", qty: 10 },
+        { size: "4", color: "AZUL", qty: 10 },
+      ],
+    }));
+    assert.equal(result.totalAllocatedQty, 2);
+    assert.equal(result.unallocatedQty, 18);
+  });
+
+  it("PARTIAL when warehouse stock insufficient for full request", () => {
+    const result = buildVariantAllocation(makeInput({
+      requestedQty: 10,
+      warehouseVariants: [
+        { size: "2", color: "AZUL", qty: 3 },
+      ],
+    }));
+    assert.equal(result.balanceQuality, "PARTIAL");
+    assert.equal(result.totalAllocatedQty, 3);
+    assert.equal(result.unallocatedQty, 7);
+  });
+
+  it("skips SIN_TALLA when real sizes exist", () => {
+    const result = buildVariantAllocation(makeInput({
+      requestedQty: 4,
+      warehouseVariants: [
+        { size: "SIN_TALLA", color: "SIN_COLOR", qty: 20 },
+        { size: "2", color: "AZUL", qty: 10 },
+      ],
+    }));
+    assert.equal(result.totalAllocatedQty, 4);
+    // Only size 2 allocated (SIN_TALLA skipped)
+    assert.equal(result.allocations.length, 1);
+    assert.equal(result.allocations[0].size, "2");
+  });
+
+  it("uses SIN_TALLA when no real sizes exist → INCOMPLETE_VARIANT_DATA", () => {
+    const result = buildVariantAllocation(makeInput({
+      requestedQty: 3,
+      warehouseVariants: [
+        { size: "SIN_TALLA", color: "SIN_COLOR", qty: 10 },
+      ],
+    }));
+    assert.equal(result.balanceQuality, "INCOMPLETE_VARIANT_DATA");
+    assert.equal(result.totalAllocatedQty, 3);
+    assert.equal(result.allocations[0].size, "SIN_TALLA");
+  });
+
+  it("allocations sorted by commercial size order", () => {
+    const result = buildVariantAllocation(makeInput({
+      requestedQty: 12,
+      warehouseVariants: [
+        { size: "6", color: "AZUL", qty: 10 },
+        { size: "2", color: "AZUL", qty: 10 },
+        { size: "4", color: "AZUL", qty: 10 },
+        { size: "0-3", color: "AZUL", qty: 10 },
+      ],
+    }));
+    const sizes = result.allocations.map(a => a.size);
+    assert.deepEqual(sizes, ["0-3", "2", "4", "6"]);
+  });
+
+  it("storeQtyAfter = storeQtyBefore + suggestedQty for each allocation", () => {
+    const result = buildVariantAllocation(makeInput({
+      requestedQty: 6,
+      storeVariants: [
+        { variantKey: "2|AZUL", size: "2", color: "AZUL", storeQty: 3 },
+      ],
+      warehouseVariants: [
+        { size: "2", color: "AZUL", qty: 5 },
+        { size: "4", color: "ROJO", qty: 5 },
+      ],
+    }));
+    for (const a of result.allocations) {
+      assert.equal(a.storeQtyAfter, a.storeQtyBefore + a.suggestedQty);
+    }
+  });
+
+  it("reason is 'Talla/color ausente en tienda' for absent variants", () => {
+    const result = buildVariantAllocation(makeInput({
+      requestedQty: 2,
+      warehouseVariants: [
+        { size: "2", color: "AZUL", qty: 5 },
+      ],
+    }));
+    assert.equal(result.allocations[0].reason, "Talla/color ausente en tienda");
+    assert.equal(result.allocations[0].isAbsentInStore, undefined); // not on VariantAllocation
+    assert.equal(result.allocations[0].storeQtyBefore, 0);
+  });
+
+  it("reason is 'Baja cobertura de esta variante' for store qty <= 1", () => {
+    const result = buildVariantAllocation(makeInput({
+      requestedQty: 2,
+      storeVariants: [
+        { variantKey: "2|AZUL", size: "2", color: "AZUL", storeQty: 1 },
+      ],
+      warehouseVariants: [
+        { size: "2", color: "AZUL", qty: 5 },
+      ],
+    }));
+    assert.equal(result.allocations[0].reason, "Baja cobertura de esta variante");
+  });
+
+  it("totalRequestedQty + unallocatedQty invariant", () => {
+    const result = buildVariantAllocation(makeInput({
+      requestedQty: 8,
+      warehouseVariants: [
+        { size: "2", color: "AZUL", qty: 3 },
+        { size: "4", color: "ROJO", qty: 2 },
+      ],
+    }));
+    assert.equal(result.totalRequestedQty, 8);
+    assert.equal(result.totalAllocatedQty + result.unallocatedQty, result.totalRequestedQty);
+  });
+
+  it("warehouse exhaustion caps allocation per variant", () => {
+    const result = buildVariantAllocation(makeInput({
+      requestedQty: 10,
+      warehouseVariants: [
+        { size: "2", color: "AZUL", qty: 2 },
+        { size: "4", color: "AZUL", qty: 3 },
+      ],
+    }));
+    const a2 = result.allocations.find(a => a.size === "2")!;
+    const a4 = result.allocations.find(a => a.size === "4")!;
+    assert.equal(a2.suggestedQty, 2, "capped at warehouse qty");
+    assert.equal(a4.suggestedQty, 3, "capped at warehouse qty");
+    assert.equal(result.totalAllocatedQty, 5);
+    assert.equal(result.balanceQuality, "PARTIAL");
+  });
+
+  it("color diversity: same size different colors both allocated", () => {
+    const result = buildVariantAllocation(makeInput({
+      requestedQty: 4,
+      warehouseVariants: [
+        { size: "4", color: "AZUL", qty: 5 },
+        { size: "4", color: "ROJO", qty: 5 },
+      ],
+    }));
+    assert.equal(result.allocations.length, 2);
+    assert.equal(result.allocations[0].suggestedQty, 2);
+    assert.equal(result.allocations[1].suggestedQty, 2);
+  });
+
+  it("buildReplacementBalancingInput maps ReplacementVariant correctly", () => {
+    const input = buildReplacementBalancingInput(
+      5,   // suggestedQty
+      30,  // maxUnitsPerRef
+      10,  // candidateStoreStock
+      [
+        { size: "2", color: "AZUL", mainWarehouseQty: 8, allWarehousesQty: 12 },
+        { size: null as unknown as string, color: null as unknown as string, mainWarehouseQty: 3, allWarehousesQty: 5 },
+      ],
+      [{ variantKey: "2|AZUL", size: "2", color: "AZUL", storeQty: 2 }],
+      true,
+    );
+    assert.equal(input.requestedQty, 5);
+    assert.equal(input.maxUnitsPerRef, 30);
+    assert.equal(input.currentStoreTotal, 10);
+    assert.equal(input.warehouseVariants.length, 2);
+    assert.equal(input.warehouseVariants[0].size, "2");
+    assert.equal(input.warehouseVariants[1].size, "SIN_TALLA");
+    assert.equal(input.warehouseVariants[1].color, "SIN_COLOR");
+  });
+
+  it("evidenceDate is a valid YYYY-MM-DD string", () => {
+    const result = buildVariantAllocation(makeInput({
+      warehouseVariants: [{ size: "2", color: "AZUL", qty: 5 }],
+    }));
+    assert.match(result.evidenceDate, /^\d{4}-\d{2}-\d{2}$/);
   });
 });

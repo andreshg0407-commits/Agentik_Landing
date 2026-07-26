@@ -51,6 +51,18 @@ import {
   assertStoreActive,
 } from "@/lib/comercial/tiendas/store-governance-service";
 import { STORE_INACTIVE_CODE, STORE_INACTIVE_MESSAGE } from "@/lib/comercial/tiendas/store-governance-types";
+import {
+  loadStoreInventoryByLine,
+  getInventoryLineCounts,
+  loadInventoryVariants,
+  diagnoseInventoryByLine,
+} from "@/lib/comercial/tiendas/store-inventory-by-line";
+import {
+  loadStoreNeedsByLine,
+} from "@/lib/comercial/tiendas/store-needs-by-line";
+import type { NeedLine, NeedType, NeedSortBy, NeedSizeClass } from "@/lib/comercial/tiendas/store-needs-by-line";
+import { getStoreDerroteroCoverage, getAllStoresDerroteroCoverageSummary } from "@/lib/comercial/tiendas/store-derrotero-service";
+import { buildStoreDerroteroFromSalesPortfolioDerrotero } from "@/lib/comercial/tiendas/store-derrotero-adapter";
 
 export async function POST(
   req: NextRequest,
@@ -67,8 +79,10 @@ export async function POST(
   const GUARDED_ACTIONS = new Set([
     "store_detail", "store_summary", "store_inventory",
     "store_shortages", "store_suggestions", "store_textile_coverage",
-    "store_distribution_detail", "distribution_effective_config",
+    "store_distribution_detail", "store_inventory_by_line", "store_needs_by_line",
+    "distribution_effective_config",
     "distribution_preview_impact", "distribution_save_config",
+    "derrotero_coverage",
   ]);
   if (GUARDED_ACTIONS.has(action) && body.storeId) {
     try {
@@ -296,6 +310,102 @@ export async function POST(
       return NextResponse.json({ ok: true, config: result.config });
     }
 
+    // ── INVENTORY BY LINE (AGENTIK-STORES-INVENTORY-BY-LINE-01) ─────────────
+
+    case "store_inventory_by_line": {
+      const sub = body.sub as string;
+      const storeId = body.storeId as string;
+      if (!storeId) return NextResponse.json({ error: "Missing storeId" }, { status: 400 });
+
+      switch (sub) {
+        case "counts": {
+          try {
+            const counts = await getInventoryLineCounts(orgId, storeId);
+            return NextResponse.json({ counts });
+          } catch (err) {
+            console.error("[INV-BY-LINE] counts error", storeId, err instanceof Error ? err.message : err);
+            return NextResponse.json({ error: "Error al cargar conteos de inventario", counts: [] }, { status: 500 });
+          }
+        }
+        case "load": {
+          const line = body.line as string;
+          if (!line) return NextResponse.json({ error: "Missing line" }, { status: 400 });
+          try {
+            const result = await loadStoreInventoryByLine(orgId, {
+              storeId,
+              line: line as import("@/lib/comercial/tiendas/store-inventory-by-line").InventoryLine,
+              group: body.group,
+              subgroup: body.subgroup,
+              sizeClass: body.sizeClass,
+              inventoryState: body.inventoryState,
+              unclassifiedReason: body.unclassifiedReason,
+              kpiFilter: body.kpiFilter,
+              sortBy: body.sortBy,
+              search: body.search,
+              page: body.page ?? 1,
+              pageSize: Math.min(body.pageSize ?? 25, 50),
+            });
+            return NextResponse.json(result);
+          } catch (err) {
+            console.error("[INV-BY-LINE] load error", storeId, line, err instanceof Error ? err.message : err);
+            return NextResponse.json({ error: "Error al cargar inventario por linea", line, summary: null, items: [], pagination: { page: 1, pageSize: 25, total: 0, totalPages: 0 }, availableFilters: null, dataFreshness: null }, { status: 500 });
+          }
+        }
+        case "variants": {
+          const referenceCode = body.referenceCode as string;
+          if (!referenceCode) return NextResponse.json({ error: "Missing referenceCode" }, { status: 400 });
+          try {
+            const variants = await loadInventoryVariants(orgId, storeId, referenceCode);
+            return NextResponse.json({ variants });
+          } catch {
+            return NextResponse.json({ variants: [] });
+          }
+        }
+        case "diagnose": {
+          try {
+            const diag = await diagnoseInventoryByLine(orgId, storeId);
+            return NextResponse.json(diag);
+          } catch {
+            return NextResponse.json({ error: "diagnostic_failed" });
+          }
+        }
+        default:
+          return NextResponse.json({ error: "Unknown sub-action" }, { status: 400 });
+      }
+    }
+
+    // ── NEEDS BY LINE (AGENTIK-STORES-NEEDS-BY-LINE-01) ─────────────────────
+
+    case "store_needs_by_line": {
+      const storeId = body.storeId as string;
+      if (!storeId) return NextResponse.json({ error: "Missing storeId" }, { status: 400 });
+      try {
+        const result = await loadStoreNeedsByLine(orgId, {
+          storeId,
+          line:      (body.line ?? "CASTILLITOS") as NeedLine,
+          needType:  (body.needType ?? "ALL") as NeedType,
+          sortBy:    (body.sortBy ?? "SHORTAGE_DESC") as NeedSortBy,
+          sizeClass: (body.sizeClass ?? "ALL") as NeedSizeClass,
+          search:    body.search as string | undefined,
+          page:      body.page ?? 1,
+          pageSize:  Math.min(body.pageSize ?? 25, 50),
+        });
+        return NextResponse.json(result);
+      } catch (err) {
+        console.error("[NEEDS-BY-LINE] error", storeId, err instanceof Error ? err.message : err);
+        return NextResponse.json({
+          error: "Error al cargar necesidades por linea",
+          line: body.line ?? "CASTILLITOS",
+          summary: { directReplenishment: 0, replacement: 0, noAlternative: 0, total: 0 },
+          items: [],
+          pagination: { page: 1, pageSize: 25, total: 0, totalPages: 0 },
+          lineCounts: [],
+          availableSizeClasses: [],
+          dataFreshness: null,
+        }, { status: 500 });
+      }
+    }
+
     // ── GOVERNANCE (AGENTIK-STORES-ACTIVE-STORE-GOVERNANCE-01) ──────────────
 
     case "store_governance_list": {
@@ -336,6 +446,93 @@ export async function POST(
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Error";
         return NextResponse.json({ error: msg }, { status: 422 });
+      }
+    }
+
+    // ── DERROTERO COVERAGE (AGENTIK-STORES-DERROTERO-COVERAGE-FOUNDATION-01) ──
+
+    case "derrotero_coverage": {
+      const storeId = body.storeId as string;
+      if (!storeId) return NextResponse.json({ error: "Missing storeId" }, { status: 400 });
+      try {
+        const coverage = await getStoreDerroteroCoverage(orgId, storeId);
+        const editable = canEditDistributionConfig(membership.role);
+        return NextResponse.json({ coverage, editable });
+      } catch (err) {
+        console.error("[DERROTERO-COVERAGE] error", storeId, err instanceof Error ? err.message : err);
+        return NextResponse.json({ error: "Error al cargar cobertura del derrotero" }, { status: 500 });
+      }
+    }
+
+    case "derrotero_catalog": {
+      try {
+        const derrotero = buildStoreDerroteroFromSalesPortfolioDerrotero("castillitos");
+        // Return just the entry structure — no coverage, no inventory
+        const catalog = {
+          castillitos: derrotero.lines.castillitos.map(g => ({
+            groupCode: g.groupCode,
+            groupName: g.groupName,
+            sagGrupo: g.sagGrupo,
+            entries: g.entries.map(e => ({
+              entryCode: e.entryCode,
+              entryName: e.entryName,
+              sagSubgrupo: e.sagSubgrupo,
+              minUnitsPerRef: e.minUnitsPerRef,
+              idealUnitsPerRef: e.idealUnitsPerRef,
+              maxUnitsPerRef: e.maxUnitsPerRef,
+              active: e.active,
+            })),
+          })),
+          latinKids: derrotero.lines.latinKids.map(g => ({
+            groupCode: g.groupCode,
+            groupName: g.groupName,
+            entries: g.entries.map(e => ({
+              entryCode: e.entryCode,
+              entryName: e.entryName,
+              sagSubgrupo: e.sagSubgrupo,
+              minUnitsPerRef: e.minUnitsPerRef,
+              idealUnitsPerRef: e.idealUnitsPerRef,
+              maxUnitsPerRef: e.maxUnitsPerRef,
+              active: e.active,
+            })),
+          })),
+          accessories: derrotero.lines.accessories.map(g => ({
+            groupCode: g.groupCode,
+            groupName: g.groupName,
+            entries: g.entries.map(e => ({
+              entryCode: e.entryCode,
+              entryName: e.entryName,
+              sizeClass: e.sizeClass,
+              idealUnitsPerRef: e.idealUnitsPerRef,
+              active: e.active,
+            })),
+          })),
+          totalEntries: derrotero.totalEntries,
+        };
+        return NextResponse.json({ catalog });
+      } catch (err) {
+        console.error("[DERROTERO-CATALOG] error", err instanceof Error ? err.message : err);
+        return NextResponse.json({ error: "Error al cargar catalogo del derrotero" }, { status: 500 });
+      }
+    }
+
+    case "derrotero_summary": {
+      try {
+        const summary = await getAllStoresDerroteroCoverageSummary(orgId);
+        // Serialize Map → plain object for JSON
+        const simulationSerialized = {
+          ...summary.simulation,
+          allocationByStore: Object.fromEntries(summary.simulation.allocationByStore),
+        };
+        return NextResponse.json({
+          warehouseMatrix: summary.warehouseMatrix,
+          gapSummaries: summary.gapSummaries,
+          priorities: summary.priorities,
+          simulation: simulationSerialized,
+        });
+      } catch (err) {
+        console.error("[DERROTERO-SUMMARY] error", err instanceof Error ? err.message : err);
+        return NextResponse.json({ error: "Error al cargar resumen de derrotero" }, { status: 500 });
       }
     }
 

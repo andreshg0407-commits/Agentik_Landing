@@ -46,7 +46,15 @@ import type {
   StoreDistributionHealthStatus,
   ReplacementCandidate,
   ReplacementResult,
+  ReplacementVariant,
+  StoreVariantSnapshot,
+  VariantAllocationSuggestion,
+  NeedResolution,
+  NeedResolutionType,
+  CoverageStatus,
 } from "./store-distribution-types";
+
+import { buildVariantAllocation, buildReplacementBalancingInput } from "./store-variant-balancing";
 
 import type { StorePolicyRule, StoreSizeClass, StoreProductClass } from "./store-policy-types";
 
@@ -62,6 +70,7 @@ import {
 import type { ReplacementMatchMode as ReplacementMatchModeConfig } from "./store-policy-pack-config";
 import { BUSINESS_LINE_MAP, resolveBusinessLineId } from "./store-business-lines";
 import { resolveVariantSizeColor } from "./variant-attribute-resolver";
+import { normalizeCanonicalGroup, normalizeCanonicalSubgroup } from "./classification-normalization";
 import {
   getStoreWarehousePks,
   getCommercialTextilePks,
@@ -87,6 +96,9 @@ function setCache<T>(key: string, data: T, ttlMs: number): void {
 
 const TTL_DISTRIBUTION = 2 * 60 * 1000; // 2 min
 
+// Inflight dedup: prevents concurrent calls from running the same heavy query twice
+const inflight = new Map<string, Promise<unknown>>();
+
 /**
  * Invalidate all distribution caches for an org.
  * Called after saving config changes via store-distribution-actions.
@@ -94,6 +106,10 @@ const TTL_DISTRIBUTION = 2 * 60 * 1000; // 2 min
 export function invalidateDistributionCacheForOrg(orgId: string): void {
   cache.delete(`storeDistribution:${orgId}`);
   cache.delete(`distData:${orgId}`);
+  // Also clear per-store detail caches
+  for (const key of cache.keys()) {
+    if (key.startsWith(`storeDetail:${orgId}:`)) cache.delete(key);
+  }
 }
 
 // ── Canonical store identity ────────────────────────────────────────────────
@@ -231,17 +247,27 @@ function getScarcityParams(): ScarcityParams {
 
 // ── Main warehouse availability index ───────────────────────────────────────
 
+/** Per-variant stock record for replacement candidate detail */
+interface MainVariantRecord {
+  size:  string;
+  color: string;
+  qty:   number;
+}
+
 interface MainStockIndex {
   /** key = `${referenceCode}|${size}|${color}` */
   byVariant: Map<string, number>;
   /** key = referenceCode → total across all variants */
   byReference: Map<string, number>;
+  /** key = referenceCode → per-variant records with qty > 0 */
+  byReferenceVariants: Map<string, MainVariantRecord[]>;
   totalUnits: number;
 }
 
 function buildMainStockIndex(mainStock: MainWarehouseAvailability[]): MainStockIndex {
   const byVariant = new Map<string, number>();
   const byReference = new Map<string, number>();
+  const byReferenceVariants = new Map<string, MainVariantRecord[]>();
   let totalUnits = 0;
   for (const s of mainStock) {
     const available = Math.max(0, s.availableUnits - s.reservedUnits);
@@ -249,8 +275,12 @@ function buildMainStockIndex(mainStock: MainWarehouseAvailability[]): MainStockI
     const key = `${s.referenceCode}|${s.size}|${s.color}`;
     byVariant.set(key, (byVariant.get(key) ?? 0) + available);
     byReference.set(s.referenceCode, (byReference.get(s.referenceCode) ?? 0) + available);
+    if (available > 0) {
+      if (!byReferenceVariants.has(s.referenceCode)) byReferenceVariants.set(s.referenceCode, []);
+      byReferenceVariants.get(s.referenceCode)!.push({ size: s.size, color: s.color, qty: available });
+    }
   }
-  return { byVariant, byReference, totalUnits };
+  return { byVariant, byReference, byReferenceVariants, totalUnits };
 }
 
 function getMainAvailable(index: MainStockIndex, ref: string, size: string, color: string): number {
@@ -263,6 +293,84 @@ function getMainAvailable(index: MainStockIndex, ref: string, size: string, colo
  */
 function getMainReferenceStock(index: MainStockIndex, referenceCode: string): number {
   return index.byReference.get(referenceCode) ?? 0;
+}
+
+// ── Commercial size sorting (REPLACEMENT-VARIANTS-01) ────────────────────────
+
+/** Size ordering: baby ranges → infantile numerics → generic → unknown */
+const BABY_SIZE_ORDER: Record<string, number> = {
+  "0-3": 1, "3-6": 2, "6-9": 3, "9-12": 4, "12-18": 5, "18-24": 6,
+};
+const GENERIC_SIZE_ORDER: Record<string, number> = {
+  "GEN": 900, "SIN_TALLA": 999,
+};
+
+function commercialSizeRank(size: string | null): number {
+  if (!size) return 1000;
+  const upper = size.toUpperCase();
+  if (BABY_SIZE_ORDER[size]) return BABY_SIZE_ORDER[size];
+  if (GENERIC_SIZE_ORDER[upper]) return GENERIC_SIZE_ORDER[upper];
+  // Numeric infantile sizes: 2, 3, 4, ..., 16
+  const num = parseInt(size, 10);
+  if (!isNaN(num) && num >= 1 && num <= 20) return 100 + num;
+  // Accessory sizes
+  if (upper === "SMALL" || upper === "PEQUEÑO") return 200;
+  if (upper === "MEDIUM" || upper === "MEDIANO") return 201;
+  if (upper === "LARGE" || upper === "GRANDE") return 202;
+  // Alpha: XS, S, M, L, XL
+  const alpha: Record<string, number> = { XS: 300, S: 301, M: 302, L: 303, XL: 304, XXL: 305 };
+  if (alpha[upper]) return alpha[upper];
+  return 800; // unknown
+}
+
+function sortVariantsByCommercialOrder(variants: ReplacementVariant[]): ReplacementVariant[] {
+  return variants.slice().sort((a, b) => {
+    const sizeA = commercialSizeRank(a.size);
+    const sizeB = commercialSizeRank(b.size);
+    if (sizeA !== sizeB) return sizeA - sizeB;
+    const colorA = (a.color ?? "").toLowerCase();
+    const colorB = (b.color ?? "").toLowerCase();
+    if (colorA !== colorB) return colorA < colorB ? -1 : 1;
+    return b.mainWarehouseQty - a.mainWarehouseQty; // higher qty first as tiebreaker
+  });
+}
+
+/** Build sorted ReplacementVariant[] from MainStockIndex for a given reference */
+function buildCandidateVariants(
+  ref: string,
+  mainStockIndex: MainStockIndex,
+): { variants: ReplacementVariant[]; totalUnits: number } {
+  const records = mainStockIndex.byReferenceVariants.get(ref);
+  if (!records || records.length === 0) return { variants: [], totalUnits: 0 };
+
+  // Consolidate duplicates by size+color
+  const consolidated = new Map<string, { size: string; color: string; qty: number }>();
+  for (const r of records) {
+    const key = `${r.size}|${r.color}`;
+    const existing = consolidated.get(key);
+    if (existing) {
+      existing.qty += r.qty;
+    } else {
+      consolidated.set(key, { size: r.size, color: r.color, qty: r.qty });
+    }
+  }
+
+  let totalUnits = 0;
+  const variants: ReplacementVariant[] = [];
+  for (const [, c] of consolidated) {
+    if (c.qty <= 0) continue;
+    totalUnits += c.qty;
+    variants.push({
+      variantKey: `${ref}|${c.size}|${c.color}`,
+      size: c.size === "SIN_TALLA" ? null : c.size,
+      color: c.color === "SIN_COLOR" ? null : c.color,
+      mainWarehouseQty: c.qty,
+      availableQty: c.qty, // PIL operational = qty - reserved, already computed in buildMainStockIndex
+      stockQuality: "OPERATIONAL_CONFIRMED",
+    });
+  }
+
+  return { variants: sortVariantsByCommercialOrder(variants), totalUnits };
 }
 
 // ── Line-aware textile threshold resolution ─────────────────────────────────
@@ -398,8 +506,8 @@ function buildCanonicalFields(
   return {
     world,
     canonicalLine:         variant.line,
-    group:                 grupoSag || "SIN_GRUPO_SAG",
-    subgroup:              variant.category || "SIN_SUBGRUPO_SAG",
+    group:                 normalizeCanonicalGroup(grupoSag),
+    subgroup:              normalizeCanonicalSubgroup(variant.category),
     sizeClass,
     classificationSource:  "BUSINESS_LINE_MAP",
     classificationQuality: quality,
@@ -413,8 +521,10 @@ interface SubstitutionIndex {
   byGroupAndSubgroup: Map<string, Set<string>>;
   /** key = `${canonicalLine}|${subgroup}` → Set<referenceCode> */
   bySubgroup: Map<string, Set<string>>;
-  /** key = referenceCode → { canonicalLine, group, subgroup, productName, imageUrl } */
-  refMeta: Map<string, { canonicalLine: string; group: string; subgroup: string; productName: string; imageUrl: string | null }>;
+  /** key = `${sizeClass}` → Set<referenceCode> (accessories only, CASCADE-FIX-01) */
+  byLineSizeClass: Map<string, Set<string>>;
+  /** key = referenceCode → { canonicalLine, group, subgroup, productName, imageUrl, sizeClass } */
+  refMeta: Map<string, { canonicalLine: string; group: string; subgroup: string; productName: string; imageUrl: string | null; sizeClass: string | null }>;
 }
 
 function buildSubstitutionIndex(
@@ -423,10 +533,12 @@ function buildSubstitutionIndex(
   grupoByRef: Map<string, string | null>,
   heroImageMap: Map<string, string>,
   refToProductId: Map<string, string>,
+  sizeClassByRef: Map<string, StoreSizeClass | null>,
 ): SubstitutionIndex {
   const byGroupAndSubgroup = new Map<string, Set<string>>();
   const bySubgroup = new Map<string, Set<string>>();
-  const refMeta = new Map<string, { canonicalLine: string; group: string; subgroup: string; productName: string; imageUrl: string | null }>();
+  const byLineSizeClass = new Map<string, Set<string>>();
+  const refMeta = new Map<string, { canonicalLine: string; group: string; subgroup: string; productName: string; imageUrl: string | null; sizeClass: string | null }>();
 
   // Include all refs known in main warehouse too (they may not appear in store inventory)
   const allRefs = new Set<string>();
@@ -435,8 +547,9 @@ function buildSubstitutionIndex(
 
   for (const v of allInventory) {
     const line = v.line;
-    const group = grupoByRef.get(v.referenceCode) || "SIN_GRUPO_SAG";
-    const subgroup = v.category || "SIN_SUBGRUPO_SAG";
+    const group = normalizeCanonicalGroup(grupoByRef.get(v.referenceCode));
+    const subgroup = normalizeCanonicalSubgroup(v.category);
+    const sc = sizeClassByRef.get(v.referenceCode) ?? null;
 
     if (!refMeta.has(v.referenceCode)) {
       const pid = refToProductId.get(v.referenceCode) ?? "";
@@ -446,6 +559,7 @@ function buildSubstitutionIndex(
         subgroup,
         productName: v.productName,
         imageUrl: heroImageMap.get(pid) ?? null,
+        sizeClass: sc,
       });
     }
 
@@ -456,9 +570,16 @@ function buildSubstitutionIndex(
     const sKey = `${line}|${subgroup}`;
     if (!bySubgroup.has(sKey)) bySubgroup.set(sKey, new Set());
     bySubgroup.get(sKey)!.add(v.referenceCode);
+
+    // Accessories: index by sizeClass (CASCADE-FIX-01)
+    if (sc) {
+      const scKey = sc;
+      if (!byLineSizeClass.has(scKey)) byLineSizeClass.set(scKey, new Set());
+      byLineSizeClass.get(scKey)!.add(v.referenceCode);
+    }
   }
 
-  return { byGroupAndSubgroup, bySubgroup, refMeta };
+  return { byGroupAndSubgroup, bySubgroup, byLineSizeClass, refMeta };
 }
 
 // ── Rule 36 check for substitution candidates (SEXTO) ───────────────────
@@ -477,12 +598,19 @@ function isRule36Blocked(
 
 // ── Substitution engine (TERCERO-SEXTO) ─────────────────────────────────
 
+interface ReplacementSearchResult {
+  candidates: ReplacementCandidate[];
+  totalFound: number;
+  rule36BlockedCount: number;
+}
+
 function findReplacementCandidates(
   referenceCode: string,
   storeSlug: string,
   canonicalLine: string,
   group: string,
   subgroup: string,
+  sizeClass: string | null,
   shortageQty: number,
   maxCandidates: number,
   matchMode: ReplacementMatchModeConfig,
@@ -492,10 +620,12 @@ function findReplacementCandidates(
   scarcity: ScarcityParams,
   maxUnitsPerRef: number,
   assignedRefs: Set<string>,
-): ReplacementCandidate[] {
+): ReplacementSearchResult {
   // Find compatible references from index
   let candidateRefs: Set<string>;
-  if (matchMode === "SAME_GROUP_AND_SUBGROUP") {
+  if (matchMode === "SAME_SIZE_CLASS") {
+    candidateRefs = sizeClass ? (subIndex.byLineSizeClass.get(sizeClass) ?? new Set()) : new Set();
+  } else if (matchMode === "SAME_GROUP_AND_SUBGROUP") {
     candidateRefs = subIndex.byGroupAndSubgroup.get(`${canonicalLine}|${group}|${subgroup}`) ?? new Set();
   } else {
     candidateRefs = subIndex.bySubgroup.get(`${canonicalLine}|${subgroup}`) ?? new Set();
@@ -505,8 +635,10 @@ function findReplacementCandidates(
     ref: string;
     mainStock: number;
     storeStock: number;
-    meta: { canonicalLine: string; group: string; subgroup: string; productName: string; imageUrl: string | null };
+    meta: { canonicalLine: string; group: string; subgroup: string; productName: string; imageUrl: string | null; sizeClass: string | null };
   }> = [];
+
+  let rule36BlockedCount = 0;
 
   for (const ref of candidateRefs) {
     if (ref === referenceCode) continue;
@@ -514,14 +646,17 @@ function findReplacementCandidates(
 
     const meta = subIndex.refMeta.get(ref);
     if (!meta) continue;
-    // Line isolation (DÉCIMO)
-    if (meta.canonicalLine !== canonicalLine) continue;
+    // Line isolation (DÉCIMO) — for SAME_SIZE_CLASS, sizeClass already isolates
+    if (matchMode !== "SAME_SIZE_CLASS" && meta.canonicalLine !== canonicalLine) continue;
 
     const mainStock = mainStockIndex.byReference.get(ref) ?? 0;
     if (mainStock <= 0) continue;
 
     // Rule 36 blocks candidates (SEXTO)
-    if (isRule36Blocked(ref, mainStockIndex, storeSlug, scarcity)) continue;
+    if (isRule36Blocked(ref, mainStockIndex, storeSlug, scarcity)) {
+      rule36BlockedCount++;
+      continue;
+    }
 
     const storeStock = storeStockByRef.get(ref) ?? 0;
     if (storeStock >= maxUnitsPerRef) continue;
@@ -555,7 +690,13 @@ function findReplacementCandidates(
 
     const matchEvidence = matchMode === "SAME_GROUP_AND_SUBGROUP"
       ? `Mismo grupo (${s.meta.group}) y subgrupo (${s.meta.subgroup})`
-      : `Mismo subgrupo (${s.meta.subgroup})`;
+      : matchMode === "SAME_SIZE_CLASS"
+        ? `Mismo tamano (${s.meta.sizeClass ?? "sin clasificar"})`
+        : `Mismo subgrupo (${s.meta.subgroup})`;
+
+    // Build variant-level detail for this candidate
+    const variantResult = buildCandidateVariants(s.ref, mainStockIndex);
+    const now = new Date().toISOString().slice(0, 10);
 
     candidates.push({
       referenceCode:             s.ref,
@@ -574,10 +715,16 @@ function findReplacementCandidates(
       groupSource:               "ProductEntity.grupoSag",
       subgroupSource:            "ProductEntity.subgrupoSag",
       dataQuality:               s.meta.group === "SIN_GRUPO_SAG" || s.meta.subgroup === "SIN_SUBGRUPO_SAG" ? "INFERRED" : "CONFIRMED",
+      // Variant-level detail (REPLACEMENT-VARIANTS-01)
+      replacementVariants:       variantResult.variants,
+      totalVariantCount:         variantResult.variants.length,
+      displayedVariantCount:     Math.min(variantResult.variants.length, 8),
+      totalVariantUnits:         variantResult.totalUnits,
+      variantEvidenceDate:       now,
     });
   }
 
-  return candidates;
+  return { candidates, totalFound: scored.length, rule36BlockedCount };
 }
 
 // ── Build distribution items for a single store ─────────────────────────────
@@ -603,8 +750,24 @@ function buildStoreItems(
 
   // ── PRIMERO: Consolidate per-reference stock for textile evaluation ────
   const refStockInStore = new Map<string, number>();
+  // Build per-reference store variant snapshots for balancing
+  const storeVariantsByRef = new Map<string, StoreVariantSnapshot[]>();
   for (const v of inventory) {
     refStockInStore.set(v.referenceCode, (refStockInStore.get(v.referenceCode) ?? 0) + v.currentUnits);
+    // Build variant snapshot
+    const svKey = `${v.referenceCode}|${v.size}|${v.color}`;
+    if (!storeVariantsByRef.has(v.referenceCode)) storeVariantsByRef.set(v.referenceCode, []);
+    const existing = storeVariantsByRef.get(v.referenceCode)!.find(s => s.variantKey === svKey);
+    if (existing) {
+      existing.storeQty += Math.max(0, v.currentUnits);
+    } else {
+      storeVariantsByRef.get(v.referenceCode)!.push({
+        variantKey: svKey,
+        size: v.size,
+        color: v.color,
+        storeQty: Math.max(0, v.currentUnits),
+      });
+    }
   }
 
   for (const v of inventory) {
@@ -659,6 +822,8 @@ function buildStoreItems(
           actionReason:           "Producto especial identificado por texto. Requiere configuracion explicita (subgrupoSag o lista de referencias) antes de generar surtido automatico",
           dataQuality:            "REQUIRES_CONFIGURATION",
           replacement:            null,
+          needResolution:         null,
+          variantAllocation:      null,
         });
         continue;
       } else {
@@ -678,6 +843,8 @@ function buildStoreItems(
             actionReason:           "Producto especial (identificado por texto) no asignado a esta tienda",
             dataQuality:            "PARTIAL",
             replacement:            null,
+            needResolution:         null,
+            variantAllocation:      null,
           });
           continue;
         }
@@ -720,6 +887,8 @@ function buildStoreItems(
           actionReason:           `Stock bodega principal ${evidence.stockPrincipal} <= ${evidence.umbral} unidades. Concentrar en ${evidence.tiendasPermitidas.join(" y ")}. Tienda ${evidence.tiendaEvaluada} no es prioritaria`,
           dataQuality:            "CONFIRMED",
           replacement:            null,
+          needResolution:         null,
+          variantAllocation:      null,
         });
         continue;
       }
@@ -758,61 +927,169 @@ function buildStoreItems(
       thresholds,
     );
 
-    // ── TERCERO-SEXTO: Substitution when no same-ref stock ──────────────
+    // ── CASCADE-FIX-01: Cascade replacement resolution ─────────────────
     let replacement: ReplacementResult | null = null;
+    const isTextile = canonical.world === "TEXTILE";
+    const totalShortage = shortageQty > 0 ? shortageQty : refDeficit;
+    const sameRefCoverage = action === "SURTIR" ? Math.min(totalShortage, mainRefAvailable) : 0;
 
-    if (action === "SIN_STOCK_ORIGEN" && canonical.world === "TEXTILE" && subIndex) {
-      const lineConfig = canonical.canonicalLine === "latin_kids"
+    // Determine line config for replacement search
+    const lineConfig = canonical.world === "IMPORT"
+      ? CASTILLITOS_REPLACEMENT_CONFIG.accessories
+      : canonical.canonicalLine === "latin_kids"
         ? CASTILLITOS_REPLACEMENT_CONFIG.latinKids
         : CASTILLITOS_REPLACEMENT_CONFIG.castillitos;
 
-      if (lineConfig.allowReplacementWhenNoStock) {
-        const candidates = findReplacementCandidates(
-          v.referenceCode, storeSlug, canonical.canonicalLine,
-          canonical.group, canonical.subgroup,
-          shortageQty > 0 ? shortageQty : refDeficit,
-          lineConfig.maxCandidates, lineConfig.replacementMatchMode,
-          subIndex, mainStockIndex, refStockInStore, scarcity,
-          thresholds.maxUnits, assignedReplacementRefs,
-        );
+    // CASCADE: Search replacements when (a) no same-ref stock, or (b) partial same-ref stock
+    const isNoStock = action === "SIN_STOCK_ORIGEN";
+    const isPartialSurtir = action === "SURTIR" && mainRefAvailable > 0 && mainRefAvailable < totalShortage;
 
-        if (candidates.length > 0) {
-          const coveredQty = candidates.reduce((sum, c) => sum + c.suggestedQty, 0);
-          replacement = {
-            replacementRequired:           true,
-            replacementReason:             `Sin stock de ${v.referenceCode} en bodega principal. Sustituto${candidates.length > 1 ? "s" : ""} del mismo ${lineConfig.replacementMatchMode === "SAME_GROUP_AND_SUBGROUP" ? "grupo y subgrupo" : "subgrupo"}`,
-            replacementShortageQty:        shortageQty > 0 ? shortageQty : refDeficit,
-            replacementCandidates:         candidates,
-            selectedReplacementCandidate:  candidates[0],
-            replacementConfidence:         candidates[0].dataQuality === "CONFIRMED" ? 0.85 : 0.6,
-            replacementRuleSource:         lineConfig.replacementMatchMode,
-            replacementCoveredQty:         coveredQty,
-          };
+    const shouldSearchReplacements = subIndex && (
+      (isNoStock && lineConfig.allowReplacementWhenNoStock) ||
+      (isPartialSurtir && lineConfig.allowReplacementWhenPartial)
+    );
+
+    if (shouldSearchReplacements) {
+      // For partial, search only for the remaining gap after same-ref transfer
+      const replacementShortage = isPartialSurtir
+        ? totalShortage - sameRefCoverage
+        : totalShortage;
+
+      const searchResult = findReplacementCandidates(
+        v.referenceCode, storeSlug, canonical.canonicalLine,
+        canonical.group, canonical.subgroup, canonical.sizeClass,
+        replacementShortage,
+        lineConfig.maxCandidates, lineConfig.replacementMatchMode,
+        subIndex, mainStockIndex, refStockInStore, scarcity,
+        thresholds.maxUnits, assignedReplacementRefs,
+      );
+      const { candidates, totalFound, rule36BlockedCount } = searchResult;
+
+      const matchLabel = lineConfig.replacementMatchMode === "SAME_GROUP_AND_SUBGROUP"
+        ? "grupo y subgrupo"
+        : lineConfig.replacementMatchMode === "SAME_SIZE_CLASS"
+          ? "tamano"
+          : "subgrupo";
+
+      if (candidates.length > 0) {
+        const coveredQty = candidates.reduce((sum, c) => sum + c.suggestedQty, 0);
+        replacement = {
+          replacementRequired:           true,
+          replacementReason:             isPartialSurtir
+            ? `Stock parcial de ${v.referenceCode} (${sameRefCoverage} uds). ${candidates.length} sustituto${candidates.length > 1 ? "s" : ""} del mismo ${matchLabel} para cubrir las ${replacementShortage} uds restantes`
+            : `Sin stock de ${v.referenceCode} en bodega principal. Sustituto${candidates.length > 1 ? "s" : ""} del mismo ${matchLabel}`,
+          replacementShortageQty:        replacementShortage,
+          replacementCandidates:         candidates,
+          selectedReplacementCandidate:  candidates[0],
+          replacementConfidence:         candidates[0].dataQuality === "CONFIRMED" ? 0.85 : 0.6,
+          replacementRuleSource:         lineConfig.replacementMatchMode,
+          replacementCoveredQty:         coveredQty,
+          totalCandidatesFound:          totalFound,
+          hasMoreCandidates:             totalFound > candidates.length,
+          rule36BlockedCount,
+        };
+
+        if (isNoStock) {
           action = "SUGERIR_REEMPLAZO";
           reason = `Sin stock de referencia original. ${candidates.length} sustituto${candidates.length > 1 ? "s" : ""} encontrado${candidates.length > 1 ? "s" : ""} (${coveredQty} uds)`;
         } else {
-          // SEXTO — Check if candidates were blocked by scarcity (Rule 36)
+          // Partial: action stays SURTIR, but replacement is attached
+          reason = `Faltan ${totalShortage} unidades. Bodega tiene ${sameRefCoverage} (transferencia parcial). ${candidates.length} sustituto${candidates.length > 1 ? "s" : ""} para ${replacementShortage} uds restantes`;
+        }
+      } else {
+        if (rule36BlockedCount > 0) {
+          reason = `Faltan ${totalShortage} unidades. ${isNoStock ? "Bodega principal sin stock" : `Solo ${sameRefCoverage} disponibles`}. ${rule36BlockedCount} referencia${rule36BlockedCount > 1 ? "s" : ""} compatible${rule36BlockedCount > 1 ? "s" : ""} excluida${rule36BlockedCount > 1 ? "s" : ""} por regla de concentracion de inventario`;
+        } else {
           const matchKey = lineConfig.replacementMatchMode === "SAME_GROUP_AND_SUBGROUP"
             ? `${canonical.canonicalLine}|${canonical.group}|${canonical.subgroup}`
-            : `${canonical.canonicalLine}|${canonical.subgroup}`;
+            : lineConfig.replacementMatchMode === "SAME_SIZE_CLASS"
+              ? canonical.sizeClass ?? ""
+              : `${canonical.canonicalLine}|${canonical.subgroup}`;
           const candidatePool = lineConfig.replacementMatchMode === "SAME_GROUP_AND_SUBGROUP"
             ? subIndex.byGroupAndSubgroup.get(matchKey)
-            : subIndex.bySubgroup.get(matchKey);
-          if (candidatePool && candidatePool.size > 1) {
-            // There were potential candidates in the pool — they were blocked
-            let blockedByScarcity = 0;
-            for (const ref of candidatePool) {
-              if (ref === v.referenceCode) continue;
-              const mainStock = mainStockIndex.byReference.get(ref) ?? 0;
-              if (mainStock > 0 && isRule36Blocked(ref, mainStockIndex, storeSlug, scarcity)) {
-                blockedByScarcity++;
-              }
-            }
-            if (blockedByScarcity > 0) {
-              reason = `Faltan ${refDeficit > 0 ? refDeficit : shortageQty} unidades. Bodega principal sin stock. Se encontraron ${blockedByScarcity} referencia${blockedByScarcity > 1 ? "s" : ""} compatible${blockedByScarcity > 1 ? "s" : ""} pero con stock <= ${scarcity.threshold} uds, reservado para ${scarcity.allowedNames.join(" y ")} por regla de escasez`;
-            }
+            : lineConfig.replacementMatchMode === "SAME_SIZE_CLASS"
+              ? subIndex.byLineSizeClass.get(matchKey)
+              : subIndex.bySubgroup.get(matchKey);
+          if (!candidatePool || candidatePool.size <= 1) {
+            reason = `Faltan ${totalShortage} unidades. ${isNoStock ? "Sin stock en bodega principal" : `Solo ${sameRefCoverage} disponibles`}. No se encontraron referencias compatibles del mismo ${matchLabel}`;
           }
         }
+      }
+    }
+
+    // ── CASCADE-FIX-01: Build NeedResolution ────────────────────────────
+    let needResolution: NeedResolution | null = null;
+
+    if (totalShortage > 0 && (action === "SURTIR" || action === "SIN_STOCK_ORIGEN" || action === "SUGERIR_REEMPLAZO")) {
+      const replacementCoverageQty = replacement?.replacementCoveredQty ?? 0;
+      const totalCoveredQty = sameRefCoverage + replacementCoverageQty;
+      const remainingShortageQty = Math.max(0, totalShortage - totalCoveredQty);
+
+      let resolutionType: NeedResolutionType;
+      if (sameRefCoverage >= totalShortage) {
+        resolutionType = "DIRECT_REPLENISHMENT";
+      } else if (sameRefCoverage > 0 && replacementCoverageQty > 0) {
+        resolutionType = "PARTIAL_DIRECT_PLUS_REPLACEMENT";
+      } else if (sameRefCoverage > 0 && replacementCoverageQty === 0) {
+        // Partial same-ref coverage but no replacements found for the gap.
+        // Still DIRECT_REPLENISHMENT — coverageStatus/coveragePercent communicate the gap.
+        resolutionType = "DIRECT_REPLENISHMENT";
+      } else if (sameRefCoverage === 0 && replacementCoverageQty > 0) {
+        resolutionType = "REPLACEMENT";
+      } else {
+        resolutionType = "NO_ALTERNATIVE";
+      }
+
+      const coverageStatus: CoverageStatus = totalCoveredQty >= totalShortage
+        ? "FULLY_COVERED"
+        : totalCoveredQty > 0
+          ? "PARTIALLY_COVERED"
+          : "NO_COVERAGE";
+
+      needResolution = {
+        resolutionType,
+        coverageStatus,
+        totalShortageQty: totalShortage,
+        sameRefCoverageQty: sameRefCoverage,
+        replacementCoverageQty,
+        totalCoveredQty,
+        remainingShortageQty,
+        coveragePercent: totalShortage > 0 ? Math.round((totalCoveredQty / totalShortage) * 100) : 0,
+      };
+    }
+
+    // ── VARIANT-BALANCING-01: Build balanced variant allocation ──────────
+    let variantAllocation: VariantAllocationSuggestion | null = null;
+
+    if (action === "SURTIR" && shortageQty > 0 && isTextile) {
+      // Same-reference replenishment: balance warehouse variants across the shortage
+      const whVariants = buildCandidateVariants(v.referenceCode, mainStockIndex);
+      variantAllocation = buildVariantAllocation({
+        requestedQty: shortageQty,
+        maxUnitsPerRef: thresholds.maxUnits,
+        currentStoreTotal: effectiveRefStock,
+        storeVariants: storeVariantsByRef.get(v.referenceCode) ?? [],
+        warehouseVariants: whVariants.variants.map(wv => ({
+          size: wv.size ?? "SIN_TALLA",
+          color: wv.color ?? "SIN_COLOR",
+          qty: wv.mainWarehouseQty,
+        })),
+        isTextile: true,
+      });
+    } else if (action === "SUGERIR_REEMPLAZO" && replacement) {
+      // Replacement: balance the best candidate's variants
+      const best = replacement.selectedReplacementCandidate ?? replacement.replacementCandidates[0];
+      if (best) {
+        variantAllocation = buildVariantAllocation(
+          buildReplacementBalancingInput(
+            best.suggestedQty,
+            thresholds.maxUnits,
+            best.storeStock,
+            best.replacementVariants,
+            storeVariantsByRef.get(best.referenceCode) ?? [],
+            isTextile,
+          ),
+        );
       }
     }
 
@@ -831,6 +1108,8 @@ function buildStoreItems(
       actionReason:           reason,
       dataQuality:            thresholds.dataQuality,
       replacement,
+      needResolution,
+      variantAllocation,
     });
   }
 
@@ -926,6 +1205,19 @@ async function loadDistributionData(orgId: string): Promise<DistributionData> {
   const dataCacheKey = `distData:${orgId}`;
   const cachedData = getCached<DistributionData>(dataCacheKey);
   if (cachedData) return cachedData;
+
+  // Dedup: if another call is already loading this org's data, wait for it
+  const inflightKey = `distData:${orgId}`;
+  const existing = inflight.get(inflightKey);
+  if (existing) return existing as Promise<DistributionData>;
+
+  const promise = loadDistributionDataImpl(orgId, dataCacheKey);
+  inflight.set(inflightKey, promise);
+  promise.finally(() => inflight.delete(inflightKey));
+  return promise;
+}
+
+async function loadDistributionDataImpl(orgId: string, dataCacheKey: string): Promise<DistributionData> {
 
   const stores = resolveOperationalStoresForTenant();
   const storePks = stores.map(s => s.sagWarehouseCode);
@@ -1074,10 +1366,10 @@ export async function buildCanonicalStoreDistribution(orgId: string): Promise<Ca
   const policyRules = rawPolicies.flatMap(p => p.rules);
   const mainStockIndex = buildMainStockIndex(data.mainStock);
 
-  // Build substitution index once for all stores (DECIMOSEXTO)
+  // Build substitution index once for all stores (DECIMOSEXTO + CASCADE-FIX-01)
   const subIndex = buildSubstitutionIndex(
     data.storeInventory, mainStockIndex, data.grupoByRef,
-    heroImageMap, data.refToProductId,
+    heroImageMap, data.refToProductId, data.sizeClassByRef,
   );
 
   let totalCritical = 0;
@@ -1133,6 +1425,22 @@ export async function buildCanonicalStoreDistribution(orgId: string): Promise<Ca
  * Get canonical distribution detail for a single store.
  */
 export async function getCanonicalStoreDetail(orgId: string, storeId: string): Promise<CanonicalStoreDetail | null> {
+  // Per-store detail cache (2 min, same TTL as distribution)
+  const detailCacheKey = `storeDetail:${orgId}:${storeId}`;
+  const cachedDetail = getCached<CanonicalStoreDetail>(detailCacheKey);
+  if (cachedDetail) return cachedDetail;
+
+  // Inflight dedup: share a single in-flight computation per store
+  const existingFlight = inflight.get(detailCacheKey);
+  if (existingFlight) return existingFlight as Promise<CanonicalStoreDetail | null>;
+
+  const promise = getCanonicalStoreDetailImpl(orgId, storeId, detailCacheKey);
+  inflight.set(detailCacheKey, promise);
+  promise.finally(() => inflight.delete(detailCacheKey));
+  return promise;
+}
+
+async function getCanonicalStoreDetailImpl(orgId: string, storeId: string, detailCacheKey: string): Promise<CanonicalStoreDetail | null> {
   console.time("[DISTRIBUTION] getCanonicalStoreDetail");
 
   const [data, rawPolicies, heroImageMap] = await Promise.all([
@@ -1155,7 +1463,7 @@ export async function getCanonicalStoreDetail(orgId: string, storeId: string): P
 
   const subIndex = buildSubstitutionIndex(
     data.storeInventory, mainStockIndex, data.grupoByRef,
-    heroImageMap, data.refToProductId,
+    heroImageMap, data.refToProductId, data.sizeClassByRef,
   );
 
   const items = buildStoreItems(
@@ -1166,5 +1474,7 @@ export async function getCanonicalStoreDetail(orgId: string, storeId: string): P
   const kpis = computeDetailKpis(items);
 
   console.timeEnd("[DISTRIBUTION] getCanonicalStoreDetail");
-  return { store, items, kpis };
+  const result = { store, items, kpis };
+  setCache(detailCacheKey, result, TTL_DISTRIBUTION);
+  return result;
 }
