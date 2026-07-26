@@ -1877,7 +1877,7 @@ function VariantAllocationTable({ allocation, paddingLeft }: { allocation: Varia
 
 // ── Distribution Store Drawer (NOVENO + SEGUNDO) ──────────────────────────────
 
-type DistDrawerTab = "inventario" | "necesidades" | "derrotero" | "inteligencia";
+type DistDrawerTab = "inventario" | "necesidades" | "cobertura" | "derrotero" | "inteligencia";
 
 function DistributionStoreDrawer({
   orgSlug,
@@ -2038,6 +2038,139 @@ function DistributionStoreDrawer({
   const [ndShowNoSolution, setNdShowNoSolution] = useState(false);
   const [ndInitialLineSet, setNdInitialLineSet] = useState(false);
 
+  // ── Coverage state (AGENTIK-STORES-COVERAGE-TAB-01 — Two-Dimension) ────
+  type CoverageLineName = "CASTILLITOS" | "LATIN_KIDS" | "ACCESORIOS";
+  type StructuralCoverageStatus = "CUBIERTA" | "SIN_COBERTURA";
+  type QuantitativeHealthStatus = "SALUDABLE" | "CON_REFERENCIAS_BAJO_MINIMO" | "SIN_REFERENCIAS";
+  type ReferenceHealthState = "BAJO_MINIMO" | "SALUDABLE" | "SOBRE_MAXIMO";
+  type CoverageCandidateType = "REPOSICION_MISMA_REFERENCIA" | "COMPLEMENTO_REFERENCIA_COMPATIBLE" | "REFERENCIA_NUEVA_COMPATIBLE";
+  type CoverageStatusFilter = "ALL" | "SIN_COBERTURA" | "CON_REFERENCIAS_BAJO_MINIMO" | "SALUDABLE";
+
+  interface SolutionSummary {
+    sameReferenceCandidates: number;
+    compatibleReferenceCandidates: number;
+    eligibleCandidates: number;
+    blockedCandidates: number;
+    totalWarehouseUnits: number;
+  }
+
+  interface CoverageStructure {
+    structureKey: string;
+    label: string;
+    groupLabel: string | null;
+    subgroupLabel: string;
+    line: CoverageLineName;
+    structuralCoverageStatus: StructuralCoverageStatus;
+    activeReferenceCount: number;
+    totalStoreUnits: number;
+    healthyReferenceCount: number;
+    belowMinimumReferenceCount: number;
+    overMaximumReferenceCount: number;
+    minimumUnits: number;
+    targetUnits: number;
+    maximumUnits: number | null;
+    totalShortageToTarget: number;
+    totalShortageToMinimum: number;
+    quantitativeHealthStatus: QuantitativeHealthStatus;
+    priority: number;
+    solutionSummary: SolutionSummary | null;
+  }
+
+  interface CoverageLineSummary {
+    line: CoverageLineName;
+    expected: number;
+    covered: number;
+    withBelowMinimum: number;
+    gaps: number;
+    coveragePercent: number;
+    healthPercent: number;
+  }
+
+  interface CoverageResponse {
+    storeId: string;
+    storeName: string;
+    totalExpected: number;
+    totalCovered: number;
+    totalWithBelowMinimum: number;
+    totalGaps: number;
+    overallCoveragePercent: number;
+    overallHealthPercent: number;
+    lineSummaries: CoverageLineSummary[];
+    structures: CoverageStructure[];
+    computedAt: string;
+  }
+
+  /** Derive display state from two-dimension model */
+  const covDisplayState = (s: CoverageStructure): "SIN_COBERTURA" | "CON_REFERENCIAS_BAJO_MINIMO" | "SALUDABLE" => {
+    if (s.structuralCoverageStatus === "SIN_COBERTURA") return "SIN_COBERTURA";
+    if (s.quantitativeHealthStatus === "CON_REFERENCIAS_BAJO_MINIMO") return "CON_REFERENCIAS_BAJO_MINIMO";
+    return "SALUDABLE";
+  };
+
+  const [covData, setCovData] = useState<CoverageResponse | null>(null);
+  const [covLoading, setCovLoading] = useState(false);
+  const [covLoaded, setCovLoaded] = useState(false);
+  const [covLine, setCovLine] = useState<CoverageLineName | "ALL">("ALL");
+  const [covStatusFilter, setCovStatusFilter] = useState<CoverageStatusFilter>("ALL");
+
+  // Candidate expansion state
+  type CoverageCandidateRule36 = "ELEGIBLE_CUATRO_TIENDAS" | "BLOQUEADA";
+  interface CoverageCandidate {
+    referenceCode: string;
+    productName: string;
+    imageUrl: string | null;
+    mainWarehouseStock: number;
+    variantCount: number;
+    alreadyPresentInStore: boolean;
+    storeQty: number;
+    rule36Status: CoverageCandidateRule36;
+    candidateType: CoverageCandidateType;
+  }
+  interface CoverageActiveRef {
+    referenceCode: string;
+    productName: string;
+    imageUrl: string | null;
+    storeQty: number;
+    activeVariants: number;
+    minimumUnits: number;
+    targetUnits: number;
+    maximumUnits: number;
+    referenceShortageToTarget: number;
+    referenceState: ReferenceHealthState;
+  }
+  interface CoverageCandidatesResult {
+    structureKey: string;
+    line: CoverageLineName;
+    label: string;
+    structuralCoverageStatus: StructuralCoverageStatus;
+    quantitativeHealthStatus: QuantitativeHealthStatus;
+    totalCompatible: number;
+    activeStoreRefs: CoverageActiveRef[];
+    eligible: CoverageCandidate[];
+    blocked: CoverageCandidate[];
+    solutionSummary: SolutionSummary;
+    computedAt: string;
+  }
+  const [covExpandedKey, setCovExpandedKey] = useState<string | null>(null);
+  const [covCandidates, setCovCandidates] = useState<Record<string, CoverageCandidatesResult>>({});
+  const [covCandidateLoading, setCovCandidateLoading] = useState<string | null>(null);
+
+  // Lazy load coverage when tab is active
+  useEffect(() => {
+    if (tab !== "cobertura" || covLoaded) return;
+    let cancelled = false;
+    setCovLoading(true);
+    tiendaApi(orgSlug, { action: "store_coverage", storeId: storeCard.store.id })
+      .then((data: { coverage?: CoverageResponse }) => {
+        if (cancelled) return;
+        if (data.coverage) setCovData(data.coverage);
+        setCovLoaded(true);
+      })
+      .catch(() => { if (!cancelled) setCovLoaded(true); })
+      .finally(() => { if (!cancelled) setCovLoading(false); });
+    return () => { cancelled = true; };
+  }, [tab, storeCard.store.id, orgSlug, covLoaded]);
+
   // Reset state on store change
   useEffect(() => {
     setTab("inventario");
@@ -2073,6 +2206,14 @@ function DistributionStoreDrawer({
     setNdExpandedRef(null);
     setNdShowNoSolution(false);
     setNdInitialLineSet(false);
+    // Reset coverage state
+    setCovData(null);
+    setCovLoaded(false);
+    setCovLine("ALL");
+    setCovStatusFilter("ALL");
+    setCovExpandedKey(null);
+    setCovCandidates({});
+    setCovCandidateLoading(null);
   }, [storeCard.store.id]);
 
   // ── Load line counts when inventario tab is active ─────────────────────
@@ -2268,6 +2409,7 @@ function DistributionStoreDrawer({
   const tabItems: { key: DistDrawerTab; label: string }[] = [
     { key: "inventario",   label: "Inventario" },
     { key: "necesidades",  label: "Necesidades" },
+    { key: "cobertura",    label: "Cobertura" },
     { key: "derrotero",    label: "Derrotero" },
     { key: "inteligencia", label: "Inteligencia" },
   ];
@@ -2924,6 +3066,398 @@ function DistributionStoreDrawer({
               </>
             );
           })()}
+        </div>
+      )}
+
+      {/* TAB: Cobertura — quantitative structural coverage (AGENTIK-STORES-COVERAGE-TAB-01) */}
+      {tab === "cobertura" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
+          {covLoading && !covData && (
+            <div style={{ height: 120, background: C.surface, borderRadius: R.sm, animation: "pulse 1.5s infinite" }} />
+          )}
+          {covData && (() => {
+            // Filter by line, then by display state
+            let filteredStructures = covLine === "ALL"
+              ? covData.structures
+              : covData.structures.filter(s => s.line === covLine);
+            if (covStatusFilter !== "ALL") {
+              filteredStructures = filteredStructures.filter(s => covDisplayState(s) === covStatusFilter);
+            }
+
+            const sinCobertura = filteredStructures.filter(s => covDisplayState(s) === "SIN_COBERTURA");
+            const conBajoMinimo = filteredStructures.filter(s => covDisplayState(s) === "CON_REFERENCIAS_BAJO_MINIMO");
+            const saludables = filteredStructures.filter(s => covDisplayState(s) === "SALUDABLE");
+
+            // Candidate type labels
+            const candidateTypeLabel = (t: CoverageCandidateType) =>
+              t === "REPOSICION_MISMA_REFERENCIA" ? "Reposición"
+              : t === "COMPLEMENTO_REFERENCIA_COMPATIBLE" ? "Complemento"
+              : "Referencia nueva";
+
+            const candidateTypeVariant = (t: CoverageCandidateType) =>
+              t === "REPOSICION_MISMA_REFERENCIA" ? "info"
+              : t === "COMPLEMENTO_REFERENCIA_COMPATIBLE" ? "success"
+              : "neutral";
+
+            const refStateLabel = (s: ReferenceHealthState) =>
+              s === "BAJO_MINIMO" ? "Bajo mínimo" : s === "SOBRE_MAXIMO" ? "Sobre máximo" : "Saludable";
+            const refStateColor = (s: ReferenceHealthState) =>
+              s === "BAJO_MINIMO" ? C.red : s === "SOBRE_MAXIMO" ? C.amber : C.green;
+
+            return (
+              <>
+                {/* KPIs — 6 metrics: structural coverage + quantitative health */}
+                <div style={{ display: "flex", gap: S[4], flexWrap: "wrap" }}>
+                  <MiniStat label="Esperadas" value={String(covData.totalExpected)} color={C.ink} />
+                  <MiniStat label="Cubiertas" value={String(covData.totalCovered)} color={C.green} />
+                  <MiniStat label="Sin cobertura" value={String(covData.totalGaps)} color={covData.totalGaps > 0 ? C.red : C.ink} />
+                  <MiniStat label="Refs bajo mínimo" value={String(covData.totalWithBelowMinimum)} color={covData.totalWithBelowMinimum > 0 ? C.amber : C.ink} />
+                  <MiniStat label="Cobertura" value={`${covData.overallCoveragePercent}%`} color={covData.overallCoveragePercent >= 80 ? C.green : covData.overallCoveragePercent >= 50 ? C.amber : C.red} />
+                  <MiniStat label="Salud" value={`${covData.overallHealthPercent}%`} color={covData.overallHealthPercent >= 80 ? C.green : covData.overallHealthPercent >= 50 ? C.amber : C.red} />
+                </div>
+
+                {/* Per-line filter strip */}
+                <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
+                  <button
+                    onClick={() => setCovLine("ALL")}
+                    style={{
+                      padding: `${S[1]}px ${S[3]}px`, borderRadius: R.sm, border: `1px solid ${C.line}`,
+                      fontFamily: T.mono, fontSize: T.sz.xs, cursor: "pointer",
+                      background: covLine === "ALL" ? C.blueDark : C.surface,
+                      color: covLine === "ALL" ? "#fff" : C.ink,
+                    }}
+                  >
+                    Todas ({covData.totalExpected})
+                  </button>
+                  {covData.lineSummaries.map(ls => {
+                    const lineLabel = ls.line === "CASTILLITOS" ? "Castillitos"
+                      : ls.line === "LATIN_KIDS" ? "Latin Kids" : "Accesorios";
+                    const active = covLine === ls.line;
+                    const issues = ls.gaps + ls.withBelowMinimum;
+                    return (
+                      <button
+                        key={ls.line}
+                        onClick={() => setCovLine(ls.line)}
+                        style={{
+                          padding: `${S[1]}px ${S[3]}px`, borderRadius: R.sm, border: `1px solid ${C.line}`,
+                          fontFamily: T.mono, fontSize: T.sz.xs, cursor: "pointer",
+                          background: active ? C.blueDark : C.surface,
+                          color: active ? "#fff" : C.ink,
+                        }}
+                      >
+                        {lineLabel} ({ls.covered}/{ls.expected})
+                        {issues > 0 && (
+                          <span style={{ marginLeft: S[1], color: active ? "#fca5a5" : ls.gaps > 0 ? C.red : C.amber, fontWeight: T.wt.semibold }}>
+                            {issues} {issues === 1 ? "brecha" : "brechas"}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Status filter strip — two-dimension */}
+                <div style={{ display: "flex", gap: S[1], flexWrap: "wrap" }}>
+                  {([
+                    { key: "ALL" as CoverageStatusFilter, label: "Todas", count: covData.structures.filter(s => covLine === "ALL" || s.line === covLine).length },
+                    { key: "SALUDABLE" as CoverageStatusFilter, label: "Saludables", count: covData.structures.filter(s => covDisplayState(s) === "SALUDABLE" && (covLine === "ALL" || s.line === covLine)).length },
+                    { key: "CON_REFERENCIAS_BAJO_MINIMO" as CoverageStatusFilter, label: "Con refs bajo mín.", count: covData.structures.filter(s => covDisplayState(s) === "CON_REFERENCIAS_BAJO_MINIMO" && (covLine === "ALL" || s.line === covLine)).length },
+                    { key: "SIN_COBERTURA" as CoverageStatusFilter, label: "Sin cobertura", count: covData.structures.filter(s => covDisplayState(s) === "SIN_COBERTURA" && (covLine === "ALL" || s.line === covLine)).length },
+                  ]).map(f => (
+                    <button
+                      key={f.key}
+                      onClick={() => setCovStatusFilter(f.key)}
+                      style={{
+                        padding: `2px ${S[2]}px`, borderRadius: R.sm, border: `1px solid ${C.line}`,
+                        fontFamily: T.mono, fontSize: "10px", cursor: "pointer",
+                        background: covStatusFilter === f.key ? C.surfaceAlt : "transparent",
+                        color: C.ink, fontWeight: covStatusFilter === f.key ? T.wt.semibold : T.wt.normal,
+                      }}
+                    >
+                      {f.label} ({f.count})
+                    </button>
+                  ))}
+                </div>
+
+                {/* Structures table */}
+                <div className="ag-op-table" style={{ fontSize: T.sz.sm }}>
+                  {/* Header */}
+                  <div className="ag-op-row" style={{
+                    fontFamily: T.mono, fontWeight: T.wt.semibold, fontSize: T.sz.xs,
+                    color: C.inkLight, borderBottom: `1px solid ${C.line}`,
+                    display: "grid", gridTemplateColumns: "140px 1fr 50px 50px 60px 60px 90px", gap: S[2],
+                    padding: `${S[1]}px ${S[2]}px`,
+                  }}>
+                    <span>Grupo / Línea</span>
+                    <span>Estructura</span>
+                    <span style={{ textAlign: "right" }}>Refs</span>
+                    <span style={{ textAlign: "right" }}>Uds</span>
+                    <span style={{ textAlign: "right" }}>Objetivo</span>
+                    <span style={{ textAlign: "right" }}>Faltante</span>
+                    <span style={{ textAlign: "center" }}>Estado</span>
+                  </div>
+
+                  {/* SIN_COBERTURA first, then CON_REFERENCIAS_BAJO_MINIMO, then SALUDABLE */}
+                  {[
+                    ...sinCobertura.sort((a, b) => a.priority - b.priority),
+                    ...conBajoMinimo.sort((a, b) => a.priority - b.priority),
+                    ...saludables.sort((a, b) => a.priority - b.priority),
+                  ].map(s => {
+                    const ds = covDisplayState(s);
+                    const isExpandable = ds !== "SALUDABLE";
+                    const isExpanded = covExpandedKey === s.structureKey;
+                    const candidateData = covCandidates[s.structureKey];
+                    const isLoadingCandidates = covCandidateLoading === s.structureKey;
+
+                    const statusVariant = ds === "SALUDABLE" ? "success"
+                      : ds === "CON_REFERENCIAS_BAJO_MINIMO" ? "warning" : "critical";
+                    const statusLabel = ds === "SALUDABLE" ? "Saludable"
+                      : ds === "CON_REFERENCIAS_BAJO_MINIMO"
+                        ? `${s.belowMinimumReferenceCount} bajo mín.`
+                        : "Sin cobertura";
+                    const rowBg = ds === "SIN_COBERTURA" ? "rgba(239,68,68,0.04)"
+                      : ds === "CON_REFERENCIAS_BAJO_MINIMO" ? "rgba(245,158,11,0.04)" : "transparent";
+
+                    const handleToggle = () => {
+                      if (!isExpandable) return;
+                      if (isExpanded) {
+                        setCovExpandedKey(null);
+                        return;
+                      }
+                      setCovExpandedKey(s.structureKey);
+                      if (!covCandidates[s.structureKey]) {
+                        setCovCandidateLoading(s.structureKey);
+                        tiendaApi(orgSlug, {
+                          action: "store_coverage_candidates",
+                          storeId: storeCard.store.id,
+                          structureKeys: [s.structureKey],
+                          coverageStatuses: { [s.structureKey]: s.structuralCoverageStatus },
+                        })
+                          .then((data: { candidates?: CoverageCandidatesResult[] }) => {
+                            if (data.candidates?.[0]) {
+                              setCovCandidates(prev => ({ ...prev, [s.structureKey]: data.candidates![0] }));
+                            }
+                          })
+                          .catch(() => {})
+                          .finally(() => setCovCandidateLoading(null));
+                      }
+                    };
+
+                    return (
+                      <div key={s.structureKey}>
+                        <div
+                          className="ag-op-row"
+                          onClick={handleToggle}
+                          style={{
+                            display: "grid", gridTemplateColumns: "140px 1fr 50px 50px 60px 60px 90px", gap: S[2],
+                            padding: `${S[2]}px ${S[2]}px`,
+                            fontFamily: T.mono, fontSize: T.sz.sm,
+                            background: rowBg,
+                            borderBottom: isExpanded ? "none" : `1px solid ${C.line}`,
+                            cursor: isExpandable ? "pointer" : "default",
+                          }}
+                        >
+                          <span style={{ color: C.inkLight, fontSize: T.sz.xs }}>
+                            {isExpandable && <span style={{ marginRight: S[1] }}>{isExpanded ? "▾" : "▸"}</span>}
+                            {s.line === "CASTILLITOS" ? s.groupLabel ?? "CS" : s.line === "LATIN_KIDS" ? "Latin Kids" : "Accesorios"}
+                          </span>
+                          <span style={{ color: C.ink }}>{s.label}</span>
+                          <span style={{ textAlign: "right", color: s.activeReferenceCount > 0 ? C.ink : C.red, fontWeight: T.wt.semibold }}>
+                            {s.activeReferenceCount > 0 ? s.activeReferenceCount : "\u2014"}
+                          </span>
+                          <span style={{ textAlign: "right", color: C.inkLight }}>
+                            {s.totalStoreUnits > 0 ? s.totalStoreUnits : "\u2014"}
+                          </span>
+                          <span style={{ textAlign: "right", color: C.inkLight }}>
+                            {s.targetUnits}
+                          </span>
+                          <span style={{ textAlign: "right", color: s.totalShortageToTarget > 0 ? C.red : C.inkLight, fontWeight: s.totalShortageToTarget > 0 ? T.wt.semibold : T.wt.normal }}>
+                            {s.totalShortageToTarget > 0 ? s.totalShortageToTarget : "\u2014"}
+                          </span>
+                          <span style={{ textAlign: "center" }}>
+                            <span className={`ag-op-status ag-op-status--${statusVariant}`}>
+                              {statusLabel}
+                            </span>
+                          </span>
+                        </div>
+
+                        {/* Candidate expansion panel */}
+                        {isExpanded && isExpandable && (
+                          <div style={{
+                            padding: `${S[2]}px ${S[3]}px ${S[3]}px ${S[3]}px`,
+                            background: ds === "SIN_COBERTURA" ? "rgba(239,68,68,0.02)" : "rgba(245,158,11,0.02)",
+                            borderBottom: `1px solid ${C.line}`,
+                          }}>
+                            {isLoadingCandidates && !candidateData && (
+                              <div style={{ height: 48, background: C.surface, borderRadius: R.sm, animation: "pulse 1.5s infinite" }} />
+                            )}
+                            {candidateData && (
+                              <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
+                                {/* Solution summary */}
+                                <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight }}>
+                                  {candidateData.solutionSummary.eligibleCandidates > 0
+                                    ? `${candidateData.solutionSummary.eligibleCandidates} solución${candidateData.solutionSummary.eligibleCandidates !== 1 ? "es" : ""} en bodega · ${candidateData.solutionSummary.totalWarehouseUnits} uds disponibles`
+                                    : "Sin solución en bodega"
+                                  }
+                                </div>
+
+                                {/* Active store refs with per-reference health */}
+                                {candidateData.activeStoreRefs.length > 0 && (
+                                  <div>
+                                    <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.blueDark, fontWeight: T.wt.semibold, marginBottom: S[1] }}>
+                                      En tienda ({candidateData.activeStoreRefs.length})
+                                    </div>
+                                    {candidateData.activeStoreRefs.map(ar => (
+                                      <div key={ar.referenceCode} style={{
+                                        display: "grid", gridTemplateColumns: "28px 1fr auto auto auto auto", gap: S[2],
+                                        padding: `${S[1]}px 0`, alignItems: "center",
+                                        fontFamily: T.mono, fontSize: T.sz.xs,
+                                        borderBottom: `1px solid ${C.line}`,
+                                      }}>
+                                        <CommercialReferenceThumbnail imageUrl={ar.imageUrl} reference={ar.referenceCode} description={ar.productName} size={24} />
+                                        <div>
+                                          <div style={{ color: C.ink, fontWeight: T.wt.medium }}>{ar.referenceCode}</div>
+                                          <div style={{ color: C.inkLight, fontSize: "10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>
+                                            {ar.productName}
+                                          </div>
+                                        </div>
+                                        <span style={{ color: C.ink, textAlign: "right" }}>{ar.storeQty} uds</span>
+                                        <span style={{ color: C.inkLight, textAlign: "right", fontSize: "10px" }}>
+                                          {ar.minimumUnits}/{ar.targetUnits}/{ar.maximumUnits}
+                                        </span>
+                                        <span style={{ textAlign: "right", color: ar.referenceShortageToTarget > 0 ? C.red : C.inkLight, fontWeight: ar.referenceShortageToTarget > 0 ? T.wt.semibold : T.wt.normal, fontSize: "10px" }}>
+                                          {ar.referenceShortageToTarget > 0 ? `-${ar.referenceShortageToTarget}` : "\u2014"}
+                                        </span>
+                                        <span>
+                                          <span style={{ fontSize: "10px", color: refStateColor(ar.referenceState), fontWeight: T.wt.semibold }}>
+                                            {refStateLabel(ar.referenceState)}
+                                          </span>
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {/* Eligible candidates */}
+                                {candidateData.eligible.length > 0 && (
+                                  <div>
+                                    <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.green, fontWeight: T.wt.semibold, marginBottom: S[1] }}>
+                                      Elegibles ({candidateData.eligible.length})
+                                    </div>
+                                    {candidateData.eligible.map(c => (
+                                      <div key={c.referenceCode} style={{
+                                        display: "grid", gridTemplateColumns: "28px 1fr auto auto auto auto", gap: S[2],
+                                        padding: `${S[1]}px 0`, alignItems: "center",
+                                        fontFamily: T.mono, fontSize: T.sz.xs,
+                                        borderBottom: `1px solid ${C.line}`,
+                                      }}>
+                                        <CommercialReferenceThumbnail imageUrl={c.imageUrl} reference={c.referenceCode} description={c.productName} size={24} />
+                                        <div>
+                                          <div style={{ color: C.ink, fontWeight: T.wt.medium }}>{c.referenceCode}</div>
+                                          <div style={{ color: C.inkLight, fontSize: "10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>
+                                            {c.productName}
+                                          </div>
+                                        </div>
+                                        <span style={{ color: C.ink, textAlign: "right" }}>{c.mainWarehouseStock} uds</span>
+                                        <span style={{ color: C.inkLight, textAlign: "right" }}>{c.variantCount} var</span>
+                                        <span>
+                                          <span className={`ag-op-status ag-op-status--${candidateTypeVariant(c.candidateType)}`} style={{ fontSize: "10px" }}>
+                                            {candidateTypeLabel(c.candidateType)}
+                                          </span>
+                                        </span>
+                                        <span>
+                                          {c.alreadyPresentInStore && c.storeQty > 0
+                                            ? <span style={{ fontSize: "10px", color: C.inkLight }}>{c.storeQty} en tienda</span>
+                                            : null
+                                          }
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {/* Blocked candidates */}
+                                {candidateData.blocked.length > 0 && (
+                                  <div>
+                                    <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.amber, fontWeight: T.wt.semibold, marginBottom: S[1] }}>
+                                      Bloqueadas — Regla 36 ({candidateData.blocked.length})
+                                    </div>
+                                    {candidateData.blocked.map(c => (
+                                      <div key={c.referenceCode} style={{
+                                        display: "grid", gridTemplateColumns: "28px 1fr auto auto auto", gap: S[2],
+                                        padding: `${S[1]}px 0`, alignItems: "center",
+                                        fontFamily: T.mono, fontSize: T.sz.xs, opacity: 0.6,
+                                        borderBottom: `1px solid ${C.line}`,
+                                      }}>
+                                        <CommercialReferenceThumbnail imageUrl={c.imageUrl} reference={c.referenceCode} description={c.productName} size={24} />
+                                        <div>
+                                          <div style={{ color: C.ink, fontWeight: T.wt.medium }}>{c.referenceCode}</div>
+                                          <div style={{ color: C.inkLight, fontSize: "10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>
+                                            {c.productName}
+                                          </div>
+                                        </div>
+                                        <span style={{ color: C.ink, textAlign: "right" }}>{c.mainWarehouseStock} uds</span>
+                                        <span style={{ color: C.inkLight, textAlign: "right" }}>{c.variantCount} var</span>
+                                        <span>
+                                          <span className={`ag-op-status ag-op-status--${candidateTypeVariant(c.candidateType)}`} style={{ fontSize: "10px" }}>
+                                            {candidateTypeLabel(c.candidateType)}
+                                          </span>
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {/* No candidates */}
+                                {candidateData.totalCompatible === 0 && candidateData.activeStoreRefs.length === 0 && (
+                                  <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight, padding: S[2] }}>
+                                    No hay referencias compatibles en bodega principal
+                                  </div>
+                                )}
+
+                                {/* "Ver en Necesidades" navigation */}
+                                <div style={{ marginTop: S[1] }}>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setTab("necesidades");
+                                    }}
+                                    style={{
+                                      fontFamily: T.mono, fontSize: T.sz.xs, color: C.blueDark,
+                                      background: "none", border: "none", cursor: "pointer",
+                                      textDecoration: "underline", padding: 0,
+                                    }}
+                                  >
+                                    Ver en Necesidades →
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                            {!isLoadingCandidates && !candidateData && (
+                              <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight, padding: S[2] }}>
+                                Error al cargar candidatos
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {filteredStructures.length === 0 && (
+                    <div style={{ padding: S[4], textAlign: "center", fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight }}>
+                      No hay estructuras para este filtro
+                    </div>
+                  )}
+                </div>
+              </>
+            );
+          })()}
+          {!covLoading && !covData && covLoaded && (
+            <div style={{ padding: S[4], textAlign: "center", fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight }}>
+              No se pudo cargar la cobertura estructural
+            </div>
+          )}
         </div>
       )}
 

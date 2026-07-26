@@ -63,6 +63,7 @@ import {
 import type { NeedLine, NeedType, NeedSortBy, NeedSizeClass } from "@/lib/comercial/tiendas/store-needs-by-line";
 import { loadWarehouseFirstNeeds } from "@/lib/comercial/tiendas/store-warehouse-first-needs";
 import type { WHFLine, WHFSortBy } from "@/lib/comercial/tiendas/store-warehouse-first-needs";
+import { loadStoreCoverage, loadStoreCoverageCandidates } from "@/lib/comercial/tiendas/store-coverage-service";
 import { getStoreDerroteroCoverage, getAllStoresDerroteroCoverageSummary } from "@/lib/comercial/tiendas/store-derrotero-service";
 import { buildStoreDerroteroFromSalesPortfolioDerrotero } from "@/lib/comercial/tiendas/store-derrotero-adapter";
 
@@ -84,7 +85,7 @@ export async function POST(
     "store_distribution_detail", "store_inventory_by_line", "store_needs_by_line", "store_warehouse_first_needs",
     "distribution_effective_config",
     "distribution_preview_impact", "distribution_save_config",
-    "derrotero_coverage",
+    "derrotero_coverage", "store_coverage", "store_coverage_candidates",
   ]);
   if (GUARDED_ACTIONS.has(action) && body.storeId) {
     try {
@@ -478,6 +479,41 @@ export async function POST(
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Error";
         return NextResponse.json({ error: msg }, { status: 422 });
+      }
+    }
+
+    // ── STRUCTURAL COVERAGE (AGENTIK-STORES-COVERAGE-TAB-01) ──────────────────
+
+    case "store_coverage": {
+      const storeId = body.storeId as string;
+      if (!storeId) return NextResponse.json({ error: "Missing storeId" }, { status: 400 });
+      try {
+        const coverage = await loadStoreCoverage(orgId, storeId);
+        return NextResponse.json({ coverage });
+      } catch (err) {
+        console.error("[STORE-COVERAGE] error", storeId, err instanceof Error ? err.message : err);
+        return NextResponse.json({ error: "Error al cargar cobertura estructural" }, { status: 500 });
+      }
+    }
+
+    // ── STRUCTURAL COVERAGE CANDIDATES (AGENTIK-STORES-COVERAGE-TAB-01) ────────
+
+    case "store_coverage_candidates": {
+      const storeId = body.storeId as string;
+      const structureKeys = body.structureKeys as string[];
+      const coverageStatuses = body.coverageStatuses as Record<string, string> | undefined;
+      if (!storeId || !Array.isArray(structureKeys) || structureKeys.length === 0) {
+        return NextResponse.json({ error: "Missing storeId or structureKeys" }, { status: 400 });
+      }
+      try {
+        const candidates = await loadStoreCoverageCandidates(
+          orgId, storeId, structureKeys,
+          coverageStatuses as Record<string, import("@/lib/comercial/tiendas/store-coverage-service").StructuralCoverageStatus> | undefined,
+        );
+        return NextResponse.json({ candidates });
+      } catch (err) {
+        console.error("[STORE-COVERAGE-CANDIDATES] error", storeId, err instanceof Error ? err.message : err);
+        return NextResponse.json({ error: "Error al cargar candidatos de cobertura" }, { status: 500 });
       }
     }
 
