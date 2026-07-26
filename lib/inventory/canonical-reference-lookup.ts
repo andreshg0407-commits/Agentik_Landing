@@ -162,12 +162,17 @@ export async function loadCanonicalReferencesByReferenceList(
     if (!peByNorm.has(norm)) peByNorm.set(norm, pe);
   }
 
-  // ── Step 2: Batch PIL (SQL-aggregated net per productId + warehouseId) ─
+  // ── Step 2: Batch PIL (SQL-aggregated per productId + warehouseId) ──────
+  // Returns both net (SUM) and positive-only (SUM(GREATEST(0, qty))).
+  // positiveQuantity = physical stock available for sale (negatives excluded).
+  // AGENTIK-INVENTORY-COMMERCIAL-VS-PRODUCTION-STOCK-CLARITY-01.
   const productIds = peRows.map((pe: any) => pe.id);
-  let pilAggRows: { productId: string; warehouseId: string; net_qty: number }[] = [];
+  let pilAggRows: { productId: string; warehouseId: string; net_qty: number; pos_qty: number }[] = [];
   if (productIds.length > 0) {
     const rawRows = await db.$queryRawUnsafe(
-      `SELECT "productId", "warehouseId", SUM(quantity)::float AS net_qty
+      `SELECT "productId", "warehouseId",
+              SUM(quantity)::float AS net_qty,
+              SUM(GREATEST(0, quantity))::float AS pos_qty
        FROM "ProductInventoryLevel"
        WHERE "productId" = ANY($1::text[])
        GROUP BY "productId", "warehouseId"`,
@@ -177,6 +182,7 @@ export async function loadCanonicalReferencesByReferenceList(
       productId: r.productId as string,
       warehouseId: String(r.warehouseId),
       net_qty: Number(r.net_qty) || 0,
+      pos_qty: Number(r.pos_qty) || 0,
     }));
   }
 
@@ -184,7 +190,7 @@ export async function loadCanonicalReferencesByReferenceList(
   const pilByProduct = new Map<string, WarehouseBalance[]>();
   for (const row of pilAggRows) {
     const arr = pilByProduct.get(row.productId) ?? [];
-    arr.push({ warehouseId: row.warehouseId, netQuantity: row.net_qty });
+    arr.push({ warehouseId: row.warehouseId, netQuantity: row.net_qty, positiveQuantity: row.pos_qty });
     pilByProduct.set(row.productId, arr);
   }
 

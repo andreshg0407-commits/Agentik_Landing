@@ -17,7 +17,11 @@
  *   IMPORT:  sum PIL from includeInImportInventory warehouses (B24, ka_nl=33)
  *            CCS override NOT allowed (CCS from textile bodegas, incompatible)
  *
- * PIL semantics: net quantity per warehouse (includes negatives), clamped to 0.
+ * PIL formula: sum(max(0, quantity)) per authorized warehouse.
+ * Each positive quantity is physical stock available for sale.
+ * Negative quantities (oversold variants) are excluded, not netted.
+ *
+ * AGENTIK-INVENTORY-COMMERCIAL-VS-PRODUCTION-STOCK-CLARITY-01.
  */
 
 import type { ReferenceBusinessDomain } from "./reference-business-domain";
@@ -35,6 +39,14 @@ export interface WarehouseBalance {
   warehouseId: string;
   /** Net quantity (sum of all PIL rows for this product+warehouse, can be negative) */
   netQuantity: number;
+  /**
+   * Positive-only quantity: SUM(GREATEST(0, quantity)) for this product+warehouse.
+   * Each positive PIL row = physical stock available for sale.
+   * Negative rows (oversold variants) are excluded, not netted.
+   *
+   * AGENTIK-INVENTORY-COMMERCIAL-VS-PRODUCTION-STOCK-CLARITY-01.
+   */
+  positiveQuantity: number;
 }
 
 export interface CommercialStockResolverInput {
@@ -136,7 +148,12 @@ export function resolveCompatibleCommercialStock(
     dataQualityFlags.push("CCS_DOMAIN_INCOMPATIBLE");
   }
 
-  let pilNetTotal = 0;
+  // Formula: sum(positiveQuantity) from authorized warehouses.
+  // positiveQuantity = SUM(GREATEST(0, quantity)) — clamped per PIL row, then summed.
+  // Each positive PIL row = physical stock available for sale.
+  // Negative PIL rows (oversold variants) excluded at the source, never netted.
+  // AGENTIK-INVENTORY-COMMERCIAL-VS-PRODUCTION-STOCK-CLARITY-01.
+  let pilPosTotal = 0;
   const contributingWarehouses: ContributingWarehouse[] = [];
   const hasPIL = warehouseBalances.length > 0;
 
@@ -144,7 +161,7 @@ export function resolveCompatibleCommercialStock(
     if (stockPolicy.authorizedPks.has(bal.warehouseId)) {
       const wh = resolveWarehouseByPk(bal.warehouseId);
       if (!wh) continue;
-      pilNetTotal += bal.netQuantity;
+      pilPosTotal += bal.positiveQuantity;
       contributingWarehouses.push({
         kaNlBodega: wh.kaNlBodega,
         ssCodigo: wh.ssCodigo,
@@ -159,7 +176,7 @@ export function resolveCompatibleCommercialStock(
   if (!hasCcs && !hasPIL) dataQualityFlags.push("NO_STOCK_DATA");
 
   return {
-    compatibleCommercialStock: Math.max(0, pilNetTotal),
+    compatibleCommercialStock: pilPosTotal,
     commercialStockPolicy: stockPolicy.policy,
     stockSource: hasPIL ? "PIL" : "NONE",
     sourceCompatibilityValidated: true,

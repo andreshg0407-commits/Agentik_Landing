@@ -143,8 +143,10 @@ export async function listImportedReferences(orgId: string): Promise<ImportedRef
     if (qty > 0) {
       totalStockMap.set(lvl.productId, (totalStockMap.get(lvl.productId) ?? 0) + qty);
     }
-    // Import warehouse stock only
-    if (IMPORT_WAREHOUSE_PKS.has(lvl.warehouseId)) {
+    // Import warehouse stock only — SUM(GREATEST(0, quantity)).
+    // Each positive PIL row = physical stock. Negatives excluded, not netted.
+    // AGENTIK-INVENTORY-COMMERCIAL-VS-PRODUCTION-STOCK-CLARITY-01.
+    if (IMPORT_WAREHOUSE_PKS.has(lvl.warehouseId) && qty > 0) {
       remainingMap.set(lvl.productId, (remainingMap.get(lvl.productId) ?? 0) + qty);
     }
   }

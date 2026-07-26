@@ -4,7 +4,8 @@
  * INVENTORY-CONTROL-CENTER-01 — Domain types.
  *
  * The Inventory Control Center is the official owner of commercial inventory.
- * Inventario Comercial = Bodega 01+04 (textile multi-bodega).
+ * Inventario Comercial = Bodega 01 (textile, wh10) + Bodega 24 (import, wh33).
+ * Bodega 04 (wh13, PRODUCTO EN PROCESO) is tracked separately — not commercial.
  *
  * This module CONSUMES:
  *   - CommercialAvailabilityReport (availability-engine)
@@ -193,14 +194,31 @@ export interface InventoryItem {
   /** Product cost from ProductEntity.costo. */
   cost: number | null;
 
-  /** Inventory in Bodega 01. */
+  /** Physical stock from CCS aggregate (includes production warehouses for textile).
+   * For pure commercial stock, use disponibleReal.
+   */
   existenciaBodega01: number;
   /** Pending orders. */
   pedidosPendientes: number;
-  /** = existenciaBodega01 - pedidosPendientes. */
+  /**
+   * Commercial available stock — excludes production warehouses.
+   * Textile: PIL wh10 net (BODEGA PRINCIPAL, SAG B01), clamped >= 0.
+   * Import: PIL wh33 net (IMPORTACION, SAG B24), clamped >= 0.
+   *
+   * AGENTIK-INVENTORY-COMMERCIAL-VS-PRODUCTION-STOCK-CLARITY-01:
+   * Corrected to exclude production warehouse (wh13/B04).
+   */
   disponibleReal: number;
   /** Availability status (from availability-engine). */
   availabilityStatus: AvailabilityStatus;
+
+  /**
+   * Stock in production process — not commercially available.
+   * PIL wh13 net (PRODUCTO EN PROCESO, SAG B04), clamped >= 0.
+   *
+   * AGENTIK-INVENTORY-COMMERCIAL-VS-PRODUCTION-STOCK-CLARITY-01.
+   */
+  productionInProcess: number;
 
   /** Operational state (enriched with criticality + production). */
   operationalState: InventoryOperationalState;
@@ -335,6 +353,10 @@ export interface InventoryHealth {
   subgruposSinCobertura: number;
   /** Accessories below operational threshold. */
   accesoriosBajaCantidad: number;
+
+  // ── Production (AGENTIK-INVENTORY-COMMERCIAL-VS-PRODUCTION-STOCK-CLARITY-01) ──
+  /** Total units in production process (wh13) — not commercially available. */
+  totalProductionInProcess: number;
 
   // ── Visibility counts (COMERCIAL-INVENTARIO-ACTIVO-HISTORICO-01) ──
   /** Items with disponibleReal > 0. */

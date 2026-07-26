@@ -3,6 +3,14 @@
  *
  * AGENTIK-STORES-DERROTERO-COVERAGE-FOUNDATION-01 — SEXTO
  *
+ * @deprecated EXPERIMENTAL — DISCONNECTED FROM UI
+ * This service uses the coverage engine which relies on hardcoded thresholds.
+ * It is NOT consumed by Inventario or Necesidades tabs.
+ * The Derrotero tab now uses StoreSupplyRulesTab (pure rules editor).
+ *
+ * Do NOT use as source of truth for inventory or needs evaluation.
+ * See store-distribution-service.ts → resolveThresholds() for the real chain.
+ *
  * Server-side service for derrotero coverage evaluation.
  * Provides:
  *   - getStoreDerroteroCoverage(orgId, storeId)    — single store

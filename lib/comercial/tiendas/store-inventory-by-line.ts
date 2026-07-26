@@ -61,6 +61,28 @@ export type UnclassifiedReason =
 
 export type StockQuality = "OPERATIONAL_CONFIRMED" | "PHYSICAL_ONLY" | "UNKNOWN";
 
+// ── Rule provenance (AGENTIK-STORES-SUPPLY-RULES-CONSUMPTION-CERTIFICATION-01) ─
+
+export type EffectiveRuleSource =
+  | "TENANT_DEFAULT"
+  | "STORE_OVERRIDE"
+  | "SPECIAL_PRODUCT"
+  | "RULE_36"
+  | "FALLBACK";
+
+export interface EffectiveRule {
+  ruleId:      string | null;
+  source:      EffectiveRuleSource;
+  minUnits:    number | null;
+  idealUnits:  number | null;
+  maxUnits:    number | null;
+  targetUnits: number | null;
+  inherited:   boolean;
+  validFrom:   string | null;
+  validTo:     string | null;
+  season:      string | null;
+}
+
 export interface ReplacementBrief {
   candidateRef:              string;
   candidateDesc:             string;
@@ -104,6 +126,7 @@ export interface ConsolidatedInventoryRef {
   variantCount:       number;
   hasReplacement:     boolean;
   replacementBrief:   ReplacementBrief | null;
+  effectiveRule:      EffectiveRule;
 }
 
 // ── Variant (lazy-loaded) ────────────────────────────────────────────────────
@@ -268,6 +291,48 @@ function deriveConfigState(item: StoreDistributionItem): ConfigState {
   return "REGLA_HEREDADA";
 }
 
+// ── Rule provenance resolution ────────────────────────────────────────────────
+
+function resolveEffectiveRuleSource(resolvedBy: string): EffectiveRuleSource {
+  switch (resolvedBy) {
+    case "textile_default":
+    case "default":
+      return "TENANT_DEFAULT";
+    case "special_product":
+      return "SPECIAL_PRODUCT";
+    case "global_low_stock":
+      return "RULE_36";
+    case "line":
+    case "class_size":
+    case "variant_override":
+    case "reference":
+    case "line_subgroup":
+    case "subgroup":
+    case "productClass":
+    case "store":
+      return "STORE_OVERRIDE";
+    default:
+      return "FALLBACK";
+  }
+}
+
+function buildEffectiveRule(item: StoreDistributionItem): EffectiveRule {
+  const source = resolveEffectiveRuleSource(item.resolvedBy);
+  const inherited = source === "TENANT_DEFAULT" || source === "FALLBACK";
+  return {
+    ruleId:      null, // StorePolicyRule.id not propagated to distribution item
+    source,
+    minUnits:    item.minUnits,
+    idealUnits:  item.idealUnits,
+    maxUnits:    item.maxUnits,
+    targetUnits: item.idealUnits,
+    inherited,
+    validFrom:   null, // Not available at distribution item level
+    validTo:     null,
+    season:      null,
+  };
+}
+
 // ── Consolidation (per-reference) ────────────────────────────────────────────
 
 interface ItemsByRef {
@@ -368,6 +433,7 @@ function consolidateByReference(
       variantCount: variants.length,
       hasReplacement,
       replacementBrief,
+      effectiveRule: buildEffectiveRule(first),
     });
   }
 

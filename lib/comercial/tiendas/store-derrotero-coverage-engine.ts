@@ -3,6 +3,20 @@
  *
  * AGENTIK-STORES-DERROTERO-COVERAGE-FOUNDATION-01
  *
+ * @deprecated EXPERIMENTAL — DISCONNECTED FROM UI
+ * This engine uses hardcoded thresholds from store-policy-pack-config.ts,
+ * NOT the effective config from Prisma (StorePolicyRule). It is NOT the
+ * source of truth for Inventario or Necesidades tabs.
+ *
+ * Inventario and Necesidades consume the canonical distribution service
+ * (store-distribution-service.ts → resolveThresholds → findApplicableRule),
+ * which reads persisted store overrides from Prisma.
+ *
+ * Do NOT reconnect this engine to any UI tab without first wiring it
+ * to the effective config pipeline (getEffectiveStoreConfig).
+ *
+ * Candidate for cleanup in a future sprint.
+ *
  * Measures how well a store's actual inventory matches the expected derrotero.
  *
  * Five independent dimensions per entry:

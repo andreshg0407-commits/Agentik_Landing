@@ -55,6 +55,7 @@ import {
   getCanonicalStoreDetail,
   invalidateDistributionCacheForOrg,
 } from "./store-distribution-service";
+import { invalidateLineCountsCache } from "./store-inventory-by-line";
 import { hasMinRole } from "@/lib/auth/module-access";
 import { prisma } from "@/lib/prisma";
 
@@ -410,8 +411,9 @@ export async function saveDistributionConfig(
     const auditEntries = buildAuditEntries(orgId, storeId, userId, input.role, requestId, source, now, currentConfig, config, motivo);
     await Promise.all(auditEntries.map(recordAuditEntry));
 
-    // Invalidate distribution cache so next read picks up new config
+    // Invalidate all caches so next read picks up new config
     invalidateDistributionCacheForOrg(orgId);
+    invalidateLineCountsCache(orgId);
 
     // Return the new effective config
     const newConfig = await getEffectiveStoreConfig(orgId, storeId);

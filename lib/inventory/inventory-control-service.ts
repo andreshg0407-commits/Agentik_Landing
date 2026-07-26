@@ -4,7 +4,8 @@
  * INVENTORY-CONTROL-CENTER-01 — Server-side orchestration service.
  *
  * The Inventory Control Center is the official owner of commercial inventory.
- * Inventario Comercial = Bodega 01+04+14+15 (textile) + B26+B27 (importacion).
+ * Inventario Comercial = Bodega 01/wh10 (textile) + B24/wh33 (import).
+ * Production (B04/wh13) tracked separately — not included in commercial KPIs.
  *
  * This service:
  * - Loads availability data via report-loader (Prisma)
@@ -185,6 +186,73 @@ async function loadNonCommercialPil(
   }
 }
 
+/**
+ * Loads commercial textile stock (PIL wh10 = BODEGA PRINCIPAL, SAG B01).
+ * Formula: SUM(GREATEST(0, quantity)) — clamp per row, then sum.
+ * Positive PIL rows = physical stock available for sale.
+ * Negative PIL rows = oversold variants, excluded (not netted).
+ *
+ * AGENTIK-INVENTORY-COMMERCIAL-VS-PRODUCTION-STOCK-CLARITY-01.
+ */
+async function loadTextileCommercialPil(
+  organizationId: string,
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  try {
+    const textilePks = [...getCommercialTextilePks()];
+    const whList = textilePks.map((_, i) => `$${i + 2}`).join(",");
+    const rows: any[] = await (prisma as any).$queryRawUnsafe(`
+      SELECT pe."sku",
+             SUM(GREATEST(0, pil."quantity"))::float AS pos_qty
+      FROM "ProductInventoryLevel" pil
+      JOIN "ProductEntity" pe ON pe."id" = pil."productId"
+        AND pe."organizationId" = pil."organizationId"
+      WHERE pe."organizationId" = $1
+        AND pil."warehouseId" IN (${whList})
+      GROUP BY pe."sku"
+    `, organizationId, ...textilePks);
+    for (const r of rows) {
+      if (r.sku) result.set(r.sku as string, Number(r.pos_qty) || 0);
+    }
+  } catch (err) {
+    console.error("[inventory] loadTextileCommercialPil failed:", (err as any)?.message);
+  }
+  return result;
+}
+
+/**
+ * Loads production-in-process stock (PIL wh13 = PRODUCTO EN PROCESO, SAG B04).
+ * Formula: SUM(GREATEST(0, quantity)) — clamp per row, then sum.
+ * Each bodega represents an independent physical state.
+ *
+ * AGENTIK-INVENTORY-COMMERCIAL-VS-PRODUCTION-STOCK-CLARITY-01.
+ */
+const PRODUCTION_IN_PROCESS_WH = "13";
+
+async function loadProductionPil(
+  organizationId: string,
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  try {
+    const rows: any[] = await (prisma as any).$queryRawUnsafe(`
+      SELECT pe."sku",
+             SUM(GREATEST(0, pil."quantity"))::float AS pos_qty
+      FROM "ProductInventoryLevel" pil
+      JOIN "ProductEntity" pe ON pe."id" = pil."productId"
+        AND pe."organizationId" = pil."organizationId"
+      WHERE pe."organizationId" = $1
+        AND pil."warehouseId" = $2
+      GROUP BY pe."sku"
+    `, organizationId, PRODUCTION_IN_PROCESS_WH);
+    for (const r of rows) {
+      if (r.sku) result.set(r.sku as string, Number(r.pos_qty) || 0);
+    }
+  } catch (err) {
+    console.error("[inventory] loadProductionPil failed:", (err as any)?.message);
+  }
+  return result;
+}
+
 function computeDataQuality(
   snapshotAt: string | null,
   recordCount: number,
@@ -222,7 +290,7 @@ function computeDataQuality(
     confidence,
     confidenceReason: `${recordCount} registros, ${days}d desde ultimo sync`,
     warnings,
-    sources: ["CommercialCoverageSnapshot (B01+B04+B14+B15)", "ProductInventoryLevel (B26+B27)"],
+    sources: ["ProductInventoryLevel B01/wh10 (textile)", "ProductInventoryLevel B24/wh33 (import)", "ProductInventoryLevel B04/wh13 (production)"],
   };
 }
 
@@ -326,6 +394,9 @@ function buildHealth(
     subgruposEnRiesgo: subgrupoCoverage.filter(s => s.estado === "riesgo").length,
     subgruposSinCobertura: subgrupoCoverage.filter(s => s.estado === "sin_cobertura").length,
     accesoriosBajaCantidad: accessories.filter(i => i.disponibleReal > 0 && i.disponibleReal < IMPORT_SCARCITY_MINIMUM).length,
+
+    // Production (AGENTIK-INVENTORY-COMMERCIAL-VS-PRODUCTION-STOCK-CLARITY-01)
+    totalProductionInProcess: items.reduce((s, i) => s + i.productionInProcess, 0),
 
     // Visibility counts (COMERCIAL-INVENTARIO-ACTIVO-HISTORICO-01)
     activeCount: items.filter(i => i.inventoryVisibility === "ACTIVE").length,
@@ -560,10 +631,12 @@ async function loadAccessoryAvailability(
     const importPks = [...getImportInventoryPks()];
     const whList = importPks.map((_, i) => `$${i + 2}`).join(",");
     const params = [organizationId, ...importPks];
-    interface ImportRow { sku: string; net_qty: number }
+    // Formula: SUM(GREATEST(0, quantity)) — clamp per row, then sum.
+    // AGENTIK-INVENTORY-COMMERCIAL-VS-PRODUCTION-STOCK-CLARITY-01.
+    interface ImportRow { sku: string; pos_qty: number }
     const rows: ImportRow[] = await (prisma as any).$queryRawUnsafe(`
       SELECT pe."sku",
-             SUM(pil."quantity")::float AS net_qty
+             SUM(GREATEST(0, pil."quantity"))::float AS pos_qty
       FROM "ProductInventoryLevel" pil
       JOIN "ProductEntity" pe ON pe."id" = pil."productId"
         AND pe."organizationId" = pil."organizationId"
@@ -573,7 +646,7 @@ async function loadAccessoryAvailability(
       GROUP BY pe."sku"
     `, ...params);
     for (const r of rows) {
-      if (r.sku) result.set(r.sku, Math.max(0, Number(r.net_qty) || 0));
+      if (r.sku) result.set(r.sku, Number(r.pos_qty) || 0);
     }
   } catch (err) {
     console.error("[inventory] loadAccessoryAvailability failed:", (err as any)?.message);
@@ -602,7 +675,7 @@ export async function buildInventoryControlSnapshot(
   // All independent queries run in a single parallel batch.
   // Variant summaries use SQL aggregation (~223ms vs ~4680ms findMany).
   // Unified PE query replaces separate textile metadata + accessory refs (~600ms vs ~3000ms).
-  const [availResult, allProducts, productionCounts, variantMap, freshestPilAt, accessoryAvail, nonCommercialPil] = await Promise.all([
+  const [availResult, allProducts, productionCounts, variantMap, freshestPilAt, accessoryAvail, nonCommercialPil, textileCommercialPil, productionPil] = await Promise.all([
     loadAvailabilityRecords(organizationId),
     loadAllProducts(organizationId),
     loadActiveProductionCounts(organizationId),
@@ -610,6 +683,8 @@ export async function buildInventoryControlSnapshot(
     loadPilFreshnessDate(organizationId),
     loadAccessoryAvailability(organizationId),
     loadNonCommercialPil(organizationId),
+    loadTextileCommercialPil(organizationId),
+    loadProductionPil(organizationId),
   ]);
   const { records, snapshotAt } = availResult;
 
@@ -633,13 +708,20 @@ export async function buildInventoryControlSnapshot(
   }
 
   // 5. Enrich rows into InventoryItem[] (textile)
+  // AGENTIK-INVENTORY-COMMERCIAL-VS-PRODUCTION-STOCK-CLARITY-01:
+  // disponibleReal = PIL wh10 net (commercial only), NOT CCS aggregate.
+  // CCS aggregate (row.disponibleReal) includes B04 production — excluded.
   const textileItems: InventoryItem[] = report.rows.map((row: AvailabilityRow) => {
     const threshold = thresholdMap.get(row.subLinea.toUpperCase()) ?? null;
     const activeOpCount = productionCounts.get(row.reference.toUpperCase().trim()) ?? 0;
     const hasActiveProduction = activeOpCount > 0;
 
+    // Commercial available = PIL wh10 only (excludes production wh13)
+    const commercialAvailable = textileCommercialPil.get(row.reference) ?? 0;
+    const prodInProcess = productionPil.get(row.reference) ?? 0;
+
     const operationalState = deriveOperationalState(
-      row.disponibleReal,
+      commercialAvailable,
       threshold,
       hasActiveProduction,
       false,
@@ -664,7 +746,7 @@ export async function buildInventoryControlSnapshot(
       cost: meta?.costo ?? null,
       existenciaBodega01: row.existenciaBodega01,
       pedidosPendientes: row.pedidosPendientes,
-      disponibleReal: row.disponibleReal,
+      disponibleReal: commercialAvailable,
       availabilityStatus: row.status,
       operationalState,
       threshold,
@@ -674,7 +756,8 @@ export async function buildInventoryControlSnapshot(
       isAccessory: false,
       lineCategory: "textile" as const,
       canonicalLine,
-      inventoryVisibility: deriveInventoryVisibility(row.disponibleReal, true),
+      inventoryVisibility: deriveInventoryVisibility(commercialAvailable, true),
+      productionInProcess: prodInProcess,
       productLine: meta?.productLine ?? null,
       lineaSag: meta?.lineaSag ?? null,
       lastModifiedSag: meta?.lastModifiedSag ?? null,
@@ -717,6 +800,7 @@ export async function buildInventoryControlSnapshot(
       lineCategory: "accessory" as const,
       canonicalLine: "IMPORTACION" as const,
       inventoryVisibility: deriveInventoryVisibility(available, hasData),
+      productionInProcess: 0,
       productLine: ref.productLine ?? null,
       lineaSag: ref.lineaSag ?? null,
       lastModifiedSag: ref.lastModifiedSag ?? null,

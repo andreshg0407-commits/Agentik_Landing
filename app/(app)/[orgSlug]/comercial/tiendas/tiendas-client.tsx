@@ -32,6 +32,21 @@ import { ACTIVE_STORE_SLUGS } from "@/lib/comercial/tiendas/store-distribution-t
 import type { StoreGovernanceRecord } from "@/lib/comercial/tiendas/store-governance-types";
 import { StoreSupplyRulesTab } from "@/components/comercial/store-supply-rules-tab";
 
+// ── Rule provenance (AGENTIK-STORES-SUPPLY-RULES-CONSUMPTION-CERTIFICATION-01) ─
+
+interface EffectiveRuleClient {
+  ruleId:      string | null;
+  source:      "TENANT_DEFAULT" | "STORE_OVERRIDE" | "SPECIAL_PRODUCT" | "RULE_36" | "FALLBACK";
+  minUnits:    number | null;
+  idealUnits:  number | null;
+  maxUnits:    number | null;
+  targetUnits: number | null;
+  inherited:   boolean;
+  validFrom:   string | null;
+  validTo:     string | null;
+  season:      string | null;
+}
+
 // ── Inventory-by-line types (client-side, mirrors server types) ──────────────
 
 interface InvReplacementVariant {
@@ -75,7 +90,6 @@ interface InvConsolidatedRef {
   subgroup: string;
   sizeClass: string | null;
   currentStoreQty: number;
-  mainWarehouseQty: number;
   minUnits: number;
   idealUnits: number;
   maxUnits: number;
@@ -83,19 +97,17 @@ interface InvConsolidatedRef {
   configState: string;
   unclassifiedReason: string | null;
   variantCount: number;
-  hasReplacement: boolean;
-  replacementBrief: InvReplacementBrief | null;
+  effectiveRule: EffectiveRuleClient;
 }
 
 type InvSortBy = "QUANTITY_ASC" | "QUANTITY_DESC" | "REFERENCE_ASC" | "REFERENCE_DESC";
-type InvKpiFilter = "ALL" | "BELOW_MINIMUM" | "HEALTHY" | "HAS_REPLACEMENT";
+type InvKpiFilter = "ALL" | "BELOW_MINIMUM" | "HEALTHY";
 
 interface InvVariant {
   referenceCode: string;
   size: string;
   color: string;
   storeQty: number;
-  mainQty: number;
   inventoryState: string;
 }
 
@@ -1527,6 +1539,27 @@ const INV_STATE_COLOR: Record<string, { bg: string; text: string }> = {
   CLASIFICACION_PENDIENTE: { bg: C.amberLight,  text: C.amber },
 };
 
+// ── Rule provenance labels (CERTIFICATION-01) ─────────────────────────────
+const RULE_SOURCE_LABEL: Record<string, string> = {
+  TENANT_DEFAULT:  "Heredada",
+  STORE_OVERRIDE:  "Personalizada",
+  SPECIAL_PRODUCT: "Regla especial",
+  RULE_36:         "Regla 36",
+  FALLBACK:        "Sin regla",
+};
+
+function formatRuleChip(rule: EffectiveRuleClient | undefined): string {
+  if (!rule) return "";
+  if (rule.source === "RULE_36") return `R36 (${rule.minUnits ?? 0})`;
+  if (rule.source === "SPECIAL_PRODUCT") return `Especial (${rule.targetUnits ?? 0})`;
+  if (rule.source === "FALLBACK") return "Sin regla";
+  if (rule.minUnits != null && rule.maxUnits != null) {
+    return `${rule.minUnits} / ${rule.idealUnits ?? rule.targetUnits ?? "—"} / ${rule.maxUnits}`;
+  }
+  if (rule.targetUnits != null) return `Obj: ${rule.targetUnits}`;
+  return "";
+}
+
 const INV_SIZE_LABEL: Record<string, string> = {
   small:  "Pequeno",
   medium: "Mediano",
@@ -1561,7 +1594,6 @@ function InvLineSummaryStrip({ summary, activeKpi, onKpiClick, sortBy, onSortCha
       { key: "ALL",             label: "Referencias",   value: Number(d.referenciasActivas ?? 0), color: C.ink },
       { key: "ALL",             label: "Unidades",      value: Number(d.unidades ?? 0),           color: C.ink },
       { key: "BELOW_MINIMUM",   label: "Bajo minimo",   value: Number(d.bajoMinimo ?? 0),         color: C.red },
-      { key: "HAS_REPLACEMENT", label: "Reemplazos",    value: Number(d.reemplazos ?? 0),         color: C.blue },
       { key: "HEALTHY",         label: "Saludables",     value: Number(d.saludables ?? 0),         color: C.green },
     ];
   } else if (summary.type === "accessory") {
@@ -1569,7 +1601,6 @@ function InvLineSummaryStrip({ summary, activeKpi, onKpiClick, sortBy, onSortCha
       { key: "ALL",             label: "Referencias",   value: Number(d.referenciasActivas ?? 0), color: C.ink },
       { key: "ALL",             label: "Unidades",      value: Number(d.unidades ?? 0),           color: C.ink },
       { key: "BELOW_MINIMUM",   label: "Bajo objetivo", value: Number(d.bajoObjetivo ?? 0),       color: C.red },
-      { key: "HAS_REPLACEMENT", label: "Reemplazos",    value: Number(d.reemplazos ?? 0),         color: C.blue },
       { key: "HEALTHY",         label: "Saludables",     value: Number(d.saludables ?? 0),         color: C.green },
     ];
   } else if (summary.type === "unclassified") {
@@ -1861,7 +1892,7 @@ function DistributionStoreDrawer({
   const [actionFilter, setActionFilter] = useState<StoreDistributionAction | "ALL">("ALL");
   const [domainFilter, setDomainFilter] = useState<DistDomainFilter>("ALL");
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
-  // expandedNeedRef / expandedVariantKey removed — replaced by ndExpandedRef / ndExpandedVariantKey (NEEDS-BY-LINE-01)
+  // expandedNeedRef / expandedVariantKey removed — replaced by ndExpandedRef (WAREHOUSE-FIRST-01)
 
   // ── Lazy detail loading: only fetch when necesidades/inteligencia tab is active ──
   const [detail, setDetail] = useState<CanonicalStoreDetail | null>(null);
@@ -1908,104 +1939,103 @@ function DistributionStoreDrawer({
   const [invSortBy, setInvSortBy] = useState<InvSortBy>("QUANTITY_ASC");
   const [invKpiFilter, setInvKpiFilter] = useState<InvKpiFilter>("ALL");
 
-  // ── Needs-by-line state (AGENTIK-STORES-NEEDS-BY-LINE-01) ──────────────
-  type NdLine = "CASTILLITOS" | "LATIN_KIDS" | "ACCESSORIES" | "UNCLASSIFIED";
-  type NdNeedType = "ALL" | "DIRECT_REPLENISHMENT" | "PARTIAL_DIRECT_PLUS_REPLACEMENT" | "REPLACEMENT" | "NO_ALTERNATIVE" | "CLASSIFICATION_INCOMPLETE";
-  type NdSortBy = "SHORTAGE_DESC" | "SHORTAGE_ASC" | "MAIN_STOCK_DESC" | "REFERENCE_ASC" | "REFERENCE_DESC";
-  type NdSizeClass = "ALL" | "SMALL" | "MEDIUM" | "LARGE" | "UNCLASSIFIED";
+  // ── Warehouse-first needs state (AGENTIK-STORES-NEEDS-WAREHOUSE-FIRST-RESOLUTION-01) ──
+  type WHFLineUI = "CASTILLITOS" | "LATIN_KIDS" | "ACCESSORIES" | "UNCLASSIFIED";
+  type WHFSortByUI = "AVAILABLE_DESC" | "NEEDS_COUNT_DESC" | "URGENCY_DESC" | "REFERENCE_ASC";
+  type WHFRule36StatusUI = "ELEGIBLE_4_TIENDAS" | "SOLO_CENTRO_CALDAS" | "BLOQUEADA";
+  type WHFResolutionTypeUI = "REPOSICION" | "REEMPLAZO";
+  type WHFMatchTypeUI = "MISMA_REFERENCIA" | "MISMO_GRUPO_Y_SUBGRUPO" | "MISMO_SUBGRUPO" | "MISMO_SIZE_CLASS" | "MISMO_SUBGRUPO_Y_SIZE_CLASS";
 
-  interface NdNeedItem {
-    referenceCode: string;
-    productName: string;
-    imageUrl: string | null;
-    canonicalLine: string;
-    group: string;
-    subgroup: string;
-    sizeClass: string | null;
-    world: string;
-    currentUnits: number;
-    minUnits: number;
-    idealUnits: number;
-    maxUnits: number;
-    shortageQty: number;
-    mainWarehouseAvailable: number;
-    needType: "DIRECT_REPLENISHMENT" | "PARTIAL_DIRECT_PLUS_REPLACEMENT" | "REPLACEMENT" | "NO_ALTERNATIVE" | "CLASSIFICATION_INCOMPLETE";
-    needTypeLabel: string;
-    suggestedReplenishment: number;
-    candidates: InvReplacementCandidate[];
-    totalCandidatesFound: number;
-    hasMoreCandidates: boolean;
-    rule36BlockedCount: number;
-    replacementShortageQty: number;
-    resolution: {
-      resolutionType: string;
-      coverageStatus: string;
-      totalShortageQty: number;
-      sameRefCoverageQty: number;
-      replacementCoverageQty: number;
-      totalCoveredQty: number;
-      remainingShortageQty: number;
-      coveragePercent: number;
-    } | null;
-    variantAllocation: VariantAllocationForUI | null;
-    actionReason: string;
-  }
-
-  interface InvReplacementCandidate {
-    referenceCode: string;
+  interface WHFStoreNeedUI {
+    storeReference: string;
     description: string;
     imageUrl: string | null;
     canonicalLine: string;
     group: string;
     subgroup: string;
-    storeStock: number;
-    mainWarehouseAvailableQty: number;
+    sizeClass: string | null;
+    storeQty: number;
+    minUnits: number;
+    idealUnits: number;
+    maxUnits: number;
+    shortageQty: number;
+    matchType: WHFMatchTypeUI;
+    resolutionType: WHFResolutionTypeUI;
     suggestedQty: number;
+    coveragePossible: number;
+    effectiveRule: EffectiveRuleClient;
+    ruleSource: string;
+  }
+
+  interface WHFWarehouseVariantUI {
+    size: string | null;
+    color: string | null;
+    availableQty: number;
+  }
+
+  interface WHFWarehouseRefUI {
+    warehouseReference: string;
+    description: string;
+    imageUrl: string | null;
+    canonicalLine: string;
+    group: string;
+    subgroup: string;
+    sizeClass: string | null;
+    warehouseId: string;
+    commercialAvailableQty: number;
+    totalSuggestedQty: number;
+    needsResolvable: number;
+    rule36Status: WHFRule36StatusUI;
+    resolutionType: WHFResolutionTypeUI;
+    positiveVariants: WHFWarehouseVariantUI[];
+    snapshotAt: string;
+    storeNeeds: WHFStoreNeedUI[];
+  }
+
+  interface WHFNoSolutionItemUI {
+    storeReference: string;
+    description: string;
+    imageUrl: string | null;
+    canonicalLine: string;
+    group: string;
+    subgroup: string;
+    sizeClass: string | null;
+    storeQty: number;
+    minUnits: number;
+    idealUnits: number;
+    shortageQty: number;
     reason: string;
-    evidence: string;
-    quality: string;
-    classificationSource: string;
-    groupSource: string;
-    subgroupSource: string;
-    dataQuality: string;
-    replacementVariants: InvReplacementVariant[];
-    totalVariantCount: number;
-    displayedVariantCount: number;
-    totalVariantUnits: number;
-    variantEvidenceDate: string;
+    effectiveRule: EffectiveRuleClient;
   }
 
-  interface NdSummary {
-    directReplenishment: number;
-    partialDirectPlusReplacement: number;
-    replacement: number;
-    noAlternative: number;
-    classificationIncomplete: number;
-    total: number;
+  interface WHFSummaryUI {
+    availableForSupply: number;
+    totalSuggestedUnits: number;
+    sameRefReplenishments: number;
+    replacements: number;
+    noSolution: number;
   }
 
-  interface NdResponse {
+  interface WHFResponseUI {
     line: string;
-    summary: NdSummary;
-    items: NdNeedItem[];
+    summary: WHFSummaryUI;
+    items: WHFWarehouseRefUI[];
+    noSolutionItems: WHFNoSolutionItemUI[];
     pagination: { page: number; pageSize: number; total: number; totalPages: number };
-    lineCounts: { line: NdLine; count: number }[];
-    availableSizeClasses: string[];
+    lineCounts: { line: WHFLineUI; count: number }[];
     dataFreshness: string | null;
   }
 
-  const [ndLine, setNdLine] = useState<NdLine>("CASTILLITOS");
-  const [ndData, setNdData] = useState<NdResponse | null>(null);
+  const [ndLine, setNdLine] = useState<WHFLineUI>("CASTILLITOS");
+  const [ndData, setNdData] = useState<WHFResponseUI | null>(null);
   const [ndLoading, setNdLoading] = useState(false);
   const [ndError, setNdError] = useState<string | null>(null);
-  const [ndNeedType, setNdNeedType] = useState<NdNeedType>("ALL");
-  const [ndSortBy, setNdSortBy] = useState<NdSortBy>("SHORTAGE_DESC");
-  const [ndSizeClass, setNdSizeClass] = useState<NdSizeClass>("ALL");
+  const [ndSortBy, setNdSortBy] = useState<WHFSortByUI>("URGENCY_DESC");
   const [ndSearch, setNdSearch] = useState("");
   const [ndSearchDebounced, setNdSearchDebounced] = useState("");
   const [ndPage, setNdPage] = useState(1);
   const [ndExpandedRef, setNdExpandedRef] = useState<string | null>(null);
-  const [ndExpandedVariantKey, setNdExpandedVariantKey] = useState<string | null>(null);
+  const [ndShowNoSolution, setNdShowNoSolution] = useState(false);
   const [ndInitialLineSet, setNdInitialLineSet] = useState(false);
 
   // Reset state on store change
@@ -2036,14 +2066,12 @@ function DistributionStoreDrawer({
     setNdLine("CASTILLITOS");
     setNdData(null);
     setNdError(null);
-    setNdNeedType("ALL");
-    setNdSortBy("SHORTAGE_DESC");
-    setNdSizeClass("ALL");
+    setNdSortBy("URGENCY_DESC");
     setNdSearch("");
     setNdSearchDebounced("");
     setNdPage(1);
     setNdExpandedRef(null);
-    setNdExpandedVariantKey(null);
+    setNdShowNoSolution(false);
     setNdInitialLineSet(false);
   }, [storeCard.store.id]);
 
@@ -2146,26 +2174,23 @@ function DistributionStoreDrawer({
       });
   }
 
-  // ── Load needs-by-line data (AGENTIK-STORES-NEEDS-BY-LINE-01) ────────────
+  // ── Load warehouse-first needs (AGENTIK-STORES-NEEDS-WAREHOUSE-FIRST-RESOLUTION-01) ─
   useEffect(() => {
     if (tab !== "necesidades") return;
     let cancelled = false;
     setNdLoading(true);
     setNdError(null);
     setNdExpandedRef(null);
-    setNdExpandedVariantKey(null);
     tiendaApi(orgSlug, {
-      action: "store_needs_by_line",
+      action: "store_warehouse_first_needs",
       storeId: storeCard.store.id,
       line: ndLine,
-      needType: ndNeedType !== "ALL" ? ndNeedType : undefined,
       sortBy: ndSortBy,
-      sizeClass: ndLine === "ACCESSORIES" && ndSizeClass !== "ALL" ? ndSizeClass : undefined,
       search: ndSearchDebounced || undefined,
       page: ndPage,
       pageSize: 25,
     })
-      .then((data: NdResponse & { error?: string; code?: string }) => {
+      .then((data: WHFResponseUI & { error?: string; code?: string }) => {
         if (cancelled) return;
         if (data.error) {
           setNdError(data.code === "STORE_INACTIVE" ? "Tienda desactivada" : `Error: ${data.error}`);
@@ -2175,14 +2200,13 @@ function DistributionStoreDrawer({
         // Auto-select first line with needs on initial load
         if (!ndInitialLineSet && data.lineCounts) {
           setNdInitialLineSet(true);
-          const preferredOrder: NdLine[] = ["CASTILLITOS", "LATIN_KIDS", "ACCESSORIES", "UNCLASSIFIED"];
+          const preferredOrder: WHFLineUI[] = ["CASTILLITOS", "LATIN_KIDS", "ACCESSORIES", "UNCLASSIFIED"];
           const firstWithNeeds = preferredOrder.find(l => {
             const lc = data.lineCounts.find(c => c.line === l);
             return lc && lc.count > 0;
           });
           if (firstWithNeeds && firstWithNeeds !== ndLine) {
             setNdLine(firstWithNeeds);
-            // Don't set data — the line change will trigger a re-fetch
             return;
           }
         }
@@ -2190,7 +2214,7 @@ function DistributionStoreDrawer({
       .catch(() => { if (!cancelled) setNdError("Error de conexion al cargar necesidades"); })
       .finally(() => { if (!cancelled) setNdLoading(false); });
     return () => { cancelled = true; };
-  }, [tab, storeCard.store.id, orgSlug, ndLine, ndNeedType, ndSortBy, ndSizeClass, ndSearchDebounced, ndPage]);
+  }, [tab, storeCard.store.id, orgSlug, ndLine, ndSortBy, ndSearchDebounced, ndPage]);
 
   // Debounce needs search
   useEffect(() => {
@@ -2462,41 +2486,9 @@ function DistributionStoreDrawer({
                               {item.productName}
                             </div>
                           </div>
-                          <div style={{ display: "flex", gap: S[2], alignItems: "center", flexShrink: 0 }}>
-                            <div style={{ textAlign: "center", minWidth: 36 }}>
-                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Tienda</div>
-                              <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.ink }}>{item.currentStoreQty}</div>
-                            </div>
-                            <div style={{ textAlign: "center", minWidth: 36 }} title={item.hasReplacement && item.replacementBrief ? "Stock de la referencia sugerida en bodega principal" : "Stock de esta referencia en bodega principal"}>
-                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Bodega ppal.</div>
-                              {(() => {
-                                const wqty = item.hasReplacement && item.replacementBrief && item.replacementBrief.candidateMainStock > 0
-                                  ? item.replacementBrief.candidateMainStock
-                                  : item.mainWarehouseQty;
-                                const qualityLabel = item.hasReplacement && item.replacementBrief
-                                  ? item.replacementBrief.stockQuality === "UNKNOWN" ? "Por confirmar"
-                                    : item.replacementBrief.stockQuality === "PHYSICAL_ONLY" ? `${wqty}`
-                                    : `${wqty} disp.`
-                                  : null;
-                                const qualityTitle = item.hasReplacement && item.replacementBrief
-                                  ? item.replacementBrief.stockQuality === "PHYSICAL_ONLY" ? "Stock físico. No descuenta compromisos."
-                                    : item.replacementBrief.stockQuality === "UNKNOWN" ? "Stock pendiente de confirmación"
-                                    : "Stock operativo confirmado"
-                                  : undefined;
-                                if (item.hasReplacement && item.replacementBrief && qualityLabel) {
-                                  return (
-                                    <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: wqty > 0 ? C.green : C.inkFaint }} title={qualityTitle}>
-                                      {wqty > 0 ? qualityLabel : "\u2014"}
-                                    </div>
-                                  );
-                                }
-                                return (
-                                  <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: wqty > 0 ? C.green : C.inkFaint }}>
-                                    {wqty > 0 ? wqty : "\u2014"}
-                                  </div>
-                                );
-                              })()}
-                            </div>
+                          <div style={{ textAlign: "center", minWidth: 36, flexShrink: 0 }}>
+                            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Tienda</div>
+                            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.ink }}>{item.currentStoreQty}</div>
                           </div>
                           <span style={{
                             fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
@@ -2512,47 +2504,20 @@ function DistributionStoreDrawer({
                           )}
                         </div>
 
+                        {/* Rule provenance (CERTIFICATION-01) */}
+                        {item.effectiveRule && item.effectiveRule.source !== "FALLBACK" && (
+                          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, padding: `0 ${S[2]}px 0 ${S[2] + 32 + S[2]}px`, display: "flex", gap: S[2], alignItems: "center" }}>
+                            <span style={{ color: item.effectiveRule.inherited ? C.inkFaint : C.blueDark }}>
+                              {RULE_SOURCE_LABEL[item.effectiveRule.source] || item.effectiveRule.source}
+                            </span>
+                            <span>{formatRuleChip(item.effectiveRule)}</span>
+                          </div>
+                        )}
+
                         {/* Unclassified reason */}
                         {item.unclassifiedReason && (
                           <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.amber, padding: `0 ${S[2]}px ${S[1]}px ${S[2] + 32 + S[2]}px` }}>
                             {INV_UNCLASSIFIED_LABEL[item.unclassifiedReason] || item.unclassifiedReason}
-                          </div>
-                        )}
-
-                        {/* Replacement brief with stock evidence */}
-                        {item.hasReplacement && item.replacementBrief && (
-                          <div style={{
-                            display: "flex", flexDirection: "column", gap: 2,
-                            padding: `${S[1]}px ${S[2]}px ${S[1]}px ${S[2] + 32 + S[2]}px`,
-                            fontFamily: T.mono, fontSize: T.sz["2xs"],
-                          }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
-                              <span style={{
-                                padding: "1px 6px", borderRadius: R.pill,
-                                background: C.blueLight, color: C.blueDark, fontWeight: T.wt.semibold,
-                              }}>
-                                Reemplazo disponible
-                              </span>
-                              <span style={{ color: C.inkMid }}>
-                                {item.replacementBrief.candidateRef}
-                              </span>
-                              <span style={{ color: C.inkFaint }}>
-                                {item.replacementBrief.ruleSource === "SAME_GROUP_AND_SUBGROUP" ? "Mismo grupo y subgrupo" : "Mismo subgrupo"}
-                              </span>
-                            </div>
-                            <div style={{ display: "flex", alignItems: "center", gap: S[3], color: C.inkFaint }}>
-                              <span>Bodega: <strong style={{ color: C.inkMid }}>{item.replacementBrief.candidateMainStock}</strong> uds</span>
-                              <span style={{ color: C.line }}>|</span>
-                              <span>Sugerido: <strong style={{ color: C.blueDark }}>{item.replacementBrief.suggestedQty}</strong> uds</span>
-                              <span style={{ color: C.line }}>|</span>
-                              <span>Faltante: {item.replacementBrief.shortageQty} uds</span>
-                              {item.replacementBrief.remainingShortageQty > 0 && (
-                                <>
-                                  <span style={{ color: C.line }}>|</span>
-                                  <span style={{ color: C.amber }}>Pendiente: {item.replacementBrief.remainingShortageQty} uds</span>
-                                </>
-                              )}
-                            </div>
                           </div>
                         )}
 
@@ -2569,7 +2534,6 @@ function DistributionStoreDrawer({
                                   <span style={{ width: 80 }}>Talla</span>
                                   <span style={{ width: 80 }}>Color</span>
                                   <span style={{ width: 50, textAlign: "right" }}>Tienda</span>
-                                  <span style={{ width: 50, textAlign: "right" }}>Bodega</span>
                                   <span style={{ flex: 1 }}>Estado</span>
                                 </div>
                                 {(invVariants[item.referenceCode] || []).map((v, vi) => (
@@ -2577,7 +2541,6 @@ function DistributionStoreDrawer({
                                     <span style={{ width: 80, color: C.ink }}>{v.size || "\u2014"}</span>
                                     <span style={{ width: 80, color: C.ink }}>{v.color || "\u2014"}</span>
                                     <span style={{ width: 50, textAlign: "right", fontWeight: T.wt.semibold, color: C.ink }}>{v.storeQty}</span>
-                                    <span style={{ width: 50, textAlign: "right", color: v.mainQty > 0 ? C.green : C.inkFaint }}>{v.mainQty > 0 ? v.mainQty : "\u2014"}</span>
                                     <span style={{ flex: 1, color: C.inkMid }}>{INV_STATE_LABEL[v.inventoryState] || v.inventoryState}</span>
                                   </div>
                                 ))}
@@ -2631,13 +2594,13 @@ function DistributionStoreDrawer({
         </div>
       )}
 
-      {/* TAB: Necesidades — needs by line (AGENTIK-STORES-NEEDS-BY-LINE-01) */}
+      {/* TAB: Necesidades — warehouse-first (AGENTIK-STORES-NEEDS-WAREHOUSE-FIRST-RESOLUTION-01) */}
       {tab === "necesidades" && (
         <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
           {/* Line navigation */}
           {ndData?.lineCounts && (
             <div style={{ display: "flex", gap: S[1], flexWrap: "wrap" }}>
-              {(["CASTILLITOS", "LATIN_KIDS", "ACCESSORIES", "UNCLASSIFIED"] as NdLine[]).map(line => {
+              {(["CASTILLITOS", "LATIN_KIDS", "ACCESSORIES", "UNCLASSIFIED"] as WHFLineUI[]).map(line => {
                 const lc = ndData.lineCounts.find(c => c.line === line);
                 const count = lc?.count ?? 0;
                 const active = ndLine === line;
@@ -2647,8 +2610,8 @@ function DistributionStoreDrawer({
                   : "Sin clasificar";
                 return (
                   <button key={line} onClick={() => {
-                    setNdLine(line); setNdPage(1); setNdNeedType("ALL"); setNdSizeClass("ALL");
-                    setNdSearch(""); setNdSearchDebounced(""); setNdExpandedRef(null); setNdExpandedVariantKey(null);
+                    setNdLine(line); setNdPage(1);
+                    setNdSearch(""); setNdSearchDebounced(""); setNdExpandedRef(null); setNdShowNoSolution(false);
                   }} style={{
                     fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
                     padding: "4px 10px", borderRadius: R.sm, cursor: "pointer",
@@ -2680,77 +2643,51 @@ function DistributionStoreDrawer({
           )}
 
           {ndData && (() => {
-            const { summary, items: needItems, pagination, availableSizeClasses } = ndData;
+            const { summary, items: whfItems, noSolutionItems, pagination } = ndData;
 
-            // Unclassified: special message
-            if (ndLine === "UNCLASSIFIED" && summary.total === 0) return (
-              <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkFaint, padding: `${S[4]}px 0`, textAlign: "center" }}>
-                Sin referencias sin clasificar con necesidades pendientes
-              </div>
-            );
-
-            if (summary.total === 0) return (
+            if (summary.availableForSupply === 0 && summary.noSolution === 0) return (
               <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkFaint, padding: `${S[4]}px 0`, textAlign: "center" }}>
                 Sin necesidades pendientes en esta linea
               </div>
             );
 
+            const MATCH_LABEL: Record<WHFMatchTypeUI, string> = {
+              MISMA_REFERENCIA: "Misma ref",
+              MISMO_GRUPO_Y_SUBGRUPO: "Grupo+Subgrupo",
+              MISMO_SUBGRUPO: "Subgrupo",
+              MISMO_SIZE_CLASS: "Tamano",
+              MISMO_SUBGRUPO_Y_SIZE_CLASS: "Subgrupo+Tamano",
+            };
+
             return (
               <>
-                {/* KPIs */}
+                {/* KPIs — warehouse-first */}
                 <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
                   {([
-                    { key: "DIRECT_REPLENISHMENT" as NdNeedType, label: "Reposicion directa", value: summary.directReplenishment, color: C.blueDark },
-                    { key: "PARTIAL_DIRECT_PLUS_REPLACEMENT" as NdNeedType, label: "Parcial + reemplazo", value: summary.partialDirectPlusReplacement ?? 0, color: "#6366f1" },
-                    { key: "REPLACEMENT" as NdNeedType, label: "Reemplazos", value: summary.replacement, color: C.blue },
-                    { key: "NO_ALTERNATIVE" as NdNeedType, label: "Sin alternativa", value: summary.noAlternative, color: C.red },
-                    { key: "CLASSIFICATION_INCOMPLETE" as NdNeedType, label: "Clasificacion incompleta", value: summary.classificationIncomplete ?? 0, color: C.inkFaint },
-                  ]).map(kpi => {
-                    const active = ndNeedType === kpi.key;
-                    return (
-                      <button key={kpi.key} onClick={() => {
-                        setNdNeedType(active ? "ALL" : kpi.key); setNdPage(1);
-                      }} style={{
-                        ...panel, padding: S[3], display: "flex", flexDirection: "column", gap: S[1],
-                        cursor: "pointer", border: active ? `2px solid ${kpi.color}` : `1px solid ${C.line}`,
-                        background: active ? C.blueLight : C.white,
-                      }}>
-                        <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase" as const }}>
-                          {kpi.label}
-                        </div>
-                        <div style={{ fontFamily: T.mono, fontSize: T.sz.xl, fontWeight: T.wt.bold, color: kpi.color }}>
-                          {kpi.value}
-                        </div>
-                      </button>
-                    );
-                  })}
+                    { label: "Refs con stock", value: summary.availableForSupply, color: C.blueDark },
+                    { label: "Unidades sugeridas", value: summary.totalSuggestedUnits, color: C.green },
+                    { label: "Reposiciones", value: summary.sameRefReplenishments, color: C.blueDark },
+                    { label: "Reemplazos", value: summary.replacements, color: "#6366f1" },
+                    { label: "Sin solucion", value: summary.noSolution, color: C.red },
+                  ]).map(kpi => (
+                    <div key={kpi.label} style={{
+                      ...panel, padding: S[3], display: "flex", flexDirection: "column", gap: S[1],
+                    }}>
+                      <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase" as const }}>
+                        {kpi.label}
+                      </div>
+                      <div style={{ fontFamily: T.mono, fontSize: T.sz.xl, fontWeight: T.wt.bold, color: kpi.color }}>
+                        {kpi.value}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-
-                {/* Accessories: size class filter */}
-                {ndLine === "ACCESSORIES" && availableSizeClasses.length > 0 && (
-                  <div style={{ display: "flex", gap: S[1], flexWrap: "wrap" }}>
-                    {(["ALL", "SMALL", "MEDIUM", "LARGE", "UNCLASSIFIED"] as NdSizeClass[]).map(sc => {
-                      const label = sc === "ALL" ? "Todos" : sc === "SMALL" ? "Pequenos" : sc === "MEDIUM" ? "Medianos" : sc === "LARGE" ? "Grandes" : "Sin tamano";
-                      const active = ndSizeClass === sc;
-                      return (
-                        <button key={sc} onClick={() => { setNdSizeClass(sc); setNdPage(1); }} style={{
-                          fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "3px 8px", borderRadius: R.sm,
-                          border: `1px solid ${active ? C.blueDark : C.line}`,
-                          background: active ? C.blueDark : "transparent",
-                          color: active ? C.white : C.inkMid, cursor: "pointer",
-                        }}>
-                          {label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
 
                 {/* Search + Sort */}
                 <div style={{ display: "flex", gap: S[2], alignItems: "center" }}>
                   <input
                     type="text"
-                    placeholder="Buscar referencia, descripcion, grupo..."
+                    placeholder="Buscar referencia bodega, necesidad tienda, grupo..."
                     value={ndSearch}
                     onChange={e => setNdSearch(e.target.value)}
                     style={{
@@ -2761,17 +2698,16 @@ function DistributionStoreDrawer({
                   />
                   <select
                     value={ndSortBy}
-                    onChange={e => { setNdSortBy(e.target.value as NdSortBy); setNdPage(1); }}
+                    onChange={e => { setNdSortBy(e.target.value as WHFSortByUI); setNdPage(1); }}
                     style={{
                       fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "4px 6px",
                       border: `1px solid ${C.line}`, borderRadius: R.sm, background: C.white, color: C.ink,
                     }}
                   >
-                    <option value="SHORTAGE_DESC">Mayor faltante</option>
-                    <option value="SHORTAGE_ASC">Menor faltante</option>
-                    <option value="MAIN_STOCK_DESC">Mayor stock bodega</option>
+                    <option value="URGENCY_DESC">Mayor urgencia</option>
+                    <option value="AVAILABLE_DESC">Mayor stock bodega</option>
+                    <option value="NEEDS_COUNT_DESC">Mas necesidades</option>
                     <option value="REFERENCE_ASC">Referencia A-Z</option>
-                    <option value="REFERENCE_DESC">Referencia Z-A</option>
                   </select>
                 </div>
 
@@ -2782,278 +2718,179 @@ function DistributionStoreDrawer({
                   </div>
                 )}
 
-                {/* Need items list */}
+                {/* Warehouse-first items */}
                 <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                  {needItems.map((item, idx) => {
-                    const needColor = item.needType === "DIRECT_REPLENISHMENT"
-                      ? { bg: `${C.blueDark}18`, text: C.blueDark }
-                      : item.needType === "PARTIAL_DIRECT_PLUS_REPLACEMENT"
-                        ? { bg: "#6366f118", text: "#6366f1" }
-                        : item.needType === "REPLACEMENT"
-                          ? { bg: `${C.blue}18`, text: C.blue }
-                          : item.needType === "CLASSIFICATION_INCOMPLETE"
-                            ? { bg: `${C.inkFaint}18`, text: C.inkFaint }
-                            : { bg: `${C.red}18`, text: C.red };
-                    const hasCandidates = (item.needType === "REPLACEMENT" || item.needType === "PARTIAL_DIRECT_PLUS_REPLACEMENT") && item.candidates.length > 0;
-                    const isExpanded = ndExpandedRef === `${item.referenceCode}|${idx}`;
-                    const candidates = hasCandidates ? item.candidates.slice(0, 5) : [];
-
-                    // Sin alternativa explanation
-                    const noAltReason = item.needType === "NO_ALTERNATIVE" ? ((): string => {
-                      if (item.rule36BlockedCount > 0) return `${item.rule36BlockedCount} candidato${item.rule36BlockedCount > 1 ? "s" : ""} excluido${item.rule36BlockedCount > 1 ? "s" : ""} por regla de concentracion`;
-                      if (!item.group || item.group === "SIN_GRUPO_SAG") return "Falta clasificacion de grupo";
-                      if (!item.subgroup || item.subgroup === "SIN_SUBGRUPO_SAG") return "Falta clasificacion de subgrupo";
-                      return "No se encontraron referencias compatibles con stock disponible";
-                    })() : null;
-
-                    // Unclassified: special message
-                    const isUnclassified = ndLine === "UNCLASSIFIED";
+                  {whfItems.map((whRef, idx) => {
+                    const isExpanded = ndExpandedRef === whRef.warehouseReference;
+                    const resColor = whRef.resolutionType === "REPOSICION"
+                      ? { bg: `${C.blueDark}18`, text: C.blueDark, label: "Reposicion" }
+                      : { bg: "#6366f118", text: "#6366f1", label: "Reemplazo" };
+                    const rule36Label = whRef.rule36Status === "SOLO_CENTRO_CALDAS" ? "R36: Centro+Caldas" : null;
 
                     return (
-                      <div key={idx} style={{ borderBottom: `1px solid ${C.line}`, padding: `${S[2]}px` }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
-                          <CommercialReferenceThumbnail imageUrl={item.imageUrl} reference={item.referenceCode} description={item.productName} size={28} />
+                      <div key={idx} style={{ borderBottom: `1px solid ${C.line}` }}>
+                        {/* Primary row: warehouse reference */}
+                        <div
+                          onClick={() => setNdExpandedRef(isExpanded ? null : whRef.warehouseReference)}
+                          style={{ display: "flex", alignItems: "center", gap: S[2], padding: `${S[2]}px`, cursor: "pointer", background: isExpanded ? C.blueLight : "transparent" }}
+                        >
+                          <CommercialReferenceThumbnail imageUrl={whRef.imageUrl} reference={whRef.warehouseReference} description={whRef.description} size={32} />
                           <div style={{ flex: 1, minWidth: 0 }}>
-                            <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink }}>{item.referenceCode}</span>
+                            <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
+                              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink }}>{whRef.warehouseReference}</span>
+                              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, padding: "1px 6px", borderRadius: R.pill, background: resColor.bg, color: resColor.text }}>
+                                {resColor.label}
+                              </span>
+                              {rule36Label && (
+                                <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "1px 5px", borderRadius: R.pill, background: `${C.amber}20`, color: C.amber }}>
+                                  {rule36Label}
+                                </span>
+                              )}
+                            </div>
                             <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {item.productName}
+                              {whRef.description}
                             </div>
                             <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginTop: 1 }}>
-                              {item.group !== "SIN_GRUPO_SAG" ? item.group : "\u2014"} / {item.subgroup !== "SIN_SUBGRUPO_SAG" ? item.subgroup : "\u2014"}
-                              {ndLine === "ACCESSORIES" && item.sizeClass && <span> / {item.sizeClass}</span>}
+                              {whRef.group !== "SIN_GRUPO_SAG" ? whRef.group : "\u2014"} / {whRef.subgroup !== "SIN_SUBGRUPO_SAG" ? whRef.subgroup : "\u2014"}
+                              {whRef.sizeClass && <span> / {whRef.sizeClass}</span>}
                             </div>
                           </div>
-                          <div style={{ textAlign: "center", minWidth: 32 }}>
-                            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Tienda</div>
-                            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.ink }}>{item.currentUnits}</div>
+                          <div style={{ textAlign: "center", minWidth: 56 }}>
+                            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Disponible</div>
+                            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.green }}>{whRef.commercialAvailableQty}</div>
                           </div>
-                          <div style={{ textAlign: "center", minWidth: 32 }}>
-                            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Min</div>
-                            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>{item.minUnits}</div>
+                          <div style={{ textAlign: "center", minWidth: 48 }}>
+                            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Sugerido</div>
+                            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.blueDark }}>{whRef.totalSuggestedQty}</div>
                           </div>
-                          <div style={{ textAlign: "center", minWidth: 32 }}>
-                            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Faltante</div>
-                            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.red }}>{item.shortageQty}</div>
+                          <div style={{ textAlign: "center", minWidth: 40 }}>
+                            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Resuelve</div>
+                            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.ink }}>{whRef.needsResolvable}</div>
                           </div>
-                          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, padding: "2px 6px", borderRadius: R.pill, background: needColor.bg, color: needColor.text }}>
-                            {item.needTypeLabel}
+                          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, transform: isExpanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
+                            &#9660;
                           </span>
                         </div>
 
-                        {/* Action reason */}
-                        <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, paddingLeft: 28 + S[2], marginTop: 2 }}>
-                          {item.actionReason}
-                        </div>
+                        {/* Expanded: store needs resolved by this warehouse ref */}
+                        {isExpanded && (
+                          <div style={{ padding: `0 ${S[2]}px ${S[2]}px ${S[2] + 32 + S[2]}px`, display: "flex", flexDirection: "column", gap: S[1] }}>
+                            {/* Variant detail for warehouse ref */}
+                            {whRef.positiveVariants.length > 0 && (
+                              <div style={{ marginBottom: S[1] }}>
+                                <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkMid, marginBottom: 4 }}>
+                                  Variantes disponibles en bodega
+                                </div>
+                                <div style={{ display: "flex", gap: S[1], flexWrap: "wrap" }}>
+                                  {whRef.positiveVariants.slice(0, 12).map((v, vi) => (
+                                    <span key={vi} style={{
+                                      fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "2px 6px",
+                                      borderRadius: R.sm, background: C.surface, border: `1px solid ${C.line}`,
+                                      color: C.ink,
+                                    }}>
+                                      {v.size ?? "\u2014"}/{v.color ?? "\u2014"}: <strong style={{ color: C.green }}>{v.availableQty}</strong>
+                                    </span>
+                                  ))}
+                                  {whRef.positiveVariants.length > 12 && (
+                                    <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, padding: "2px 4px" }}>
+                                      +{whRef.positiveVariants.length - 12} mas
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            )}
 
-                        {/* Unclassified warning */}
-                        {isUnclassified && (
-                          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.amber, paddingLeft: 28 + S[2], marginTop: 2 }}>
-                            Requiere clasificacion antes de sugerir movimiento.
-                          </div>
-                        )}
-
-                        {/* Sin alternativa explanation */}
-                        {item.needType === "NO_ALTERNATIVE" && noAltReason && !isUnclassified && (
-                          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.red, paddingLeft: 28 + S[2], marginTop: 2 }}>
-                            {noAltReason}
-                          </div>
-                        )}
-
-                        {/* Clasificacion incompleta explanation */}
-                        {item.needType === "CLASSIFICATION_INCOMPLETE" && (
-                          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, paddingLeft: 28 + S[2], marginTop: 2 }}>
-                            Campos de clasificacion faltantes — no se puede buscar reemplazo compatible.
-                          </div>
-                        )}
-
-                        {/* Reposicion directa detail */}
-                        {item.needType === "DIRECT_REPLENISHMENT" && (
-                          <div style={{ paddingLeft: 28 + S[2], marginTop: S[1], fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
-                            <div style={{ display: "flex", gap: S[3] }}>
-                              <span>Bodega ppal: <strong style={{ color: C.green }}>{item.mainWarehouseAvailable}</strong> uds</span>
-                              <span>Sugerido: <strong style={{ color: C.blueDark }}>{item.suggestedReplenishment}</strong> uds</span>
+                            {/* Store needs children */}
+                            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkMid }}>
+                              Necesidades de tienda que resuelve ({whRef.storeNeeds.length})
                             </div>
-                          </div>
-                        )}
-
-                        {/* Variant allocation for SURTIR */}
-                        {item.needType === "DIRECT_REPLENISHMENT" && item.variantAllocation && item.variantAllocation.allocations.length > 0 && (
-                          <VariantAllocationTable allocation={item.variantAllocation} paddingLeft={28 + S[2]} />
-                        )}
-
-                        {/* PARTIAL_DIRECT_PLUS_REPLACEMENT detail (CASCADE-FIX-01) */}
-                        {item.needType === "PARTIAL_DIRECT_PLUS_REPLACEMENT" && item.resolution && (
-                          <div style={{ paddingLeft: 28 + S[2], marginTop: S[1], fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
-                            <div style={{ display: "flex", gap: S[3], flexWrap: "wrap" }}>
-                              <span>Misma ref: <strong style={{ color: C.blueDark }}>{item.resolution.sameRefCoverageQty}</strong> uds</span>
-                              <span>Reemplazos: <strong style={{ color: "#6366f1" }}>{item.resolution.replacementCoverageQty}</strong> uds</span>
-                              <span>Cobertura: <strong style={{ color: item.resolution.coverageStatus === "FULLY_COVERED" ? C.green : C.amber }}>{item.resolution.coveragePercent}%</strong></span>
-                              {item.resolution.remainingShortageQty > 0 && (
-                                <span>Faltante: <strong style={{ color: C.red }}>{item.resolution.remainingShortageQty}</strong> uds</span>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                        {item.needType === "PARTIAL_DIRECT_PLUS_REPLACEMENT" && item.variantAllocation && item.variantAllocation.allocations.length > 0 && (
-                          <VariantAllocationTable allocation={item.variantAllocation} paddingLeft={28 + S[2]} />
-                        )}
-
-                        {/* Ver reemplazos button */}
-                        {hasCandidates && (
-                          <div style={{ paddingLeft: 28 + S[2], marginTop: S[1] }}>
-                            <button
-                              onClick={() => { setNdExpandedRef(isExpanded ? null : `${item.referenceCode}|${idx}`); setNdExpandedVariantKey(null); }}
-                              style={{
-                                fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                                padding: "2px 8px", borderRadius: R.sm,
-                                border: `1px solid ${C.blueDark}`, background: isExpanded ? C.blueDark : "transparent",
-                                color: isExpanded ? C.white : C.blueDark, cursor: "pointer",
-                              }}
-                            >
-                              {isExpanded ? "Ocultar reemplazos" : `Ver reemplazos (${candidates.length})`}
-                            </button>
-                          </div>
-                        )}
-
-                        {/* Expanded candidate cards */}
-                        {isExpanded && candidates.length > 0 && (
-                          <div style={{ paddingLeft: 28 + S[2], marginTop: S[2], display: "flex", flexDirection: "column", gap: S[2] }}>
-                            {candidates.map((c, ci) => {
-                              const isRecommended = ci === 0 && c.mainWarehouseAvailableQty > 0 && c.suggestedQty > 0 && c.dataQuality === "CONFIRMED";
-                              const coveredSoFar = candidates.slice(0, ci + 1).reduce((s, x) => s + x.suggestedQty, 0);
-                              const shortage = item.replacementShortageQty;
-                              const remainingAfter = Math.max(0, shortage - coveredSoFar);
-
-                              // Variant data
-                              const allVariants: InvReplacementVariant[] = c.replacementVariants ?? [];
-                              const variantExpandKey = `${item.referenceCode}|${ci}`;
-                              const isVariantExpanded = ndExpandedVariantKey === variantExpandKey;
-                              const INITIAL_VARIANT_LIMIT = 8;
-                              const visibleVariants = isVariantExpanded ? allVariants : allVariants.slice(0, INITIAL_VARIANT_LIMIT);
-                              const hasMoreVariants = allVariants.length > INITIAL_VARIANT_LIMIT;
-                              const totalVarUnits = c.totalVariantUnits ?? allVariants.reduce((s, v) => s + v.mainWarehouseQty, 0);
-                              const variantCoverage = totalVarUnits >= c.suggestedQty ? "full" : "partial";
-
+                            {whRef.storeNeeds.map((sn, si) => {
+                              const snResColor = sn.resolutionType === "REPOSICION"
+                                ? { bg: `${C.blueDark}14`, text: C.blueDark }
+                                : { bg: "#6366f114", text: "#6366f1" };
                               return (
-                                <div key={ci} style={{
-                                  display: "flex", flexDirection: "column", padding: S[2],
-                                  background: isRecommended ? C.blueLight : C.surface,
-                                  borderRadius: R.sm,
-                                  border: `1px solid ${isRecommended ? C.blueDark : C.line}`,
+                                <div key={si} style={{
+                                  display: "flex", alignItems: "center", gap: S[2], padding: `${S[1]}px ${S[2]}px`,
+                                  background: snResColor.bg, borderRadius: R.sm, border: `1px solid ${C.line}`,
                                 }}>
-                                  <div style={{ display: "flex", gap: S[2] }}>
-                                    <CommercialReferenceThumbnail imageUrl={c.imageUrl} reference={c.referenceCode} description={c.description} size={36} />
-                                    <div style={{ flex: 1, minWidth: 0 }}>
-                                      <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
-                                        <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink }}>{c.referenceCode}</span>
-                                        {isRecommended && (
-                                          <span style={{
-                                            fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                                            padding: "1px 6px", borderRadius: R.pill, background: C.blueDark, color: C.white,
-                                          }}>
-                                            Recomendado
-                                          </span>
-                                        )}
-                                      </div>
-                                      <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                        {c.description}
-                                      </div>
-                                      <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, marginTop: 2 }}>
-                                        {c.group} / {c.subgroup}
-                                      </div>
-                                      <div style={{ display: "flex", gap: S[3], fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginTop: 2 }}>
-                                        <span>Bodega ppal: <strong style={{ color: C.green }}>{c.mainWarehouseAvailableQty}</strong> uds</span>
-                                        <span>Sugerido: <strong style={{ color: C.blueDark }}>{c.suggestedQty}</strong> uds</span>
-                                      </div>
-                                      <div style={{ display: "flex", gap: S[3], fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginTop: 1 }}>
-                                        <span>Cubre: {c.suggestedQty} de {shortage}</span>
-                                        {remainingAfter > 0 && (
-                                          <span style={{ color: C.amber }}>Pendiente: {remainingAfter} uds</span>
-                                        )}
-                                      </div>
+                                  <CommercialReferenceThumbnail imageUrl={sn.imageUrl} reference={sn.storeReference} description={sn.description} size={24} />
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ display: "flex", alignItems: "center", gap: S[1] }}>
+                                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.ink }}>{sn.storeReference}</span>
+                                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "0px 4px", borderRadius: R.pill, background: snResColor.bg, color: snResColor.text, border: `1px solid ${snResColor.text}30` }}>
+                                        {sn.resolutionType === "REPOSICION" ? "Misma ref" : MATCH_LABEL[sn.matchType]}
+                                      </span>
+                                    </div>
+                                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                      {sn.description}
                                     </div>
                                   </div>
-
-                                  {/* Variant table */}
-                                  {allVariants.length > 0 && (
-                                    <div style={{ marginTop: S[2] }}>
-                                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: S[1] }}>
-                                        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkMid }}>
-                                          Variantes disponibles
-                                        </span>
-                                        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: variantCoverage === "full" ? C.green : C.amber }}>
-                                          {variantCoverage === "full" ? `${totalVarUnits} uds disponibles` : `${totalVarUnits} de ${c.suggestedQty} uds \u2014 cobertura parcial`}
-                                        </span>
-                                      </div>
-                                      <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: T.mono, fontSize: T.sz["2xs"] }}>
-                                        <thead>
-                                          <tr style={{ borderBottom: `1px solid ${C.line}` }}>
-                                            <th style={{ textAlign: "left", padding: "2px 4px", color: C.inkMid, fontWeight: T.wt.semibold }}>Talla</th>
-                                            <th style={{ textAlign: "left", padding: "2px 4px", color: C.inkMid, fontWeight: T.wt.semibold }}>Color</th>
-                                            <th style={{ textAlign: "right", padding: "2px 4px", color: C.inkMid, fontWeight: T.wt.semibold }}>Bodega principal</th>
-                                          </tr>
-                                        </thead>
-                                        <tbody>
-                                          {visibleVariants.map((v, vi) => {
-                                            const qtyLabel = v.stockQuality === "PHYSICAL_ONLY"
-                                              ? `${v.mainWarehouseQty} uds f\u00edsicas`
-                                              : v.stockQuality === "UNKNOWN"
-                                                ? "Por confirmar"
-                                                : `${v.mainWarehouseQty} ud${v.mainWarehouseQty !== 1 ? "s" : ""} disponible${v.mainWarehouseQty !== 1 ? "s" : ""}`;
-                                            return (
-                                              <tr key={vi} style={{ borderBottom: `1px solid ${C.line}` }}
-                                                title={v.stockQuality === "PHYSICAL_ONLY" ? "No descuenta compromisos." : undefined}>
-                                                <td style={{ padding: "3px 4px", color: C.ink }}>{v.size ?? "\u2014"}</td>
-                                                <td style={{ padding: "3px 4px", color: C.ink }}>{v.color ?? "\u2014"}</td>
-                                                <td style={{ padding: "3px 4px", textAlign: "right", color: v.stockQuality === "UNKNOWN" ? C.inkFaint : C.green, fontWeight: T.wt.semibold }}>
-                                                  {qtyLabel}
-                                                </td>
-                                              </tr>
-                                            );
-                                          })}
-                                        </tbody>
-                                      </table>
-                                      {hasMoreVariants && !isVariantExpanded && (
-                                        <button onClick={() => setNdExpandedVariantKey(variantExpandKey)} style={{
-                                          fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.blueDark,
-                                          background: "transparent", border: "none", cursor: "pointer", padding: "4px 0", marginTop: 2,
-                                        }}>
-                                          Ver todas las variantes ({allVariants.length})
-                                        </button>
-                                      )}
-                                      {hasMoreVariants && isVariantExpanded && (
-                                        <button onClick={() => setNdExpandedVariantKey(null)} style={{
-                                          fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.blueDark,
-                                          background: "transparent", border: "none", cursor: "pointer", padding: "4px 0", marginTop: 2,
-                                        }}>
-                                          Ocultar variantes
-                                        </button>
-                                      )}
+                                  <div style={{ textAlign: "center", minWidth: 36 }}>
+                                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Tienda</div>
+                                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.ink }}>{sn.storeQty}</div>
+                                  </div>
+                                  <div style={{ textAlign: "center", minWidth: 36 }}>
+                                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Faltante</div>
+                                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.red }}>{sn.shortageQty}</div>
+                                  </div>
+                                  <div style={{ textAlign: "center", minWidth: 44 }}>
+                                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Sugerido</div>
+                                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.blueDark }}>{sn.suggestedQty}</div>
+                                  </div>
+                                  <div style={{ textAlign: "center", minWidth: 40 }}>
+                                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Cobertura</div>
+                                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: sn.coveragePossible >= 100 ? C.green : C.amber }}>
+                                      {sn.coveragePossible}%
                                     </div>
-                                  )}
+                                  </div>
                                 </div>
                               );
                             })}
-                            {item.hasMoreCandidates && (
-                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textAlign: "center", padding: S[1] }}>
-                                Mostrando los {candidates.length} mejores de {item.totalCandidatesFound} candidatos
-                              </div>
-                            )}
-                            {item.rule36BlockedCount > 0 && (
-                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, fontStyle: "italic", padding: S[1] }}>
-                                {item.rule36BlockedCount} candidato{item.rule36BlockedCount > 1 ? "s" : ""} excluido{item.rule36BlockedCount > 1 ? "s" : ""} por regla de concentracion
-                              </div>
-                            )}
-                            {/* Variant allocation for replacement */}
-                            {item.variantAllocation && item.variantAllocation.allocations.length > 0 && (
-                              <VariantAllocationTable allocation={item.variantAllocation} paddingLeft={0} />
-                            )}
                           </div>
                         )}
                       </div>
                     );
                   })}
                 </div>
+
+                {/* No-solution items */}
+                {noSolutionItems.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: S[1] }}>
+                    <button
+                      onClick={() => setNdShowNoSolution(s => !s)}
+                      style={{
+                        fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                        padding: "4px 10px", borderRadius: R.sm, cursor: "pointer",
+                        border: `1px solid ${C.red}40`, background: ndShowNoSolution ? `${C.red}10` : "transparent",
+                        color: C.red, textAlign: "left",
+                      }}
+                    >
+                      {ndShowNoSolution ? "Ocultar" : "Ver"} necesidades sin solucion ({noSolutionItems.length})
+                    </button>
+                    {ndShowNoSolution && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                        {noSolutionItems.map((ns, ni) => (
+                          <div key={ni} style={{ display: "flex", alignItems: "center", gap: S[2], padding: `${S[1]}px ${S[2]}px`, borderBottom: `1px solid ${C.line}` }}>
+                            <CommercialReferenceThumbnail imageUrl={ns.imageUrl} reference={ns.storeReference} description={ns.description} size={24} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.ink }}>{ns.storeReference}</span>
+                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {ns.description}
+                              </div>
+                            </div>
+                            <div style={{ textAlign: "center", minWidth: 36 }}>
+                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Faltante</div>
+                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.red }}>{ns.shortageQty}</div>
+                            </div>
+                            <div style={{ flex: 1, fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.red, textAlign: "right" }}>
+                              {ns.reason}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Pagination */}
                 {pagination.totalPages > 1 && (
@@ -3069,7 +2906,7 @@ function DistributionStoreDrawer({
                       Anterior
                     </button>
                     <span style={{ color: C.inkMid }}>
-                      {pagination.page} / {pagination.totalPages} ({pagination.total} total)
+                      {pagination.page} / {pagination.totalPages} ({pagination.total} refs bodega)
                     </span>
                     <button
                       disabled={pagination.page >= pagination.totalPages}

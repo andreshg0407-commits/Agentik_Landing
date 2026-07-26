@@ -61,6 +61,8 @@ import {
   loadStoreNeedsByLine,
 } from "@/lib/comercial/tiendas/store-needs-by-line";
 import type { NeedLine, NeedType, NeedSortBy, NeedSizeClass } from "@/lib/comercial/tiendas/store-needs-by-line";
+import { loadWarehouseFirstNeeds } from "@/lib/comercial/tiendas/store-warehouse-first-needs";
+import type { WHFLine, WHFSortBy } from "@/lib/comercial/tiendas/store-warehouse-first-needs";
 import { getStoreDerroteroCoverage, getAllStoresDerroteroCoverageSummary } from "@/lib/comercial/tiendas/store-derrotero-service";
 import { buildStoreDerroteroFromSalesPortfolioDerrotero } from "@/lib/comercial/tiendas/store-derrotero-adapter";
 
@@ -79,7 +81,7 @@ export async function POST(
   const GUARDED_ACTIONS = new Set([
     "store_detail", "store_summary", "store_inventory",
     "store_shortages", "store_suggestions", "store_textile_coverage",
-    "store_distribution_detail", "store_inventory_by_line", "store_needs_by_line",
+    "store_distribution_detail", "store_inventory_by_line", "store_needs_by_line", "store_warehouse_first_needs",
     "distribution_effective_config",
     "distribution_preview_impact", "distribution_save_config",
     "derrotero_coverage",
@@ -401,6 +403,36 @@ export async function POST(
           pagination: { page: 1, pageSize: 25, total: 0, totalPages: 0 },
           lineCounts: [],
           availableSizeClasses: [],
+          dataFreshness: null,
+        }, { status: 500 });
+      }
+    }
+
+    // ── WAREHOUSE-FIRST NEEDS (AGENTIK-STORES-NEEDS-WAREHOUSE-FIRST-RESOLUTION-01) ─
+
+    case "store_warehouse_first_needs": {
+      const storeId = body.storeId as string;
+      if (!storeId) return NextResponse.json({ error: "Missing storeId" }, { status: 400 });
+      try {
+        const result = await loadWarehouseFirstNeeds(orgId, {
+          storeId,
+          line:     (body.line ?? "CASTILLITOS") as WHFLine,
+          sortBy:   (body.sortBy ?? "URGENCY_DESC") as WHFSortBy,
+          search:   body.search as string | undefined,
+          page:     body.page ?? 1,
+          pageSize: Math.min(body.pageSize ?? 25, 50),
+        });
+        return NextResponse.json(result);
+      } catch (err) {
+        console.error("[WAREHOUSE-FIRST-NEEDS] error", storeId, err instanceof Error ? err.message : err);
+        return NextResponse.json({
+          error: "Error al cargar necesidades warehouse-first",
+          line: body.line ?? "CASTILLITOS",
+          summary: { availableForSupply: 0, totalSuggestedUnits: 0, sameRefReplenishments: 0, replacements: 0, noSolution: 0 },
+          items: [],
+          noSolutionItems: [],
+          pagination: { page: 1, pageSize: 25, total: 0, totalPages: 0 },
+          lineCounts: [],
           dataFreshness: null,
         }, { status: 500 });
       }

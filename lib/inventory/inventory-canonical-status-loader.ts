@@ -156,7 +156,8 @@ export async function enrichWithCanonicalClassification(
 
   // 1b. Load aggregated PIL per warehouse for IMPORT refs (productLine=5).
   // Import refs need B24 (COMMERCIAL_AVAILABLE_IMPORT) stock via the shared resolver.
-  // This query returns NET per (productId, warehouseId) including negative quantities.
+  // Returns both net and positive-only per warehouse.
+  // AGENTIK-INVENTORY-COMMERCIAL-VS-PRODUCTION-STOCK-CLARITY-01.
   const importProductIds = snapshot.items
     .filter(i => i.isAccessory && i.productId)
     .map(i => i.productId!);
@@ -165,7 +166,9 @@ export async function enrichWithCanonicalClassification(
     try {
       const db = prisma as any;
       const rawRows: any[] = await db.$queryRawUnsafe(
-        `SELECT "productId", "warehouseId", SUM(quantity)::float AS net_qty
+        `SELECT "productId", "warehouseId",
+                SUM(quantity)::float AS net_qty,
+                SUM(GREATEST(0, quantity))::float AS pos_qty
          FROM "ProductInventoryLevel"
          WHERE "productId" = ANY($1::text[])
          GROUP BY "productId", "warehouseId"`,
@@ -174,7 +177,11 @@ export async function enrichWithCanonicalClassification(
       for (const r of rawRows) {
         const pid = r.productId as string;
         const arr = importPilByProduct.get(pid) ?? [];
-        arr.push({ warehouseId: String(r.warehouseId), netQuantity: Number(r.net_qty) || 0 });
+        arr.push({
+          warehouseId: String(r.warehouseId),
+          netQuantity: Number(r.net_qty) || 0,
+          positiveQuantity: Number(r.pos_qty) || 0,
+        });
         importPilByProduct.set(pid, arr);
       }
     } catch { /* graceful — import refs will show 0 */ }
@@ -216,8 +223,9 @@ export async function enrichWithCanonicalClassification(
       : [];
 
     // Build warehouse balances for resolver (non-commercial PIL + import commercial PIL)
+    // Non-commercial PIL rows are pre-filtered to quantity > 0 (line 134), so positiveQuantity = quantity.
     const warehouseBalances: WarehouseBalance[] = [
-      ...pils.map(p => ({ warehouseId: p.warehouseId, netQuantity: p.quantity })),
+      ...pils.map(p => ({ warehouseId: p.warehouseId, netQuantity: p.quantity, positiveQuantity: Math.max(0, p.quantity) })),
       ...importBalances,
     ];
 

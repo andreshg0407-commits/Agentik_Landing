@@ -129,8 +129,12 @@ export const CANONICAL_STORE_IDENTITY: Record<string, CanonicalStoreIdentity> = 
   "39": { slug: "caldas",     name: "Caldas",     city: "Caldas" },
 };
 
-// Main warehouse PK from warehouse-master (BODEGA PRINCIPAL, kaNlBodega=10)
-const MAIN_WAREHOUSE_PK = "10";
+// Main warehouse PKs from warehouse-master — split by world
+// TEXTILE: BODEGA PRINCIPAL (kaNlBodega=10, ssCodigo=01)
+// IMPORT:  IMPORTACIÓN      (kaNlBodega=33, ssCodigo=24)
+const MAIN_WAREHOUSE_PK_TEXTILE = "10";
+const MAIN_WAREHOUSE_PK_IMPORT  = "33";
+const ALL_MAIN_WAREHOUSE_PKS = new Set([MAIN_WAREHOUSE_PK_TEXTILE, MAIN_WAREHOUSE_PK_IMPORT]);
 
 /**
  * Resolve the 4 operational stores for Castillitos.
@@ -175,7 +179,7 @@ function resolveCanonicalSizeClass(handlingUnit: string | null | undefined): Sto
 
 // ── Hero image batch loader ─────────────────────────────────────────────────
 
-async function loadHeroImageMap(orgId: string): Promise<Map<string, string>> {
+export async function loadHeroImageMap(orgId: string): Promise<Map<string, string>> {
   const imageMap = new Map<string, string>();
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -229,14 +233,14 @@ function isSpecialProduct(referenceCode: string, productName: string): boolean {
   });
 }
 
-interface ScarcityParams {
+export interface ScarcityParams {
   enabled:    boolean;
   threshold:  number;
   allowedIds: string[];
   allowedNames: string[];
 }
 
-function getScarcityParams(): ScarcityParams {
+export function getScarcityParams(): ScarcityParams {
   return {
     enabled:      true,
     threshold:    CASTILLITOS_GLOBAL_LOW_STOCK.threshold,
@@ -248,13 +252,13 @@ function getScarcityParams(): ScarcityParams {
 // ── Main warehouse availability index ───────────────────────────────────────
 
 /** Per-variant stock record for replacement candidate detail */
-interface MainVariantRecord {
+export interface MainVariantRecord {
   size:  string;
   color: string;
   qty:   number;
 }
 
-interface MainStockIndex {
+export interface MainStockIndex {
   /** key = `${referenceCode}|${size}|${color}` */
   byVariant: Map<string, number>;
   /** key = referenceCode → total across all variants */
@@ -264,7 +268,7 @@ interface MainStockIndex {
   totalUnits: number;
 }
 
-function buildMainStockIndex(mainStock: MainWarehouseAvailability[]): MainStockIndex {
+export function buildMainStockIndex(mainStock: MainWarehouseAvailability[]): MainStockIndex {
   const byVariant = new Map<string, number>();
   const byReference = new Map<string, number>();
   const byReferenceVariants = new Map<string, MainVariantRecord[]>();
@@ -336,7 +340,7 @@ function sortVariantsByCommercialOrder(variants: ReplacementVariant[]): Replacem
 }
 
 /** Build sorted ReplacementVariant[] from MainStockIndex for a given reference */
-function buildCandidateVariants(
+export function buildCandidateVariants(
   ref: string,
   mainStockIndex: MainStockIndex,
 ): { variants: ReplacementVariant[]; totalUnits: number } {
@@ -516,7 +520,7 @@ function buildCanonicalFields(
 
 // ── Substitution index for O(1)/O(k) lookups (DECIMOSEXTO) ──────────────
 
-interface SubstitutionIndex {
+export interface SubstitutionIndex {
   /** key = `${canonicalLine}|${group}|${subgroup}` → Set<referenceCode> */
   byGroupAndSubgroup: Map<string, Set<string>>;
   /** key = `${canonicalLine}|${subgroup}` → Set<referenceCode> */
@@ -527,7 +531,7 @@ interface SubstitutionIndex {
   refMeta: Map<string, { canonicalLine: string; group: string; subgroup: string; productName: string; imageUrl: string | null; sizeClass: string | null }>;
 }
 
-function buildSubstitutionIndex(
+export function buildSubstitutionIndex(
   allInventory: StoreInventoryVariant[],
   mainStockIndex: MainStockIndex,
   grupoByRef: Map<string, string | null>,
@@ -582,9 +586,11 @@ function buildSubstitutionIndex(
   return { byGroupAndSubgroup, bySubgroup, byLineSizeClass, refMeta };
 }
 
-// ── Rule 36 check for substitution candidates (SEXTO) ───────────────────
+// ── Rule 36 check for same-reference surtido/reposición ─────────────────
+// Allowed stores (centro/caldas) can surtir/reponer their own scarce refs.
+// Non-allowed stores (san_diego/gran_plaza) cannot.
 
-function isRule36Blocked(
+function isRule36BlockedForSameRef(
   referenceCode: string,
   mainStockIndex: MainStockIndex,
   storeSlug: string,
@@ -592,6 +598,22 @@ function isRule36Blocked(
 ): boolean {
   if (!scarcity.enabled) return false;
   if (scarcity.allowedIds.includes(storeSlug)) return false;
+  const mainRefStock = getMainReferenceStock(mainStockIndex, referenceCode);
+  return mainRefStock <= scarcity.threshold;
+}
+
+// ── Rule 36 check for replacement candidates (QUINTO) ───────────────────
+// For replacements (different reference), Rule 36 is STRICT for ALL stores:
+// candidate.mainWarehouseQty must be > threshold (not <=).
+// Centro/caldas do NOT get a pass when using a scarce ref as replacement
+// for a different reference's shortage.
+
+function isRule36BlockedForReplacement(
+  referenceCode: string,
+  mainStockIndex: MainStockIndex,
+  scarcity: ScarcityParams,
+): boolean {
+  if (!scarcity.enabled) return false;
   const mainRefStock = getMainReferenceStock(mainStockIndex, referenceCode);
   return mainRefStock <= scarcity.threshold;
 }
@@ -652,8 +674,8 @@ function findReplacementCandidates(
     const mainStock = mainStockIndex.byReference.get(ref) ?? 0;
     if (mainStock <= 0) continue;
 
-    // Rule 36 blocks candidates (SEXTO)
-    if (isRule36Blocked(ref, mainStockIndex, storeSlug, scarcity)) {
+    // Rule 36 blocks replacement candidates — STRICT for ALL stores (QUINTO)
+    if (isRule36BlockedForReplacement(ref, mainStockIndex, scarcity)) {
       rule36BlockedCount++;
       continue;
     }
@@ -912,12 +934,22 @@ function buildStoreItems(
     const mainRefAvailable = getMainReferenceStock(mainStockIndex, v.referenceCode);
 
     // ── SEGUNDO: Same-reference replenishment ───────────────────────────
-    // shortageQty = target(12) - effectiveStoreStock (textile, per reference)
+    // shortageQty = gap to IDEAL (not max). Max is only a guard/cap.
+    // needDetected when storeQty < minUnits; shortageQty = ideal - storeQty.
+    // maximumReceivableQty = max - storeQty (cap, not target).
     const shortageQty = canonical.world === "TEXTILE" && thresholds.resolvedBy !== "default"
-      ? Math.max(0, thresholds.maxUnits - effectiveRefStock)
-      : Math.max(0, thresholds.minUnits - v.currentUnits);
+      ? Math.max(0, thresholds.idealUnits - effectiveRefStock)
+      : Math.max(0, thresholds.idealUnits - v.currentUnits);
 
-    const transferableUnits = Math.min(shortageQty > 0 ? shortageQty : refDeficit, mainAvailable);
+    const maximumReceivableQty = canonical.world === "TEXTILE" && thresholds.resolvedBy !== "default"
+      ? Math.max(0, thresholds.maxUnits - effectiveRefStock)
+      : Math.max(0, thresholds.maxUnits - v.currentUnits);
+
+    const transferableUnits = Math.min(
+      shortageQty > 0 ? shortageQty : refDeficit,
+      mainAvailable,
+      maximumReceivableQty,
+    );
 
     let { action, reason } = resolveAction(
       canonical.world === "TEXTILE" ? effectiveRefStock : v.currentUnits,
@@ -1183,7 +1215,7 @@ function buildCard(
 
 // ── PIL-direct data loader ──────────────────────────────────────────────────
 
-interface DistributionData {
+export interface DistributionData {
   stores:           StoreLocation[];
   storeInventory:   StoreInventoryVariant[];
   mainStock:        MainWarehouseAvailability[];
@@ -1201,7 +1233,7 @@ const TTL_DATA = 3 * 60 * 1000; // 3 min — shared between build + detail
  * Single batch query — no SOAP, no SagCurrentProvider.
  * Cached for 3 min so detail calls after build are near-instant.
  */
-async function loadDistributionData(orgId: string): Promise<DistributionData> {
+export async function loadDistributionData(orgId: string): Promise<DistributionData> {
   const dataCacheKey = `distData:${orgId}`;
   const cachedData = getCached<DistributionData>(dataCacheKey);
   if (cachedData) return cachedData;
@@ -1221,7 +1253,7 @@ async function loadDistributionDataImpl(orgId: string, dataCacheKey: string): Pr
 
   const stores = resolveOperationalStoresForTenant();
   const storePks = stores.map(s => s.sagWarehouseCode);
-  const allPks = [...storePks, MAIN_WAREHOUSE_PK];
+  const allPks = [...storePks, ...ALL_MAIN_WAREHOUSE_PKS];
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any;
@@ -1270,7 +1302,9 @@ async function loadDistributionDataImpl(orgId: string, dataCacheKey: string): Pr
 
   for (const lv of levels) {
     const resolved = resolveVariantSizeColor(lv.variant);
-    const ref = lv.variant?.sku ?? lv.product?.sku ?? lv.externalRef ?? "";
+    // canonicalReferenceKey = product.sku (reference base, e.g. "L-1288")
+    // NOT variant.sku (e.g. "L-1288|14|KA1") — size/color are in resolved.*
+    const ref = lv.product?.sku ?? lv.externalRef ?? "";
     if (!ref) continue;
     const refUpper = ref.toUpperCase();
     const name = lv.product?.name ?? refUpper;
@@ -1301,10 +1335,10 @@ async function loadDistributionDataImpl(orgId: string, dataCacheKey: string): Pr
       if (!lastSyncAt || ts > lastSyncAt) lastSyncAt = ts;
     }
 
-    if (lv.warehouseId === MAIN_WAREHOUSE_PK) {
-      // Main warehouse stock
+    if (ALL_MAIN_WAREHOUSE_PKS.has(lv.warehouseId)) {
+      // Main warehouse stock (textile=10, import=33)
       mainStock.push({
-        warehouseCode: MAIN_WAREHOUSE_PK,
+        warehouseCode: lv.warehouseId,
         referenceCode: refUpper,
         size:          resolved.size,
         color:         resolved.color,

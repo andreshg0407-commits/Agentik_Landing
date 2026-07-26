@@ -30,9 +30,10 @@
  * | colores          | ProductVariant.attributes.colorName  | REAL (API)
  * | precioDetal      | SAG v_articulos.nd_precio3           | REAL (API)
  * | precioMayorista  | SAG v_articulos.nd_precio4           | REAL (API)
- * | disponible       | InventoryItem.disponibleReal         | REAL
+ * | disponible       | InventoryItem.disponibleReal         | REAL — PIL wh10 (textile) or wh33 (import), commercial only
+ * | productionInProcess | InventoryItem.productionInProcess | REAL — PIL wh13 (PRODUCTO EN PROCESO)
  * | reservado        | InventoryItem.pedidosPendientes      | REAL — SAG pedidos pendientes de facturacion
- * | totalStock       | InventoryItem.existenciaBodega01     | REAL
+ * | totalStock       | InventoryItem.existenciaBodega01     | REAL — CCS aggregate (may include production)
  * | enTransito       | (REMOVED — no certified source)      | —
  *
  * Sprint: COMERCIAL-INVENTARIO-MASTER-DATA-COMPLETION-02
@@ -85,6 +86,7 @@ export interface CommercialProductData {
   reservado?: number;
   enImportacion?: number;
   totalStock?: number;
+  productionInProcess?: number;
 
   imageUrl?: string | null;
 
@@ -214,9 +216,10 @@ export function CommercialProductDrawer({ open, onClose, product, children }: Pr
         borderBottom: `1px solid ${C.line}22`,
       }}>
         <SummaryMetric
-          label="Disponible"
+          label="Disp. comercial"
           value={product.disponible > 0 ? `${fmtNum(product.disponible)} uds` : "\u2014"}
           highlight={product.disponible <= 0}
+          title="Inventario fisico terminado disponible para surtido y venta inmediata"
         />
         {loading ? (
           <SummaryMetric label="Precio detal" value="..." />
@@ -306,11 +309,11 @@ export function CommercialProductDrawer({ open, onClose, product, children }: Pr
         )}
       </Section>
 
-      {/* ── Inventario ──────────────────────────────────────────────── */}
-      <Section title="Inventario">
+      {/* ── Inventario comercial ─────────────────────────────────────── */}
+      <Section title="Inventario comercial">
         <InfoGrid>
           <InfoField
-            label="Disponible"
+            label="Disponible comercial"
             value={product.disponible > 0 ? fmtNum(product.disponible) : "\u2014"}
             highlight={product.disponible <= 0}
           />
@@ -322,12 +325,28 @@ export function CommercialProductDrawer({ open, onClose, product, children }: Pr
           />
           {product.totalStock != null && (
             <InfoField
-              label="Stock total"
+              label="Stock fisico bodega"
               value={product.totalStock > 0 ? fmtNum(product.totalStock) : "\u2014"}
             />
           )}
         </InfoGrid>
       </Section>
+
+      {/* ── Produccion ─────────────────────────────────────────────── */}
+      {product.productionInProcess != null && product.productionInProcess > 0 && (
+        <Section title="Produccion">
+          <InfoGrid>
+            <InfoField
+              label="En proceso"
+              value={fmtNum(product.productionInProcess)}
+            />
+            <InfoField
+              label="Bodega"
+              value="B04 — Producto en proceso"
+            />
+          </InfoGrid>
+        </Section>
+      )}
 
       {/* ── Fechas SAG ──────────────────────────────────────────────── */}
       {!loading && (
@@ -423,13 +442,15 @@ function SummaryMetric({
   label,
   value,
   highlight,
+  title,
 }: {
   label: string;
   value: string;
   highlight?: boolean;
+  title?: string;
 }) {
   return (
-    <div style={{ minWidth: 0 }}>
+    <div style={{ minWidth: 0 }} title={title}>
       <div style={{
         fontFamily: T.mono,
         fontSize: T.sz["2xs"],

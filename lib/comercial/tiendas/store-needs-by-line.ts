@@ -21,7 +21,9 @@ import type {
   ReplacementCandidate,
   VariantAllocationSuggestion,
   NeedResolution,
+  DistributionRuleSource,
 } from "./store-distribution-types";
+import type { EffectiveRule, EffectiveRuleSource } from "./store-inventory-by-line";
 
 // ── Line identifiers ─────────────────────────────────────────────────────────
 
@@ -88,7 +90,7 @@ export interface NeedItem {
   minUnits:               number;
   idealUnits:             number;
   maxUnits:               number;
-  shortageQty:            number;        // max(0, minUnits - currentUnits)
+  shortageQty:            number;        // max(0, idealUnits - currentUnits)
   mainWarehouseAvailable: number;
 
   // Derived need type (CASCADE-FIX-01: 4 states + CLASSIFICATION_INCOMPLETE)
@@ -113,6 +115,9 @@ export interface NeedItem {
 
   // Explanation
   actionReason:           string;
+
+  // Rule provenance (AGENTIK-STORES-SUPPLY-RULES-CONSUMPTION-CERTIFICATION-01)
+  effectiveRule:          EffectiveRule;
 }
 
 export interface NeedLineSummary {
@@ -222,11 +227,54 @@ const NEED_TYPE_LABELS: Record<string, string> = {
   CLASSIFICATION_INCOMPLETE:     "Clasificacion incompleta",
 };
 
+// ── Rule provenance (AGENTIK-STORES-SUPPLY-RULES-CONSUMPTION-CERTIFICATION-01) ─
+
+function resolveEffectiveRuleSource(resolvedBy: DistributionRuleSource): EffectiveRuleSource {
+  switch (resolvedBy) {
+    case "textile_default":
+    case "default":
+      return "TENANT_DEFAULT";
+    case "special_product":
+      return "SPECIAL_PRODUCT";
+    case "global_low_stock":
+      return "RULE_36";
+    case "line":
+    case "class_size":
+    case "variant_override":
+    case "reference":
+    case "line_subgroup":
+    case "subgroup":
+    case "productClass":
+    case "store":
+      return "STORE_OVERRIDE";
+    default:
+      return "FALLBACK";
+  }
+}
+
+function buildEffectiveRule(item: StoreDistributionItem): EffectiveRule {
+  const source = resolveEffectiveRuleSource(item.resolvedBy);
+  const inherited = source === "TENANT_DEFAULT" || source === "FALLBACK";
+  return {
+    ruleId:      null,
+    source,
+    minUnits:    item.minUnits,
+    idealUnits:  item.idealUnits,
+    maxUnits:    item.maxUnits,
+    targetUnits: item.idealUnits,
+    inherited,
+    validFrom:   null,
+    validTo:     null,
+    season:      null,
+  };
+}
+
 // ── Build NeedItem from StoreDistributionItem ─────────────────────────────
 
 function buildNeedItem(item: StoreDistributionItem): NeedItem {
   const needType = deriveNeedType(item);
-  const shortageQty = Math.max(0, item.minUnits - item.currentUnits);
+  // shortageQty = gap to IDEAL (not min). Need is detected by min, filled to ideal.
+  const shortageQty = Math.max(0, item.idealUnits - item.currentUnits);
 
   return {
     referenceCode:          item.referenceCode,
@@ -254,6 +302,7 @@ function buildNeedItem(item: StoreDistributionItem): NeedItem {
     resolution:             item.needResolution,
     variantAllocation:      item.variantAllocation,
     actionReason:           item.actionReason,
+    effectiveRule:          buildEffectiveRule(item),
   };
 }
 

@@ -498,6 +498,7 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
       tallas: enrichment?.tallas,
       colores: enrichment?.colores,
       variantCount: enrichment?.variantCount,
+      productionInProcess: drawerItem.productionInProcess,
     };
   }, [drawerItem, enrichment, enrichmentLoading]);
 
@@ -526,10 +527,10 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
           detailColor={C.inkGhost}
         />
         <KpiCard
-          label="Total unidades"
+          label="Disp. comercial"
           value={health.totalDisponibleBodega}
           suffix=" uds"
-          detail="Inventario disponible"
+          detail="Inventario comercial disponible"
           detailColor={C.inkGhost}
         />
         <KpiCard
@@ -537,7 +538,7 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
           value={health.totalCS}
           suffix=" uds"
           color={C.blueDark}
-          detail="Unidades disponibles"
+          detail="Disp. comercial"
           detailColor={C.inkGhost}
           onClick={() => switchTab("CASTILLITOS")}
         />
@@ -546,7 +547,7 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
           value={health.totalLT}
           suffix=" uds"
           color={C.blueDark}
-          detail="Unidades disponibles"
+          detail="Disp. comercial"
           detailColor={C.inkGhost}
           onClick={() => switchTab("LATIN_KIDS")}
         />
@@ -555,10 +556,20 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
           value={health.totalImportacion}
           suffix=" uds"
           color={C.blueDark}
-          detail="Unidades disponibles"
+          detail="Disp. comercial"
           detailColor={C.inkGhost}
           onClick={() => switchTab("IMPORTACION")}
         />
+        {health.totalProductionInProcess > 0 && (
+          <KpiCard
+            label="En proceso"
+            value={health.totalProductionInProcess}
+            suffix=" uds"
+            color={C.amber}
+            detail="Producto en proceso"
+            detailColor={C.inkGhost}
+          />
+        )}
       </div>
 
       {/* ── Sync Status Block ──────────────────────────────────────────── */}
@@ -881,7 +892,7 @@ function AgotadosTabContent({
         background: C.surfaceAlt ?? C.surface,
         borderBottom: `1px solid ${C.line}`,
       }}>
-        {["", "Referencia", "Descripcion", "Linea", "Subgrupo", "Disponible"].map((h, i) => (
+        {["", "Referencia", "Descripcion", "Linea", "Subgrupo", "Disp. comercial"].map((h, i) => (
           <span key={`${h}-${i}`} style={{
             fontFamily: T.mono,
             fontSize: T.sz["2xs"],
@@ -1208,7 +1219,7 @@ function CanonicalStatusSection({ canonical }: { canonical: CanonicalInventoryIt
         <DrawerField label="Estado" value={statusLabel} valueColor={statusColor} />
         <DrawerField label="Linea" value={CANONICAL_LINE_LABELS[canonical.canonicalLine]} />
         <DrawerField
-          label="Disponible"
+          label="Disp. comercial"
           value={canonical.compatibleCommercialStock > 0 ? canonical.compatibleCommercialStock.toLocaleString("es-CO") : "\u2014"}
         />
         <DrawerField
@@ -1555,7 +1566,7 @@ function SyncStatusBlock({ dataQuality }: { dataQuality: InventoryControlSnapsho
 // ── Table Headers ────────────────────────────────────────────────────────────
 
 function TextileTableHeader() {
-  const headers = ["", "Referencia", "Descripcion", "Subgrupo", "Disponible", "Estado"];
+  const headers = ["", "Referencia", "Descripcion", "Subgrupo", "Disp. comercial", "Estado"];
   const centerAligned = new Set([4]);
   return (
     <div className="ag-op-row" style={{
@@ -1583,7 +1594,7 @@ function TextileTableHeader() {
 }
 
 function AccessoryTableHeader() {
-  const headers = ["", "Referencia", "Descripcion", "Subgrupo", "Tamano", "Disponible", "Estado"];
+  const headers = ["", "Referencia", "Descripcion", "Subgrupo", "Tamano", "Disp. comercial", "Estado"];
   return (
     <div className="ag-op-row" style={{
       display: "grid",
@@ -1689,15 +1700,29 @@ function InventoryRow({ item, even, onClick, lowActivity }: {
         {item.subgrupoSag}
       </span>
 
-      <span style={{
-        fontFamily: T.mono,
-        fontSize: T.sz.xs,
-        fontWeight: T.wt.semibold,
-        color: item.disponibleReal <= 0 ? C.red : item.disponibleReal <= (item.threshold ?? 0) ? C.amber : C.ink,
-        textAlign: "center" as const,
-      }}>
+      <span
+        style={{
+          fontFamily: T.mono,
+          fontSize: T.sz.xs,
+          fontWeight: T.wt.semibold,
+          color: item.disponibleReal <= 0 ? C.red : item.disponibleReal <= (item.threshold ?? 0) ? C.amber : C.ink,
+          textAlign: "center" as const,
+        }}
+        title="Disponible comercial — inventario fisico terminado para surtido y venta"
+      >
         {item.disponibleReal > 0 ? item.disponibleReal.toLocaleString("es-CO") : "\u2014"}
       </span>
+
+      {item.productionInProcess > 0 && (
+        <span style={{
+          fontFamily: T.mono,
+          fontSize: T.sz["2xs"],
+          color: C.amber,
+          textAlign: "center" as const,
+        }} title="Producto en proceso — no disponible para surtido">
+          {item.productionInProcess.toLocaleString("es-CO")} en proc.
+        </span>
+      )}
 
       <span className="ag-op-status" style={{
         fontFamily: T.mono,
@@ -1812,13 +1837,16 @@ function AccessoryRow({ item, even, onClick, lowActivity }: {
         {item.handlingUnit ?? "\u2014"}
       </span>
 
-      <span style={{
-        fontFamily: T.mono,
-        fontSize: T.sz.xs,
-        fontWeight: T.wt.semibold,
-        color: item.disponibleReal <= 0 ? C.red : item.disponibleReal <= (item.threshold ?? 0) ? C.amber : C.ink,
-        textAlign: "center" as const,
-      }}>
+      <span
+        style={{
+          fontFamily: T.mono,
+          fontSize: T.sz.xs,
+          fontWeight: T.wt.semibold,
+          color: item.disponibleReal <= 0 ? C.red : item.disponibleReal <= (item.threshold ?? 0) ? C.amber : C.ink,
+          textAlign: "center" as const,
+        }}
+        title="Disponible comercial — inventario fisico terminado para surtido y venta"
+      >
         {item.disponibleReal > 0 ? item.disponibleReal.toLocaleString("es-CO") : "\u2014"}
       </span>
 
