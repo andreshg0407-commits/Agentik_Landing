@@ -54,6 +54,7 @@ function makeVariant(overrides: Partial<StoreInventoryVariant> = {}): StoreInven
     minUnits:      8,
     idealUnits:    10,
     updatedAt:     "2026-07-24T00:00:00Z",
+    entryDate:     null,
     ...overrides,
   };
 }
@@ -655,8 +656,10 @@ describe("DECIMO — Read model contracts", () => {
       dataQuality:            "PARTIAL",
       committedUnitsQuality:  "NOT_AVAILABLE",
       imageUrl:               null,
+      entryDate:              null,
       replacement:            null,
       needResolution:         null,
+      variantAllocation:      null,
     };
     assert.equal(item.action, "SURTIR");
     assert.equal(item.deficit, 3);
@@ -707,8 +710,10 @@ describe("DECIMO — Read model contracts", () => {
       dataQuality:            "REQUIRES_CONFIGURATION",
       committedUnitsQuality:  "NOT_AVAILABLE",
       imageUrl:               null,
+      entryDate:              null,
       replacement:            null,
       needResolution:         null,
+      variantAllocation:      null,
     };
     assert.equal(item.action, "REQUIERE_CONFIGURACION");
     assert.equal(item.transferableUnits, 0);

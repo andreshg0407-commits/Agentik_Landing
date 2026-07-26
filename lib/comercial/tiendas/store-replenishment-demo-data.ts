@@ -118,6 +118,7 @@ function buildInventory(
         idealUnits:    8,
         maxUnits:      15,
         updatedAt:     "2026-06-20T08:00:00Z",
+        entryDate:     null,
       });
     }
   }

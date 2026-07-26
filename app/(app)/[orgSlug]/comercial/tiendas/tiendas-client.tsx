@@ -31,6 +31,14 @@ import type {
 import { ACTIVE_STORE_SLUGS } from "@/lib/comercial/tiendas/store-distribution-types";
 import type { StoreGovernanceRecord } from "@/lib/comercial/tiendas/store-governance-types";
 import { StoreSupplyRulesTab } from "@/components/comercial/store-supply-rules-tab";
+import type {
+  StoreDiscountResponse,
+  DiscountTier,
+} from "@/lib/comercial/tiendas/store-discount-types";
+import {
+  DISCOUNT_TIER_LABEL,
+  DISCOUNT_TIER_COLOR,
+} from "@/lib/comercial/tiendas/store-discount-types";
 
 // ── Rule provenance (AGENTIK-STORES-SUPPLY-RULES-CONSUMPTION-CERTIFICATION-01) ─
 
@@ -1877,7 +1885,7 @@ function VariantAllocationTable({ allocation, paddingLeft }: { allocation: Varia
 
 // ── Distribution Store Drawer (NOVENO + SEGUNDO) ──────────────────────────────
 
-type DistDrawerTab = "inventario" | "necesidades" | "cobertura" | "derrotero" | "inteligencia";
+type DistDrawerTab = "inventario" | "necesidades" | "cobertura" | "descuentos" | "derrotero" | "inteligencia";
 
 function DistributionStoreDrawer({
   orgSlug,
@@ -2155,6 +2163,36 @@ function DistributionStoreDrawer({
   const [covCandidates, setCovCandidates] = useState<Record<string, CoverageCandidatesResult>>({});
   const [covCandidateLoading, setCovCandidateLoading] = useState<string | null>(null);
 
+  // ── Discount state (AGENTIK-STORES-DISCOUNTS-TAB-01) ───────────────────
+  const [discData, setDiscData] = useState<StoreDiscountResponse | null>(null);
+  const [discLoading, setDiscLoading] = useState(false);
+  const [discLoaded, setDiscLoaded] = useState(false);
+  const [discTierFilter, setDiscTierFilter] = useState<DiscountTier | "ALL">("ALL");
+  const [discSearch, setDiscSearch] = useState("");
+  const [discSearchDebounced, setDiscSearchDebounced] = useState("");
+
+  // Debounce discount search
+  useEffect(() => {
+    const t = setTimeout(() => setDiscSearchDebounced(discSearch), 300);
+    return () => clearTimeout(t);
+  }, [discSearch]);
+
+  // Lazy load discounts when tab is active
+  useEffect(() => {
+    if (tab !== "descuentos" || discLoaded) return;
+    let cancelled = false;
+    setDiscLoading(true);
+    tiendaApi(orgSlug, { action: "store_discounts", storeId: storeCard.store.id })
+      .then((data: { discounts?: StoreDiscountResponse }) => {
+        if (cancelled) return;
+        if (data.discounts) setDiscData(data.discounts);
+        setDiscLoaded(true);
+      })
+      .catch(() => { if (!cancelled) setDiscLoaded(true); })
+      .finally(() => { if (!cancelled) setDiscLoading(false); });
+    return () => { cancelled = true; };
+  }, [tab, storeCard.store.id, orgSlug, discLoaded]);
+
   // Lazy load coverage when tab is active
   useEffect(() => {
     if (tab !== "cobertura" || covLoaded) return;
@@ -2214,6 +2252,12 @@ function DistributionStoreDrawer({
     setCovExpandedKey(null);
     setCovCandidates({});
     setCovCandidateLoading(null);
+    // Reset discount state
+    setDiscData(null);
+    setDiscLoaded(false);
+    setDiscTierFilter("ALL");
+    setDiscSearch("");
+    setDiscSearchDebounced("");
   }, [storeCard.store.id]);
 
   // ── Load line counts when inventario tab is active ─────────────────────
@@ -2410,6 +2454,7 @@ function DistributionStoreDrawer({
     { key: "inventario",   label: "Inventario" },
     { key: "necesidades",  label: "Necesidades" },
     { key: "cobertura",    label: "Cobertura" },
+    { key: "descuentos",   label: "Descuentos" },
     { key: "derrotero",    label: "Derrotero" },
     { key: "inteligencia", label: "Inteligencia" },
   ];
@@ -3456,6 +3501,200 @@ function DistributionStoreDrawer({
           {!covLoading && !covData && covLoaded && (
             <div style={{ padding: S[4], textAlign: "center", fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight }}>
               No se pudo cargar la cobertura estructural
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB: Descuentos — aging-based discount recommendations (AGENTIK-STORES-DISCOUNTS-TAB-01) */}
+      {tab === "descuentos" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
+          {discLoading && !discData && (
+            <div style={{ height: 120, background: C.surface, borderRadius: R.sm, animation: "pulse 1.5s infinite" }} />
+          )}
+          {discData && (() => {
+            const kpis = discData.kpis;
+            // Filter by tier + search
+            let filtered = discData.recommendations;
+            if (discTierFilter !== "ALL") {
+              filtered = filtered.filter(r => r.discountTier === discTierFilter);
+            }
+            if (discSearchDebounced) {
+              const q = discSearchDebounced.toLowerCase();
+              filtered = filtered.filter(r =>
+                r.referenceCode.toLowerCase().includes(q) ||
+                r.description.toLowerCase().includes(q)
+              );
+            }
+
+            const TIER_FILTERS: { key: DiscountTier | "ALL"; label: string; count: number }[] = [
+              { key: "ALL",              label: `Todas (${kpis.totalEvaluated})`, count: kpis.totalEvaluated },
+              { key: "SEVENTY_PERCENT",  label: `70% (${kpis.seventyPercent})`,  count: kpis.seventyPercent },
+              { key: "FIFTY_PERCENT",    label: `50% (${kpis.fiftyPercent})`,    count: kpis.fiftyPercent },
+              { key: "THIRTY_PERCENT",   label: `30% (${kpis.thirtyPercent})`,   count: kpis.thirtyPercent },
+              { key: "TEN_PERCENT",      label: `10% (${kpis.tenPercent})`,      count: kpis.tenPercent },
+              { key: "NONE",             label: `0% (${kpis.none})`,             count: kpis.none },
+              { key: "SIN_FECHA",        label: `Sin fecha (${kpis.sinFecha})`,  count: kpis.sinFecha },
+            ];
+
+            return (
+              <>
+                {/* Rule summary strip */}
+                <div style={{
+                  ...panel, padding: `${S[2]}px ${S[3]}px`,
+                  background: C.surface, display: "flex", gap: S[4], flexWrap: "wrap", alignItems: "center",
+                }}>
+                  <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
+                    Reglas de descuento por antiguedad:
+                  </span>
+                  {[
+                    { label: "0-89d", pct: "0%" },
+                    { label: "90-179d", pct: "10%" },
+                    { label: "180-269d", pct: "30%" },
+                    { label: "270-364d", pct: "50%" },
+                    { label: "365d+", pct: "70%" },
+                  ].map(r => (
+                    <span key={r.label} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.ink }}>
+                      {r.label} = <strong>{r.pct}</strong>
+                    </span>
+                  ))}
+                </div>
+
+                {/* KPIs */}
+                <div style={{ display: "flex", gap: S[4], flexWrap: "wrap" }}>
+                  <MiniStat label="Evaluadas" value={String(kpis.totalEvaluated)} color={C.ink} />
+                  <MiniStat label="70%" value={String(kpis.seventyPercent)} color={kpis.seventyPercent > 0 ? DISCOUNT_TIER_COLOR.SEVENTY_PERCENT : C.ink} />
+                  <MiniStat label="50%" value={String(kpis.fiftyPercent)} color={kpis.fiftyPercent > 0 ? DISCOUNT_TIER_COLOR.FIFTY_PERCENT : C.ink} />
+                  <MiniStat label="30%" value={String(kpis.thirtyPercent)} color={kpis.thirtyPercent > 0 ? DISCOUNT_TIER_COLOR.THIRTY_PERCENT : C.ink} />
+                  <MiniStat label="10%" value={String(kpis.tenPercent)} color={kpis.tenPercent > 0 ? DISCOUNT_TIER_COLOR.TEN_PERCENT : C.ink} />
+                  <MiniStat label="Sin descuento" value={String(kpis.none)} color={C.ink} />
+                  <MiniStat label="Sin fecha" value={String(kpis.sinFecha)} color={kpis.sinFecha > 0 ? C.inkFaint : C.ink} />
+                </div>
+
+                {/* Tier filter strip */}
+                <div style={{ display: "flex", gap: S[1], flexWrap: "wrap" }}>
+                  {TIER_FILTERS.map(tf => {
+                    const isActive = discTierFilter === tf.key;
+                    return (
+                      <button
+                        key={tf.key}
+                        onClick={() => setDiscTierFilter(tf.key)}
+                        style={{
+                          fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                          padding: "3px 10px", borderRadius: R.pill, cursor: "pointer",
+                          background: isActive ? C.blueDark : C.surface,
+                          color: isActive ? C.white : C.inkMid,
+                          border: `1px solid ${isActive ? C.blueDark : C.line}`,
+                        }}
+                      >
+                        {tf.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Search */}
+                <input
+                  value={discSearch}
+                  onChange={e => setDiscSearch(e.target.value)}
+                  placeholder="Buscar referencia o descripcion..."
+                  style={{
+                    fontFamily: T.mono, fontSize: T.sz.xs, padding: `${S[2]}px ${S[3]}px`,
+                    border: `1px solid ${C.line}`, borderRadius: R.sm, background: C.white,
+                    color: C.ink, width: "100%",
+                  }}
+                />
+
+                {/* Table */}
+                <div className="ag-op-table" style={{ fontSize: T.sz.xs }}>
+                  {/* Header */}
+                  <div className="ag-op-row" style={{
+                    display: "grid",
+                    gridTemplateColumns: "32px 1fr 80px 80px 80px 70px",
+                    gap: S[2], padding: `${S[2]}px ${S[3]}px`,
+                    fontWeight: T.wt.semibold, color: C.inkMid,
+                    borderBottom: `1px solid ${C.line}`, background: C.surface,
+                  }}>
+                    <span />
+                    <span style={{ fontFamily: T.mono }}>Referencia</span>
+                    <span style={{ fontFamily: T.mono, textAlign: "right" }}>Dias</span>
+                    <span style={{ fontFamily: T.mono, textAlign: "right" }}>Uds</span>
+                    <span style={{ fontFamily: T.mono, textAlign: "center" }}>Descuento</span>
+                    <span style={{ fontFamily: T.mono, textAlign: "right" }}>Variantes</span>
+                  </div>
+
+                  {filtered.map((rec) => {
+                    const tierColor = DISCOUNT_TIER_COLOR[rec.discountTier];
+                    return (
+                      <div key={rec.referenceCode} className="ag-op-row" style={{
+                        display: "grid",
+                        gridTemplateColumns: "32px 1fr 80px 80px 80px 70px",
+                        gap: S[2], padding: `${S[2]}px ${S[3]}px`,
+                        borderBottom: `1px solid ${C.lineSubtle}`,
+                        alignItems: "center",
+                      }}>
+                        {/* Thumbnail */}
+                        <CommercialReferenceThumbnail imageUrl={rec.imageUrl} reference={rec.referenceCode} description={rec.description} size={28} />
+
+                        {/* Reference + description + reason */}
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {rec.referenceCode}
+                          </div>
+                          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {rec.description}
+                          </div>
+                          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight, marginTop: 1 }}>
+                            {rec.reason}
+                          </div>
+                        </div>
+
+                        {/* Days in store */}
+                        <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, textAlign: "right", color: C.ink }}>
+                          {rec.daysInStore !== null ? `${rec.daysInStore}d` : "\u2014"}
+                        </div>
+
+                        {/* Store qty */}
+                        <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, textAlign: "right", color: C.ink }}>
+                          {rec.storeQty}
+                        </div>
+
+                        {/* Discount badge */}
+                        <div style={{ textAlign: "center" }}>
+                          <span style={{
+                            fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                            padding: "2px 8px", borderRadius: R.pill,
+                            background: `${tierColor}18`, color: tierColor,
+                            border: `1px solid ${tierColor}40`,
+                          }}>
+                            {DISCOUNT_TIER_LABEL[rec.discountTier]}
+                          </span>
+                        </div>
+
+                        {/* Variant count */}
+                        <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, textAlign: "right", color: C.inkMid }}>
+                          {rec.variantCount}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {filtered.length === 0 && (
+                    <div style={{ padding: S[4], textAlign: "center", fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight }}>
+                      {discSearchDebounced ? "Sin resultados para esta busqueda" : "No hay referencias en este filtro"}
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
+                  Recomendaciones basadas en antiguedad (fecha de ingreso a tienda). No modifica precios.
+                </div>
+              </>
+            );
+          })()}
+          {!discLoading && !discData && discLoaded && (
+            <div style={{ padding: S[4], textAlign: "center", fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight }}>
+              No se pudo cargar la informacion de descuentos
             </div>
           )}
         </div>

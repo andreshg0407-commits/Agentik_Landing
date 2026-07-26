@@ -40,6 +40,8 @@ export interface StoreInventoryVariant {
   idealUnits:     number;
   maxUnits?:      number;
   updatedAt:      string;
+  /** PIL createdAt — first time this variant appeared in this store */
+  entryDate:      string | null;
 }
 
 // ── Main warehouse availability ──────────────────────────────────────────────

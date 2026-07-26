@@ -177,6 +177,19 @@ function resolveCanonicalSizeClass(handlingUnit: string | null | undefined): Sto
   return HANDLING_UNIT_TO_SIZE_CLASS[handlingUnit] ?? null;
 }
 
+// ── Entry date resolution (AGENTIK-STORES-DISCOUNTS-TAB-01) ─────────────────
+// Source: ProductEntity.createdAtSag (dd_fch_primer_vez from SAG ARTICULOS).
+// Sentinel value 1900-01-01 is treated as null (SAG default for missing dates).
+// This is a product-level date, not store-level — best available proxy.
+
+const SAG_SENTINEL_DATE = new Date("1900-01-02T00:00:00Z").getTime();
+
+function resolveEntryDate(createdAtSag: Date | null | undefined): string | null {
+  if (!createdAtSag) return null;
+  if (createdAtSag.getTime() < SAG_SENTINEL_DATE) return null;
+  return createdAtSag.toISOString();
+}
+
 // ── Hero image batch loader ─────────────────────────────────────────────────
 
 export async function loadHeroImageMap(orgId: string): Promise<Map<string, string>> {
@@ -821,6 +834,7 @@ function buildStoreItems(
       classificationQuality:  canonical.classificationQuality,
       committedUnitsQuality:  "NOT_AVAILABLE" as CommittedUnitsQuality,
       imageUrl:               (heroImageMap && refToProductId ? heroImageMap.get(refToProductId.get(v.referenceCode) ?? "") : null) ?? null,
+      entryDate:              v.entryDate ?? null,
     };
 
     // ── Special product override ────────────────────────────────────────
@@ -1267,6 +1281,7 @@ async function loadDistributionDataImpl(orgId: string, dataCacheKey: string): Pr
     reservedQty: number;
     externalRef: string | null;
     updatedAt: Date | null;
+    createdAt: Date | null;
     product?: {
       id: string;
       name: string;
@@ -1275,6 +1290,7 @@ async function loadDistributionDataImpl(orgId: string, dataCacheKey: string): Pr
       subgrupoSag: string | null;
       productLine: string | null;
       handlingUnit: string | null;
+      createdAtSag: Date | null;
     } | null;
     variant?: {
       sku: string | null;
@@ -1284,7 +1300,7 @@ async function loadDistributionDataImpl(orgId: string, dataCacheKey: string): Pr
   }> = await db.productInventoryLevel.findMany({
     where: { organizationId: orgId, warehouseId: { in: allPks } },
     include: {
-      product: { select: { id: true, name: true, sku: true, grupoSag: true, subgrupoSag: true, productLine: true, handlingUnit: true } },
+      product: { select: { id: true, name: true, sku: true, grupoSag: true, subgrupoSag: true, productLine: true, handlingUnit: true, createdAtSag: true } },
       variant: { select: { sku: true, name: true, attributes: true } },
     },
   });
@@ -1364,6 +1380,7 @@ async function loadDistributionDataImpl(orgId: string, dataCacheKey: string): Pr
         minUnits:      0,
         idealUnits:    0,
         updatedAt:     lv.updatedAt?.toISOString() ?? now,
+        entryDate:     resolveEntryDate(lv.product?.createdAtSag),
       });
     }
   }

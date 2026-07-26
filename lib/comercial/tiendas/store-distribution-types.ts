@@ -178,6 +178,10 @@ export interface StoreDistributionItem {
   // Thumbnail
   imageUrl:        string | null;
 
+  // ── Entry date (AGENTIK-STORES-DISCOUNTS-TAB-01) ─────────────────────
+  /** PIL createdAt — earliest variant entry date for this ref in this store */
+  entryDate:       string | null;
+
   // ── Replacement (SUGERIR_REEMPLAZO) ────────────────────────────────────
   replacement:     ReplacementResult | null;
 
