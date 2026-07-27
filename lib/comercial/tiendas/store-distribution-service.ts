@@ -1215,11 +1215,13 @@ function buildCard(
   hasPolicyRules: boolean,
 ): CanonicalStoreCard {
   const kpis = computeDetailKpis(items);
+  const shortageUnits = items.reduce((sum, i) => sum + i.deficit, 0);
   return {
     store,
     totalReferences:  kpis.totalReferences,
     totalUnits:       kpis.totalUnits,
     criticalNeeds:    kpis.criticalNeeds,
+    shortageUnits,
     excessItems:      kpis.excessItems,
     coveragePercent:  kpis.coveragePercent,
     actionRequired:   kpis.criticalNeeds > 0 || kpis.excessItems > 0,

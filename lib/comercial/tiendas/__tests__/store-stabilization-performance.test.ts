@@ -34,6 +34,7 @@ function makeStoreCard(overrides: Partial<CanonicalStoreCard> = {}): CanonicalSt
     totalReferences: 120,
     totalUnits: 450,
     criticalNeeds: 5,
+    shortageUnits: 137,
     excessItems: 2,
     coveragePercent: 78,
     actionRequired: true,

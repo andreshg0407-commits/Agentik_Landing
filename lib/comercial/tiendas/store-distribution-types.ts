@@ -261,6 +261,7 @@ export interface CanonicalStoreCard {
   totalReferences:   number;
   totalUnits:        number;
   criticalNeeds:     number;
+  shortageUnits:     number;         // sum of deficit across all items (units to reach ideal)
   excessItems:       number;
   coveragePercent:   number;
   actionRequired:    boolean;

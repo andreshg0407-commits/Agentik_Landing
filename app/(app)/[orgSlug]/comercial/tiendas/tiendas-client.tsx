@@ -320,8 +320,8 @@ export function TiendasClient({ orgSlug }: Props) {
 
   // ── Derived: overall status from distribution ──────────────────────────────
   const overallStatus = distribution
-    ? (distribution.kpis.tiendasCriticas > 0 ? "critical" as const
-      : distribution.kpis.referenciasPorSurtir > 0 ? "warning" as const
+    ? (distribution.stores.some(c => c.coveragePercent >= 0 && c.coveragePercent < 70) ? "critical" as const
+      : distribution.stores.some(c => c.shortageUnits > 0 || c.excessItems > 0) ? "warning" as const
       : "ok" as const)
     : "ok" as const;
 
@@ -411,20 +411,29 @@ export function TiendasClient({ orgSlug }: Props) {
           )}
 
           {/* Loaded — KPIs + 4 store cards */}
-          {distribution && (
+          {distribution && (() => {
+            const requierenAtencion = distribution.stores.filter(c =>
+              c.coveragePercent < 90 || c.criticalNeeds > 0 || c.excessItems > 0
+            ).length;
+            const totalShortageUnits = distribution.stores.reduce((sum, c) => sum + c.shortageUnits, 0);
+            const coberturaPromedio = distribution.stores.length > 0
+              ? Math.round(distribution.stores.reduce((sum, c) => sum + (c.coveragePercent >= 0 ? c.coveragePercent : 0), 0) / distribution.stores.length)
+              : 0;
+
+            return (
             <div style={{ display: "flex", flexDirection: "column", gap: S[4] }}>
               {/* KPI strip */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: S[3] }}>
                 <DistKpiCard label="Tiendas activas" value={String(distribution.kpis.tiendasActivas)} color={C.blueDark} />
-                <DistKpiCard label="Criticas" value={String(distribution.kpis.tiendasCriticas)} color={distribution.kpis.tiendasCriticas > 0 ? C.red : C.green} />
-                <DistKpiCard label="Por surtir" value={String(distribution.kpis.referenciasPorSurtir)} color={distribution.kpis.referenciasPorSurtir > 0 ? C.blueDark : C.green} />
-                <DistKpiCard label="Bodega principal" value={`${distribution.mainWarehouseStock.toLocaleString()} uds`} color={C.ink} />
+                <DistKpiCard label="Requieren atencion" value={String(requierenAtencion)} color={requierenAtencion > 0 ? C.red : C.green} />
+                <DistKpiCard label="Unidades por surtir" value={totalShortageUnits > 0 ? `${totalShortageUnits.toLocaleString()} uds` : "\u2014"} color={totalShortageUnits > 0 ? C.blueDark : C.green} />
+                <DistKpiCard label="Cobertura promedio" value={`${coberturaPromedio}%`} color={coberturaPromedio >= 90 ? C.green : coberturaPromedio >= 70 ? C.amber : C.red} />
               </div>
 
-              {/* SÉPTIMO — 4 operational store cards */}
+              {/* 4 operational store cards — fixed 2×2 grid */}
               <div style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+                gridTemplateColumns: "1fr 1fr",
                 gap: S[4],
               }}>
                 {distribution.stores.map(card => (
@@ -534,7 +543,8 @@ export function TiendasClient({ orgSlug }: Props) {
                 </div>
               )}
             </div>
-          )}
+            );
+          })()}
 
           {/* GOVERNANCE — Confirmation modal */}
           {govConfirm && (
@@ -634,8 +644,19 @@ function OperationalStoreCard({ card, onOpen, canDeactivate, onDeactivate }: {
   const healthColor = DIST_HEALTH_COLOR[card.healthStatus];
   const healthLabel = DIST_HEALTH_LABEL[card.healthStatus];
 
-  // CUARTO — replacement count from criticalNeeds (items needing action)
-  const hasAction = card.criticalNeeds > 0 || card.excessItems > 0;
+  // CUARTO — coverage-based visual state
+  const covColor = card.coveragePercent >= 90 ? C.green
+    : card.coveragePercent >= 70 ? C.amber : C.red;
+
+  // QUINTO — automatic action recommendation
+  const actionText = card.shortageUnits > 0 && card.excessItems > 0
+    ? `Surtir ${card.shortageUnits.toLocaleString()} uds · Redistribuir ${card.excessItems} refs`
+    : card.shortageUnits > 0
+    ? `Surtir ${card.shortageUnits.toLocaleString()} unidades`
+    : card.excessItems > 0
+    ? `Redistribuir ${card.excessItems} referencias`
+    : "Sin acciones pendientes";
+  const actionColor = card.shortageUnits > 0 ? C.red : card.excessItems > 0 ? C.amber : C.green;
 
   return (
     <div style={{
@@ -666,43 +687,38 @@ function OperationalStoreCard({ card, onOpen, canDeactivate, onDeactivate }: {
 
       {/* Metrics */}
       <div style={{ padding: S[4], flex: 1, display: "flex", flexDirection: "column", gap: S[2] }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
-          <MetricBox label="Referencias" value={card.totalReferences} color={C.blueDark} suffix=" refs" />
-          <MetricBox label="Unidades" value={card.totalUnits} color={C.ink} suffix=" uds" />
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
-          <MetricBox label="Necesidades" value={card.criticalNeeds} color={card.criticalNeeds > 0 ? C.red : C.green} suffix="" />
-          <MetricBox label="Excesos" value={card.excessItems} color={card.excessItems > 0 ? C.amber : C.green} suffix="" />
-        </div>
-        {/* Coverage */}
+        {/* Coverage — visual principal */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
           <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight }}>Cobertura</span>
           <span style={{
-            fontFamily: T.mono, fontSize: T.sz.xl, fontWeight: T.wt.bold,
-            color: card.coveragePercent >= 85 ? C.green : card.coveragePercent >= 60 ? C.amber : C.red,
+            fontFamily: T.mono, fontSize: T.sz.xl, fontWeight: T.wt.bold, color: covColor,
           }}>
             {card.coveragePercent >= 0 ? `${card.coveragePercent}%` : "\u2014"}
           </span>
         </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
+          <MetricBox label="Referencias" value={card.totalReferences} color={C.ink} suffix=" refs" />
+          <MetricBox label="Unidades" value={card.totalUnits} color={C.ink} suffix=" uds" />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
+          <MetricBox label="Faltantes" value={card.shortageUnits > 0 ? card.shortageUnits : null} color={C.red} suffix=" uds" />
+          <MetricBox label="Excesos" value={card.excessItems > 0 ? card.excessItems : null} color={C.amber} suffix=" refs" />
+        </div>
       </div>
 
-      {/* Footer */}
+      {/* Footer — action recommendation */}
       <div style={{
         padding: `${S[2]}px ${S[4]}px`, borderTop: `1px solid ${C.line}`,
         display: "flex", justifyContent: "space-between", alignItems: "center",
       }}>
-        {hasAction && (
-          <span style={{
-            fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.amber,
-          }}>
-            Accion requerida
-          </span>
-        )}
+        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: actionColor }}>
+          {actionText}
+        </span>
         <button onClick={onOpen} className="ag-action-primary" style={{
           fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold,
           color: C.white, background: C.blueDark, border: "none",
           borderRadius: R.sm, padding: `${S[1]}px ${S[3]}px`, cursor: "pointer",
-          marginLeft: "auto",
+          flexShrink: 0,
         }}>
           Abrir tienda
         </button>
@@ -1523,7 +1539,7 @@ const DIST_HEALTH_COLOR: Record<StoreDistributionHealthStatus, { bg: string; tex
 const DIST_HEALTH_LABEL: Record<StoreDistributionHealthStatus, string> = {
   ok:               "Saludable",
   requiere_surtido: "Atencion",
-  critica:          "Critica",
+  critica:          "Prioridad",
   sin_reglas:       "Sin reglas",
 };
 
