@@ -67,6 +67,8 @@ import { loadStoreCoverage, loadStoreCoverageCandidates } from "@/lib/comercial/
 import { loadStoreDiscounts } from "@/lib/comercial/tiendas/store-discount-service";
 import { getStoreDerroteroCoverage, getAllStoresDerroteroCoverageSummary } from "@/lib/comercial/tiendas/store-derrotero-service";
 import { buildStoreDerroteroFromSalesPortfolioDerrotero } from "@/lib/comercial/tiendas/store-derrotero-adapter";
+import { loadStoreIntelligence } from "@/lib/comercial/tiendas/store-intelligence-service";
+import { loadCertifiedStoreIntelligence } from "@/lib/comercial/tiendas/store-certified-intelligence-service";
 
 export async function POST(
   req: NextRequest,
@@ -86,7 +88,7 @@ export async function POST(
     "store_distribution_detail", "store_inventory_by_line", "store_needs_by_line", "store_warehouse_first_needs",
     "distribution_effective_config",
     "distribution_preview_impact", "distribution_save_config",
-    "derrotero_coverage", "store_coverage", "store_coverage_candidates", "store_discounts",
+    "derrotero_coverage", "store_coverage", "store_coverage_candidates", "store_discounts", "store_intelligence",
   ]);
   if (GUARDED_ACTIONS.has(action) && body.storeId) {
     try {
@@ -596,6 +598,33 @@ export async function POST(
       } catch (err) {
         console.error("[DERROTERO-CATALOG] error", err instanceof Error ? err.message : err);
         return NextResponse.json({ error: "Error al cargar catalogo del derrotero" }, { status: 500 });
+      }
+    }
+
+    // ── STORE INTELLIGENCE (AGENTIK-STORES-INTELLIGENCE-MVP-01) ──────────────
+
+    case "store_intelligence": {
+      const storeId = body.storeId as string;
+      if (!storeId) return NextResponse.json({ error: "Missing storeId" }, { status: 400 });
+      try {
+        const intelligence = await loadStoreIntelligence(orgId, storeId);
+        return NextResponse.json({ intelligence });
+      } catch (err) {
+        console.error("[STORE-INTELLIGENCE] error", storeId, err instanceof Error ? err.message : err);
+        return NextResponse.json({ error: "Error al cargar inteligencia comercial" }, { status: 500 });
+      }
+    }
+
+    // ── CERTIFIED STORE INTELLIGENCE (AGENTIK-STORES-INTELLIGENCE-CERTIFIED-MVP-01)
+    case "certified_store_intelligence": {
+      const storeId = body.storeId as string;
+      if (!storeId) return NextResponse.json({ error: "Missing storeId" }, { status: 400 });
+      try {
+        const certifiedIntelligence = await loadCertifiedStoreIntelligence(orgId, storeId);
+        return NextResponse.json({ certifiedIntelligence });
+      } catch (err) {
+        console.error("[CERTIFIED-STORE-INTELLIGENCE] error", storeId, err instanceof Error ? err.message : err);
+        return NextResponse.json({ error: "Error al cargar inteligencia certificada" }, { status: 500 });
       }
     }
 
