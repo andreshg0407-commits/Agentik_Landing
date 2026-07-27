@@ -521,12 +521,19 @@ export type CoverageCandidateType =
   | "COMPLEMENTO_REFERENCIA_COMPATIBLE"
   | "REFERENCIA_NUEVA_COMPATIBLE";
 
+export interface CoverageCandidateVariant {
+  size: string;
+  color: string;
+  qty: number;
+}
+
 export interface CoverageCandidate {
   referenceCode: string;
   productName: string;
   imageUrl: string | null;
   mainWarehouseStock: number;
   variantCount: number;
+  variants: CoverageCandidateVariant[];
   alreadyPresentInStore: boolean;
   storeQty: number;
   rule36Status: CoverageCandidateRule36;
@@ -696,8 +703,9 @@ function buildCandidatesWithTypes(
     const meta = subIndex.refMeta.get(ref);
     if (!meta) continue;
 
-    const variants = mainStockIndex.byReferenceVariants.get(ref);
-    const variantCount = variants?.length ?? 0;
+    const variantRecords = mainStockIndex.byReferenceVariants.get(ref);
+    const variantCount = variantRecords?.length ?? 0;
+    const variants: CoverageCandidateVariant[] = (variantRecords ?? []).map(v => ({ size: v.size, color: v.color, qty: v.qty }));
     const isPresent = storeRefsWithStock.has(ref);
     const storeQty = storeStockByRef.get(ref) ?? 0;
 
@@ -733,6 +741,7 @@ function buildCandidatesWithTypes(
       imageUrl: meta.imageUrl,
       mainWarehouseStock: mainStock,
       variantCount,
+      variants,
       alreadyPresentInStore: isPresent,
       storeQty,
       rule36Status,

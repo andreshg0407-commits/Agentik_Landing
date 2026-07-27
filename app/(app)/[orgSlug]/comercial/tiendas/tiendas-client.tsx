@@ -2123,12 +2123,18 @@ function DistributionStoreDrawer({
 
   // Candidate expansion state
   type CoverageCandidateRule36 = "ELEGIBLE_CUATRO_TIENDAS" | "BLOQUEADA";
+  interface CoverageCandidateVariant {
+    size: string;
+    color: string;
+    qty: number;
+  }
   interface CoverageCandidate {
     referenceCode: string;
     productName: string;
     imageUrl: string | null;
     mainWarehouseStock: number;
     variantCount: number;
+    variants: CoverageCandidateVariant[];
     alreadyPresentInStore: boolean;
     storeQty: number;
     rule36Status: CoverageCandidateRule36;
@@ -3336,120 +3342,232 @@ function DistributionStoreDrawer({
                             {isLoadingCandidates && !candidateData && (
                               <div style={{ height: 48, background: C.surface, borderRadius: R.sm, animation: "pulse 1.5s infinite" }} />
                             )}
-                            {candidateData && (
-                              <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
-                                {/* Solution summary */}
-                                <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight }}>
-                                  {candidateData.solutionSummary.eligibleCandidates > 0
-                                    ? `${candidateData.solutionSummary.eligibleCandidates} solución${candidateData.solutionSummary.eligibleCandidates !== 1 ? "es" : ""} en bodega · ${candidateData.solutionSummary.totalWarehouseUnits} uds disponibles`
-                                    : "Sin solución en bodega"
-                                  }
+                            {candidateData && (() => {
+                              const ss = candidateData.solutionSummary;
+                              const totalBodegaRefs = ss.eligibleCandidates + ss.blockedCandidates;
+                              const allCandidates = [...candidateData.eligible, ...candidateData.blocked];
+                              // Store refs that can be served by a candidate (same ref = reposición)
+                              const recoverableStoreRefs = candidateData.activeStoreRefs.filter(ar =>
+                                candidateData.eligible.some(c => c.referenceCode === ar.referenceCode)
+                              );
+                              const recoverableCount = recoverableStoreRefs.length + (ds === "SIN_COBERTURA" ? ss.eligibleCandidates : 0);
+                              const coverageBase = Math.max(1, s.activeReferenceCount > 0 ? s.activeReferenceCount : (s.targetUnits > 0 ? 1 : 1));
+                              const coveragePct = ds === "SIN_COBERTURA"
+                                ? (ss.eligibleCandidates > 0 ? 100 : 0)
+                                : Math.min(100, Math.round(((candidateData.activeStoreRefs.filter(ar => ar.referenceState !== "BAJO_MINIMO").length + recoverableStoreRefs.length) / Math.max(1, candidateData.activeStoreRefs.length)) * 100));
+
+                              // Candidate card renderer (shared between eligible and blocked)
+                              const renderCandidateCard = (c: CoverageCandidate, isBlocked: boolean) => {
+                                // Find which store refs this candidate matches
+                                const matchedStoreRef = candidateData.activeStoreRefs.find(ar => ar.referenceCode === c.referenceCode);
+                                return (
+                                  <div key={`${c.referenceCode}-${isBlocked ? "b" : "e"}`} style={{
+                                    padding: `${S[2]}px ${S[3]}px`, borderRadius: R.sm,
+                                    background: isBlocked ? "rgba(245,158,11,0.03)" : C.white,
+                                    border: `1px solid ${isBlocked ? "rgba(245,158,11,0.2)" : C.line}`,
+                                    opacity: isBlocked ? 0.75 : 1,
+                                  }}>
+                                    {/* Candidate header row */}
+                                    <div style={{
+                                      display: "grid", gridTemplateColumns: "28px 1fr auto auto auto", gap: S[2],
+                                      alignItems: "center", fontFamily: T.mono, fontSize: T.sz.xs,
+                                    }}>
+                                      <CommercialReferenceThumbnail imageUrl={c.imageUrl} reference={c.referenceCode} description={c.productName} size={24} />
+                                      <div>
+                                        <div style={{ color: C.ink, fontWeight: T.wt.semibold }}>{c.referenceCode}</div>
+                                        <div style={{ color: C.inkLight, fontSize: "10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>
+                                          {c.productName}
+                                        </div>
+                                      </div>
+                                      <span style={{ color: C.ink, fontWeight: T.wt.semibold }}>{c.mainWarehouseStock} uds</span>
+                                      <span className={`ag-op-status ag-op-status--${candidateTypeVariant(c.candidateType)}`} style={{ fontSize: "10px" }}>
+                                        {candidateTypeLabel(c.candidateType)}
+                                      </span>
+                                      <span className={`ag-op-status ag-op-status--${isBlocked ? "warning" : "success"}`} style={{ fontSize: "10px" }}>
+                                        {isBlocked ? "Regla 36" : "Disponible"}
+                                      </span>
+                                    </div>
+
+                                    {/* Variant breakdown */}
+                                    {c.variants.length > 0 && (
+                                      <div style={{ marginTop: S[1], paddingLeft: 36 }}>
+                                        <div style={{ fontFamily: T.mono, fontSize: "10px", color: C.inkLight, marginBottom: 2 }}>
+                                          Variantes disponibles ({c.variants.length})
+                                        </div>
+                                        <div style={{ display: "flex", flexWrap: "wrap", gap: S[1] }}>
+                                          {c.variants.slice(0, 12).map((v, vi) => (
+                                            <span key={vi} style={{
+                                              fontFamily: T.mono, fontSize: "10px",
+                                              padding: "1px 6px", borderRadius: R.sm,
+                                              background: C.surface, border: `1px solid ${C.line}`,
+                                              color: C.ink,
+                                            }}>
+                                              {v.size}/{v.color} <strong>{v.qty}</strong>
+                                            </span>
+                                          ))}
+                                          {c.variants.length > 12 && (
+                                            <span style={{ fontFamily: T.mono, fontSize: "10px", color: C.inkLight }}>
+                                              +{c.variants.length - 12} más
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* Matched store ref (what this candidate can supply) */}
+                                    {matchedStoreRef && (
+                                      <div style={{
+                                        marginTop: S[1], paddingLeft: 36,
+                                        padding: `${S[1]}px ${S[2]}px ${S[1]}px 36px`,
+                                        background: "rgba(59,130,246,0.04)", borderRadius: R.sm,
+                                      }}>
+                                        <div style={{ fontFamily: T.mono, fontSize: "10px", color: C.blueDark, marginBottom: 2 }}>
+                                          Abastece en tienda
+                                        </div>
+                                        <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, display: "flex", gap: S[3], alignItems: "center" }}>
+                                          <span style={{ color: C.ink }}>{matchedStoreRef.referenceCode}</span>
+                                          <span style={{ color: C.inkLight }}>{matchedStoreRef.storeQty} uds actuales</span>
+                                          {matchedStoreRef.referenceShortageToTarget > 0 && (
+                                            <span style={{ color: C.red, fontWeight: T.wt.semibold }}>falta {matchedStoreRef.referenceShortageToTarget}</span>
+                                          )}
+                                          <span style={{ fontSize: "10px", color: refStateColor(matchedStoreRef.referenceState), fontWeight: T.wt.semibold }}>
+                                            {refStateLabel(matchedStoreRef.referenceState)}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    )}
+                                    {!matchedStoreRef && c.candidateType !== "REPOSICION_MISMA_REFERENCIA" && candidateData.activeStoreRefs.length > 0 && (
+                                      <div style={{
+                                        marginTop: S[1], paddingLeft: 36,
+                                        fontFamily: T.mono, fontSize: "10px", color: C.inkLight,
+                                      }}>
+                                        Complementa el subgrupo — {candidateData.activeStoreRefs.length} ref{candidateData.activeStoreRefs.length !== 1 ? "s" : ""} en tienda
+                                      </div>
+                                    )}
+                                    {c.candidateType === "REFERENCIA_NUEVA_COMPATIBLE" && candidateData.activeStoreRefs.length === 0 && (
+                                      <div style={{
+                                        marginTop: S[1], paddingLeft: 36,
+                                        fontFamily: T.mono, fontSize: "10px", color: C.inkLight,
+                                      }}>
+                                        Referencia nueva — cubre estructura sin cobertura
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              };
+
+                              return (
+                              <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
+
+                                {/* ── 1. EXECUTIVE SUMMARY ── */}
+                                <div style={{
+                                  display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: S[2],
+                                  padding: `${S[2]}px ${S[3]}px`, borderRadius: R.sm,
+                                  background: ss.eligibleCandidates > 0 ? "rgba(34,197,94,0.06)" : "rgba(239,68,68,0.04)",
+                                  border: `1px solid ${ss.eligibleCandidates > 0 ? "rgba(34,197,94,0.2)" : "rgba(239,68,68,0.15)"}`,
+                                }}>
+                                  <div style={{ fontFamily: T.mono, fontSize: T.sz.xs }}>
+                                    <div style={{ color: C.inkLight, fontSize: "10px", marginBottom: 2 }}>Refs compatibles</div>
+                                    <div style={{ color: C.ink, fontWeight: T.wt.semibold }}>{totalBodegaRefs}</div>
+                                  </div>
+                                  <div style={{ fontFamily: T.mono, fontSize: T.sz.xs }}>
+                                    <div style={{ color: C.inkLight, fontSize: "10px", marginBottom: 2 }}>Uds disponibles</div>
+                                    <div style={{ color: C.ink, fontWeight: T.wt.semibold }}>{ss.totalWarehouseUnits}</div>
+                                  </div>
+                                  <div style={{ fontFamily: T.mono, fontSize: T.sz.xs }}>
+                                    <div style={{ color: C.inkLight, fontSize: "10px", marginBottom: 2 }}>Refs recuperables</div>
+                                    <div style={{ color: recoverableCount > 0 ? C.green : C.inkLight, fontWeight: T.wt.semibold }}>
+                                      {recoverableCount > 0 ? recoverableCount : "\u2014"}
+                                    </div>
+                                  </div>
+                                  <div style={{ fontFamily: T.mono, fontSize: T.sz.xs }}>
+                                    <div style={{ color: C.inkLight, fontSize: "10px", marginBottom: 2 }}>Cobertura estimada</div>
+                                    <div style={{ color: ss.eligibleCandidates > 0 ? C.green : C.red, fontWeight: T.wt.semibold }}>
+                                      {ss.eligibleCandidates > 0 ? `${coveragePct}%` : "0%"}
+                                    </div>
+                                  </div>
                                 </div>
 
-                                {/* Active store refs with per-reference health */}
-                                {candidateData.activeStoreRefs.length > 0 && (
-                                  <div>
-                                    <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.blueDark, fontWeight: T.wt.semibold, marginBottom: S[1] }}>
-                                      En tienda ({candidateData.activeStoreRefs.length})
-                                    </div>
-                                    {candidateData.activeStoreRefs.map(ar => (
-                                      <div key={ar.referenceCode} style={{
-                                        display: "grid", gridTemplateColumns: "28px 1fr auto auto auto auto", gap: S[2],
-                                        padding: `${S[1]}px 0`, alignItems: "center",
-                                        fontFamily: T.mono, fontSize: T.sz.xs,
-                                        borderBottom: `1px solid ${C.line}`,
-                                      }}>
-                                        <CommercialReferenceThumbnail imageUrl={ar.imageUrl} reference={ar.referenceCode} description={ar.productName} size={24} />
-                                        <div>
-                                          <div style={{ color: C.ink, fontWeight: T.wt.medium }}>{ar.referenceCode}</div>
-                                          <div style={{ color: C.inkLight, fontSize: "10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>
-                                            {ar.productName}
-                                          </div>
-                                        </div>
-                                        <span style={{ color: C.ink, textAlign: "right" }}>{ar.storeQty} uds</span>
-                                        <span style={{ color: C.inkLight, textAlign: "right", fontSize: "10px" }}>
-                                          {ar.minimumUnits}/{ar.targetUnits}/{ar.maximumUnits}
-                                        </span>
-                                        <span style={{ textAlign: "right", color: ar.referenceShortageToTarget > 0 ? C.red : C.inkLight, fontWeight: ar.referenceShortageToTarget > 0 ? T.wt.semibold : T.wt.normal, fontSize: "10px" }}>
-                                          {ar.referenceShortageToTarget > 0 ? `-${ar.referenceShortageToTarget}` : "\u2014"}
-                                        </span>
-                                        <span>
-                                          <span style={{ fontSize: "10px", color: refStateColor(ar.referenceState), fontWeight: T.wt.semibold }}>
-                                            {refStateLabel(ar.referenceState)}
-                                          </span>
-                                        </span>
-                                      </div>
-                                    ))}
+                                {/* ── 2. SUBGROUP STATE IN STORE ── */}
+                                <div>
+                                  <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.blueDark, fontWeight: T.wt.semibold, marginBottom: S[1] }}>
+                                    Estado en tienda
                                   </div>
-                                )}
+                                  <div style={{
+                                    display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: S[2],
+                                    padding: `${S[2]}px ${S[3]}px`, borderRadius: R.sm,
+                                    background: C.surface, border: `1px solid ${C.line}`,
+                                  }}>
+                                    <div style={{ fontFamily: T.mono, fontSize: T.sz.xs }}>
+                                      <div style={{ color: C.inkLight, fontSize: "10px", marginBottom: 2 }}>Refs existentes</div>
+                                      <div style={{ color: C.ink, fontWeight: T.wt.semibold }}>{s.activeReferenceCount > 0 ? s.activeReferenceCount : "\u2014"}</div>
+                                    </div>
+                                    <div style={{ fontFamily: T.mono, fontSize: T.sz.xs }}>
+                                      <div style={{ color: C.inkLight, fontSize: "10px", marginBottom: 2 }}>Unidades actuales</div>
+                                      <div style={{ color: C.ink, fontWeight: T.wt.semibold }}>{s.totalStoreUnits > 0 ? s.totalStoreUnits : "\u2014"}</div>
+                                    </div>
+                                    <div style={{ fontFamily: T.mono, fontSize: T.sz.xs }}>
+                                      <div style={{ color: C.inkLight, fontSize: "10px", marginBottom: 2 }}>Faltante total</div>
+                                      <div style={{ color: s.totalShortageToTarget > 0 ? C.red : C.inkLight, fontWeight: T.wt.semibold }}>
+                                        {s.totalShortageToTarget > 0 ? s.totalShortageToTarget : "\u2014"}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  {candidateData.activeStoreRefs.length > 0 && (
+                                    <div style={{ marginTop: S[1] }}>
+                                      {candidateData.activeStoreRefs.map(ar => (
+                                        <div key={ar.referenceCode} style={{
+                                          display: "grid", gridTemplateColumns: "28px 1fr auto auto auto auto", gap: S[2],
+                                          padding: `${S[1]}px 0`, alignItems: "center",
+                                          fontFamily: T.mono, fontSize: T.sz.xs,
+                                          borderBottom: `1px solid ${C.line}`,
+                                        }}>
+                                          <CommercialReferenceThumbnail imageUrl={ar.imageUrl} reference={ar.referenceCode} description={ar.productName} size={24} />
+                                          <div>
+                                            <div style={{ color: C.ink, fontWeight: T.wt.medium }}>{ar.referenceCode}</div>
+                                            <div style={{ color: C.inkLight, fontSize: "10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>
+                                              {ar.productName}
+                                            </div>
+                                          </div>
+                                          <span style={{ color: C.ink, textAlign: "right" }}>{ar.storeQty} uds</span>
+                                          <span style={{ color: C.inkLight, textAlign: "right", fontSize: "10px" }}>
+                                            {ar.minimumUnits}/{ar.targetUnits}/{ar.maximumUnits}
+                                          </span>
+                                          <span style={{ textAlign: "right", color: ar.referenceShortageToTarget > 0 ? C.red : C.inkLight, fontWeight: ar.referenceShortageToTarget > 0 ? T.wt.semibold : T.wt.normal, fontSize: "10px" }}>
+                                            {ar.referenceShortageToTarget > 0 ? `-${ar.referenceShortageToTarget}` : "\u2014"}
+                                          </span>
+                                          <span>
+                                            <span style={{ fontSize: "10px", color: refStateColor(ar.referenceState), fontWeight: T.wt.semibold }}>
+                                              {refStateLabel(ar.referenceState)}
+                                            </span>
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
 
-                                {/* Eligible candidates */}
+                                {/* ── 3. BODEGA PRINCIPAL TEXTIL — detailed candidate cards ── */}
                                 {candidateData.eligible.length > 0 && (
                                   <div>
                                     <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.green, fontWeight: T.wt.semibold, marginBottom: S[1] }}>
-                                      Elegibles ({candidateData.eligible.length})
+                                      Disponibles para enviar ({candidateData.eligible.length})
                                     </div>
-                                    {candidateData.eligible.map(c => (
-                                      <div key={c.referenceCode} style={{
-                                        display: "grid", gridTemplateColumns: "28px 1fr auto auto auto auto", gap: S[2],
-                                        padding: `${S[1]}px 0`, alignItems: "center",
-                                        fontFamily: T.mono, fontSize: T.sz.xs,
-                                        borderBottom: `1px solid ${C.line}`,
-                                      }}>
-                                        <CommercialReferenceThumbnail imageUrl={c.imageUrl} reference={c.referenceCode} description={c.productName} size={24} />
-                                        <div>
-                                          <div style={{ color: C.ink, fontWeight: T.wt.medium }}>{c.referenceCode}</div>
-                                          <div style={{ color: C.inkLight, fontSize: "10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>
-                                            {c.productName}
-                                          </div>
-                                        </div>
-                                        <span style={{ color: C.ink, textAlign: "right" }}>{c.mainWarehouseStock} uds</span>
-                                        <span style={{ color: C.inkLight, textAlign: "right" }}>{c.variantCount} var</span>
-                                        <span>
-                                          <span className={`ag-op-status ag-op-status--${candidateTypeVariant(c.candidateType)}`} style={{ fontSize: "10px" }}>
-                                            {candidateTypeLabel(c.candidateType)}
-                                          </span>
-                                        </span>
-                                        <span>
-                                          {c.alreadyPresentInStore && c.storeQty > 0
-                                            ? <span style={{ fontSize: "10px", color: C.inkLight }}>{c.storeQty} en tienda</span>
-                                            : null
-                                          }
-                                        </span>
-                                      </div>
-                                    ))}
+                                    <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
+                                      {candidateData.eligible.map(c => renderCandidateCard(c, false))}
+                                    </div>
                                   </div>
                                 )}
 
-                                {/* Blocked candidates */}
+                                {/* ── 4. BLOCKED — Limited by Rule 36 ── */}
                                 {candidateData.blocked.length > 0 && (
                                   <div>
                                     <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.amber, fontWeight: T.wt.semibold, marginBottom: S[1] }}>
-                                      Bloqueadas — Regla 36 ({candidateData.blocked.length})
+                                      Limitadas por Regla 36 ({candidateData.blocked.length})
                                     </div>
-                                    {candidateData.blocked.map(c => (
-                                      <div key={c.referenceCode} style={{
-                                        display: "grid", gridTemplateColumns: "28px 1fr auto auto auto", gap: S[2],
-                                        padding: `${S[1]}px 0`, alignItems: "center",
-                                        fontFamily: T.mono, fontSize: T.sz.xs, opacity: 0.6,
-                                        borderBottom: `1px solid ${C.line}`,
-                                      }}>
-                                        <CommercialReferenceThumbnail imageUrl={c.imageUrl} reference={c.referenceCode} description={c.productName} size={24} />
-                                        <div>
-                                          <div style={{ color: C.ink, fontWeight: T.wt.medium }}>{c.referenceCode}</div>
-                                          <div style={{ color: C.inkLight, fontSize: "10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>
-                                            {c.productName}
-                                          </div>
-                                        </div>
-                                        <span style={{ color: C.ink, textAlign: "right" }}>{c.mainWarehouseStock} uds</span>
-                                        <span style={{ color: C.inkLight, textAlign: "right" }}>{c.variantCount} var</span>
-                                        <span>
-                                          <span className={`ag-op-status ag-op-status--${candidateTypeVariant(c.candidateType)}`} style={{ fontSize: "10px" }}>
-                                            {candidateTypeLabel(c.candidateType)}
-                                          </span>
-                                        </span>
-                                      </div>
-                                    ))}
+                                    <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
+                                      {candidateData.blocked.map(c => renderCandidateCard(c, true))}
+                                    </div>
                                   </div>
                                 )}
 
@@ -3477,7 +3595,8 @@ function DistributionStoreDrawer({
                                   </button>
                                 </div>
                               </div>
-                            )}
+                              );
+                            })()}
                             {!isLoadingCandidates && !candidateData && (
                               <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight, padding: S[2] }}>
                                 Error al cargar candidatos
