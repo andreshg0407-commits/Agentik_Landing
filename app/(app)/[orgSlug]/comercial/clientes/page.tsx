@@ -22,7 +22,7 @@ export default async function ClientesPage({
 
   const page = Math.max(parseInt(String(sp.page ?? "1"), 10) || 1, 1);
   const search = String(sp.q ?? "");
-  const filter = (sp.filter ?? "todos") as "todos" | "activos" | "con_cartera" | "con_vendedor";
+  const filter = (sp.filter ?? "todos") as "todos" | "activos" | "inactivos" | "con_cartera" | "con_vendedor" | "sin_compra_90d" | "con_crm" | "sin_crm";
 
   const [summary, pageResult] = await Promise.all([
     loadClientesSummary(organization.id),

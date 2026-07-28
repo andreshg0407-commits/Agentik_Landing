@@ -22,13 +22,17 @@ import type { Cliente360Data } from "@/lib/comercial/clientes/cliente-360-loader
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-type FilterKey = "todos" | "activos" | "con_cartera" | "con_vendedor";
+type FilterKey = "todos" | "activos" | "inactivos" | "con_cartera" | "con_vendedor" | "sin_compra_90d" | "con_crm" | "sin_crm";
 
 const FILTER_OPTIONS: { key: FilterKey; label: string }[] = [
-  { key: "todos",        label: "Todos" },
-  { key: "activos",      label: "Activos" },
-  { key: "con_cartera",  label: "Con cartera vencida" },
-  { key: "con_vendedor", label: "Con vendedor" },
+  { key: "todos",          label: "Todos" },
+  { key: "activos",        label: "Activos" },
+  { key: "inactivos",      label: "Inactivos" },
+  { key: "con_cartera",    label: "Con cartera" },
+  { key: "con_vendedor",   label: "Con vendedor" },
+  { key: "sin_compra_90d", label: "Sin compra 90d" },
+  { key: "con_crm",        label: "Con CRM" },
+  { key: "sin_crm",        label: "Sin CRM" },
 ];
 
 type ClienteStatus = "ACTIVE" | "INACTIVE" | "PROSPECT" | "CHURNED" | "BLOCKED";
@@ -49,11 +53,11 @@ const STATUS_VARIANT: Record<ClienteStatus, string> = {
   BLOCKED:  "critical",
 };
 
-const TABLE_GRID = "1fr 100px 100px 120px 90px 90px 70px 60px";
+const TABLE_GRID = "1.2fr 90px 90px 110px 75px 80px 70px 60px 40px";
 
 // ── Drawer tab type ──────────────────────────────────────────────────────────
 
-type DrawerTab = "perfil" | "pedidos" | "facturas" | "cartera" | "inteligencia";
+type DrawerTab = "perfil" | "pedidos" | "facturas" | "cartera" | "inteligencia" | "timeline";
 
 const DRAWER_TABS: { key: DrawerTab; label: string }[] = [
   { key: "perfil",       label: "PERFIL" },
@@ -61,6 +65,7 @@ const DRAWER_TABS: { key: DrawerTab; label: string }[] = [
   { key: "facturas",     label: "FACTURAS" },
   { key: "cartera",      label: "CARTERA" },
   { key: "inteligencia", label: "INTELIGENCIA" },
+  { key: "timeline",     label: "LINEA" },
 ];
 
 // ── Formatters ───────────────────────────────────────────────────────────────
@@ -185,6 +190,31 @@ function oppLabel(type: string): string {
   }
 }
 
+// ── Cartera traffic light (semaforo) ─────────────────────────────────────────
+
+function carteraTrafficLight(receivables: Cliente360Data["receivables"]): { label: string; color: string } {
+  if (receivables.state === "no_disponible" || receivables.totalBalance === 0) {
+    return { label: "Sin cartera", color: C.inkGhost };
+  }
+  // Check if we have certified overdue data (daysOverdue on individual items)
+  const itemsWithDueDate = receivables.items.filter(r => r.dueDate !== null);
+  if (itemsWithDueDate.length === 0) {
+    // Have balance but no due dates — cannot determine mora
+    return { label: "Saldo pendiente", color: C.inkMid };
+  }
+  const overdueItems = itemsWithDueDate.filter(r => r.daysOverdue > 0);
+  if (overdueItems.length === 0) {
+    return { label: "Al dia", color: C.green };
+  }
+  const maxDaysOverdue = Math.max(...overdueItems.map(r => r.daysOverdue));
+  const overdueBalance = overdueItems.reduce((s, r) => s + r.balanceDue, 0);
+  const overdueRatio = overdueBalance / receivables.totalBalance;
+  if (maxDaysOverdue > 90 || overdueRatio > 0.5) {
+    return { label: "Critica", color: C.red };
+  }
+  return { label: "En mora", color: C.amber };
+}
+
 // ── Grid constants for drawer tables ─────────────────────────────────────────
 
 const ORDER_GRID = "52px 1fr 80px 80px 80px 60px";
@@ -296,7 +326,7 @@ export function ClientesClient({ orgSlug, summary, pageResult, currentFilter, cu
   const headerStatusLabel =
     summary.total === 0
       ? "En consolidacion"
-      : `${summary.total.toLocaleString("es-CO")} clientes \u00B7 ${summary.active.toLocaleString("es-CO")} activos \u00B7 ${summary.withSeller} con vendedor`;
+      : `${summary.total.toLocaleString("es-CO")} clientes \u00B7 ${summary.active.toLocaleString("es-CO")} activos \u00B7 ${summary.inactive.toLocaleString("es-CO")} inactivos`;
 
   // Drawer severity
   const drawerSeverity = drawerData
@@ -324,11 +354,12 @@ export function ClientesClient({ orgSlug, summary, pageResult, currentFilter, cu
       ) : (
         <>
           {/* KPI strip */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: S[3], marginBottom: S[6] }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: S[3], marginBottom: S[6] }}>
             <ListKpiCard label="Total" value={summary.total} />
             <ListKpiCard label="Activos" value={summary.active} color={C.green} />
-            <ListKpiCard label="Con cartera" value={summary.withOverdue} color={summary.withOverdue > 0 ? C.red : undefined} />
-            <ListKpiCard label="Con vendedor" value={summary.withSeller} color={summary.withSeller > 0 ? C.blueDark : undefined} />
+            <ListKpiCard label="Inactivos" value={summary.inactive} color={summary.inactive > 0 ? C.amber : undefined} />
+            <ListKpiCard label="Con saldo" value={summary.withCartera} color={summary.withCartera > 0 ? C.blueDark : undefined} />
+            <ListKpiCard label="Sin compra 90d" value={summary.sinCompra90d} color={summary.sinCompra90d > 0 ? C.amber : undefined} />
           </div>
 
           {/* Filters + search */}
@@ -361,7 +392,7 @@ export function ClientesClient({ orgSlug, summary, pageResult, currentFilter, cu
                 value={searchInput}
                 onChange={e => setSearchInput(e.target.value)}
                 onKeyDown={handleSearchKeyDown}
-                placeholder="Buscar nombre o NIT... (Enter)"
+                placeholder="Buscar nombre, NIT, codigo, email... (Enter)"
                 style={{
                   fontFamily: T.mono, fontSize: T.sz.xs, padding: `6px ${S[3]}px`,
                   borderRadius: R.sm, border: `1px solid ${C.line}`, background: C.surface,
@@ -398,7 +429,7 @@ export function ClientesClient({ orgSlug, summary, pageResult, currentFilter, cu
             <div className="ag-op-table" style={{ border: `1px solid ${C.line}`, borderRadius: R.sm, overflow: "hidden" }}>
               {/* Header */}
               <div className="ag-op-row" style={{ display: "grid", gridTemplateColumns: TABLE_GRID, gap: S[2], padding: `${S[2]}px ${S[4]}px`, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}` }}>
-                {["Cliente", "NIT", "Ciudad", "Vendedor", "Cartera", "Ultimo mov", "Estado", ""].map(h => (
+                {["Cliente", "NIT", "Ciudad", "Vendedor", "Tipo", "Cartera", "Ult. mov", "Estado", ""].map(h => (
                   <span key={h || "action"} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkLight, textTransform: "uppercase" as const }}>{h}</span>
                 ))}
               </div>
@@ -508,9 +539,9 @@ function DrawerContent({
         <DrawerKpi label="Pedidos CRM" value={crmQuotes.items.length} />
         <DrawerKpi label="Pedidos SAG" value={sagOrders.items.length} />
         <DrawerKpi label="Facturas" value={facturaCount} />
-        <DrawerKpi label="Saldo registrado" textValue={receivables.totalBalance > 0 ? fmtCurrency(receivables.totalBalance) : "\u2014"} color={receivables.totalOverdue > 0 ? C.red : undefined} />
+        <DrawerKpi label="Saldo cartera" textValue={receivables.totalBalance > 0 ? fmtCurrency(receivables.totalBalance) : "\u2014"} color={receivables.totalOverdue > 0 ? C.red : undefined} />
         <DrawerKpi label="Ultima compra" textValue={fmtDaysAgo(lastActivity)} />
-        <DrawerKpi label="Score cliente" textValue={computeClientScore(data)} />
+        <DrawerKpi label="Salud cartera" textValue={carteraTrafficLight(receivables).label} color={carteraTrafficLight(receivables).color} />
       </div>
 
       {/* ── Tab Bar ──────────────────────────────────────────────────── */}
@@ -559,6 +590,7 @@ function DrawerContent({
       {activeTab === "facturas" && <TabFacturas sales={sales} collections={collections} />}
       {activeTab === "cartera" && <TabCartera receivables={receivables} />}
       {activeTab === "inteligencia" && <TabInteligencia data={data} />}
+      {activeTab === "timeline" && <TabTimeline data={data} />}
     </div>
   );
 }
@@ -572,9 +604,11 @@ function TabPerfil({ profile, seller }: { profile: Cliente360Data["profile"]; se
       <div>
         <SectionLabel label="Datos generales" />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[3] }}>
-          <FieldRow label="Nombre" value={profile.name} />
+          <FieldRow label="Nombre comercial" value={profile.name} />
+          <FieldRow label="Razon social" value={profile.legalName} />
           <FieldRow label="NIT" value={profile.nit} />
-          <FieldRow label="Segmento" value={profile.segment} />
+          <FieldRow label="Codigo SAG" value={profile.erpId} />
+          <FieldRow label="Tipo cliente" value={profile.customerType} />
           <FieldRow label="Estado" value={profileStatusLabel(profile.status)} />
         </div>
       </div>
@@ -594,6 +628,8 @@ function TabPerfil({ profile, seller }: { profile: Cliente360Data["profile"]; se
         <SectionLabel label="Ubicacion" />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[3] }}>
           <FieldRow label="Ciudad" value={profile.city} />
+          <FieldRow label="Departamento" value={profile.department} />
+          <FieldRow label="Zona comercial" value={profile.zone} />
         </div>
       </div>
 
@@ -603,18 +639,22 @@ function TabPerfil({ profile, seller }: { profile: Cliente360Data["profile"]; se
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[3] }}>
           <FieldRow label="Vendedor" value={seller.sellerName} />
           <FieldRow label="Confianza" value={seller.confidence > 0 ? `${seller.confidence}%` : null} />
-          <FieldRow label="CRM ID" value={profile.crmId} />
-          <FieldRow label="SAG Tercero" value={profile.sagTerceroId != null ? String(profile.sagTerceroId) : null} />
+          <FieldRow label="Canal" value={profile.segment} />
+          <FieldRow label="Lista de precios" value={profile.priceListName} />
+          <FieldRow label="Cupo credito" value={profile.creditLimit != null && profile.creditLimit > 0 ? fmtCurrency(profile.creditLimit) : null} />
+          <FieldRow label="Ultima compra" value={fmtDate(profile.lastPurchaseAt)} />
         </div>
       </div>
 
-      {/* Sincronizacion */}
+      {/* Integraciones */}
       <div>
-        <SectionLabel label="Sincronizacion" />
+        <SectionLabel label="Integraciones" />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[3] }}>
-          <FieldRow label="CRM sync" value={fmtDate(profile.crmSyncedAt)} />
+          <FieldRow label="SAG Tercero" value={profile.sagTerceroId != null ? String(profile.sagTerceroId) : null} />
+          <FieldRow label="CRM ID" value={profile.crmId} />
           <FieldRow label="ERP sync" value={fmtDate(profile.erpSyncedAt)} />
-          <FieldRow label="Ultima compra" value={fmtDate(profile.lastPurchaseAt)} />
+          <FieldRow label="CRM sync" value={fmtDate(profile.crmSyncedAt)} />
+          <FieldRow label="Creado en SAG" value={fmtDate(profile.createdAtSag)} />
         </div>
       </div>
     </div>
@@ -881,6 +921,112 @@ function TabInteligencia({ data }: { data: Cliente360Data }) {
   );
 }
 
+// ── Tab: LINEA DE TIEMPO ─────────────────────────────────────────────────────
+
+interface TimelineEvent {
+  date: string;
+  type: string;
+  label: string;
+  detail: string;
+  color: string;
+}
+
+function TabTimeline({ data }: { data: Cliente360Data }) {
+  // Build timeline from all real data sources
+  const events: TimelineEvent[] = [];
+
+  // CRM quotes
+  for (const q of data.crmQuotes.items) {
+    if (q.issuedAt) {
+      events.push({
+        date: q.issuedAt,
+        type: "CRM",
+        label: `Pedido CRM ${q.quoteNumber ?? ""}`.trim(),
+        detail: `${fmtCurrency(q.amount)} — ${q.stage}`,
+        color: C.blueDark,
+      });
+    }
+  }
+
+  // SAG orders
+  for (const o of data.sagOrders.items) {
+    if (o.orderDate) {
+      events.push({
+        date: o.orderDate,
+        type: "SAG",
+        label: `Pedido SAG ${o.orderNumber ?? String(o.erpMovId ?? "")}`.trim(),
+        detail: `${fmtCurrency(o.amount)} — ${o.status}`,
+        color: C.blue,
+      });
+    }
+  }
+
+  // Sales
+  for (const s of data.sales.items) {
+    if (s.saleDate) {
+      events.push({
+        date: s.saleDate,
+        type: s.sagSourceType === "OFICIAL" ? "FAC" : "REM",
+        label: s.sagSourceType === "OFICIAL" ? "Factura" : "Remision",
+        detail: `${fmtCurrency(s.amount)} — ${s.comprobanteCode ?? ""}`,
+        color: s.sagSourceType === "OFICIAL" ? C.green : C.inkMid,
+      });
+    }
+  }
+
+  // Collections
+  for (const c of data.collections.items) {
+    if (c.collectionDate) {
+      events.push({
+        date: c.collectionDate,
+        type: "COB",
+        label: "Cobro registrado",
+        detail: `${fmtCurrency(c.amount)} — ${c.documentNumber ?? ""}`,
+        color: C.green,
+      });
+    }
+  }
+
+  // Sort descending by date
+  events.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  if (events.length === 0) {
+    return <EmptyOperationalState message="Sin eventos registrados" detail="No hay actividad comercial con fecha para este cliente." />;
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column" as const, gap: 0 }}>
+      {events.slice(0, 50).map((ev, i) => (
+        <div key={`${ev.date}-${ev.type}-${i}`} style={{
+          display: "flex", gap: S[3], padding: `${S[2]}px 0`,
+          borderBottom: i < events.length - 1 ? `1px solid ${C.line}22` : "none",
+        }}>
+          {/* Date */}
+          <div style={{ width: 70, flexShrink: 0, textAlign: "right" as const }}>
+            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{fmtDate(ev.date)}</span>
+          </div>
+          {/* Dot + line */}
+          <div style={{ width: 16, display: "flex", flexDirection: "column" as const, alignItems: "center", flexShrink: 0 }}>
+            <div style={{ width: 8, height: 8, borderRadius: R.pill, background: ev.color, marginTop: 4 }} />
+            {i < events.length - 1 && <div style={{ width: 1, flex: 1, background: C.line }} />}
+          </div>
+          {/* Content */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: S[1] }}>
+              <span className={`ag-op-status ag-op-status--${ev.type === "CRM" ? "info" : ev.type === "FAC" ? "ok" : ev.type === "COB" ? "ok" : "scheduled"}`}
+                style={{ fontFamily: T.mono, fontSize: 9, fontWeight: T.wt.semibold }}>
+                {ev.type}
+              </span>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink }}>{ev.label}</span>
+            </div>
+            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{ev.detail}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Client score computation ─────────────────────────────────────────────────
 
 function computeClientScore(data: Cliente360Data): string {
@@ -975,11 +1121,12 @@ function SectionLabel({ label }: { label: string }) {
   );
 }
 
-function FieldRow({ label, value, span, color }: { label: string; value: string | null | undefined; span?: number; color?: string }) {
+function FieldRow({ label, value, span, color, compact }: { label: string; value: string | null | undefined; span?: number; color?: string; compact?: boolean }) {
+  const placeholder = compact ? "\u2014" : "Sin registrar";
   return (
     <div style={{ gridColumn: span ? `span ${span}` : undefined }}>
       <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkLight, textTransform: "uppercase" as const, marginBottom: 1 }}>{label}</div>
-      <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: value ? (color ?? C.ink) : C.inkGhost }}>{value ?? "\u2014"}</div>
+      <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: value ? (color ?? C.ink) : C.inkGhost }}>{value ?? placeholder}</div>
     </div>
   );
 }
@@ -1014,6 +1161,9 @@ function ClienteRowItem({ client, even, selected, onClick }: {
       </span>
       <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: client.sellerName ? C.ink : C.inkGhost, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
         {client.sellerName ?? "\u2014"}
+      </span>
+      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: client.customerType ? C.inkMid : C.inkGhost, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+        {client.customerType ?? "\u2014"}
       </span>
       <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: client.overdueReceivable > 0 ? T.wt.semibold : T.wt.normal, color: client.overdueReceivable > 0 ? C.red : C.inkGhost, textAlign: "right" as const }}>
         {fmtCurrency(client.overdueReceivable)}

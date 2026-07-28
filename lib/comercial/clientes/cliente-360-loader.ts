@@ -34,10 +34,14 @@ type BlockState = "disponible" | "no_disponible";
 export interface Cliente360Profile {
   id: string;
   name: string;
+  legalName: string | null;
   nit: string | null;
+  erpId: string | null;        // CODIGO_CLIENTE from SAG
   city: string | null;
+  department: string | null;
   status: string;
-  segment: string | null;
+  customerType: string | null;  // TIPO_CLIENTE from SAG
+  segment: string | null;       // CANAL_CLIENTE from SAG
   email: string | null;
   phone: string | null;
   address: string | null;
@@ -46,6 +50,11 @@ export interface Cliente360Profile {
   lastPurchaseAt: string | null;
   crmSyncedAt: string | null;
   erpSyncedAt: string | null;
+  // Extracted from rawErpJson.raw (SAG view fields not in Prisma columns)
+  zone: string | null;           // ZONA_COMERCIAL
+  creditLimit: number | null;    // CUPO_CREDITO
+  priceListName: string | null;  // LISTA_PRECIOS
+  createdAtSag: string | null;   // FECHA_CREACION
 }
 
 export interface Cliente360Seller {
@@ -160,11 +169,13 @@ export async function loadCliente360(
       const r = await prisma.customerProfile.findFirst({
         where: { id: clienteId, organizationId },
         select: {
-          id: true, name: true, nit: true, city: true, status: true,
-          segment: true, email: true, phone: true, address: true,
+          id: true, name: true, legalName: true, nit: true, erpId: true,
+          city: true, department: true, status: true,
+          customerType: true, segment: true,
+          email: true, phone: true, address: true,
           crmId: true, sagTerceroId: true, lastPurchaseAt: true,
           crmSyncedAt: true, erpSyncedAt: true,
-          rawCrmJson: true, // single row — needed for city resolution
+          rawCrmJson: true, rawErpJson: true,
         },
       });
       timing.profile = ms(t);
@@ -223,14 +234,24 @@ export async function loadCliente360(
   const crmBillingCity = crmRaw.billing_address_city as string | undefined;
   const resolvedCity = resolveCity(p.city) ?? resolveCrmCity(crmBillingCity);
 
+  // Extract SAG view fields from rawErpJson.raw (not in Prisma columns)
+  const erpRaw = (p.rawErpJson as any)?.raw ?? {};
+
   const profile: Cliente360Profile = {
-    id: p.id, name: p.name, nit: p.nit, city: resolvedCity,
-    status: p.status, segment: p.segment, email: p.email,
+    id: p.id, name: p.name, legalName: p.legalName ?? null,
+    nit: p.nit, erpId: p.erpId ?? null,
+    city: resolvedCity, department: p.department ?? null,
+    status: p.status, customerType: p.customerType ?? null,
+    segment: p.segment, email: p.email,
     phone: p.phone, address: p.address, crmId: p.crmId,
     sagTerceroId: p.sagTerceroId,
     lastPurchaseAt: p.lastPurchaseAt?.toISOString() ?? null,
     crmSyncedAt: p.crmSyncedAt?.toISOString() ?? null,
     erpSyncedAt: p.erpSyncedAt?.toISOString() ?? null,
+    zone: erpRaw.ZONA_COMERCIAL ?? null,
+    creditLimit: erpRaw.CUPO_CREDITO != null ? Number(erpRaw.CUPO_CREDITO) : null,
+    priceListName: erpRaw.LISTA_PRECIOS ?? null,
+    createdAtSag: erpRaw.FECHA_CREACION ?? null,
   };
 
   const seller: Cliente360Seller = {
