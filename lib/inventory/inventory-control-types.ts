@@ -24,6 +24,59 @@ import type {
   CommercialAvailabilityReport,
 } from "@/lib/commercial-intelligence/availability-types";
 
+// ── Balance Source (AGENTIK-INVENTORY-COMMERCIAL-SAG-OFFICIAL-BALANCE-MIGRATION-01) ──
+
+/**
+ * Balance source label — unambiguous provenance for every InventoryItem.
+ *
+ * SAG_OFFICIAL:          Live SAG data, confirmed for this reference+bodega.
+ * SAG_OFFICIAL_CACHE:    Stale SAG data from in-memory cache (SAG error, cache < 1hr).
+ * SAG_OFFICIAL_NOT_FOUND: SAG query succeeded but this reference was absent from the view.
+ *                         Does NOT imply zero — the view filters EXISTENCIA > 0.
+ *                         PIL is NOT substituted as official balance.
+ * PIL_LEGACY:            Feature flag = PIL_LEGACY (explicit mode, not a fallback).
+ * UNAVAILABLE:           SAG query failed and no cache exists.
+ */
+export type InventoryBalanceSourceLabel =
+  | "SAG_OFFICIAL"
+  | "SAG_OFFICIAL_CACHE"
+  | "SAG_OFFICIAL_NOT_FOUND"
+  | "PIL_LEGACY"
+  | "UNAVAILABLE";
+
+// ── Variant Reconciliation ──────────────────────────────────────────────────
+
+/**
+ * Reconciliation status between SAG official balance and PIL variant sum.
+ * MATCHED: delta < 1 unit
+ * PARTIAL: delta exists but both sources have data
+ * UNRECONCILED: large divergence (typical — PIL has massive negative rows)
+ * STALE: PIL data is older than SAG by > 24 hours
+ */
+export type VariantReconciliationStatus =
+  | "MATCHED"
+  | "PARTIAL"
+  | "UNRECONCILED"
+  | "STALE";
+
+// ── Sellable Units (MIGRATION-01 CIERRE DE SEGURIDAD) ───────────────────────
+
+/**
+ * Resolve non-negative sellable units from the signed official available balance.
+ *
+ * disponibleReal = official signed value (can be negative when RESERVADO > EXISTENCIA).
+ * sellableUnits  = operational non-negative quantity for surtido and venta decisions.
+ *
+ * Consumers that need "how many can I sell/ship" MUST use this function.
+ * Consumers that need "what does the official balance say" use disponibleReal directly.
+ *
+ * This is the ONLY authorized clamp point — individual consumers must NOT apply
+ * their own Math.max(0, ...) to disponibleReal.
+ */
+export function resolveSellableUnits(officialAvailableUnits: number): number {
+  return Math.max(0, officialAvailableUnits);
+}
+
 // ── Inventory Visibility (COMERCIAL-INVENTARIO-ACTIVO-HISTORICO-01) ──────────
 
 /**
@@ -200,15 +253,36 @@ export interface InventoryItem {
   existenciaBodega01: number;
   /** Pending orders. */
   pedidosPendientes: number;
+
+  // ── Three-field SAG semantics (MIGRATION-01 FASE FINAL) ──────────────
   /**
-   * Commercial available stock — excludes production warehouses.
-   * Textile: PIL wh10 net (BODEGA PRINCIPAL, SAG B01), clamped >= 0.
-   * Import: PIL wh33 net (IMPORTACION, SAG B24), clamped >= 0.
+   * On-hand units in the primary commercial warehouse.
+   * SAG_OFFICIAL: SAG EXISTENCIA (saldos_articulos.n_saldo_actual).
+   * PIL_LEGACY: PIL SUM(GREATEST(0, qty)) — legacy approximation.
+   */
+  onHandReal: number;
+  /**
+   * Reserved units (pending shipments, committed orders).
+   * SAG_OFFICIAL: SAG RESERVADO (saldos_pedidos SUM).
+   * PIL_LEGACY: 0 — PIL has no reserved concept.
+   */
+  reservedReal: number;
+  /**
+   * Commercially available stock = onHandReal - reservedReal.
+   * SAG_OFFICIAL: SAG DISPONIBLE from vw_agentik_inventario.
+   * PIL_LEGACY: same as onHandReal (no reserved concept in PIL).
    *
-   * AGENTIK-INVENTORY-COMMERCIAL-VS-PRODUCTION-STOCK-CLARITY-01:
-   * Corrected to exclude production warehouse (wh13/B04).
+   * Can be negative when reservado > existencia.
+   * NEVER equals EXISTENCIA — that is onHandReal.
+   *
+   * AGENTIK-INVENTORY-COMMERCIAL-SAG-OFFICIAL-BALANCE-MIGRATION-01.
    */
   disponibleReal: number;
+  /**
+   * True when SAG DISPONIBLE != EXISTENCIA - RESERVADO.
+   * Indicates data inconsistency in the SAG view — original values preserved.
+   */
+  sagDataInvariantError: boolean;
   /** Availability status (from availability-engine). */
   availabilityStatus: AvailabilityStatus;
 
@@ -249,6 +323,42 @@ export interface InventoryItem {
    * Sprint: COMERCIAL-INVENTARIO-ACTIVO-HISTORICO-01
    */
   inventoryVisibility: InventoryVisibility;
+
+  // ── SAG Official Balance (AGENTIK-INVENTORY-COMMERCIAL-SAG-OFFICIAL-BALANCE-MIGRATION-01) ──
+
+  /**
+   * Official on-hand units from SAG vw_agentik_inventario.
+   * Source: saldos_articulos.n_saldo_actual (positive-only balance).
+   * NULL when SAG source is unavailable (PIL_LEGACY mode).
+   */
+  sagOfficialExistencia: number | null;
+  /**
+   * Official reserved units from SAG vw_agentik_inventario.
+   * Source: saldos_pedidos SUM (open orders).
+   */
+  sagOfficialReservado: number | null;
+  /**
+   * Official available units from SAG: existencia - reservado.
+   * Can be negative. Preserved for audit — not silently clamped.
+   */
+  sagOfficialDisponible: number | null;
+  /** SAG cost (n_costo_promedio) for this warehouse. */
+  sagOfficialCosto: number | null;
+  /** Most recent inventory-affecting movement date from SAG. */
+  sagOfficialLastMovement: Date | null;
+
+  // ── Variant Reconciliation ──
+  /** PIL SUM(GREATEST(0, quantity)) for this reference + commercial warehouse. */
+  variantPositiveUnits: number;
+  /** PIL SUM(quantity) for this reference + commercial warehouse. */
+  variantNetUnits: number;
+  /** sagOfficialDisponible - variantPositiveUnits (null if SAG unavailable). */
+  variantReconciliationDelta: number | null;
+  /** Reconciliation status. */
+  variantReconciliationStatus: VariantReconciliationStatus;
+
+  /** Source of the disponibleReal value. */
+  balanceSource: InventoryBalanceSourceLabel;
 
   // ── Lifecycle/Domain fields (shared with canonical enrichment) ──
   /** SAG product line ID — used for domain resolution */
@@ -407,6 +517,22 @@ export interface InventoryDataQuality {
   confidenceReason: string;
   warnings: string[];
   sources: string[];
+  /** SAG balance source metadata (MIGRATION-01). */
+  sagSourcePeriod?: string | null;
+  sagSourceStatus?: "FRESH" | "AGING" | "STALE" | "UNAVAILABLE" | "DEGRADED";
+  sagFetchDurationMs?: number;
+  /** Active balance source for this snapshot. */
+  balanceSource?: InventoryBalanceSourceLabel;
+
+  // ── Data gap metrics (MIGRATION-01 CIERRE DE SEGURIDAD) ──
+  /** Items with balanceSource = SAG_OFFICIAL or SAG_OFFICIAL_CACHE. */
+  officialBalanceReferences?: number;
+  /** Items with balanceSource = SAG_OFFICIAL_NOT_FOUND. */
+  officialNotFoundReferences?: number;
+  /** Items with balanceSource = UNAVAILABLE. */
+  unavailableReferences?: number;
+  /** Items with disponibleReal < 0. */
+  negativeAvailableReferences?: number;
 }
 
 // ── Complete Snapshot ─────────────────────────────────────────────────────────

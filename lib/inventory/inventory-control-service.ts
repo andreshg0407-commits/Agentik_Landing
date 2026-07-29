@@ -53,6 +53,13 @@ import {
   getCommercialAvailableImportPks,
   getImportInventoryPks,
 } from "./warehouse-master";
+import {
+  loadSagOfficialInventoryBalances,
+  buildWarehouseStockMap,
+  getInventoryBalanceSource,
+  type SagOfficialBalanceResult,
+} from "./sag-official-balance-loader";
+import type { InventoryBalanceSourceLabel, VariantReconciliationStatus } from "./inventory-control-types";
 
 // ── Operational State Derivation (INVENTARIO-KPI-REALIGNMENT-01) ─────────────
 
@@ -256,7 +263,10 @@ async function loadProductionPil(
 function computeDataQuality(
   snapshotAt: string | null,
   recordCount: number,
+  sagResult?: SagOfficialBalanceResult | null,
 ): InventoryDataQuality {
+  const balanceSource = getInventoryBalanceSource();
+
   if (!snapshotAt) {
     return {
       snapshotAt: null,
@@ -266,6 +276,10 @@ function computeDataQuality(
       confidenceReason: "Sin datos SAG disponibles",
       warnings: ["No se ha sincronizado inventario desde SAG"],
       sources: [],
+      balanceSource,
+      sagSourcePeriod: sagResult?.sourcePeriod ?? null,
+      sagSourceStatus: sagResult?.sourceStatus ?? "UNAVAILABLE",
+      sagFetchDurationMs: sagResult?.qualityMetrics.fetchDurationMs ?? 0,
     };
   }
 
@@ -283,6 +297,21 @@ function computeDataQuality(
   if (days > 3) warnings.push(`Datos de hace ${days} dias — considerar re-sync`);
   if (recordCount === 0) warnings.push("Snapshot vacio — 0 registros");
 
+  const sources: string[] = [];
+  if (balanceSource === "SAG_OFFICIAL") {
+    sources.push("vw_agentik_inventario (SAG OFFICIAL)");
+    sources.push("ProductInventoryLevel (variant detail only)");
+    sources.push("ProductInventoryLevel B04/wh13 (production)");
+  } else {
+    sources.push("ProductInventoryLevel B01/wh10 (textile)");
+    sources.push("ProductInventoryLevel B24/wh33 (import)");
+    sources.push("ProductInventoryLevel B04/wh13 (production)");
+  }
+
+  if (sagResult && sagResult.sourceStatus === "STALE") {
+    warnings.push(`SAG balance cache stale (${Math.round(sagResult.sourceLag / 60000)}min)`);
+  }
+
   return {
     snapshotAt,
     daysSinceSnapshot: days,
@@ -290,7 +319,11 @@ function computeDataQuality(
     confidence,
     confidenceReason: `${recordCount} registros, ${days}d desde ultimo sync`,
     warnings,
-    sources: ["ProductInventoryLevel B01/wh10 (textile)", "ProductInventoryLevel B24/wh33 (import)", "ProductInventoryLevel B04/wh13 (production)"],
+    sources,
+    balanceSource,
+    sagSourcePeriod: sagResult?.sourcePeriod ?? null,
+    sagSourceStatus: sagResult?.sourceStatus ?? "UNAVAILABLE",
+    sagFetchDurationMs: sagResult?.qualityMetrics.fetchDurationMs ?? 0,
   };
 }
 
@@ -654,6 +687,24 @@ async function loadAccessoryAvailability(
   return result;
 }
 
+// ── Variant Reconciliation ───────────────────────────────────────────────────
+
+/**
+ * Derive variant reconciliation status from SAG official vs PIL variant sum.
+ */
+function deriveReconciliationStatus(
+  sagExistencia: number | null,
+  pilPositiveUnits: number,
+): VariantReconciliationStatus {
+  if (sagExistencia === null) return "UNRECONCILED";
+  const delta = Math.abs(sagExistencia - pilPositiveUnits);
+  if (delta < 1) return "MATCHED";
+  // Within 10% or 5 units — close enough for variant distribution
+  const pct = sagExistencia > 0 ? delta / sagExistencia : 1;
+  if (pct <= 0.1 || delta <= 5) return "PARTIAL";
+  return "UNRECONCILED";
+}
+
 // ── Main Entry Point ─────────────────────────────────────────────────────────
 
 /**
@@ -664,18 +715,21 @@ async function loadAccessoryAvailability(
  * 2. buildAvailabilityReport (pure domain)
  * 3. resolveInventoryThresholds (pure domain)
  * 4. loadActiveProductionCounts (Prisma)
- * 5. Enrichment: AvailabilityRow → InventoryItem
- * 6. Summaries, health, data quality
+ * 5. SAG official balance load (SOAP → vw_agentik_inventario)
+ * 6. Enrichment: AvailabilityRow → InventoryItem (SAG governs totals, PIL governs variants)
+ * 7. Summaries, health, data quality
  */
 export async function buildInventoryControlSnapshot(
   organizationId: string,
   orgSlug: string,
 ): Promise<InventoryControlSnapshot> {
-  // ── Phase 1 (parallel): CCS + all PE + production + variants + freshness ──
+  // ── Phase 1 (parallel): CCS + all PE + production + variants + freshness + SAG ──
   // All independent queries run in a single parallel batch.
   // Variant summaries use SQL aggregation (~223ms vs ~4680ms findMany).
   // Unified PE query replaces separate textile metadata + accessory refs (~600ms vs ~3000ms).
-  const [availResult, allProducts, productionCounts, variantMap, freshestPilAt, accessoryAvail, nonCommercialPil, textileCommercialPil, productionPil] = await Promise.all([
+  // SAG official balance = SOAP call to vw_agentik_inventario (MIGRATION-01).
+  const balanceSource = getInventoryBalanceSource();
+  const [availResult, allProducts, productionCounts, variantMap, freshestPilAt, accessoryAvail, nonCommercialPil, textileCommercialPil, productionPil, sagResult] = await Promise.all([
     loadAvailabilityRecords(organizationId),
     loadAllProducts(organizationId),
     loadActiveProductionCounts(organizationId),
@@ -685,8 +739,20 @@ export async function buildInventoryControlSnapshot(
     loadNonCommercialPil(organizationId),
     loadTextileCommercialPil(organizationId),
     loadProductionPil(organizationId),
+    // SAG official balance — always fetched for reconciliation even in PIL_LEGACY mode
+    loadSagOfficialInventoryBalances({ organizationId }),
   ]);
   const { records, snapshotAt } = availResult;
+
+  // Build SAG warehouse stock maps for B01 (textile) and B24 (import)
+  const sagB01 = buildWarehouseStockMap(sagResult.balances, "01");
+  const sagB24 = buildWarehouseStockMap(sagResult.balances, "24");
+
+  // SAG_OFFICIAL requires an explicit opt-in AND a healthy/cached SAG response
+  const sagHealthy = sagResult.sourceStatus === "FRESH" || sagResult.sourceStatus === "AGING" || sagResult.sourceStatus === "STALE";
+  const sagCached = sagResult.sourceStatus === "DEGRADED"; // stale cache after SAG error
+  const useSagOfficial = balanceSource === "SAG_OFFICIAL" && (sagHealthy || sagCached);
+  const sagIsCached = balanceSource === "SAG_OFFICIAL" && sagCached;
 
   // ── Pure computation ──
   const report = buildAvailabilityReport({ orgSlug, records, sourceBodega: "01+04+14+15" });
@@ -708,17 +774,61 @@ export async function buildInventoryControlSnapshot(
   }
 
   // 5. Enrich rows into InventoryItem[] (textile)
-  // AGENTIK-INVENTORY-COMMERCIAL-VS-PRODUCTION-STOCK-CLARITY-01:
-  // disponibleReal = PIL wh10 net (commercial only), NOT CCS aggregate.
-  // CCS aggregate (row.disponibleReal) includes B04 production — excluded.
+  // AGENTIK-INVENTORY-COMMERCIAL-SAG-OFFICIAL-BALANCE-MIGRATION-01 — FASE FINAL:
+  //   onHandReal    = SAG EXISTENCIA (stock físico en bodega)
+  //   reservedReal  = SAG RESERVADO  (comprometido por pedidos)
+  //   disponibleReal = SAG DISPONIBLE (EXISTENCIA - RESERVADO, puede ser negativo)
+  // PIL_LEGACY mode: onHandReal=PIL, reservedReal=0, disponibleReal=PIL.
+  // PIL is always loaded for variant detail + reconciliation delta.
   const textileItems: InventoryItem[] = report.rows.map((row: AvailabilityRow) => {
     const threshold = thresholdMap.get(row.subLinea.toUpperCase()) ?? null;
     const activeOpCount = productionCounts.get(row.reference.toUpperCase().trim()) ?? 0;
     const hasActiveProduction = activeOpCount > 0;
 
-    // Commercial available = PIL wh10 only (excludes production wh13)
-    const commercialAvailable = textileCommercialPil.get(row.reference) ?? 0;
+    // PIL variant-level data (always loaded for reconciliation)
+    const pilCommercial = textileCommercialPil.get(row.reference) ?? 0;
     const prodInProcess = productionPil.get(row.reference) ?? 0;
+
+    // SAG official balance for B01 — three separate fields
+    const sagStock = sagB01.get(row.reference);
+    const sagExistencia = sagStock?.existencia ?? null;
+    const sagReservado = sagStock?.reservado ?? null;
+    const sagDisponible = sagStock?.disponible ?? null;
+    const sagCosto = sagStock?.costoPromedio ?? null;
+
+    // Check invariant: DISPONIBLE should equal EXISTENCIA - RESERVADO
+    const sagDataInvariantError = sagExistencia !== null && sagReservado !== null && sagDisponible !== null
+      ? Math.abs(sagDisponible - (sagExistencia - sagReservado)) > 0.01
+      : false;
+
+    // Resolve the three official fields per balance source
+    const hasSagData = useSagOfficial && sagDisponible !== null;
+    let onHandReal: number;
+    let reservedReal: number;
+    let commercialAvailable: number;
+    let itemBalanceSource: InventoryBalanceSourceLabel;
+
+    if (hasSagData) {
+      // SAG data present — use official values
+      onHandReal = sagExistencia!;
+      reservedReal = sagReservado ?? 0;
+      commercialAvailable = sagDisponible!;
+      itemBalanceSource = sagIsCached ? "SAG_OFFICIAL_CACHE" : "SAG_OFFICIAL";
+    } else if (balanceSource === "SAG_OFFICIAL") {
+      // SAG mode active but ref absent from view or SAG unavailable
+      onHandReal = 0;
+      reservedReal = 0;
+      commercialAvailable = 0;
+      itemBalanceSource = sagResult.sourceStatus === "UNAVAILABLE"
+        ? "UNAVAILABLE"
+        : "SAG_OFFICIAL_NOT_FOUND";
+    } else {
+      // PIL_LEGACY mode — explicit choice, not a fallback
+      onHandReal = pilCommercial;
+      reservedReal = 0;
+      commercialAvailable = pilCommercial;
+      itemBalanceSource = "PIL_LEGACY";
+    }
 
     const operationalState = deriveOperationalState(
       commercialAvailable,
@@ -746,7 +856,10 @@ export async function buildInventoryControlSnapshot(
       cost: meta?.costo ?? null,
       existenciaBodega01: row.existenciaBodega01,
       pedidosPendientes: row.pedidosPendientes,
+      onHandReal,
+      reservedReal,
       disponibleReal: commercialAvailable,
+      sagDataInvariantError,
       availabilityStatus: row.status,
       operationalState,
       threshold,
@@ -762,14 +875,71 @@ export async function buildInventoryControlSnapshot(
       lineaSag: meta?.lineaSag ?? null,
       lastModifiedSag: meta?.lastModifiedSag ?? null,
       lastSaleSag: meta?.lastSaleSag ?? null,
+      // SAG official fields (MIGRATION-01)
+      sagOfficialExistencia: sagExistencia,
+      sagOfficialReservado: sagReservado,
+      sagOfficialDisponible: sagDisponible,
+      sagOfficialCosto: sagCosto,
+      sagOfficialLastMovement: null,
+      // Variant reconciliation — compare against DISPONIBLE, not EXISTENCIA
+      variantPositiveUnits: pilCommercial,
+      variantNetUnits: pilCommercial,
+      variantReconciliationDelta: sagDisponible !== null ? sagDisponible - pilCommercial : null,
+      variantReconciliationStatus: deriveReconciliationStatus(sagDisponible, pilCommercial),
+      balanceSource: itemBalanceSource,
     };
   });
 
   // 5b. Build accessory InventoryItem[]
+  // AGENTIK-INVENTORY-COMMERCIAL-SAG-OFFICIAL-BALANCE-MIGRATION-01 — FASE FINAL:
+  //   onHandReal    = SAG EXISTENCIA for B24
+  //   reservedReal  = SAG RESERVADO  for B24
+  //   disponibleReal = SAG DISPONIBLE for B24
+  // PIL_LEGACY mode: onHandReal=PIL, reservedReal=0, disponibleReal=PIL.
   const accessoryItems: InventoryItem[] = accessoryProducts.map((ref) => {
-    const rawAvail = accessoryAvail.get(ref.sku);
-    const hasData = rawAvail !== undefined;
-    const available = rawAvail ?? 0;
+    const pilAvail = accessoryAvail.get(ref.sku);
+    const hasPilData = pilAvail !== undefined;
+    const pilStock = pilAvail ?? 0;
+
+    // SAG official balance for B24 — three separate fields
+    const sagStock = sagB24.get(ref.sku);
+    const sagExistencia = sagStock?.existencia ?? null;
+    const sagReservado = sagStock?.reservado ?? null;
+    const sagDisponible = sagStock?.disponible ?? null;
+    const sagCosto = sagStock?.costoPromedio ?? null;
+
+    // Check invariant: DISPONIBLE should equal EXISTENCIA - RESERVADO
+    const sagDataInvariantError = sagExistencia !== null && sagReservado !== null && sagDisponible !== null
+      ? Math.abs(sagDisponible - (sagExistencia - sagReservado)) > 0.01
+      : false;
+
+    // Resolve the three official fields per balance source
+    const hasSagData = useSagOfficial && sagDisponible !== null;
+    let onHandReal: number;
+    let reservedReal: number;
+    let available: number;
+    let itemBalanceSource: InventoryBalanceSourceLabel;
+
+    if (hasSagData) {
+      onHandReal = sagExistencia!;
+      reservedReal = sagReservado ?? 0;
+      available = sagDisponible!;
+      itemBalanceSource = sagIsCached ? "SAG_OFFICIAL_CACHE" : "SAG_OFFICIAL";
+    } else if (balanceSource === "SAG_OFFICIAL") {
+      onHandReal = 0;
+      reservedReal = 0;
+      available = 0;
+      itemBalanceSource = sagResult.sourceStatus === "UNAVAILABLE"
+        ? "UNAVAILABLE"
+        : "SAG_OFFICIAL_NOT_FOUND";
+    } else {
+      onHandReal = pilStock;
+      reservedReal = 0;
+      available = pilStock;
+      itemBalanceSource = "PIL_LEGACY";
+    }
+
+    const hasData = hasPilData || sagDisponible !== null || itemBalanceSource === "SAG_OFFICIAL_NOT_FOUND";
     const state = deriveAccessoryState(available, IMPORT_SCARCITY_MINIMUM);
 
     return {
@@ -789,7 +959,10 @@ export async function buildInventoryControlSnapshot(
       cost: ref.costo,
       existenciaBodega01: available,
       pedidosPendientes: 0,
+      onHandReal,
+      reservedReal,
       disponibleReal: available,
+      sagDataInvariantError,
       availabilityStatus: available > 0 ? "disponible" : "sin_existencia",
       operationalState: state,
       threshold: IMPORT_SCARCITY_MINIMUM,
@@ -805,6 +978,18 @@ export async function buildInventoryControlSnapshot(
       lineaSag: ref.lineaSag ?? null,
       lastModifiedSag: ref.lastModifiedSag ?? null,
       lastSaleSag: ref.lastSaleSag ?? null,
+      // SAG official fields (MIGRATION-01)
+      sagOfficialExistencia: sagExistencia,
+      sagOfficialReservado: sagReservado,
+      sagOfficialDisponible: sagDisponible,
+      sagOfficialCosto: sagCosto,
+      sagOfficialLastMovement: null,
+      // Variant reconciliation — compare against DISPONIBLE, not EXISTENCIA
+      variantPositiveUnits: pilStock,
+      variantNetUnits: pilStock,
+      variantReconciliationDelta: sagDisponible !== null ? sagDisponible - pilStock : null,
+      variantReconciliationStatus: deriveReconciliationStatus(sagDisponible, pilStock),
+      balanceSource: itemBalanceSource,
     };
   });
 
@@ -835,7 +1020,21 @@ export async function buildInventoryControlSnapshot(
   const freshestAt = snapshotAt && freshestPilAt
     ? (new Date(snapshotAt) > new Date(freshestPilAt) ? snapshotAt : freshestPilAt)
     : snapshotAt ?? freshestPilAt;
-  const dataQuality = computeDataQuality(freshestAt, records.length);
+  const dataQuality = computeDataQuality(freshestAt, records.length, sagResult);
+
+  // Populate data gap metrics from assembled items
+  dataQuality.officialBalanceReferences = items.filter(
+    i => i.balanceSource === "SAG_OFFICIAL" || i.balanceSource === "SAG_OFFICIAL_CACHE"
+  ).length;
+  dataQuality.officialNotFoundReferences = items.filter(
+    i => i.balanceSource === "SAG_OFFICIAL_NOT_FOUND"
+  ).length;
+  dataQuality.unavailableReferences = items.filter(
+    i => i.balanceSource === "UNAVAILABLE"
+  ).length;
+  dataQuality.negativeAvailableReferences = items.filter(
+    i => i.disponibleReal < 0
+  ).length;
 
   return {
     orgSlug,
