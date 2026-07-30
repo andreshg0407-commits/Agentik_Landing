@@ -52,9 +52,22 @@ export function buildCanonicalStorePriorityOrder(): {
 export async function loadStoreReplenishmentPlan(
   orgId: string,
 ): Promise<StoreReplenishmentPlan> {
+  return (await loadStoreReplenishmentPlanWithMeta(orgId)).plan;
+}
+
+/**
+ * AGENTIK-STORES-REPLENISHMENT-DOCUMENT-01 (ajuste certificado): el documento
+ * separa CUÁNDO se calculó el plan de CUÁNDO se creó el documento. Esta
+ * variante expone el timestamp real de cálculo (respetando el cache).
+ */
+export async function loadStoreReplenishmentPlanWithMeta(
+  orgId: string,
+): Promise<{ plan: StoreReplenishmentPlan; planGeneratedAt: string }> {
   const cacheKey = `replPlan:${orgId}`;
   const cached = cache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.data;
+  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+    return { plan: cached.data, planGeneratedAt: new Date(cached.ts).toISOString() };
+  }
 
   const { order, materialPriorityStoreIds } = buildCanonicalStorePriorityOrder();
 
@@ -93,6 +106,7 @@ export async function loadStoreReplenishmentPlan(
     candidatesByStructure,
   });
 
-  cache.set(cacheKey, { data: plan, ts: Date.now() });
-  return plan;
+  const ts = Date.now();
+  cache.set(cacheKey, { data: plan, ts });
+  return { plan, planGeneratedAt: new Date(ts).toISOString() };
 }

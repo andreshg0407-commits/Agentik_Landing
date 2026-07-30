@@ -66,6 +66,12 @@ import type { WHFLine, WHFSortBy } from "@/lib/comercial/tiendas/store-warehouse
 import { loadStoreCoverage, loadStoreCoverageCandidates } from "@/lib/comercial/tiendas/store-coverage-service";
 import { loadStoreUnitNeeds } from "@/lib/comercial/tiendas/store-unit-needs-service";
 import { loadStoreReplenishmentPlan } from "@/lib/comercial/tiendas/store-replenishment-plan-service";
+import {
+  createReplenishmentDocuments,
+  listReplenishmentDocuments,
+  getReplenishmentDocument,
+  exportReplenishmentDocument,
+} from "@/lib/comercial/tiendas/store-replenishment-document-service";
 import { loadStoreDiscounts } from "@/lib/comercial/tiendas/store-discount-service";
 import { getStoreDerroteroCoverage, getAllStoresDerroteroCoverageSummary } from "@/lib/comercial/tiendas/store-derrotero-service";
 import { buildStoreDerroteroFromSalesPortfolioDerrotero } from "@/lib/comercial/tiendas/store-derrotero-adapter";
@@ -552,6 +558,64 @@ export async function POST(
       } catch (err) {
         console.error("[STORE-REPLENISHMENT-PLAN] error", err instanceof Error ? err.message : err);
         return NextResponse.json({ error: "Error al construir el plan de surtido" }, { status: 500 });
+      }
+    }
+
+    // ── REPLENISHMENT DOCUMENTS (AGENTIK-STORES-REPLENISHMENT-DOCUMENT-01) ─────
+    // Representación PERSISTIDA del plan certificado — cero recalculo.
+
+    case "replenishment_document_create": {
+      try {
+        const generatedBy = (body.generatedBy as string) || "sistema";
+        const result = await createReplenishmentDocuments(orgId, generatedBy);
+        return NextResponse.json({ result });
+      } catch (err) {
+        console.error("[REPLENISHMENT-DOC-CREATE] error", err instanceof Error ? err.message : err);
+        return NextResponse.json({ error: "Error al crear documentos de surtido" }, { status: 500 });
+      }
+    }
+
+    case "replenishment_document_list": {
+      try {
+        const documents = await listReplenishmentDocuments(orgId);
+        return NextResponse.json({ documents });
+      } catch (err) {
+        console.error("[REPLENISHMENT-DOC-LIST] error", err instanceof Error ? err.message : err);
+        return NextResponse.json({ error: "Error al listar documentos de surtido" }, { status: 500 });
+      }
+    }
+
+    case "replenishment_document_get": {
+      const documentId = body.documentId as string;
+      if (!documentId) return NextResponse.json({ error: "Missing documentId" }, { status: 400 });
+      try {
+        const doc = await getReplenishmentDocument(orgId, documentId);
+        if (!doc) return NextResponse.json({ error: "Documento no encontrado" }, { status: 404 });
+        return NextResponse.json({ document: doc });
+      } catch (err) {
+        console.error("[REPLENISHMENT-DOC-GET] error", err instanceof Error ? err.message : err);
+        return NextResponse.json({ error: "Error al cargar documento de surtido" }, { status: 500 });
+      }
+    }
+
+    case "replenishment_document_export": {
+      const documentId = body.documentId as string;
+      const format = body.format as string;
+      if (!documentId) return NextResponse.json({ error: "Missing documentId" }, { status: 400 });
+      // Decisión certificada #3: `pdf` NO se expone hasta producir PDF binario real.
+      if (format !== "html" && format !== "xlsx") {
+        return NextResponse.json(
+          { error: "Formato inválido. Soportados: html, xlsx. (pdf se habilitará cuando exista PDF binario real.)" },
+          { status: 400 },
+        );
+      }
+      try {
+        const file = await exportReplenishmentDocument(orgId, documentId, format);
+        if (!file) return NextResponse.json({ error: "Documento no encontrado" }, { status: 404 });
+        return NextResponse.json(file);
+      } catch (err) {
+        console.error("[REPLENISHMENT-DOC-EXPORT] error", err instanceof Error ? err.message : err);
+        return NextResponse.json({ error: "Error al exportar documento de surtido" }, { status: 500 });
       }
     }
 

@@ -9791,3 +9791,67 @@ model AssortmentIdealOverride {
   @@unique([organizationId, catalogId, groupCode, subgroupCode])
   @@index([organizationId, catalogId])
 }
+
+/// AGENTIK-STORES-REPLENISHMENT-DOCUMENT-01 (v2 — ajustes certificados)
+/// Documento de surtido por tienda: snapshot PERSISTIDO e INMUTABLE del plan
+/// certificado del Sprint 6 — cero recalculo. Solo `status` transiciona
+/// (workflow Sprint 8).
+enum ReplenishmentDocumentStatus {
+  BORRADOR
+  APROBADO
+  PREPARACION
+  DESPACHADO
+  RECIBIDO
+  CERRADO
+  CANCELADO
+}
+
+/// Secuencia transaccional de consecutivos por organización (no count+1).
+/// Se incrementa atómicamente dentro de la MISMA transacción que crea el batch.
+model ReplenishmentDocumentSequence {
+  organizationId String @id
+  lastValue      Int    @default(0)
+  updatedAt      DateTime @updatedAt
+}
+
+model StoreReplenishmentDocument {
+  id              String   @id @default(cuid())
+  organizationId  String
+
+  /// Consecutivo íntegro por organización, reservado en la secuencia transaccional.
+  consecutivo     Int
+
+  /// Número legible derivado: "SR-00042".
+  documentNumber  String
+
+  /// Corrida de generación — agrupa los documentos de las tiendas (creación atómica).
+  batchId         String
+
+  storeId         String
+  storeName       String
+
+  status          ReplenishmentDocumentStatus @default(BORRADOR)
+
+  /// Versión del esquema del snapshot (evolución controlada del contrato).
+  snapshotSchemaVersion Int @default(1)
+
+  /// Huella canónica (JSON con claves ordenadas, SHA-256) del contenido de
+  /// esta tienda — base de la idempotencia y de la auditoría de integridad.
+  planFingerprint String
+
+  /// Snapshot inmutable congelado al crear (copia profunda, JSON canónico).
+  planSnapshot    Json
+
+  suggestionCount Int
+  allocatedUnits  Int
+  withdrawalUnits Int
+
+  generatedBy     String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([organizationId, consecutivo])
+  @@index([organizationId, storeId, status])
+  @@index([organizationId, batchId])
+  @@index([organizationId, planFingerprint])
+}
