@@ -22,7 +22,7 @@
  *   dos ensamblados de la MISMA lectura → fingerprint idéntico, y el
  *   fingerprint es recomputable desde el propio objeto (integridad).
  *
- * Run: npx tsx --env-file=.env scripts/validate-store-snapshot-assembler-ab.ts
+ * Run: npx tsx --env-file=.env -r ./scripts/_mock-server-only.cjs scripts/validate-store-snapshot-assembler-ab.ts
  * Exit 1 = diferencias inexplicadas o fingerprint inconsistente. DETENER.
  */
 
@@ -151,19 +151,30 @@ async function main() {
     }
     if (structDiffs === 0) console.log(`   ✓ estructuras: ${coverage.structures.length} con unidades idénticas`);
 
-    // Reglas efectivas: B (por estructura desde políticas) vs A (max-de-variantes)
+    // Reglas efectivas: B (por estructura desde políticas) vs A (UnitsRuleEvaluation)
+    // Nota: UnitsRuleEvaluation NO expone minUnits/idealUnits (son campos internos
+    // de la config, no del resultado). La comparación verifica presencia de regla en
+    // B y coherencia del resultado evaluado (totalUnits, deficits).
     const bRules = assembled.structureRules.filter(r => r.storeId === storeId);
     let ruleDiffs = 0;
     for (const st of coverage.structures) {
       const bRule = bRules.find(r => r.structureKey === st.structureKey);
       if (!bRule) { report("INEXPLICADA", `estructura ${st.structureKey} sin regla en B`); ruleDiffs++; continue; }
-      const aRule = st.unitRule;
-      if (aRule && (bRule.minUnits !== aRule.minUnits || bRule.idealUnits !== aRule.idealUnits)) {
-        report("ESPERADA", `regla ${st.structureKey}: A=${aRule.minUnits}/${aRule.idealUnits} B=${bRule.minUnits}/${bRule.idealUnits} [${bRule.source}] — cambio de fuente de thresholds documentado en el diseño F1`);
-        ruleDiffs++;
+      const aEval = st.unitRule;
+      // A expone totalUnits/deficitToMin/deficitToIdeal (resultado evaluado).
+      // B expone minUnits/idealUnits (config de thresholds). Fuentes distintas
+      // → no son directamente comparables; verificamos coherencia indirecta:
+      // si A tiene déficit=0 pero B muestra min > totalUnits, hay inconsistencia.
+      if (aEval) {
+        const bImpliesDeficit = bRule.minUnits > aEval.totalUnits;
+        const aHasDeficit = aEval.deficitToMin > 0;
+        if (bImpliesDeficit !== aHasDeficit) {
+          report("ESPERADA", `regla ${st.structureKey}: déficit A=${aEval.deficitToMin} (total=${aEval.totalUnits}) vs B min=${bRule.minUnits}/ideal=${bRule.idealUnits} [${bRule.source}] — cambio de fuente de thresholds documentado en el diseño F1`);
+          ruleDiffs++;
+        }
       }
     }
-    if (ruleDiffs === 0) console.log(`   ✓ reglas efectivas: idénticas a las del motor actual`);
+    if (ruleDiffs === 0) console.log(`   ✓ reglas efectivas: coherencia entre A (evaluación) y B (thresholds)`);
     console.log("");
   }
 
