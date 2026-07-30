@@ -225,3 +225,113 @@ export async function resolveStructureAvailability(
 
   return result;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STRUCTURE CANDIDATES — AGENTIK-STORES-REPLENISHMENT-ENGINE-01 (Ajuste 11)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Returns ONLY: compatibility per structure, candidate type per store,
+// certified per-reference GLOBAL pools, and Rule 36 application.
+// It decides NOTHING about distribution: no winners, no quantities, no
+// priorities, no pool deductions. All allocation belongs exclusively to
+// store-replenishment-allocation-engine.
+
+import type {
+  ReferencePool,
+  StructureCandidateRef,
+  AllocationCandidateType,
+} from "./store-replenishment-allocation-engine";
+
+export interface StructureCandidatesResolution {
+  /** ÚNICA verdad de stock por referencia — pool GLOBAL (Ajuste 1). */
+  readonly referencePools: ReadonlyMap<string, ReferencePool>;
+  readonly candidatesByStructure: ReadonlyMap<string, readonly StructureCandidateRef[]>;
+}
+
+export async function resolveStructureCandidates(
+  orgId: string,
+  storeIds: readonly string[],
+  structureKeys: readonly string[],
+  /** structureKeys SIN cobertura por tienda (para tipar NUEVA vs COMPLEMENTO). */
+  uncoveredStructuresByStore: ReadonlyMap<string, ReadonlySet<string>>,
+): Promise<StructureCandidatesResolution> {
+  const distData = await loadDistributionData(orgId);
+  const details = await Promise.all(
+    storeIds.map(id => getCanonicalStoreDetail(orgId, id).then(d => [id, d] as const)),
+  );
+
+  const mainStockIndex = buildMainStockIndex(distData.mainStock);
+  const heroImageMap = await loadHeroImageMap(orgId);
+  const subIndex = buildSubstitutionIndex(
+    distData.storeInventory,
+    mainStockIndex,
+    distData.grupoByRef,
+    heroImageMap,
+    distData.refToProductId,
+    distData.sizeClassByRef,
+  );
+  const scarcity = getScarcityParams();
+
+  // Presencia con stock por tienda
+  const refsWithStockByStore = new Map<string, Set<string>>();
+  for (const [storeId, detail] of details) {
+    const set = new Set<string>();
+    if (detail) {
+      for (const item of detail.items) {
+        if (item.currentUnits > 0) set.add(item.referenceCode);
+      }
+    }
+    refsWithStockByStore.set(storeId, set);
+  }
+
+  const referencePools = new Map<string, ReferencePool>();
+  const candidatesByStructure = new Map<string, StructureCandidateRef[]>();
+
+  for (const structureKey of structureKeys) {
+    const catalogInfo = resolveCatalogInfo(structureKey);
+    if (!catalogInfo) continue;   // sin catálogo → sin candidatos (el engine lo trata vía Sprint 5)
+
+    const compatibleRefs = findCompatibleRefs(catalogInfo, subIndex);
+    const candidates: StructureCandidateRef[] = [];
+
+    for (const ref of compatibleRefs) {
+      const mainStock = mainStockIndex.byReference.get(ref) ?? 0;
+      if (mainStock <= 0) continue;
+
+      // Pool GLOBAL: una sola verdad por referencia, idéntica en toda estructura.
+      if (!referencePools.has(ref)) {
+        const meta = subIndex.refMeta.get(ref);
+        referencePools.set(ref, {
+          eligibleUnits: mainStock,
+          productName: meta?.productName ?? ref,
+          underScarcityThreshold: mainStock <= scarcity.threshold,
+        });
+      }
+
+      // Tipo de candidato por tienda; AUSENCIA = no elegible (Regla 36).
+      const candidateTypeByStore = new Map<string, AllocationCandidateType>();
+      for (const storeId of storeIds) {
+        const present = refsWithStockByStore.get(storeId)?.has(ref) ?? false;
+        const eligible = mainStock > scarcity.threshold ||
+          (present && scarcity.allowedIds.includes(storeId));
+        if (!eligible) continue;
+
+        const uncovered = uncoveredStructuresByStore.get(storeId)?.has(structureKey) ?? false;
+        candidateTypeByStore.set(
+          storeId,
+          present ? "REPOSICION_MISMA_REFERENCIA"
+            : uncovered ? "REFERENCIA_NUEVA_COMPATIBLE"
+            : "COMPLEMENTO_REFERENCIA_COMPATIBLE",
+        );
+      }
+
+      if (candidateTypeByStore.size > 0) {
+        candidates.push({ referenceCode: ref, candidateTypeByStore });
+      }
+    }
+
+    candidatesByStructure.set(structureKey, candidates);
+  }
+
+  return { referencePools, candidatesByStructure };
+}

@@ -65,6 +65,7 @@ import { loadWarehouseFirstNeeds } from "@/lib/comercial/tiendas/store-warehouse
 import type { WHFLine, WHFSortBy } from "@/lib/comercial/tiendas/store-warehouse-first-needs";
 import { loadStoreCoverage, loadStoreCoverageCandidates } from "@/lib/comercial/tiendas/store-coverage-service";
 import { loadStoreUnitNeeds } from "@/lib/comercial/tiendas/store-unit-needs-service";
+import { loadStoreReplenishmentPlan } from "@/lib/comercial/tiendas/store-replenishment-plan-service";
 import { loadStoreDiscounts } from "@/lib/comercial/tiendas/store-discount-service";
 import { getStoreDerroteroCoverage, getAllStoresDerroteroCoverageSummary } from "@/lib/comercial/tiendas/store-derrotero-service";
 import { buildStoreDerroteroFromSalesPortfolioDerrotero } from "@/lib/comercial/tiendas/store-derrotero-adapter";
@@ -532,6 +533,25 @@ export async function POST(
       } catch (err) {
         console.error("[STORE-UNIT-NEEDS] error", storeId, err instanceof Error ? err.message : err);
         return NextResponse.json({ error: "Error al cargar necesidades por unidades" }, { status: 500 });
+      }
+    }
+
+    // ── REPLENISHMENT PLAN (AGENTIK-STORES-REPLENISHMENT-ENGINE-01) ────────────
+    // Plan multi-tienda: no requiere storeId (asigna sobre el pool compartido).
+
+    case "store_replenishment_plan": {
+      try {
+        const plan = await loadStoreReplenishmentPlan(orgId);
+        // Serialize Maps → plain objects for JSON
+        return NextResponse.json({
+          plan: {
+            ...plan,
+            poolUsage: Object.fromEntries(plan.poolUsage),
+          },
+        });
+      } catch (err) {
+        console.error("[STORE-REPLENISHMENT-PLAN] error", err instanceof Error ? err.message : err);
+        return NextResponse.json({ error: "Error al construir el plan de surtido" }, { status: 500 });
       }
     }
 
