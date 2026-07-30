@@ -40,16 +40,6 @@ import {
   DISCOUNT_TIER_COLOR,
 } from "@/lib/comercial/tiendas/store-discount-types";
 import type {
-  StoreIntelligenceResponse,
-} from "@/lib/comercial/tiendas/store-intelligence-types";
-import {
-  INTELLIGENCE_YEAR,
-  DATA_QUALITY_COLOR,
-  DATA_QUALITY_LABEL,
-  ROTATION_SPEED_LABEL,
-  ROTATION_SPEED_COLOR,
-} from "@/lib/comercial/tiendas/store-intelligence-types";
-import type {
   CertifiedStoreIntelligenceResponse,
 } from "@/lib/comercial/tiendas/store-certified-intelligence-types";
 import {
@@ -1945,27 +1935,12 @@ function DistributionStoreDrawer({
   // expandedNeedRef / expandedVariantKey removed — replaced by ndExpandedRef (WAREHOUSE-FIRST-01)
 
   // ── Lazy intelligence loading: only fetch when inteligencia tab is active ──
-  const [intel, setIntel] = useState<StoreIntelligenceResponse | null>(null);
-  const [intelLoading, setIntelLoading] = useState(false);
-  const [intelLoaded, setIntelLoaded] = useState(false);
+  // AGENTIK-STORES-CERTIFIED-SALES-MIGRATION-01: the uncertified
+  // store_intelligence fetch was removed — this tab renders exclusively
+  // from the certified intelligence service (SaleRecord, fuente→tienda).
   const [certifiedIntel, setCertifiedIntel] = useState<CertifiedStoreIntelligenceResponse | null>(null);
   const [certifiedIntelLoading, setCertifiedIntelLoading] = useState(false);
   const [certifiedIntelLoaded, setCertifiedIntelLoaded] = useState(false);
-
-  useEffect(() => {
-    if (tab !== "inteligencia" || intelLoaded) return;
-    let cancelled = false;
-    setIntelLoading(true);
-    tiendaApi(orgSlug, { action: "store_intelligence", storeId: storeCard.store.id })
-      .then((data: { intelligence?: StoreIntelligenceResponse }) => {
-        if (cancelled) return;
-        if (data.intelligence) setIntel(data.intelligence);
-        setIntelLoaded(true);
-      })
-      .catch(() => { if (!cancelled) setIntelLoaded(true); })
-      .finally(() => { if (!cancelled) setIntelLoading(false); });
-    return () => { cancelled = true; };
-  }, [tab, storeCard.store.id, orgSlug, intelLoaded]);
 
   useEffect(() => {
     if (tab !== "inteligencia" || certifiedIntelLoaded) return;
@@ -2280,9 +2255,6 @@ function DistributionStoreDrawer({
     setActionFilter("ALL");
     setDomainFilter("ALL");
     setExpandedRows(new Set());
-    setIntel(null);
-    setIntelLoaded(false);
-    setIntelLoading(false);
     setCertifiedIntel(null);
     setCertifiedIntelLoaded(false);
     setCertifiedIntelLoading(false);
@@ -3860,7 +3832,7 @@ function DistributionStoreDrawer({
 
       {/* TAB: Inteligencia — commercial intelligence dashboard */}
       {tab === "inteligencia" && (
-        <StoreIntelligenceTab intel={intel} intelLoading={intelLoading} certifiedIntel={certifiedIntel} certifiedIntelLoading={certifiedIntelLoading} />
+        <StoreIntelligenceTab certifiedIntel={certifiedIntel} certifiedIntelLoading={certifiedIntelLoading} />
       )}
     </OperationalSideDrawer>
   );
@@ -3869,13 +3841,11 @@ function DistributionStoreDrawer({
 
 // ── Store Intelligence Tab — Executive Dashboard (CERTIFIED-MVP-01) ────────
 
-function StoreIntelligenceTab({ intel, intelLoading, certifiedIntel, certifiedIntelLoading }: {
-  intel: StoreIntelligenceResponse | null;
-  intelLoading: boolean;
+function StoreIntelligenceTab({ certifiedIntel, certifiedIntelLoading }: {
   certifiedIntel: CertifiedStoreIntelligenceResponse | null;
   certifiedIntelLoading: boolean;
 }) {
-  const loading = certifiedIntelLoading || intelLoading;
+  const loading = certifiedIntelLoading;
   const ci = certifiedIntel;
 
   if (loading && !ci) {
