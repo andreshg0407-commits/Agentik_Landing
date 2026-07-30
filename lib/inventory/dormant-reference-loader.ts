@@ -21,6 +21,7 @@ import {
   type ReferenceLifecycleState,
   type CommercialEligibilityInput,
 } from "./reference-lifecycle";
+import { isExcludedFromAutomaticPricing } from "@/lib/comercial/commercial-exclusions";
 import {
   resolveWarehouseByPk,
   isCommercialTextileWarehouse,
@@ -56,6 +57,13 @@ export interface DormantReferenceSummary {
   dormant: number;
   archiveReview: number;
   noActivityData: number;
+  /**
+   * AGENTIK-COMMERCIAL-CD-LINE-GLOBAL-EXCLUSION-01:
+   * referencias CD-* no-ACTIVE retenidas fuera de la bóveda por regla global
+   * (colección especial con reglas propias). Los contadores de ciclo de vida
+   * las siguen incluyendo; solo se retiene la acción de revisión.
+   */
+  protectedSpecialCollection: number;
   vaultRecords: VaultReferenceRecord[];
   byLine: Record<string, { active: number; lowActivity: number; dormant: number; archiveReview: number; noData: number }>;
   byBucket: Record<string, number>;
@@ -209,6 +217,7 @@ export async function getDormantReferencesForReview(
   let dormant = 0;
   let archiveReview = 0;
   let noActivityData = 0;
+  let protectedSpecialCollection = 0;
   const vaultRecords: VaultReferenceRecord[] = [];
   const byLine: Record<string, { active: number; lowActivity: number; dormant: number; archiveReview: number; noData: number }> = {};
   const byBucket: Record<string, number> = {};
@@ -257,7 +266,14 @@ export async function getDormantReferencesForReview(
     }
 
     // Build vault record for non-ACTIVE references
-    if (lifecycle.lifecycleState !== "ACTIVE") {
+    // AGENTIK-COMMERCIAL-CD-LINE-GLOBAL-EXCLUSION-01:
+    // CD-* (colección especial) NUNCA entra a la bóveda de dormidas — la
+    // colección se gobierna con reglas propias; los contadores de ciclo de
+    // vida siguen siendo veraces (arriba), solo se retiene la acción.
+    const vaultReference = p.sku ?? p.externalId ?? "";
+    if (lifecycle.lifecycleState !== "ACTIVE" && isExcludedFromAutomaticPricing(vaultReference)) {
+      protectedSpecialCollection++;
+    } else if (lifecycle.lifecycleState !== "ACTIVE") {
       const eligibilityInput: CommercialEligibilityInput = {
         lifecycleState: lifecycle.lifecycleState,
         productLine: p.productLine,
@@ -328,6 +344,7 @@ export async function getDormantReferencesForReview(
     dormant,
     archiveReview,
     noActivityData,
+    protectedSpecialCollection,
     vaultRecords,
     byLine,
     byBucket,

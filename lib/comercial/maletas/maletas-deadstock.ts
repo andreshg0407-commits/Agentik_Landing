@@ -21,6 +21,7 @@ import type {
   RefVelocity,
 } from "./maletas-intelligence-types";
 import type { CaseItem } from "./maletas-types";
+import { isExcludedFromAutomaticPricing } from "../commercial-exclusions";
 
 // ─── Thresholds ────────────────────────────────────────────────────────────────
 
@@ -51,6 +52,10 @@ export function detectDeadStock(
     const key = item.reference.toUpperCase();
     if (seen.has(key)) continue;
     seen.add(key);
+
+    // AGENTIK-COMMERCIAL-CD-LINE-GLOBAL-EXCLUSION-01:
+    // CD-* (colección especial) NUNCA se señala como dead stock.
+    if (isExcludedFromAutomaticPricing(item.reference)) continue;
 
     const velocity = velocityMap.get(key);
     const coverage = coverageByRef.get(key);

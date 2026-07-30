@@ -103,6 +103,12 @@ export interface DiscountKpis {
   fiftyPercent:    number;
   seventyPercent:  number;
   sinFecha:        number;
+  /**
+   * AGENTIK-COMMERCIAL-CD-LINE-GLOBAL-EXCLUSION-01:
+   * referencias CD-* (colección especial) retenidas por regla global —
+   * nunca evaluadas para descuento automático.
+   */
+  excludedSpecialCollection: number;
 }
 
 // ── Response ─────────────────────────────────────────────────────────────────

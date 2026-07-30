@@ -24,6 +24,7 @@ import "server-only";
 
 import { getCanonicalStoreDetail } from "./store-distribution-service";
 import type { StoreDistributionItem } from "./store-distribution-types";
+import { isExcludedFromAutomaticPricing } from "../commercial-exclusions";
 
 // Re-export everything from client-safe types file
 export type {
@@ -87,7 +88,7 @@ export async function loadStoreDiscounts(
       storeId,
       storeName: storeId,
       recommendations: [],
-      kpis: { totalEvaluated: 0, none: 0, tenPercent: 0, thirtyPercent: 0, fiftyPercent: 0, seventyPercent: 0, sinFecha: 0 },
+      kpis: { totalEvaluated: 0, none: 0, tenPercent: 0, thirtyPercent: 0, fiftyPercent: 0, seventyPercent: 0, sinFecha: 0, excludedSpecialCollection: 0 },
       computedAt: new Date().toISOString(),
     };
   }
@@ -121,8 +122,16 @@ export async function loadStoreDiscounts(
   }
 
   const recommendations: DiscountRecommendation[] = [];
+  let excludedSpecialCollection = 0;
 
   for (const [ref, data] of refMap) {
+    // AGENTIK-COMMERCIAL-CD-LINE-GLOBAL-EXCLUSION-01:
+    // CD-* (colección especial) NUNCA entra a descuentos automáticos.
+    if (isExcludedFromAutomaticPricing(ref)) {
+      excludedSpecialCollection++;
+      continue;
+    }
+
     // Skip references with qty 0 in store
     if (data.totalQty <= 0) continue;
 
@@ -167,6 +176,7 @@ export async function loadStoreDiscounts(
     fiftyPercent:    recommendations.filter(r => r.discountTier === "FIFTY_PERCENT").length,
     seventyPercent:  recommendations.filter(r => r.discountTier === "SEVENTY_PERCENT").length,
     sinFecha:        recommendations.filter(r => r.discountTier === "SIN_FECHA").length,
+    excludedSpecialCollection,
   };
 
   return {

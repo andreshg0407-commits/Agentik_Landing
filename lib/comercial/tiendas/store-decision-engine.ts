@@ -35,6 +35,7 @@ import type {
 } from "./store-decision-types";
 
 import type { StorePolicyPackConfig } from "./store-policy-pack-config";
+import { isExcludedFromAutomaticPricing } from "../commercial-exclusions";
 
 // ── Evidence builder ────────────────────────────────────────────────────────
 
@@ -374,8 +375,11 @@ export function evaluateAutomaticMarkdowns(
   // Sort tiers descending (highest months first)
   const sortedTiers = [...tiers].sort((a, b) => b.monthsThreshold - a.monthsThreshold);
 
+  // AGENTIK-COMMERCIAL-CD-LINE-GLOBAL-EXCLUSION-01:
+  // CD-* (colección especial) NUNCA recibe markdown automático.
   const applicableItems = inventory.filter(
-    i => applicableStoreIds.includes(i.storeId) && (i.daysInStore ?? 0) > 0 && i.currentUnits > 0,
+    i => applicableStoreIds.includes(i.storeId) && (i.daysInStore ?? 0) > 0 && i.currentUnits > 0
+      && !isExcludedFromAutomaticPricing(i.referenceCode),
   );
 
   for (const item of applicableItems) {
@@ -451,8 +455,11 @@ export function evaluateSlowRotation(
 
   const sortedTiers = [...tiers].sort((a, b) => b.monthsThreshold - a.monthsThreshold);
 
+  // AGENTIK-COMMERCIAL-CD-LINE-GLOBAL-EXCLUSION-01:
+  // CD-* (colección especial) NUNCA se señala como baja rotación.
   const slowItems = inventory.filter(
-    i => (i.daysInStore ?? 0) >= minimumDaysThreshold && i.currentUnits > 0,
+    i => (i.daysInStore ?? 0) >= minimumDaysThreshold && i.currentUnits > 0
+      && !isExcludedFromAutomaticPricing(i.referenceCode),
   );
 
   for (const item of slowItems) {
