@@ -540,7 +540,14 @@ function TextileSection({
       {/* Global rule for this line */}
       <div style={{ ...panel, padding: S[3] }}>
         <div style={{ ...monoXs, fontWeight: T.wt.semibold, color: C.ink, marginBottom: S[2] }}>
-          Regla de unidades por referencia — {label}
+          Meta de cobertura por subgrupo — {label}
+        </div>
+        {/* Ley certificada (DERROTERO-MEASUREMENT-SEMANTICS-01): la regla se
+            cumple con la SUMA de unidades de todas las referencias elegibles
+            del subgrupo — ninguna referencia individual define el cumplimiento. */}
+        <div style={{ ...mono2xs, color: C.inkFaint, marginBottom: S[2] }}>
+          Se evalúa el TOTAL agregado del subgrupo: la suma de unidades de todas sus referencias elegibles.
+          Varias referencias distintas pueden completar juntas el mínimo, ideal o máximo.
         </div>
         <div style={{ display: "flex", gap: S[4], alignItems: "flex-start" }}>
           <div>
@@ -550,7 +557,7 @@ function TextileSection({
             ) : (
               <div style={{ ...monoSm, fontWeight: T.wt.bold, color: C.ink }}>{val.minUnits}</div>
             )}
-            <div style={{ ...mono2xs, color: C.inkFaint }}>Debajo: surtir</div>
+            <div style={{ ...mono2xs, color: C.inkFaint }}>Total del subgrupo debajo: surtir</div>
             {errors.minUnits && <div style={{ ...mono2xs, color: C.red }}>{errors.minUnits}</div>}
           </div>
           <div>
@@ -560,7 +567,7 @@ function TextileSection({
             ) : (
               <div style={{ ...monoSm, fontWeight: T.wt.bold, color: C.blueDark }}>{val.targetUnits}</div>
             )}
-            <div style={{ ...mono2xs, color: C.inkFaint }}>Meta de surtido</div>
+            <div style={{ ...mono2xs, color: C.inkFaint }}>Meta agregada del subgrupo</div>
             {errors.targetUnits && <div style={{ ...mono2xs, color: C.red }}>{errors.targetUnits}</div>}
           </div>
           <div>
@@ -570,7 +577,7 @@ function TextileSection({
             ) : (
               <div style={{ ...monoSm, fontWeight: T.wt.bold, color: C.ink }}>{val.maxUnits}</div>
             )}
-            <div style={{ ...mono2xs, color: C.inkFaint }}>Encima: retirar</div>
+            <div style={{ ...mono2xs, color: C.inkFaint }}>Total del subgrupo encima: retirar excedente</div>
             {errors.maxUnits && <div style={{ ...mono2xs, color: C.red }}>{errors.maxUnits}</div>}
           </div>
           <div>
@@ -650,7 +657,8 @@ function TextileSection({
             )}
           </div>
           <div style={{ ...mono2xs, color: C.inkFaint, marginTop: S[1] }}>
-            Todos los puntos heredan la regla global de {label}: {config.minUnits}/{config.targetUnits}/{config.maxUnits}
+            Cada punto (grupo + subgrupo) se evalúa por el TOTAL de unidades de sus referencias elegibles,
+            heredando la regla global de {label}: {config.minUnits}/{config.targetUnits}/{config.maxUnits}.
           </div>
         </div>
       )}

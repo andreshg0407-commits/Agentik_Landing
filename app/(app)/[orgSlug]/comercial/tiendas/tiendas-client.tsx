@@ -1207,7 +1207,7 @@ function renderTextileBlock(
           ) : (
             <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: C.ink }}>{val.minUnits}</div>
           )}
-          <div style={helpStyle}>Debajo: surtir</div>
+          <div style={helpStyle}>Total del subgrupo debajo: surtir</div>
           {errors.minUnits && <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.red }}>{errors.minUnits}</div>}
         </div>
         <div>
@@ -1217,7 +1217,7 @@ function renderTextileBlock(
           ) : (
             <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: C.blueDark }}>{val.targetUnits}</div>
           )}
-          <div style={helpStyle}>Meta de surtido</div>
+          <div style={helpStyle}>Meta agregada del subgrupo</div>
           {errors.targetUnits && <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.red }}>{errors.targetUnits}</div>}
         </div>
         <div>
@@ -1227,7 +1227,7 @@ function renderTextileBlock(
           ) : (
             <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: C.ink }}>{val.maxUnits}</div>
           )}
-          <div style={helpStyle}>Encima: retirar</div>
+          <div style={helpStyle}>Total del subgrupo encima: retirar excedente</div>
           {errors.maxUnits && <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.red }}>{errors.maxUnits}</div>}
         </div>
       </div>
