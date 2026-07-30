@@ -2080,6 +2080,30 @@ function DistributionStoreDrawer({
   const [ndShowNoSolution, setNdShowNoSolution] = useState(false);
   const [ndInitialLineSet, setNdInitialLineSet] = useState(false);
 
+  // ── NEEDS-TAB-PLAN-ALIGNMENT-01: "no asignadas" viene del plan certificado
+  // del Sprint 6 (fuente única) — la UI no reconstruye lógica localmente.
+  const [ndUnassigned, setNdUnassigned] = useState<import("@/lib/comercial/tiendas/store-unit-needs-presentation").StoreNeedsTabPresentation | null>(null);
+  const [ndUnassignedLoading, setNdUnassignedLoading] = useState(false);
+
+  useEffect(() => {
+    if (tab !== "necesidades") return;
+    let cancelled = false;
+    setNdUnassignedLoading(true);
+    Promise.all([
+      tiendaApi(orgSlug, { action: "store_replenishment_plan" }),
+      tiendaApi(orgSlug, { action: "store_unit_needs", storeId: storeCard.store.id }),
+    ])
+      .then(async ([planRes, needsRes]: any[]) => {
+        if (cancelled) return;
+        if (!planRes?.plan || !needsRes?.unitNeeds) { setNdUnassigned(null); return; }
+        const { buildStoreNeedsTabPresentation } = await import("@/lib/comercial/tiendas/store-unit-needs-presentation");
+        setNdUnassigned(buildStoreNeedsTabPresentation(planRes.plan, needsRes.unitNeeds));
+      })
+      .catch(() => { if (!cancelled) setNdUnassigned(null); })
+      .finally(() => { if (!cancelled) setNdUnassignedLoading(false); });
+    return () => { cancelled = true; };
+  }, [tab, storeCard.store.id, orgSlug]);
+
   // ── Coverage state (AGENTIK-STORES-COVERAGE-TAB-01 — Two-Dimension) ────
   type CoverageLineName = "CASTILLITOS" | "LATIN_KIDS" | "ACCESORIOS";
   type StructuralCoverageStatus = "CUBIERTA" | "SIN_COBERTURA";
@@ -2842,9 +2866,14 @@ function DistributionStoreDrawer({
           )}
 
           {ndData && (() => {
-            const { summary, items: whfItems, noSolutionItems, pagination } = ndData;
+            const { summary, items: whfItems, pagination } = ndData;
+            // NEEDS-TAB-PLAN-ALIGNMENT-01: las "no asignadas" salen del plan
+            // certificado (Allocation Engine), NUNCA de noSolutionItems locales
+            // (aquella lógica marcaba "sin solución" solo por faltar la misma
+            // referencia, ignorando sustitutos compatibles del subgrupo).
+            const unassigned = ndUnassigned?.unassigned ?? [];
 
-            if (summary.availableForSupply === 0 && summary.noSolution === 0) return (
+            if (summary.availableForSupply === 0 && unassigned.length === 0) return (
               <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkFaint, padding: `${S[4]}px 0`, textAlign: "center" }}>
                 Sin necesidades pendientes en esta linea
               </div>
@@ -2867,7 +2896,7 @@ function DistributionStoreDrawer({
                     { label: "Unidades sugeridas", value: summary.totalSuggestedUnits, color: C.green },
                     { label: "Reposiciones", value: summary.sameRefReplenishments, color: C.blueDark },
                     { label: "Reemplazos", value: summary.replacements, color: "#6366f1" },
-                    { label: "Sin solucion", value: summary.noSolution, color: C.red },
+                    { label: "No asignadas", value: ndUnassignedLoading ? "…" : unassigned.length, color: C.red },
                   ]).map(kpi => (
                     <div key={kpi.label} style={{
                       ...panel, padding: S[3], display: "flex", flexDirection: "column", gap: S[1],
@@ -3052,8 +3081,8 @@ function DistributionStoreDrawer({
                   })}
                 </div>
 
-                {/* No-solution items */}
-                {noSolutionItems.length > 0 && (
+                {/* Necesidades no asignadas — fuente única: plan certificado (Sprint 6) */}
+                {unassigned.length > 0 && (
                   <div style={{ display: "flex", flexDirection: "column", gap: S[1] }}>
                     <button
                       onClick={() => setNdShowNoSolution(s => !s)}
@@ -3064,25 +3093,35 @@ function DistributionStoreDrawer({
                         color: C.red, textAlign: "left",
                       }}
                     >
-                      {ndShowNoSolution ? "Ocultar" : "Ver"} necesidades sin solucion ({noSolutionItems.length})
+                      {ndShowNoSolution ? "Ocultar" : "Ver"} necesidades no asignadas ({unassigned.length})
                     </button>
                     {ndShowNoSolution && (
                       <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                        {noSolutionItems.map((ns, ni) => (
-                          <div key={ni} style={{ display: "flex", alignItems: "center", gap: S[2], padding: `${S[1]}px ${S[2]}px`, borderBottom: `1px solid ${C.line}` }}>
-                            <CommercialReferenceThumbnail imageUrl={ns.imageUrl} reference={ns.storeReference} description={ns.description} size={24} />
+                        {unassigned.map((un) => (
+                          <div key={un.structureKey} style={{ display: "flex", alignItems: "flex-start", gap: S[2], padding: `${S[1]}px ${S[2]}px`, borderBottom: `1px solid ${C.line}` }}>
                             <div style={{ flex: 1, minWidth: 0 }}>
-                              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.ink }}>{ns.storeReference}</span>
-                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                {ns.description}
+                              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.ink }}>{un.label}</span>
+                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
+                                {un.structureKey}
+                              </div>
+                              {/* Razón certificada del motor — jamás texto local */}
+                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.red, marginTop: 2 }}>
+                                {un.detail}
                               </div>
                             </div>
-                            <div style={{ textAlign: "center", minWidth: 36 }}>
-                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Faltante</div>
-                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.red }}>{ns.shortageQty}</div>
+                            <div style={{ textAlign: "center", minWidth: 52 }}>
+                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Requerido</div>
+                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.ink }}>{un.requiredUnits}</div>
                             </div>
-                            <div style={{ flex: 1, fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.red, textAlign: "right" }}>
-                              {ns.reason}
+                            {un.allocatedUnits > 0 && (
+                              <div style={{ textAlign: "center", minWidth: 52 }}>
+                                <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Asignado</div>
+                                <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.green }}>{un.allocatedUnits}</div>
+                              </div>
+                            )}
+                            <div style={{ textAlign: "center", minWidth: 52 }}>
+                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Pendiente</div>
+                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.red }}>{un.pendingUnits}</div>
                             </div>
                           </div>
                         ))}

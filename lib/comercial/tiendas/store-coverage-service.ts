@@ -63,6 +63,7 @@ import {
   findCompatibleRefs,
   type StructureCatalogInfo,
 } from "./store-structure-availability-service";
+import { isRule36Eligible } from "./store-rule36-eligibility";
 
 // ── Output types ──────────────────────────────────────────────────────────
 
@@ -643,21 +644,16 @@ function buildCandidatesWithTypes(
       candidateType = "COMPLEMENTO_REFERENCIA_COMPATIBLE";
     }
 
-    // Rule 36 eligibility
-    let rule36Status: CoverageCandidateRule36;
-    if (candidateType === "REPOSICION_MISMA_REFERENCIA") {
-      if (mainStock > scarcity.threshold) {
-        rule36Status = "ELEGIBLE_CUATRO_TIENDAS";
-      } else if (scarcity.allowedIds.includes(storeSlug)) {
-        rule36Status = "ELEGIBLE_CUATRO_TIENDAS";
-      } else {
-        rule36Status = "BLOQUEADA";
-      }
-    } else {
-      rule36Status = mainStock > scarcity.threshold
-        ? "ELEGIBLE_CUATRO_TIENDAS"
-        : "BLOQUEADA";
-    }
+    // Rule 36 eligibility — AGENTIK-NEEDS-RULE36-DIAGNOSIS-FIX-01:
+    // predicado canónico único (store-rule36-eligibility). Bajo escasez las
+    // tiendas permitidas SIEMPRE son elegibles; el tipo de candidato no
+    // interviene en la elegibilidad.
+    const rule36Status: CoverageCandidateRule36 = isRule36Eligible({
+      mainStockUnits: mainStock,
+      scarcityThreshold: scarcity.threshold,
+      destinationStoreId: storeSlug,
+      allowedStoreIds: scarcity.allowedIds,
+    }) ? "ELEGIBLE_CUATRO_TIENDAS" : "BLOQUEADA";
 
     const candidate: CoverageCandidate = {
       referenceCode: ref,

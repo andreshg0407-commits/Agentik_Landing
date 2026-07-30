@@ -42,6 +42,7 @@ import {
 } from "../maletas/assortment-catalog/castillitos-mallet-assortment-catalog";
 import { normalizeCanonicalGroup, normalizeCanonicalSubgroup } from "./classification-normalization";
 import type { StructureAvailability } from "./store-unit-needs-engine";
+import { isRule36Eligible } from "./store-rule36-eligibility";
 
 // ── Catalog resolution (moved from store-coverage-service) ──────────────────
 
@@ -205,12 +206,15 @@ export async function resolveStructureAvailability(
       const mainStock = mainStockIndex.byReference.get(ref) ?? 0;
       if (mainStock <= 0) continue;
 
-      // Same Rule 36 logic as the candidate expansion:
-      // reposición (ref already in store) may use the scarcity allowlist;
-      // new/complement refs require stock above the scarcity threshold.
-      const isReposicion = storeRefsWithStock.has(ref);
-      const eligible = mainStock > scarcity.threshold ||
-        (isReposicion && scarcity.allowedIds.includes(storeId));
+      // AGENTIK-NEEDS-RULE36-DIAGNOSIS-FIX-01: predicado canónico único.
+      // Bajo escasez (≤ umbral), las tiendas permitidas (Centro/Caldas)
+      // SIEMPRE son elegibles — reposición, complemento o referencia nueva.
+      const eligible = isRule36Eligible({
+        mainStockUnits: mainStock,
+        scarcityThreshold: scarcity.threshold,
+        destinationStoreId: storeId,
+        allowedStoreIds: scarcity.allowedIds,
+      });
       if (eligible) eligibleUnits += mainStock;
       else blockedUnits += mainStock;
     }
@@ -312,8 +316,14 @@ export async function resolveStructureCandidates(
       const candidateTypeByStore = new Map<string, AllocationCandidateType>();
       for (const storeId of storeIds) {
         const present = refsWithStockByStore.get(storeId)?.has(ref) ?? false;
-        const eligible = mainStock > scarcity.threshold ||
-          (present && scarcity.allowedIds.includes(storeId));
+        // AGENTIK-NEEDS-RULE36-DIAGNOSIS-FIX-01: predicado canónico único —
+        // la presencia solo decide el TIPO de candidato, nunca la elegibilidad.
+        const eligible = isRule36Eligible({
+          mainStockUnits: mainStock,
+          scarcityThreshold: scarcity.threshold,
+          destinationStoreId: storeId,
+          allowedStoreIds: scarcity.allowedIds,
+        });
         if (!eligible) continue;
 
         const uncovered = uncoveredStructuresByStore.get(storeId)?.has(structureKey) ?? false;
