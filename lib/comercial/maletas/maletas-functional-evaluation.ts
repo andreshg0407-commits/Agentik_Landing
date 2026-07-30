@@ -22,6 +22,7 @@ import type {
   MalletAssortmentGroup,
 } from "./assortment-catalog/mallet-assortment-types";
 import type { VendorSampleRef, VendorSampleSnapshot } from "./vendor-sample-types";
+import { distinctReferences } from "../derrotero-semantics";
 
 // ══════════════════════════════════════════════════════════════════════════════
 // 1. ASSORTMENT EVALUATION — per vendor, per catalog
@@ -42,13 +43,28 @@ export interface AssortmentEntryEval {
   subgroupCode: string | null;
   subgroupName: string;
   sagSubgrupos: string[];     // SAG sc_detalle_subgrupo values for matching
-  targetUnits: number;        // idealEffective (customIdeal ?? officialIdeal)
-  officialIdeal: number;      // original value from catalog code
+
+  // ── Measurement semantics (AGENTIK-DERROTERO-MEASUREMENT-SEMANTICS-01) ──
+  // MALETAS are measured in DISTINCT REFERENCES. `targetUnits`/`currentUnits`
+  // have always carried reference counts (matchRefs → one row per reference);
+  // they are kept as deprecated aliases so existing consumers keep working.
+  /** Always "REFERENCES" for mallet derroteros. */
+  measurementUnit: "REFERENCES";
+  /** Target of DISTINCT references (idealEffective = customIdeal ?? officialIdeal). */
+  targetReferences: number;
+  /** DISTINCT references currently present in the maleta for this entry. */
+  currentReferences: number;
+
+  /** @deprecated Alias of targetReferences (misleading name — value is a reference count). */
+  targetUnits: number;
+  officialIdeal: number;      // original value from catalog code (reference count)
   isCustomIdeal: boolean;     // true when a custom override is active
+  /** @deprecated Alias of currentReferences (misleading name — value is a reference count). */
   currentUnits: number;
   delta: number;
   complete: boolean;
   excess: boolean;
+  /** Distinct matched references (deduped by normalized reference code). */
   matchedReferences: string[];
 }
 
@@ -182,7 +198,8 @@ export function evaluateVendorAssortment(
   return { vendorId: vendor.vendorId, catalogs, unresolvedRefs, unresolvedSummary };
 }
 
-function evaluateCatalog(
+/** Exported for semantic certification tests (AGENTIK-DERROTERO-MEASUREMENT-SEMANTICS-01). */
+export function evaluateCatalog(
   catalog: MalletAssortmentCatalog,
   refs: VendorSampleRef[],
   world: string,
@@ -201,15 +218,24 @@ function evaluateCatalog(
     for (const entry of group.entries) {
       if (!entry.active) continue;
       const matched = matchRefs(refs, group, entry, world);
-      const currentUnits = matched.length;
+
+      // AGENTIK-DERROTERO-MEASUREMENT-SEMANTICS-01:
+      // MALETAS are measured in DISTINCT REFERENCES. Explicit dedupe by
+      // normalized reference code — multiple rows/units of the same reference
+      // count exactly once and NEVER substitute a missing reference.
+      const matchedDistinct = distinctReferences(matched.map((r) => r.reference));
+      const currentReferences = matchedDistinct.length;
+
+      // Official target is a REFERENCE count (targetReferences ?? legacy targetUnits)
+      const officialTarget = entry.targetReferences ?? entry.targetUnits;
 
       // MALETAS-DERROTERO-IDEALES-EDITABLES-01: idealEffective = customIdeal ?? officialIdeal
       const overrideKey = entry.subgroupCode ? idealOverrideKey(catalog.catalogId, group.groupCode, entry.subgroupCode) : null;
-      const idealEffective = (overrideKey ? idealOverrides?.get(overrideKey) : undefined) ?? entry.targetUnits;
+      const idealEffective = (overrideKey ? idealOverrides?.get(overrideKey) : undefined) ?? officialTarget;
 
-      const delta = currentUnits - idealEffective;
-      const complete = currentUnits >= idealEffective;
-      const excess = currentUnits > idealEffective;
+      const delta = currentReferences - idealEffective;
+      const complete = currentReferences >= idealEffective;
+      const excess = currentReferences > idealEffective;
 
       entryResults.push({
         subgroupCode: entry.subgroupCode,
@@ -217,14 +243,17 @@ function evaluateCatalog(
         sagSubgrupos: entry.sagSubgrupo
           ? (Array.isArray(entry.sagSubgrupo) ? entry.sagSubgrupo : [entry.sagSubgrupo])
           : [],
-        targetUnits: idealEffective,
-        officialIdeal: entry.targetUnits,
-        isCustomIdeal: idealEffective !== entry.targetUnits,
-        currentUnits,
+        measurementUnit: "REFERENCES",
+        targetReferences: idealEffective,
+        currentReferences,
+        targetUnits: idealEffective,      // deprecated alias
+        officialIdeal: officialTarget,
+        isCustomIdeal: idealEffective !== officialTarget,
+        currentUnits: currentReferences,  // deprecated alias
         delta,
         complete,
         excess,
-        matchedReferences: matched.map((r) => r.reference),
+        matchedReferences: matchedDistinct,
       });
 
       if (complete) gc++;

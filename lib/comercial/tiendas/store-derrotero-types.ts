@@ -19,6 +19,19 @@
  */
 
 import type { StoreSizeClass } from "./store-policy-types";
+import type { DerroteroScope, DerroteroMeasurementUnit } from "../derrotero-semantics";
+
+// ── Measurement semantics (AGENTIK-DERROTERO-MEASUREMENT-SEMANTICS-01) ──────
+//
+// STORE derroteros are measured in UNITS: a rule is satisfied by the TOTAL
+// units of the evaluated group (grupo+subgrupo for Castillitos, subgrupo for
+// Latin Kids), regardless of how many distinct references provide them.
+//
+// KNOWN SEMANTIC DEBT (to be resolved in AGENTIK-STORES-UNIT-BASED-COVERAGE-ENGINE-01):
+// the per-reference fields below (minUnitsPerRef / idealUnitsPerRef /
+// maxUnitsPerRef) apply the 8–12 rule PER REFERENCE, which contradicts the
+// certified STORE semantic (8–12 TOTAL units per rule group). They remain
+// until Sprint 2.1 replaces the aggregation; do NOT build new logic on them.
 
 // ── Commercial line identifiers (store context) ─────────────────────────────
 
@@ -104,6 +117,10 @@ export interface StoreDerroteroGroup {
 
 export interface StoreDerrotero {
   readonly tenantId: string;
+  /** Always "STORE" — declared explicitly per AGENTIK-DERROTERO-MEASUREMENT-SEMANTICS-01. */
+  readonly scope: DerroteroScope;
+  /** Always "UNITS" for STORE scope — total units of the evaluated group. */
+  readonly measurementUnit: DerroteroMeasurementUnit;
   readonly version: string;
   readonly lines: {
     readonly castillitos: StoreDerroteroGroup[];

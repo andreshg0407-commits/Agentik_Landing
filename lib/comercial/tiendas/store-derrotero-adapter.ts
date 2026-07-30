@@ -8,6 +8,14 @@
  * subgrupo from DERROTERO LT, sizeClass from Import) but applies
  * store-specific quantity rules.
  *
+ * ⚠️ SCOPE BOUNDARY (AGENTIK-DERROTERO-MEASUREMENT-SEMANTICS-01):
+ * This adapter crosses from SALES_PORTFOLIO (maletas, measured in
+ * REFERENCES) to STORE (tiendas, measured in UNITS). Only TAXONOMY
+ * (grupos/subgrupos/sizeClass) may cross this boundary — measurement
+ * targets from the mallet catalog (targetUnits = reference counts)
+ * MUST NEVER be copied into store thresholds. The output re-declares
+ * scope: "STORE" / measurementUnit: "UNITS".
+ *
  * Key concepts (separated, not conflated):
  *   1. Coverage:  minimumCoverageReferences (default 1 — does the entry exist?)
  *   2. Quantity:  minUnitsPerRef / idealUnitsPerRef / maxUnitsPerRef (8/10/12 or 6/4/1)
@@ -107,6 +115,8 @@ export function buildStoreDerroteroFromSalesPortfolioDerrotero(
 
   return {
     tenantId,
+    scope: "STORE",
+    measurementUnit: "UNITS",
     version: `${csCatalog.version}+${ltCatalog.version}+${importCatalog.version}`,
     lines: {
       castillitos: castillitosGroups,

@@ -10,7 +10,17 @@
  * Pure types — no runtime logic, no Prisma, no UI imports.
  *
  * Sprint: CASTILLITOS-MALLET-POLICIES-01
+ * Sprint: AGENTIK-DERROTERO-MEASUREMENT-SEMANTICS-01 — measurement declared:
+ *   MALETAS (SALES_PORTFOLIO) are measured in DISTINCT REFERENCES.
+ *   `targetUnits` has ALWAYS behaved as a reference count in the evaluator
+ *   (matchRefs returns one row per reference). The explicit fields below
+ *   (`measurementUnit`, `targetReferences`) certify that semantic.
  */
+
+import type {
+  DerroteroScope,
+  DerroteroMeasurementUnit,
+} from "../../derrotero-semantics";
 
 // ── Catalog Status ──────────────────────────────────────────────────────────
 
@@ -78,8 +88,25 @@ export type DataQualityLevel = "HIGH" | "MEDIUM" | "LOW" | "INSUFFICIENT";
 export interface MalletAssortmentEntry {
   readonly subgroupCode: string | null;
   readonly subgroupName: string;
+  /**
+   * @deprecated MISLEADING NAME — this value is a count of DISTINCT
+   * REFERENCES, not units (maletas semantic: SALES_PORTFOLIO → REFERENCES).
+   * Kept for backward compatibility with existing catalogs and consumers.
+   * New code must read `targetReferences` (resolver: targetReferences ?? targetUnits).
+   * Sprint: AGENTIK-DERROTERO-MEASUREMENT-SEMANTICS-01
+   */
   readonly targetUnits: number;
+  /**
+   * Explicit target of DISTINCT references for this entry.
+   * Optional during migration; when absent, `targetUnits` carries the value.
+   */
+  readonly targetReferences?: number;
+  /**
+   * @deprecated Unit-flavored bounds do not apply to the maleta derrotero
+   * (references cannot be bounded in units). Not consumed by the evaluator.
+   */
   readonly minUnits: number | null;
+  /** @deprecated See minUnits. */
   readonly maxUnits: number | null;
   readonly priority: number;
   readonly active: boolean;
@@ -110,6 +137,13 @@ export interface MalletAssortmentCatalog {
   readonly catalogId: string;
   readonly tenantId: string;
   readonly name: string;
+  /**
+   * Measurement declaration (AGENTIK-DERROTERO-MEASUREMENT-SEMANTICS-01).
+   * For mallet catalogs these are ALWAYS "SALES_PORTFOLIO" / "REFERENCES".
+   * Optional during migration; absence means the canonical binding applies.
+   */
+  readonly scope?: DerroteroScope;
+  readonly measurementUnit?: DerroteroMeasurementUnit;
   readonly commercialWorld: CommercialWorld;
   readonly brand: string | null;
   readonly version: string;
@@ -128,7 +162,9 @@ export interface MalletAssortmentCatalog {
 export interface MalletGroupEntryResult {
   readonly subgroupCode: string | null;
   readonly subgroupName: string;
+  /** @deprecated Semantic: count of DISTINCT REFERENCES (see MalletAssortmentEntry.targetUnits). */
   readonly targetUnits: number;
+  /** @deprecated Semantic: count of DISTINCT REFERENCES currently present. */
   readonly currentUnits: number;
   readonly delta: number;
   readonly complete: boolean;
