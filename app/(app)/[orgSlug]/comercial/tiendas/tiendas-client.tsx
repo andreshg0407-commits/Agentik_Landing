@@ -3218,7 +3218,7 @@ function DistributionStoreDrawer({
                   {([
                     { key: "ALL" as CoverageStatusFilter, label: "Todas", count: covData.structures.filter(s => covLine === "ALL" || s.line === covLine).length },
                     { key: "SALUDABLE" as CoverageStatusFilter, label: "Saludables", count: covData.structures.filter(s => covDisplayState(s) === "SALUDABLE" && (covLine === "ALL" || s.line === covLine)).length },
-                    { key: "CON_REFERENCIAS_BAJO_MINIMO" as CoverageStatusFilter, label: "Con refs bajo mín.", count: covData.structures.filter(s => covDisplayState(s) === "CON_REFERENCIAS_BAJO_MINIMO" && (covLine === "ALL" || s.line === covLine)).length },
+                    { key: "CON_REFERENCIAS_BAJO_MINIMO" as CoverageStatusFilter, label: "Bajo mín. (unds)", count: covData.structures.filter(s => covDisplayState(s) === "CON_REFERENCIAS_BAJO_MINIMO" && (covLine === "ALL" || s.line === covLine)).length },
                     { key: "SIN_COBERTURA" as CoverageStatusFilter, label: "Sin cobertura", count: covData.structures.filter(s => covDisplayState(s) === "SIN_COBERTURA" && (covLine === "ALL" || s.line === covLine)).length },
                   ]).map(f => (
                     <button
@@ -3270,7 +3270,7 @@ function DistributionStoreDrawer({
                       : ds === "CON_REFERENCIAS_BAJO_MINIMO" ? "warning" : "critical";
                     const statusLabel = ds === "SALUDABLE" ? "Saludable"
                       : ds === "CON_REFERENCIAS_BAJO_MINIMO"
-                        ? `${s.belowMinimumReferenceCount} bajo mín.`
+                        ? `${Math.max(0, s.minimumUnits - s.totalStoreUnits)} unds bajo mín.`
                         : "Sin cobertura";
                     const rowBg = ds === "SIN_COBERTURA" ? "rgba(239,68,68,0.04)"
                       : ds === "CON_REFERENCIAS_BAJO_MINIMO" ? "rgba(245,158,11,0.04)" : "transparent";

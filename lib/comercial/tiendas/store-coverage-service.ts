@@ -2,21 +2,22 @@
  * lib/comercial/tiendas/store-coverage-service.ts
  *
  * AGENTIK-STORES-COVERAGE-TAB-01 — Two-Dimension Coverage Service
+ * AGENTIK-STORES-UNIT-BASED-COVERAGE-ENGINE-01 — unit-based measurement
  *
  * Two independent dimensions per structure:
  *
  *   1. Structural coverage: ¿Tiene al menos una referencia activa?
  *      CUBIERTA / SIN_COBERTURA
  *
- *   2. Quantitative health: ¿Cuántas referencias cumplen su regla individual?
- *      SALUDABLE / CON_REFERENCIAS_BAJO_MINIMO / SIN_REFERENCIAS
- *
- * Per-reference evaluation (CS/LK):
- *   Rule 8/10/12 applies PER REFERENCE, not per aggregate.
- *   5 refs × 2 uds each = totalShortageToTarget 40 (5 × max(0,10-2)),
- *   NOT 0 (10 - 10).
+ *   2. Quantitative health — CERTIFIED LAW (DERROTERO-MEASUREMENT-SEMANTICS-01):
+ *      TIENDAS se mide en UNIDADES TOTALES de la estructura, nunca por
+ *      referencia. Regla 8/10/12 sobre el TOTAL del grupo:
+ *      5 refs × 2 uds = 10 unidades → SALUDABLE (deficit 0).
+ *      Los conteos por referencia se conservan como dato informativo.
  *
  * ACC: aggregate per sizeClass (small=6, medium=4, large=1 total units).
+ * Reglas especiales (BANERA/CUNA_COLECHO/CORRAL): objetivo de unidades por
+ * tienda; presencia con ideal=0 es NO_AUTORIZADA (severidad alta).
  *
  * Data source: getCanonicalStoreDetail() (cached 2min, zero new DB queries).
  * Expected universe: castillitos-mallet-assortment-catalog (32 CS + 11 LK + 3 ACC = 46).
@@ -50,7 +51,14 @@ import {
   CASTILLITOS_TEXTILE_COVERAGE,
   LATIN_KIDS_TEXTILE_COVERAGE,
   CASTILLITOS_ACCESSORY_COVERAGE,
+  CASTILLITOS_SPECIAL_PRODUCTS,
 } from "./store-policy-pack-config";
+import {
+  evaluateUnitStructureCoverage,
+  evaluateSpecialRules,
+  type UnitsRuleEvaluation,
+  type SpecialRuleEvaluation,
+} from "./store-unit-coverage-engine";
 
 // ── Output types ──────────────────────────────────────────────────────────
 
@@ -90,15 +98,20 @@ export interface StoreCoverageStructure {
   belowMinimumReferenceCount: number;
   overMaximumReferenceCount: number;
 
-  // Per-reference rule thresholds (CS/LK: 8/10/12; ACC: per sizeClass)
+  // Structure-level rule thresholds in UNITS (CS/LK: 8/10/12; ACC: per sizeClass)
   minimumUnits: number;
   targetUnits: number;
   maximumUnits: number | null;
 
-  // Shortage = SUM of per-reference max(0, target - refQty) for CS/LK
-  //          = max(0, target - totalStoreUnits) for ACC
+  // AGENTIK-STORES-UNIT-BASED-COVERAGE-ENGINE-01:
+  // Shortage = STRUCTURE-LEVEL unit deficit (certified STORE=UNITS law):
+  //   totalShortageToTarget  = max(0, ideal - totalStoreUnits)
+  //   totalShortageToMinimum = max(0, min   - totalStoreUnits)
   totalShortageToTarget: number;
   totalShortageToMinimum: number;
+
+  /** Certified unit evaluation (measurementUnit=UNITS) for this structure. */
+  unitRule: UnitsRuleEvaluation;
 
   quantitativeHealthStatus: QuantitativeHealthStatus;
 
@@ -137,6 +150,12 @@ export interface StoreCoverageResponse {
   overallHealthPercent: number;
   lineSummaries: StoreCoverageLineSummary[];
   structures: StoreCoverageStructure[];
+  /**
+   * AGENTIK-STORES-UNIT-BASED-COVERAGE-ENGINE-01:
+   * reglas especiales por tienda (BANERA/CUNA_COLECHO/CORRAL) — objetivo de
+   * unidades por tienda; NO_AUTORIZADA cuando ideal=0 y hay unidades.
+   */
+  specialRules: SpecialRuleEvaluation[];
   computedAt: string;
 }
 
@@ -334,33 +353,30 @@ function evaluateTextileStructure(
   priority: number,
 ): StoreCoverageStructure {
   const activeRefCount = refs.size;
-  let totalStoreUnits = 0;
+
+  // ── AGENTIK-STORES-UNIT-BASED-COVERAGE-ENGINE-01 ──
+  // Certified law (STORE=UNITS): the rule applies to the TOTAL units of the
+  // structure. Per-reference states remain as INFORMATIONAL data only.
+  const refQtys = [...refs.values()].map(r => r.totalQty);
+  const coverage = evaluateUnitStructureCoverage(refQtys, {
+    minUnits: rule.minimumUnits,
+    idealUnits: rule.idealUnits,
+    maxUnits: rule.maximumUnits,
+  });
+
+  const totalStoreUnits = coverage.unitRule.totalUnits;
   let healthyCount = 0;
   let belowMinCount = 0;
   let overMaxCount = 0;
-  let totalShortageToTarget = 0;
-  let totalShortageToMinimum = 0;
-
   for (const ref of refs.values()) {
-    totalStoreUnits += ref.totalQty;
     const state = deriveReferenceHealthState(ref.totalQty, rule.minimumUnits, rule.maximumUnits);
     if (state === "SALUDABLE") healthyCount++;
     else if (state === "BAJO_MINIMO") belowMinCount++;
     else overMaxCount++;
-    totalShortageToTarget += Math.max(0, rule.idealUnits - ref.totalQty);
-    totalShortageToMinimum += Math.max(0, rule.minimumUnits - ref.totalQty);
   }
 
-  let structuralCoverageStatus: StructuralCoverageStatus;
-  let quantitativeHealthStatus: QuantitativeHealthStatus;
-
-  if (activeRefCount === 0) {
-    structuralCoverageStatus = "SIN_COBERTURA";
-    quantitativeHealthStatus = "SIN_REFERENCIAS";
-  } else {
-    structuralCoverageStatus = "CUBIERTA";
-    quantitativeHealthStatus = belowMinCount > 0 ? "CON_REFERENCIAS_BAJO_MINIMO" : "SALUDABLE";
-  }
+  const structuralCoverageStatus: StructuralCoverageStatus = coverage.structuralStatus;
+  const quantitativeHealthStatus: QuantitativeHealthStatus = coverage.quantitativeStatus;
 
   return {
     structureKey,
@@ -377,8 +393,9 @@ function evaluateTextileStructure(
     minimumUnits: rule.minimumUnits,
     targetUnits: rule.idealUnits,
     maximumUnits: rule.maximumUnits,
-    totalShortageToTarget,
-    totalShortageToMinimum,
+    totalShortageToTarget: coverage.unitRule.deficitToIdeal,
+    totalShortageToMinimum: coverage.unitRule.deficitToMin,
+    unitRule: coverage.unitRule,
     quantitativeHealthStatus,
     priority,
     solutionSummary: null,
@@ -394,22 +411,18 @@ function evaluateAccessoryStructure(
   priority: number,
 ): StoreCoverageStructure {
   const activeRefCount = refs.size;
-  let totalStoreUnits = 0;
-  for (const ref of refs.values()) {
-    totalStoreUnits += ref.totalQty;
-  }
 
-  // ACC: aggregate evaluation against sizeClass target
-  let structuralCoverageStatus: StructuralCoverageStatus;
-  let quantitativeHealthStatus: QuantitativeHealthStatus;
+  // ACC: same certified unit engine — target acts as min & ideal, no max cap.
+  const refQtys = [...refs.values()].map(r => r.totalQty);
+  const coverage = evaluateUnitStructureCoverage(refQtys, {
+    minUnits: target,
+    idealUnits: target,
+    maxUnits: Number.MAX_SAFE_INTEGER,
+  });
+  const totalStoreUnits = coverage.unitRule.totalUnits;
 
-  if (activeRefCount === 0) {
-    structuralCoverageStatus = "SIN_COBERTURA";
-    quantitativeHealthStatus = "SIN_REFERENCIAS";
-  } else {
-    structuralCoverageStatus = "CUBIERTA";
-    quantitativeHealthStatus = totalStoreUnits >= target ? "SALUDABLE" : "CON_REFERENCIAS_BAJO_MINIMO";
-  }
+  const structuralCoverageStatus: StructuralCoverageStatus = coverage.structuralStatus;
+  const quantitativeHealthStatus: QuantitativeHealthStatus = coverage.quantitativeStatus;
 
   return {
     structureKey,
@@ -427,8 +440,9 @@ function evaluateAccessoryStructure(
     minimumUnits: target,
     targetUnits: target,
     maximumUnits: null,
-    totalShortageToTarget: Math.max(0, target - totalStoreUnits),
-    totalShortageToMinimum: Math.max(0, target - totalStoreUnits),
+    totalShortageToTarget: coverage.unitRule.deficitToIdeal,
+    totalShortageToMinimum: coverage.unitRule.deficitToMin,
+    unitRule: coverage.unitRule,
     quantitativeHealthStatus,
     priority,
     solutionSummary: null,
@@ -454,6 +468,7 @@ export async function loadStoreCoverage(
       overallHealthPercent: 0,
       lineSummaries: [],
       structures: [],
+      specialRules: [],
       computedAt: new Date().toISOString(),
     };
   }
@@ -467,6 +482,17 @@ export async function loadStoreCoverage(
   const accRefIndex = buildRefDetailIndex(items, "SIZE_CLASS");
 
   const structures = buildExpectedStructures(csRefIndex, lkRefIndex, accRefIndex);
+
+  // ── Reglas especiales por tienda (UNIT-BASED-COVERAGE-ENGINE-01) ──
+  const specialRules = evaluateSpecialRules(
+    storeId,
+    items.map(i => ({
+      referenceCode: i.referenceCode,
+      productName: i.productName ?? "",
+      currentUnits: i.currentUnits,
+    })),
+    CASTILLITOS_SPECIAL_PRODUCTS,
+  );
 
   // Per-line summaries
   const lineSummaries: StoreCoverageLineSummary[] = [];
@@ -507,6 +533,7 @@ export async function loadStoreCoverage(
     overallHealthPercent: totalActiveRefs > 0 ? Math.round((totalHealthyRefs / totalActiveRefs) * 100) : 0,
     lineSummaries,
     structures,
+    specialRules,
     computedAt: new Date().toISOString(),
   };
 }
