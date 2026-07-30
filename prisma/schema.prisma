@@ -9855,3 +9855,52 @@ model StoreReplenishmentDocument {
   @@index([organizationId, batchId])
   @@index([organizationId, planFingerprint])
 }
+
+/// AGENTIK-STORES-REPLENISHMENT-FULFILLMENT-01
+/// Verbo de transición del workflow — enum cerrado, nunca String libre.
+enum StoreReplenishmentTransition {
+  APROBAR
+  INICIAR_PREPARACION
+  DESPACHAR
+  RECIBIR
+  CERRAR
+  CANCELAR
+}
+
+/// Evento de auditoría del workflow — APPEND-ONLY (sin update ni delete).
+/// occurredAt lo genera EXCLUSIVAMENTE el servidor (@default(now())); el
+/// cliente jamás lo aporta. Cada transición produce exactamente UN evento,
+/// en la misma transacción que el cambio de estado.
+model StoreReplenishmentDocumentEvent {
+  id              String   @id @default(cuid())
+  organizationId  String
+  documentId      String
+  /// Corrida del documento — consulta de eventos por batch sin joins.
+  batchId         String
+
+  fromStatus      ReplenishmentDocumentStatus
+  toStatus        ReplenishmentDocumentStatus
+  transition      StoreReplenishmentTransition
+
+  /// Versión de la matriz de transiciones vigente al emitir el evento.
+  workflowVersion Int      @default(1)
+
+  /// Actor estructurado: el ID es la identidad (no cambia); el nombre es
+  /// snapshot de display al momento del evento.
+  actorId          String
+  actorDisplayName String?
+
+  note            String?
+  /// Extensible sin migrar: device, ip, scanner, tracking, reasonCode…
+  metadata        Json?
+
+  /// Idempotencia por transición: mismo comando repetido (retry HTTP) →
+  /// misma respuesta, cero eventos nuevos.
+  idempotencyKey  String?
+
+  occurredAt      DateTime @default(now())
+
+  @@unique([documentId, idempotencyKey])
+  @@index([organizationId, documentId, occurredAt])
+  @@index([organizationId, batchId, occurredAt])
+}

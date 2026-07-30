@@ -72,6 +72,13 @@ import {
   getReplenishmentDocument,
   exportReplenishmentDocument,
 } from "@/lib/comercial/tiendas/store-replenishment-document-service";
+import {
+  transitionReplenishmentDocument,
+  listDocumentEvents,
+  DocumentNotFoundError,
+  StaleDocumentStateError,
+} from "@/lib/comercial/tiendas/store-replenishment-workflow-service";
+import { InvalidWorkflowTransitionError, allowedTransitions } from "@/lib/comercial/tiendas/store-replenishment-workflow-engine";
 import { loadStoreDiscounts } from "@/lib/comercial/tiendas/store-discount-service";
 import { getStoreDerroteroCoverage, getAllStoresDerroteroCoverageSummary } from "@/lib/comercial/tiendas/store-derrotero-service";
 import { buildStoreDerroteroFromSalesPortfolioDerrotero } from "@/lib/comercial/tiendas/store-derrotero-adapter";
@@ -616,6 +623,59 @@ export async function POST(
       } catch (err) {
         console.error("[REPLENISHMENT-DOC-EXPORT] error", err instanceof Error ? err.message : err);
         return NextResponse.json({ error: "Error al exportar documento de surtido" }, { status: 500 });
+      }
+    }
+
+    // ── REPLENISHMENT WORKFLOW (AGENTIK-STORES-REPLENISHMENT-FULFILLMENT-01) ───
+
+    case "replenishment_document_transition": {
+      const documentId = body.documentId as string;
+      const transition = body.transition as string;
+      const actorId = body.actorId as string;
+      if (!documentId || !transition || !actorId) {
+        return NextResponse.json({ error: "Missing documentId, transition o actorId" }, { status: 400 });
+      }
+      try {
+        // occurredAt jamás se acepta del cliente — lo genera el servidor.
+        const result = await transitionReplenishmentDocument(
+          orgId,
+          documentId,
+          transition,
+          { actorId, actorDisplayName: body.actorDisplayName as string | undefined },
+          {
+            note: body.note as string | undefined,
+            metadata: body.metadata as Record<string, string | number | boolean> | undefined,
+            idempotencyKey: body.idempotencyKey as string | undefined,
+          },
+        );
+        return NextResponse.json({ result, allowedNext: allowedTransitions(result.status) });
+      } catch (err) {
+        if (err instanceof InvalidWorkflowTransitionError) {
+          return NextResponse.json({ error: err.message, code: err.code, allowed: err.allowed }, { status: 409 });
+        }
+        if (err instanceof StaleDocumentStateError) {
+          return NextResponse.json({ error: err.message, code: err.code, currentStatus: err.currentStatus }, { status: 409 });
+        }
+        if (err instanceof DocumentNotFoundError) {
+          return NextResponse.json({ error: err.message, code: err.code }, { status: 404 });
+        }
+        console.error("[REPLENISHMENT-WORKFLOW] error", err instanceof Error ? err.message : err);
+        return NextResponse.json({ error: "Error al transicionar documento" }, { status: 500 });
+      }
+    }
+
+    case "replenishment_document_events": {
+      const documentId = body.documentId as string;
+      if (!documentId) return NextResponse.json({ error: "Missing documentId" }, { status: 400 });
+      try {
+        const events = await listDocumentEvents(orgId, documentId);
+        return NextResponse.json({ events });
+      } catch (err) {
+        if (err instanceof DocumentNotFoundError) {
+          return NextResponse.json({ error: err.message, code: err.code }, { status: 404 });
+        }
+        console.error("[REPLENISHMENT-WORKFLOW-EVENTS] error", err instanceof Error ? err.message : err);
+        return NextResponse.json({ error: "Error al listar eventos" }, { status: 500 });
       }
     }
 
