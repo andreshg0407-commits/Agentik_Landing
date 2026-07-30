@@ -64,6 +64,7 @@ import type { NeedLine, NeedType, NeedSortBy, NeedSizeClass } from "@/lib/comerc
 import { loadWarehouseFirstNeeds } from "@/lib/comercial/tiendas/store-warehouse-first-needs";
 import type { WHFLine, WHFSortBy } from "@/lib/comercial/tiendas/store-warehouse-first-needs";
 import { loadStoreCoverage, loadStoreCoverageCandidates } from "@/lib/comercial/tiendas/store-coverage-service";
+import { loadStoreUnitNeeds } from "@/lib/comercial/tiendas/store-unit-needs-service";
 import { loadStoreDiscounts } from "@/lib/comercial/tiendas/store-discount-service";
 import { getStoreDerroteroCoverage, getAllStoresDerroteroCoverageSummary } from "@/lib/comercial/tiendas/store-derrotero-service";
 import { buildStoreDerroteroFromSalesPortfolioDerrotero } from "@/lib/comercial/tiendas/store-derrotero-adapter";
@@ -88,6 +89,7 @@ export async function POST(
     "distribution_effective_config",
     "distribution_preview_impact", "distribution_save_config",
     "derrotero_coverage", "store_coverage", "store_coverage_candidates", "store_discounts", "certified_store_intelligence",
+    "store_unit_needs",
   ]);
   if (GUARDED_ACTIONS.has(action) && body.storeId) {
     try {
@@ -516,6 +518,20 @@ export async function POST(
       } catch (err) {
         console.error("[STORE-COVERAGE-CANDIDATES] error", storeId, err instanceof Error ? err.message : err);
         return NextResponse.json({ error: "Error al cargar candidatos de cobertura" }, { status: 500 });
+      }
+    }
+
+    // ── UNIT-BASED NEEDS (AGENTIK-STORES-UNIT-BASED-NEEDS-ENGINE-01) ───────────
+
+    case "store_unit_needs": {
+      const storeId = body.storeId as string;
+      if (!storeId) return NextResponse.json({ error: "Missing storeId" }, { status: 400 });
+      try {
+        const unitNeeds = await loadStoreUnitNeeds(orgId, storeId);
+        return NextResponse.json({ unitNeeds });
+      } catch (err) {
+        console.error("[STORE-UNIT-NEEDS] error", storeId, err instanceof Error ? err.message : err);
+        return NextResponse.json({ error: "Error al cargar necesidades por unidades" }, { status: 500 });
       }
     }
 
