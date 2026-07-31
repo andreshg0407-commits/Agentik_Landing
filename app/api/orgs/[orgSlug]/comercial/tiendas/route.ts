@@ -64,6 +64,7 @@ import type { NeedLine, NeedType, NeedSortBy, NeedSizeClass } from "@/lib/comerc
 import { loadWarehouseFirstNeeds } from "@/lib/comercial/tiendas/store-warehouse-first-needs";
 import type { WHFLine, WHFSortBy } from "@/lib/comercial/tiendas/store-warehouse-first-needs";
 import { loadStoreCoverage, loadStoreCoverageCandidates } from "@/lib/comercial/tiendas/store-coverage-service";
+import { getStoreSnapshotWithMeta } from "@/lib/comercial/tiendas/store-snapshot-service";
 import { loadStoreUnitNeeds } from "@/lib/comercial/tiendas/store-unit-needs-service";
 import { loadStoreReplenishmentPlan } from "@/lib/comercial/tiendas/store-replenishment-plan-service";
 import {
@@ -565,6 +566,20 @@ export async function POST(
       } catch (err) {
         console.error("[STORE-REPLENISHMENT-PLAN] error", err instanceof Error ? err.message : err);
         return NextResponse.json({ error: "Error al construir el plan de surtido" }, { status: 500 });
+      }
+    }
+
+    // ── STORE SNAPSHOT (AGENTIK-STORES-TRUTH-AUDIT-01 · F2) ────────────────────
+    // Única fuente de verdad del módulo: contrato v1.2, corrida completa
+    // assembler → S4 → S5 → S6 → KPIs. Sin Map (serializa directo).
+
+    case "get_store_snapshot": {
+      try {
+        const { snapshot, metrics } = await getStoreSnapshotWithMeta(orgId);
+        return NextResponse.json({ snapshot, metrics });
+      } catch (err) {
+        console.error("[STORE-SNAPSHOT] error", err instanceof Error ? err.message : err);
+        return NextResponse.json({ error: "Error al construir el StoreSnapshot" }, { status: 500 });
       }
     }
 
