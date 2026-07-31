@@ -34,6 +34,7 @@ import {
   buildDashboardPresentation,
   buildCoverageTabPresentation,
   buildNeedsTabPresentation,
+  buildOperativeNeedsPresentation,
   type DashboardPresentation,
   type PresentationStoreCard,
   type PresentationTone,
@@ -1520,6 +1521,44 @@ function MiniStat({ label, value, color }: { label: string; value: string; color
   );
 }
 
+function NeedsUnassignedRow({ item }: { item: { structureLabel: string; pendingText: string; cause: string; technicalDetail: string; engineReason: string } }) {
+  const [showDetail, setShowDetail] = useState(false);
+  return (
+    <div style={{ padding: `${S[2]}px ${S[2]}px`, borderBottom: `1px solid ${C.lineSubtle}` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: S[2] }}>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
+          {item.structureLabel}
+        </span>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.red, flexShrink: 0 }}>
+          {item.pendingText} uds
+        </span>
+      </div>
+      <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, marginTop: 2 }}>
+        {item.cause}
+      </div>
+      <button
+        type="button"
+        onClick={() => setShowDetail(v => !v)}
+        style={{
+          fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.blueDark,
+          background: "none", border: "none", padding: 0, marginTop: 4,
+          cursor: "pointer", textDecoration: "underline",
+        }}
+      >
+        {showDetail ? "Ocultar explicación" : "Ver explicación"}
+      </button>
+      {showDetail && (
+        <div style={{
+          fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint,
+          marginTop: 4, padding: S[2], background: C.surfaceAlt, borderRadius: R.xs,
+        }}>
+          {item.technicalDetail}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function formatTimeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(diff / 60000);
@@ -2033,6 +2072,10 @@ function DistributionStoreDrawer({
   // compartida — cero fetch de estado adicional; T2: cero acciones legacy).
   const needsPres = useMemo(
     () => buildNeedsTabPresentation(snapshot, storeCard.store.id),
+    [snapshot, storeCard.store.id],
+  );
+  const opNeeds = useMemo(
+    () => buildOperativeNeedsPresentation(snapshot, storeCard.store.id),
     [snapshot, storeCard.store.id],
   );
   const covPres = useMemo(
@@ -2555,71 +2598,104 @@ function DistributionStoreDrawer({
         </div>
       )}
 
-      {/* TAB: Necesidades — warehouse-first (AGENTIK-STORES-NEEDS-WAREHOUSE-FIRST-RESOLUTION-01) */}
+      {/* TAB: Necesidades — UX operativa (AGENTIK-STORES-NEEDS-OPERATIVE-UX-01) */}
       {tab === "necesidades" && (
         <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-          {/* F3A — FUENTE ÚNICA: proyección del StoreSnapshot (plan S6 + needs S5).
-              El motor paralelo de necesidades por referencia salió de esta pantalla. */}
+          {/* KPIs operativos */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: S[2] }}>
-            <MiniStat label="Unidades sugeridas" value={`${needsPres.totals.suggestedUnitsText} uds`} color={C.blueDark} />
-            <MiniStat label="No asignadas" value={needsPres.totals.unassignedCountText} color={C.red} />
-            <MiniStat label="Pendientes sin asignar" value={`${needsPres.totals.unassignedPendingText} uds`} color={C.amber} />
+            <MiniStat label="Se puede enviar" value={`${opNeeds.totalSuggestedText} uds`} color={C.blueDark} />
+            <MiniStat label="Quedará pendiente" value={`${opNeeds.totalPendingText} uds`} color={opNeeds.unassigned.length > 0 ? C.red : C.green} />
+            <MiniStat label="Estructuras cubiertas" value={`${opNeeds.coveredStructuresText} de ${opNeeds.totalStructuresText}`} color={C.green} />
           </div>
 
-          {/* Sugerencias del plan certificado */}
+          {/* Mercancía disponible para enviar — agrupada por estructura del derrotero */}
           <div style={{ ...panel }}>
             <div style={{ ...panelHeader }}>
               <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
-                Sugerencias de surtido (plan certificado)
-              </span>
-              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginLeft: "auto" }}>
-                {needsPres.suggestions.length} sugerencias
+                Mercancía disponible para enviar
               </span>
             </div>
-            {needsPres.suggestions.length === 0 ? (
+            {opNeeds.structureGroups.length === 0 ? (
               <div style={{ padding: S[4], fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight }}>
-                Sin sugerencias del plan para esta tienda.
+                No hay mercancía sugerida para esta tienda en este momento.
               </div>
             ) : (
-              <div style={{ padding: S[2] }}>
-                {needsPres.suggestions.map((s, i) => (
-                  <div key={`${s.structureKey}-${s.referenceCode}-${i}`} style={{
-                    display: "flex", alignItems: "center", gap: S[3],
-                    padding: `${S[2]}px ${S[2]}px`, borderBottom: `1px solid ${C.lineSubtle}`,
-                  }}>
-                    <CommercialReferenceThumbnail referenceCode={s.referenceCode} imageUrl={null} description={s.productName} size={34} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
-                        {s.referenceCode} <span style={{ fontWeight: T.wt.normal, color: C.inkLight }}>{s.productName}</span>
-                      </div>
-                      <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
-                        {s.structureKey} · {s.typeLabel}
-                      </div>
-                      {s.reasons.length > 0 && (
-                        <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight, marginTop: 2 }}>
-                          {s.reasons.map(r => r.detail).join(" · ")}
-                        </div>
+              <div>
+                {opNeeds.structureGroups.map(g => (
+                  <div key={g.structureKey} style={{ borderBottom: `1px solid ${C.line}` }}>
+                    {/* Structure header — what's needed, what we can send, what's pending */}
+                    <div style={{
+                      display: "flex", alignItems: "center", gap: S[2],
+                      padding: `${S[2]}px ${S[3]}px`, background: C.surfaceAlt,
+                    }}>
+                      <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink, flex: 1, minWidth: 0 }}>
+                        {g.label}
+                      </span>
+                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight, flexShrink: 0 }}>
+                        Faltan {g.requiredText}
+                      </span>
+                      <span style={{
+                        fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                        padding: "2px 8px", borderRadius: R.pill, flexShrink: 0,
+                        background: C.blueDark, color: C.white,
+                      }}>
+                        Enviar {g.suggestedText} uds
+                      </span>
+                      {!g.fullyCovered && (
+                        <span style={{
+                          fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                          padding: "2px 8px", borderRadius: R.pill, flexShrink: 0,
+                          background: C.amberLight, color: C.amber, border: `1px solid ${C.amberBorder}`,
+                        }}>
+                          Pend. {g.pendingText}
+                        </span>
                       )}
                     </div>
-                    <span style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: C.blueDark, flexShrink: 0 }}>
-                      {s.unitsText} uds
-                    </span>
+                    {/* Reference items within this structure */}
+                    <div style={{ padding: `0 ${S[3]}px` }}>
+                      {g.items.map((item, ii) => (
+                        <div key={`${item.referenceCode}-${ii}`} style={{
+                          display: "flex", alignItems: "center", gap: S[3],
+                          padding: `${S[2]}px 0`, borderBottom: ii < g.items.length - 1 ? `1px solid ${C.lineSubtle}` : "none",
+                        }}>
+                          <CommercialReferenceThumbnail referenceCode={item.referenceCode} imageUrl={null} description={item.productName} size={30} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
+                              {item.referenceCode}
+                            </span>
+                            <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight, marginLeft: S[2] }}>
+                              {item.productName}
+                            </span>
+                          </div>
+                          <span style={{
+                            fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, flexShrink: 0,
+                          }}>
+                            {item.typeLabel}
+                          </span>
+                          <span style={{
+                            fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold, color: C.blueDark, flexShrink: 0,
+                          }}>
+                            {item.unitsText} uds
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ))}
               </div>
             )}
           </div>
 
-          {/* Retiros (exceso sobre máximo — S5) */}
-          {needsPres.withdrawals.length > 0 && (
+          {/* Retiros sugeridos */}
+          {opNeeds.withdrawals.length > 0 && (
             <div style={{ ...panel }}>
               <div style={{ ...panelHeader }}>
                 <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.amber }}>
-                  Retiros sugeridos
+                  Mercancía a retirar
                 </span>
               </div>
               <div style={{ padding: S[2] }}>
-                {needsPres.withdrawals.map((w, i) => (
+                {opNeeds.withdrawals.map((w, i) => (
                   <div key={`${w.structureKey}-${i}`} style={{
                     display: "flex", justifyContent: "space-between", alignItems: "center",
                     padding: `${S[1]}px ${S[2]}px`, borderBottom: `1px solid ${C.lineSubtle}`,
@@ -2633,50 +2709,40 @@ function DistributionStoreDrawer({
             </div>
           )}
 
-          {/* Necesidades no asignadas — razones CERTIFICADAS del motor */}
+          {/* Faltantes que no podemos cubrir hoy */}
           <div style={{ ...panel }}>
             <div style={{ ...panelHeader }}>
               <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.red }}>
-                {needsPres.unassignedTitle}
+                Faltantes que no podemos cubrir hoy
               </span>
               <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginLeft: "auto" }}>
                 {needsPres.totals.unassignedCountText}
               </span>
             </div>
-            {needsPres.unassigned.length === 0 ? (
+            {opNeeds.unassigned.length === 0 ? (
               <div style={{ padding: S[4], fontFamily: T.mono, fontSize: T.sz.sm, color: C.green }}>
-                Todas las necesidades ejecutables fueron asignadas por el plan.
+                Todas las necesidades pueden cubrirse con el stock disponible.
               </div>
             ) : (
               <div style={{ padding: S[2] }}>
-                {needsPres.unassigned.map((u, i) => (
-                  <div key={`${u.structureKey}-${i}`} style={{
-                    padding: `${S[2]}px ${S[2]}px`, borderBottom: `1px solid ${C.lineSubtle}`,
-                  }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: S[2] }}>
-                      <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
-                        {u.label}
-                      </span>
-                      <span style={{
-                        fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                        padding: "2px 8px", borderRadius: R.pill,
-                        background: C.redLight, color: C.red, border: `1px solid ${C.redBorder}`,
-                        flexShrink: 0,
-                      }}>
-                        {u.code}
-                      </span>
-                    </div>
-                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight, marginTop: 2 }}>
-                      {u.detail}
-                    </div>
-                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginTop: 2 }}>
-                      Requeridas: {u.requiredText} uds · Pendientes: {u.pendingText} uds · Motor: {u.engineReason}
-                    </div>
-                  </div>
+                {opNeeds.unassigned.map((u, i) => (
+                  <NeedsUnassignedRow key={`unassigned-${i}`} item={u} />
                 ))}
               </div>
             )}
           </div>
+
+          {/* CTA — closes drawer so user can access replenishment on main screen */}
+          {opNeeds.hasSuggestions && (
+            <button
+              type="button"
+              className="ag-action-primary"
+              style={{ alignSelf: "flex-start", fontFamily: T.mono, fontSize: T.sz.sm }}
+              onClick={onClose}
+            >
+              Generar propuesta de surtido
+            </button>
+          )}
         </div>
       )}
 

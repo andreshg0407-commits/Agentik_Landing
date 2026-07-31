@@ -192,6 +192,145 @@ export interface NeedsTabPresentation {
   };
 }
 
+// ── Lenguaje comercial para causas de faltantes ──────────────────────────────
+
+const UNASSIGNED_HUMAN_CAUSE: Record<string, string> = {
+  SIN_DATOS_DISPONIBILIDAD: "Sin datos de disponibilidad",
+  SIN_COMPATIBLES_CON_STOCK: "Sin stock compatible en bodega",
+  COMPATIBLES_EXCLUIDAS_POR_REGLAS: "Stock reservado por Regla 36",
+  ASIGNACION_PARCIAL: "Pool agotado (asignación parcial)",
+  ESCASEZ_GLOBAL_POOL_AGOTADO: "Pool agotado",
+};
+
+// ── Operative Needs DTO ──────────────────────────────────────────────────────
+
+export interface OperativeNeedsSuggestionItem {
+  readonly referenceCode: string;
+  readonly productName: string;
+  readonly unitsText: string;
+  readonly typeLabel: string;
+}
+
+export interface OperativeNeedsUnassignedItem {
+  readonly structureLabel: string;
+  readonly pendingText: string;
+  readonly cause: string;
+  /** Technical detail — hidden by default, shown in "Ver explicación" */
+  readonly technicalDetail: string;
+  readonly engineReason: string;
+}
+
+export interface OperativeNeedsStructureGroup {
+  /** Derrotero structure label (e.g. "PANTALÓN CLÁSICO — 30") */
+  readonly structureKey: string;
+  readonly label: string;
+  /** Line from coverage (e.g. "1" for Textil) */
+  readonly line: string;
+  /** How many units this structure needs (from coverage deficit) */
+  readonly requiredText: string;
+  /** How many units the plan can send now */
+  readonly suggestedText: string;
+  /** How many units remain pending after suggestions */
+  readonly pendingText: string;
+  /** true if all required units are covered by suggestions */
+  readonly fullyCovered: boolean;
+  /** Concrete references available to send for this structure */
+  readonly items: readonly OperativeNeedsSuggestionItem[];
+}
+
+export interface OperativeNeedsPresentation {
+  readonly storeId: string;
+  /** Structures grouped and sorted by line, then by label */
+  readonly structureGroups: readonly OperativeNeedsStructureGroup[];
+  /** Summary KPIs */
+  readonly totalStructuresText: string;
+  readonly coveredStructuresText: string;
+  readonly pendingStructuresText: string;
+  readonly totalSuggestedText: string;
+  readonly totalPendingText: string;
+  /** Unassigned needs with human-readable causes */
+  readonly unassigned: readonly OperativeNeedsUnassignedItem[];
+  /** Withdrawals (excesos) */
+  readonly withdrawals: readonly {
+    readonly structureKey: string;
+    readonly label: string;
+    readonly unitsText: string;
+  }[];
+  /** Show CTA only when there are suggestions */
+  readonly hasSuggestions: boolean;
+}
+
+export function buildOperativeNeedsPresentation(snapshot: StoreSnapshot, storeId: string): OperativeNeedsPresentation {
+  const store = requireStore(snapshot, storeId);
+  const projection = store.presentationHints.needs;
+  const coverageByKey = new Map(store.coverage.structures.map(s => [s.structureKey, s]));
+
+  // Group suggestions by structureKey
+  const suggestionsByStructure = new Map<string, typeof projection.suggestions[number][]>();
+  for (const s of projection.suggestions) {
+    const list = suggestionsByStructure.get(s.structureKey) ?? [];
+    list.push(s);
+    suggestionsByStructure.set(s.structureKey, list);
+  }
+
+  // Build structure groups for structures that have suggestions
+  const structureKeys = [...new Set(projection.suggestions.map(s => s.structureKey))];
+  const structureGroups: OperativeNeedsStructureGroup[] = structureKeys.map(key => {
+    const cov = coverageByKey.get(key);
+    const items = suggestionsByStructure.get(key) ?? [];
+    let suggestedUnits = 0;
+    for (const it of items) suggestedUnits += it.units;
+    const requiredUnits = cov?.unitRule.deficitToIdeal ?? suggestedUnits;
+    const diff = requiredUnits - suggestedUnits;
+    const pending = diff > 0 ? diff : 0;
+    return {
+      structureKey: key,
+      label: cov?.label ?? key,
+      line: cov?.line ?? "",
+      requiredText: fmtInt(requiredUnits),
+      suggestedText: fmtInt(suggestedUnits),
+      pendingText: fmtInt(pending),
+      fullyCovered: pending === 0,
+      items: items.map(s => ({
+        referenceCode: s.referenceCode,
+        productName: s.productName,
+        unitsText: fmtInt(s.units),
+        typeLabel: CANDIDATE_TYPE_LABEL[s.candidateType] ?? s.candidateType,
+      })),
+    };
+  }).sort((a, b) => a.line.localeCompare(b.line) || a.label.localeCompare(b.label));
+
+  // Unassigned — human-readable
+  const unassigned: OperativeNeedsUnassignedItem[] = projection.unassigned.map(u => ({
+    structureLabel: u.label,
+    pendingText: fmtInt(u.pendingUnits),
+    cause: UNASSIGNED_HUMAN_CAUSE[u.code] ?? u.code,
+    technicalDetail: u.detail,
+    engineReason: u.engineReason,
+  }));
+
+  // Withdrawals
+  const withdrawals = store.needs.needs
+    .filter(n => n.action === "RETIRO")
+    .map(n => ({ structureKey: n.structureKey, label: n.label, unitsText: fmtInt(n.requiredUnits) }));
+
+  const coveredCount = structureGroups.filter(g => g.fullyCovered).length;
+  const pendingCount = structureGroups.length - coveredCount + unassigned.length;
+
+  return {
+    storeId,
+    structureGroups,
+    totalStructuresText: fmtInt(structureGroups.length + unassigned.length),
+    coveredStructuresText: fmtInt(coveredCount),
+    pendingStructuresText: fmtInt(pendingCount),
+    totalSuggestedText: fmtInt(projection.totals.suggestedUnits),
+    totalPendingText: fmtInt(projection.totals.unassignedPendingUnits),
+    unassigned,
+    withdrawals,
+    hasSuggestions: projection.suggestions.length > 0,
+  };
+}
+
 export interface ReplenishmentPresentation {
   readonly storeSummaries: readonly {
     readonly storeId: string;

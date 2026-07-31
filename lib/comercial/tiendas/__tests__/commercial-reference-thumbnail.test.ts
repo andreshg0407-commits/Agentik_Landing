@@ -77,18 +77,16 @@ describe("consumidores — prop unificada referenceCode=", () => {
   });
 
   it("wholesale-order-wizard: usa referenceCode=", () => {
-    const usages = [...WIZARD.matchAll(/CommercialReferenceThumbnail[^>]*>/gs)];
+    const usages = [...WIZARD.matchAll(/CommercialReferenceThumbnail[\s\S]*?>/g)];
     assert.ok(usages.length >= 5);
     for (const m of usages) {
       assert.ok(!m[0].includes(" reference="), `uso legacy en wizard: ${m[0].slice(0, 80)}`);
     }
   });
 
-  it("el drawer de necesidades (linea ~2590) incluye description", () => {
-    // The needs suggestions thumbnail must have description=
-    const idx = CLIENT.indexOf("referenceCode={s.referenceCode}");
-    assert.ok(idx > 0, "no encontrado referenceCode={s.referenceCode}");
-    const nearby = CLIENT.slice(idx, idx + 200);
-    assert.ok(nearby.includes("description="), "falta description= en needs suggestions thumbnail");
+  it("el drawer de necesidades incluye description en thumbnails", () => {
+    // The operative needs suggestions thumbnail must have description=
+    const idx = CLIENT.indexOf("referenceCode={item.referenceCode} imageUrl={null} description={item.productName}");
+    assert.ok(idx > 0, "no encontrado thumbnail con referenceCode/description en needs tab");
   });
 });
