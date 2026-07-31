@@ -85,6 +85,8 @@ import { getStoreDerroteroCoverage, getAllStoresDerroteroCoverageSummary } from 
 import { buildStoreDerroteroFromSalesPortfolioDerrotero } from "@/lib/comercial/tiendas/store-derrotero-adapter";
 import { loadCertifiedStoreIntelligence } from "@/lib/comercial/tiendas/store-certified-intelligence-service";
 
+export const maxDuration = 60;
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ orgSlug: string }> },
