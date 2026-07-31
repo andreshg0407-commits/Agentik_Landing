@@ -15,8 +15,6 @@ import { OperationalSideDrawer } from "@/components/workspace/operational-side-d
 import { CommercialReferenceThumbnail } from "@/components/comercial/commercial-reference-thumbnail";
 import { C, T, S, R, panel, panelHeader } from "@/lib/ui/tokens";
 import type {
-  CanonicalStoreDistribution,
-  CanonicalStoreCard,
   StoreDistributionItem,
   StoreDistributionAction,
   CanonicalStoreDetail,
@@ -26,8 +24,20 @@ import type {
   EffectiveScarcityConfig,
   RuleImpactPreview,
   ReplacementResult,
-  StoreDistributionHealthStatus,
 } from "@/lib/comercial/tiendas/store-distribution-types";
+// ── AGENTIK-STORES-TRUTH-AUDIT-01 · F3A: fuente única de verdad ──
+// La pantalla lee EXCLUSIVAMENTE el StoreSnapshot (una llamada de estado) y
+// proyecta con el PresentationAssembler. Cero recálculo de KPIs/cobertura/
+// necesidades/plan en el cliente; cero umbrales locales.
+import type { StoreSnapshot } from "@/lib/comercial/tiendas/store-snapshot-pipeline";
+import {
+  buildDashboardPresentation,
+  buildCoverageTabPresentation,
+  buildNeedsTabPresentation,
+  type DashboardPresentation,
+  type PresentationStoreCard,
+  type PresentationTone,
+} from "@/lib/comercial/tiendas/store-presentation-assembler";
 import { ACTIVE_STORE_SLUGS } from "@/lib/comercial/tiendas/store-distribution-types";
 import type { StoreGovernanceRecord } from "@/lib/comercial/tiendas/store-governance-types";
 import { StoreSupplyRulesTab } from "@/components/comercial/store-supply-rules-tab";
@@ -181,13 +191,18 @@ async function tiendaApi(orgSlug: string, body: Record<string, unknown>) {
 // ── Main component (STABILIZATION-PERFORMANCE-01) ────────────────────────────
 
 export function TiendasClient({ orgSlug }: Props) {
-  // ── Distribution cards (PRIMERO — 4 operational stores) ───────────────────
-  const [distribution, setDistribution] = useState<CanonicalStoreDistribution | null>(null);
+  // ── StoreSnapshot — ÚNICA fuente de verdad del módulo (F3A) ───────────────
+  const [snapshot, setSnapshot] = useState<StoreSnapshot | null>(null);
   const [distLoading, setDistLoading]   = useState(true);
   const [distError, setDistError]       = useState(false);
+  const dash: DashboardPresentation | null = useMemo(
+    () => (snapshot ? buildDashboardPresentation(snapshot) : null),
+    [snapshot],
+  );
 
   // ── Drawer state (QUINTO — lazy per-store loading) ──────────────────────
-  const [selectedStoreCard, setSelectedStoreCard] = useState<CanonicalStoreCard | null>(null);
+  const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
+  const [activeGov, setActiveGov] = useState<StoreGovernanceRecord[]>([]);
 
   // ── Governance: inactive stores (GOVERNANCE-01) ──────────────────────────
   const [inactiveStores, setInactiveStores] = useState<StoreGovernanceRecord[]>([]);
@@ -210,17 +225,17 @@ export function TiendasClient({ orgSlug }: Props) {
   // ── TERCERO: Load distribution + governance permission on mount ───────────
   useEffect(() => {
     let cancelled = false;
-    async function loadDistribution() {
+    async function loadSnapshot() {
       setDistLoading(true);
       setDistError(false);
       try {
         const res = await fetch(`/api/orgs/${orgSlug}/comercial/tiendas`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "store_distribution" }),
+          body: JSON.stringify({ action: "get_store_snapshot" }),
         });
         const data = await res.json();
-        if (!cancelled && data.distribution) setDistribution(data.distribution);
+        if (!cancelled && data.snapshot) setSnapshot(data.snapshot);
         else if (!cancelled) setDistError(true);
       } catch {
         if (!cancelled) setDistError(true);
@@ -238,36 +253,37 @@ export function TiendasClient({ orgSlug }: Props) {
         if (!cancelled) {
           setCanManageGov(data.canManage ?? false);
           setInactiveStores(data.inactive ?? []);
+          setActiveGov(data.active ?? []);
           setInactiveLoaded(true);
         }
       } catch { /* silent */ }
     }
-    loadDistribution();
+    loadSnapshot();
     loadGovernancePermission();
     return () => { cancelled = true; };
   }, [orgSlug]);
 
-  // ── QUINTO: Open store drawer (lazy — detail loaded by drawer on demand) ──
-  function openStoreDrawer(card: CanonicalStoreCard) {
-    setSelectedStoreCard(card);
+  // ── QUINTO: Open store drawer (lazy — tabs proyectan el snapshot) ──
+  function openStoreDrawer(storeId: string) {
+    setSelectedStoreId(storeId);
   }
 
   function closeDrawer() {
-    setSelectedStoreCard(null);
+    setSelectedStoreId(null);
   }
 
-  // ── Retry distribution load ──────────────────────────────────────────────
+  // ── Retry snapshot load ──────────────────────────────────────────────────
   function retryDistribution() {
     setDistLoading(true);
     setDistError(false);
     fetch(`/api/orgs/${orgSlug}/comercial/tiendas`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "store_distribution" }),
+      body: JSON.stringify({ action: "get_store_snapshot" }),
     })
       .then(r => r.json())
       .then(data => {
-        if (data.distribution) setDistribution(data.distribution);
+        if (data.snapshot) setSnapshot(data.snapshot);
         else setDistError(true);
       })
       .catch(() => setDistError(true))
@@ -334,11 +350,9 @@ export function TiendasClient({ orgSlug }: Props) {
     setGovReason("");
   }
 
-  // ── Derived: overall status from distribution ──────────────────────────────
-  const overallStatus = distribution
-    ? (distribution.stores.some(c => c.coveragePercent >= 0 && c.coveragePercent < 70) ? "critical" as const
-      : distribution.stores.some(c => c.shortageUnits > 0 || c.excessItems > 0) ? "warning" as const
-      : "ok" as const)
+  // ── Estado global del header — 1:1 desde los hints del snapshot (F3A) ──────
+  const overallStatus = snapshot
+    ? (snapshot.presentationHints.requierenAtencion === "ALERTA" ? "warning" as const : "ok" as const)
     : "ok" as const;
 
   return (
@@ -351,7 +365,7 @@ export function TiendasClient({ orgSlug }: Props) {
         title="Tiendas"
         subtitle="Controla surtido, faltantes y transferencias sugeridas por tienda."
         status={overallStatus}
-        statusLabel={distribution ? `${distribution.kpis.tiendasActivas} tiendas operativas` : "Cargando..."}
+        statusLabel={snapshot ? `${snapshot.moduleKpis.tiendasActivas} tiendas operativas` : "Cargando..."}
       />
 
       {/* Feedback messages */}
@@ -365,8 +379,8 @@ export function TiendasClient({ orgSlug }: Props) {
         </div>
       )}
 
-      {/* Data source pill */}
-      {distribution && (
+      {/* Data source pill — frescura HONESTA del snapshot (C1/C2 del diccionario) */}
+      {snapshot && (
         <div style={{ display: "flex", marginBottom: S[4], alignItems: "center" }}>
           <span style={{
             fontFamily: T.mono, fontSize: T.sz["2xs"], marginLeft: "auto",
@@ -374,7 +388,7 @@ export function TiendasClient({ orgSlug }: Props) {
             background: C.greenLight, color: C.green,
             border: `1px solid ${C.greenBorder}`,
           }}>
-            Datos persistidos · {distribution.lastSyncAt ? formatTimeAgo(distribution.lastSyncAt) : "sin sync"}
+            Dato real · {snapshot.dataAsOf ? formatTimeAgo(snapshot.dataAsOf) : "sin sync"}
           </span>
         </div>
       )}
@@ -382,7 +396,7 @@ export function TiendasClient({ orgSlug }: Props) {
       {/* PRIMERO — 4 operational store cards */}
       <>
           {/* TERCERO — Skeleton while distribution loads */}
-          {distLoading && !distribution && (
+          {distLoading && !snapshot && (
             <div style={{ display: "flex", flexDirection: "column", gap: S[4] }}>
               {/* KPI skeleton */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: S[3] }}>
@@ -401,7 +415,7 @@ export function TiendasClient({ orgSlug }: Props) {
           )}
 
           {/* Error state */}
-          {distError && !distribution && !distLoading && (
+          {distError && !snapshot && !distLoading && (
             <div style={{
               ...panel, padding: S[6], textAlign: "center",
               background: C.redLight, borderColor: C.redBorder,
@@ -426,39 +440,31 @@ export function TiendasClient({ orgSlug }: Props) {
             </div>
           )}
 
-          {/* Loaded — KPIs + 4 store cards */}
-          {distribution && (() => {
-            const requierenAtencion = distribution.stores.filter(c =>
-              c.coveragePercent < 90 || c.criticalNeeds > 0 || c.excessItems > 0
-            ).length;
-            const totalShortageUnits = distribution.stores.reduce((sum, c) => sum + c.shortageUnits, 0);
-            const coberturaPromedio = distribution.stores.length > 0
-              ? Math.round(distribution.stores.reduce((sum, c) => sum + (c.coveragePercent >= 0 ? c.coveragePercent : 0), 0) / distribution.stores.length)
-              : 0;
-
+          {/* Loaded — KPIs + store cards, TODO proyectado por el PresentationAssembler */}
+          {snapshot && dash && (() => {
             return (
             <div style={{ display: "flex", flexDirection: "column", gap: S[4] }}>
-              {/* KPI strip */}
+              {/* KPI strip — valores VERBATIM del snapshot, tonos del PA */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: S[3] }}>
-                <DistKpiCard label="Tiendas activas" value={String(distribution.kpis.tiendasActivas)} color={C.blueDark} />
-                <DistKpiCard label="Requieren atencion" value={String(requierenAtencion)} color={requierenAtencion > 0 ? C.red : C.green} />
-                <DistKpiCard label="Unidades por surtir" value={totalShortageUnits > 0 ? `${totalShortageUnits.toLocaleString()} uds` : "\u2014"} color={totalShortageUnits > 0 ? C.blueDark : C.green} />
-                <DistKpiCard label="Cobertura promedio" value={`${coberturaPromedio}%`} color={coberturaPromedio >= 90 ? C.green : coberturaPromedio >= 70 ? C.amber : C.red} />
+                {dash.kpiCards.map(k => (
+                  <DistKpiCard key={k.key} label={k.label} value={k.value} color={TONE_COLOR[k.tone]} />
+                ))}
               </div>
 
-              {/* 4 operational store cards — fixed 2×2 grid */}
+              {/* Store cards — fixed 2×2 grid */}
               <div style={{
                 display: "grid",
                 gridTemplateColumns: "1fr 1fr",
                 gap: S[4],
               }}>
-                {distribution.stores.map(card => (
+                {dash.storeCards.map(card => (
                   <OperationalStoreCard
-                    key={card.store.id}
+                    key={card.storeId}
                     card={card}
-                    onOpen={() => openStoreDrawer(card)}
+                    meta={activeGov.find(g => g.storeId === card.storeId)}
+                    onOpen={() => openStoreDrawer(card.storeId)}
                     canDeactivate={canManageGov}
-                    onDeactivate={() => setGovConfirm({ action: "deactivate", storeId: card.store.id, storeName: card.store.name })}
+                    onDeactivate={() => setGovConfirm({ action: "deactivate", storeId: card.storeId, storeName: card.title })}
                   />
                 ))}
               </div>
@@ -466,8 +472,8 @@ export function TiendasClient({ orgSlug }: Props) {
               {/* Intelligence disclaimer (OCTAVO) */}
               <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span>La inteligencia del modulo utiliza unicamente las tiendas activas.</span>
-                {distribution.computedAt && (
-                  <span>Computado: {formatTimeAgo(distribution.computedAt)}</span>
+                {snapshot.generatedAt && (
+                  <span>Corrida: {formatTimeAgo(snapshot.generatedAt)}</span>
                 )}
               </div>
 
@@ -635,11 +641,23 @@ export function TiendasClient({ orgSlug }: Props) {
             </div>
           )}
 
-          {/* QUINTO — Store drawer */}
-          {selectedStoreCard && (
+          {/* QUINTO — Store drawer (proyecta el MISMO snapshot: cache compartida, T8) */}
+          {selectedStoreId && snapshot && dash && (
             <DistributionStoreDrawer
               orgSlug={orgSlug}
-              storeCard={selectedStoreCard}
+              snapshot={snapshot}
+              storeCard={{
+                store: {
+                  id: selectedStoreId,
+                  name: dash.storeCards.find(c => c.storeId === selectedStoreId)?.title ?? selectedStoreId,
+                  sagWarehouseCode: activeGov.find(g => g.storeId === selectedStoreId)?.sagWarehouseCode ?? "",
+                  city: activeGov.find(g => g.storeId === selectedStoreId)?.city ?? "",
+                },
+                coverageText: dash.storeCards.find(c => c.storeId === selectedStoreId)?.coverageText ?? "\u2014",
+                healthLabel: dash.storeCards.find(c => c.storeId === selectedStoreId)?.healthBadge.label ?? "",
+                healthTone: dash.storeCards.find(c => c.storeId === selectedStoreId)?.healthBadge.tone ?? "neutral",
+                subtitle: dash.storeCards.find(c => c.storeId === selectedStoreId)?.subtitle ?? "",
+              }}
               onClose={closeDrawer}
             />
           )}
@@ -650,29 +668,20 @@ export function TiendasClient({ orgSlug }: Props) {
 
 // ── Operational Store Card (SÉPTIMO — STABILIZATION-PERFORMANCE-01) ──────────
 
-function OperationalStoreCard({ card, onOpen, canDeactivate, onDeactivate }: {
-  card: CanonicalStoreCard;
+function OperationalStoreCard({ card, meta, onOpen, canDeactivate, onDeactivate }: {
+  card: PresentationStoreCard;
+  meta?: StoreGovernanceRecord;
   onOpen: () => void;
   canDeactivate?: boolean;
   onDeactivate?: () => void;
 }) {
-  const { store } = card;
-  const healthColor = DIST_HEALTH_COLOR[card.healthStatus];
-  const healthLabel = DIST_HEALTH_LABEL[card.healthStatus];
-
-  // CUARTO — coverage-based visual state
-  const covColor = card.coveragePercent >= 90 ? C.green
-    : card.coveragePercent >= 70 ? C.amber : C.red;
-
-  // QUINTO — automatic action recommendation
-  const actionText = card.shortageUnits > 0 && card.excessItems > 0
-    ? `Surtir ${card.shortageUnits.toLocaleString()} uds · Redistribuir ${card.excessItems} refs`
-    : card.shortageUnits > 0
-    ? `Surtir ${card.shortageUnits.toLocaleString()} unidades`
-    : card.excessItems > 0
-    ? `Redistribuir ${card.excessItems} referencias`
-    : "Sin acciones pendientes";
-  const actionColor = card.shortageUnits > 0 ? C.red : card.excessItems > 0 ? C.amber : C.green;
+  // F3A: colores, badges y textos vienen del PresentationAssembler — el
+  // cliente no compara, no suma y no posee umbrales (guardián T3).
+  const healthColor = TONE_BADGE[card.healthBadge.tone];
+  const healthLabel = card.healthBadge.label;
+  const covColor = TONE_COLOR[card.coverageTone];
+  const actionText = card.actionText;
+  const actionColor = TONE_COLOR[card.coverageTone];
 
   return (
     <div style={{
@@ -682,7 +691,7 @@ function OperationalStoreCard({ card, onOpen, canDeactivate, onDeactivate }: {
       <div style={{ ...panelHeader, flexDirection: "column", alignItems: "stretch", gap: S[1] }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: C.ink }}>
-            {store.name}
+            {card.title}
           </div>
           {/* Health badge */}
           <div style={{
@@ -697,7 +706,7 @@ function OperationalStoreCard({ card, onOpen, canDeactivate, onDeactivate }: {
           </div>
         </div>
         <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight }}>
-          Bodega SAG: {store.sagWarehouseCode}{store.city ? ` · ${store.city}` : ""}
+          {meta ? `Bodega SAG: ${meta.sagWarehouseCode}${meta.city ? ` · ${meta.city}` : ""}` : "\u00A0"}
         </div>
       </div>
 
@@ -709,16 +718,16 @@ function OperationalStoreCard({ card, onOpen, canDeactivate, onDeactivate }: {
           <span style={{
             fontFamily: T.mono, fontSize: T.sz.xl, fontWeight: T.wt.bold, color: covColor,
           }}>
-            {card.coveragePercent >= 0 ? `${card.coveragePercent}%` : "\u2014"}
+            {card.coverageText}
           </span>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
-          <MetricBox label="Referencias" value={card.totalReferences} color={C.ink} suffix=" refs" />
-          <MetricBox label="Unidades" value={card.totalUnits} color={C.ink} suffix=" uds" />
+          <TextMetricBox label="Por surtir" value={`${card.stats.shortageUnits} uds`} color={C.red} />
+          <TextMetricBox label="Por retirar" value={`${card.stats.withdrawalUnits} uds`} color={C.amber} />
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
-          <MetricBox label="Faltantes" value={card.shortageUnits > 0 ? card.shortageUnits : null} color={C.red} suffix=" uds" />
-          <MetricBox label="Excesos" value={card.excessItems > 0 ? card.excessItems : null} color={C.amber} suffix=" refs" />
+          <TextMetricBox label="Estructuras criticas" value={card.stats.criticalStructures} color={C.red} />
+          <TextMetricBox label="Estructuras con exceso" value={card.stats.excessStructures} color={C.amber} />
         </div>
       </div>
 
@@ -744,6 +753,18 @@ function OperationalStoreCard({ card, onOpen, canDeactivate, onDeactivate }: {
 }
 
 // ── Metric box ───────────────────────────────────────────────────────────────
+
+function TextMetricBox({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <div style={{
+      background: C.surface, border: `1px solid ${C.lineSubtle}`,
+      borderRadius: R.sm, padding: `${S[1]}px ${S[2]}px`,
+    }}>
+      <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>{label}</div>
+      <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color }}>{value}</div>
+    </div>
+  );
+}
 
 function MetricBox({ label, value, color, suffix }: { label: string; value: number | null; color: string; suffix: string }) {
   return (
@@ -1545,18 +1566,18 @@ function classifyItemDomain(item: StoreDistributionItem): DistDomainFilter {
   return "acc_large";
 }
 
-// SÉPTIMO — Health color for distribution cards
-const DIST_HEALTH_COLOR: Record<StoreDistributionHealthStatus, { bg: string; text: string }> = {
-  ok:               { bg: C.greenLight, text: C.green },
-  requiere_surtido: { bg: C.amberLight, text: C.amber },
-  critica:          { bg: C.redLight,   text: C.red },
-  sin_reglas:       { bg: C.surface,    text: C.inkLight },
+// F3A — mapeo 1:1 tono del PA → color del design system (la UI no decide)
+const TONE_COLOR: Record<PresentationTone, string> = {
+  positive: C.green,
+  warning:  C.amber,
+  critical: C.red,
+  neutral:  C.blueDark,
 };
-const DIST_HEALTH_LABEL: Record<StoreDistributionHealthStatus, string> = {
-  ok:               "Saludable",
-  requiere_surtido: "Atencion",
-  critica:          "Prioridad",
-  sin_reglas:       "Sin reglas",
+const TONE_BADGE: Record<PresentationTone, { bg: string; text: string }> = {
+  positive: { bg: C.greenLight, text: C.green },
+  warning:  { bg: C.amberLight, text: C.amber },
+  critical: { bg: C.redLight,   text: C.red },
+  neutral:  { bg: C.surface,    text: C.inkLight },
 };
 
 // ── Inventory-by-line constants (AGENTIK-STORES-INVENTORY-BY-LINE-01) ────────
@@ -1921,18 +1942,26 @@ type DistDrawerTab = "inventario" | "necesidades" | "cobertura" | "descuentos" |
 
 function DistributionStoreDrawer({
   orgSlug,
+  snapshot,
   storeCard,
   onClose,
 }: {
   orgSlug: string;
-  storeCard: CanonicalStoreCard;
+  snapshot: StoreSnapshot;
+  storeCard: {
+    store: { id: string; name: string; sagWarehouseCode: string; city: string };
+    coverageText: string;
+    healthLabel: string;
+    healthTone: PresentationTone;
+    subtitle: string;
+  };
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<DistDrawerTab>("inventario");
   const [actionFilter, setActionFilter] = useState<StoreDistributionAction | "ALL">("ALL");
   const [domainFilter, setDomainFilter] = useState<DistDomainFilter>("ALL");
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
-  // expandedNeedRef / expandedVariantKey removed — replaced by ndExpandedRef (WAREHOUSE-FIRST-01)
+  // (estado WHF eliminado — F3A)
 
   // ── Lazy intelligence loading: only fetch when inteligencia tab is active ──
   // AGENTIK-STORES-CERTIFIED-SALES-MIGRATION-01: the uncertified
@@ -1981,251 +2010,18 @@ function DistributionStoreDrawer({
   const [invSortBy, setInvSortBy] = useState<InvSortBy>("QUANTITY_ASC");
   const [invKpiFilter, setInvKpiFilter] = useState<InvKpiFilter>("ALL");
 
-  // ── Warehouse-first needs state (AGENTIK-STORES-NEEDS-WAREHOUSE-FIRST-RESOLUTION-01) ──
-  type WHFLineUI = "CASTILLITOS" | "LATIN_KIDS" | "ACCESSORIES" | "UNCLASSIFIED";
-  type WHFSortByUI = "AVAILABLE_DESC" | "NEEDS_COUNT_DESC" | "URGENCY_DESC" | "REFERENCE_ASC";
-  type WHFRule36StatusUI = "ELEGIBLE_4_TIENDAS" | "SOLO_CENTRO_CALDAS" | "BLOQUEADA";
-  type WHFResolutionTypeUI = "REPOSICION" | "REEMPLAZO";
-  type WHFMatchTypeUI = "MISMA_REFERENCIA" | "MISMO_GRUPO_Y_SUBGRUPO" | "MISMO_SUBGRUPO" | "MISMO_SIZE_CLASS" | "MISMO_SUBGRUPO_Y_SIZE_CLASS";
-
-  interface WHFStoreNeedUI {
-    storeReference: string;
-    description: string;
-    imageUrl: string | null;
-    canonicalLine: string;
-    group: string;
-    subgroup: string;
-    sizeClass: string | null;
-    storeQty: number;
-    minUnits: number;
-    idealUnits: number;
-    maxUnits: number;
-    shortageQty: number;
-    matchType: WHFMatchTypeUI;
-    resolutionType: WHFResolutionTypeUI;
-    suggestedQty: number;
-    coveragePossible: number;
-    effectiveRule: EffectiveRuleClient;
-    ruleSource: string;
-  }
-
-  interface WHFWarehouseVariantUI {
-    size: string | null;
-    color: string | null;
-    availableQty: number;
-  }
-
-  interface WHFWarehouseRefUI {
-    warehouseReference: string;
-    description: string;
-    imageUrl: string | null;
-    canonicalLine: string;
-    group: string;
-    subgroup: string;
-    sizeClass: string | null;
-    warehouseId: string;
-    commercialAvailableQty: number;
-    totalSuggestedQty: number;
-    needsResolvable: number;
-    rule36Status: WHFRule36StatusUI;
-    resolutionType: WHFResolutionTypeUI;
-    positiveVariants: WHFWarehouseVariantUI[];
-    snapshotAt: string;
-    storeNeeds: WHFStoreNeedUI[];
-  }
-
-  interface WHFNoSolutionItemUI {
-    storeReference: string;
-    description: string;
-    imageUrl: string | null;
-    canonicalLine: string;
-    group: string;
-    subgroup: string;
-    sizeClass: string | null;
-    storeQty: number;
-    minUnits: number;
-    idealUnits: number;
-    shortageQty: number;
-    reason: string;
-    effectiveRule: EffectiveRuleClient;
-  }
-
-  interface WHFSummaryUI {
-    availableForSupply: number;
-    totalSuggestedUnits: number;
-    sameRefReplenishments: number;
-    replacements: number;
-    noSolution: number;
-  }
-
-  interface WHFResponseUI {
-    line: string;
-    summary: WHFSummaryUI;
-    items: WHFWarehouseRefUI[];
-    noSolutionItems: WHFNoSolutionItemUI[];
-    pagination: { page: number; pageSize: number; total: number; totalPages: number };
-    lineCounts: { line: WHFLineUI; count: number }[];
-    dataFreshness: string | null;
-  }
-
-  const [ndLine, setNdLine] = useState<WHFLineUI>("CASTILLITOS");
-  const [ndData, setNdData] = useState<WHFResponseUI | null>(null);
-  const [ndLoading, setNdLoading] = useState(false);
-  const [ndError, setNdError] = useState<string | null>(null);
-  const [ndSortBy, setNdSortBy] = useState<WHFSortByUI>("URGENCY_DESC");
-  const [ndSearch, setNdSearch] = useState("");
-  const [ndSearchDebounced, setNdSearchDebounced] = useState("");
-  const [ndPage, setNdPage] = useState(1);
-  const [ndExpandedRef, setNdExpandedRef] = useState<string | null>(null);
-  const [ndShowNoSolution, setNdShowNoSolution] = useState(false);
-  const [ndInitialLineSet, setNdInitialLineSet] = useState(false);
-
-  // ── NEEDS-TAB-PLAN-ALIGNMENT-01: "no asignadas" viene del plan certificado
-  // del Sprint 6 (fuente única) — la UI no reconstruye lógica localmente.
-  const [ndUnassigned, setNdUnassigned] = useState<import("@/lib/comercial/tiendas/store-unit-needs-presentation").StoreNeedsTabPresentation | null>(null);
-  const [ndUnassignedLoading, setNdUnassignedLoading] = useState(false);
-
-  useEffect(() => {
-    if (tab !== "necesidades") return;
-    let cancelled = false;
-    setNdUnassignedLoading(true);
-    Promise.all([
-      tiendaApi(orgSlug, { action: "store_replenishment_plan" }),
-      tiendaApi(orgSlug, { action: "store_unit_needs", storeId: storeCard.store.id }),
-    ])
-      .then(async ([planRes, needsRes]: any[]) => {
-        if (cancelled) return;
-        if (!planRes?.plan || !needsRes?.unitNeeds) { setNdUnassigned(null); return; }
-        const { buildStoreNeedsTabPresentation } = await import("@/lib/comercial/tiendas/store-unit-needs-presentation");
-        setNdUnassigned(buildStoreNeedsTabPresentation(planRes.plan, needsRes.unitNeeds));
-      })
-      .catch(() => { if (!cancelled) setNdUnassigned(null); })
-      .finally(() => { if (!cancelled) setNdUnassignedLoading(false); });
-    return () => { cancelled = true; };
-  }, [tab, storeCard.store.id, orgSlug]);
-
-  // ── Coverage state (AGENTIK-STORES-COVERAGE-TAB-01 — Two-Dimension) ────
-  type CoverageLineName = "CASTILLITOS" | "LATIN_KIDS" | "ACCESORIOS";
-  type StructuralCoverageStatus = "CUBIERTA" | "SIN_COBERTURA";
-  type QuantitativeHealthStatus = "SALUDABLE" | "CON_REFERENCIAS_BAJO_MINIMO" | "SIN_REFERENCIAS";
-  type ReferenceHealthState = "BAJO_MINIMO" | "SALUDABLE" | "SOBRE_MAXIMO";
-  type CoverageCandidateType = "REPOSICION_MISMA_REFERENCIA" | "COMPLEMENTO_REFERENCIA_COMPATIBLE" | "REFERENCIA_NUEVA_COMPATIBLE";
-  type CoverageStatusFilter = "ALL" | "SIN_COBERTURA" | "CON_REFERENCIAS_BAJO_MINIMO" | "SALUDABLE";
-
-  interface SolutionSummary {
-    sameReferenceCandidates: number;
-    compatibleReferenceCandidates: number;
-    eligibleCandidates: number;
-    blockedCandidates: number;
-    totalWarehouseUnits: number;
-  }
-
-  interface CoverageStructure {
-    structureKey: string;
-    label: string;
-    groupLabel: string | null;
-    subgroupLabel: string;
-    line: CoverageLineName;
-    structuralCoverageStatus: StructuralCoverageStatus;
-    activeReferenceCount: number;
-    totalStoreUnits: number;
-    healthyReferenceCount: number;
-    belowMinimumReferenceCount: number;
-    overMaximumReferenceCount: number;
-    minimumUnits: number;
-    targetUnits: number;
-    maximumUnits: number | null;
-    totalShortageToTarget: number;
-    totalShortageToMinimum: number;
-    quantitativeHealthStatus: QuantitativeHealthStatus;
-    priority: number;
-    solutionSummary: SolutionSummary | null;
-  }
-
-  interface CoverageLineSummary {
-    line: CoverageLineName;
-    expected: number;
-    covered: number;
-    withBelowMinimum: number;
-    gaps: number;
-    coveragePercent: number;
-    healthPercent: number;
-  }
-
-  interface CoverageResponse {
-    storeId: string;
-    storeName: string;
-    totalExpected: number;
-    totalCovered: number;
-    totalWithBelowMinimum: number;
-    totalGaps: number;
-    overallCoveragePercent: number;
-    overallHealthPercent: number;
-    lineSummaries: CoverageLineSummary[];
-    structures: CoverageStructure[];
-    computedAt: string;
-  }
-
-  /** Derive display state from two-dimension model */
-  const covDisplayState = (s: CoverageStructure): "SIN_COBERTURA" | "CON_REFERENCIAS_BAJO_MINIMO" | "SALUDABLE" => {
-    if (s.structuralCoverageStatus === "SIN_COBERTURA") return "SIN_COBERTURA";
-    if (s.quantitativeHealthStatus === "CON_REFERENCIAS_BAJO_MINIMO") return "CON_REFERENCIAS_BAJO_MINIMO";
-    return "SALUDABLE";
-  };
-
-  const [covData, setCovData] = useState<CoverageResponse | null>(null);
-  const [covLoading, setCovLoading] = useState(false);
-  const [covLoaded, setCovLoaded] = useState(false);
-  const [covLine, setCovLine] = useState<CoverageLineName | "ALL">("ALL");
-  const [covStatusFilter, setCovStatusFilter] = useState<CoverageStatusFilter>("ALL");
-
-  // Candidate expansion state
-  type CoverageCandidateRule36 = "ELEGIBLE_CUATRO_TIENDAS" | "BLOQUEADA";
-  interface CoverageCandidateVariant {
-    size: string;
-    color: string;
-    qty: number;
-  }
-  interface CoverageCandidate {
-    referenceCode: string;
-    productName: string;
-    imageUrl: string | null;
-    mainWarehouseStock: number;
-    variantCount: number;
-    variants: CoverageCandidateVariant[];
-    alreadyPresentInStore: boolean;
-    storeQty: number;
-    rule36Status: CoverageCandidateRule36;
-    candidateType: CoverageCandidateType;
-  }
-  interface CoverageActiveRef {
-    referenceCode: string;
-    productName: string;
-    imageUrl: string | null;
-    storeQty: number;
-    activeVariants: number;
-    minimumUnits: number;
-    targetUnits: number;
-    maximumUnits: number;
-    referenceShortageToTarget: number;
-    referenceState: ReferenceHealthState;
-  }
-  interface CoverageCandidatesResult {
-    structureKey: string;
-    line: CoverageLineName;
-    label: string;
-    structuralCoverageStatus: StructuralCoverageStatus;
-    quantitativeHealthStatus: QuantitativeHealthStatus;
-    totalCompatible: number;
-    activeStoreRefs: CoverageActiveRef[];
-    eligible: CoverageCandidate[];
-    blocked: CoverageCandidate[];
-    solutionSummary: SolutionSummary;
-    computedAt: string;
-  }
-  const [covExpandedKey, setCovExpandedKey] = useState<string | null>(null);
-  const [covCandidates, setCovCandidates] = useState<Record<string, CoverageCandidatesResult>>({});
-  const [covCandidateLoading, setCovCandidateLoading] = useState<string | null>(null);
+  // ── F3A: Necesidades y Cobertura proyectan el MISMO snapshot (T8: cache
+  // compartida — cero fetch de estado adicional; T2: cero acciones legacy).
+  const needsPres = useMemo(
+    () => buildNeedsTabPresentation(snapshot, storeCard.store.id),
+    [snapshot, storeCard.store.id],
+  );
+  const covPres = useMemo(
+    () => buildCoverageTabPresentation(snapshot, storeCard.store.id),
+    [snapshot, storeCard.store.id],
+  );
+  // Filtro VISUAL de línea (jamás invalida ni refetch — T9)
+  const [covLine, setCovLine] = useState<string>("ALL");
 
   // ── Discount state (AGENTIK-STORES-DISCOUNTS-TAB-01) ───────────────────
   const [discData, setDiscData] = useState<StoreDiscountResponse | null>(null);
@@ -2257,21 +2053,7 @@ function DistributionStoreDrawer({
     return () => { cancelled = true; };
   }, [tab, storeCard.store.id, orgSlug, discLoaded]);
 
-  // Lazy load coverage when tab is active
-  useEffect(() => {
-    if (tab !== "cobertura" || covLoaded) return;
-    let cancelled = false;
-    setCovLoading(true);
-    tiendaApi(orgSlug, { action: "store_coverage", storeId: storeCard.store.id })
-      .then((data: { coverage?: CoverageResponse }) => {
-        if (cancelled) return;
-        if (data.coverage) setCovData(data.coverage);
-        setCovLoaded(true);
-      })
-      .catch(() => { if (!cancelled) setCovLoaded(true); })
-      .finally(() => { if (!cancelled) setCovLoading(false); });
-    return () => { cancelled = true; };
-  }, [tab, storeCard.store.id, orgSlug, covLoaded]);
+  // (Efecto de coverage eliminado — F3A: el tab Cobertura proyecta el snapshot)
 
   // Reset state on store change
   useEffect(() => {
@@ -2297,25 +2079,8 @@ function DistributionStoreDrawer({
     setInvVariants({});
     setInvSortBy("QUANTITY_ASC");
     setInvKpiFilter("ALL");
-    // Reset needs state
-    setNdLine("CASTILLITOS");
-    setNdData(null);
-    setNdError(null);
-    setNdSortBy("URGENCY_DESC");
-    setNdSearch("");
-    setNdSearchDebounced("");
-    setNdPage(1);
-    setNdExpandedRef(null);
-    setNdShowNoSolution(false);
-    setNdInitialLineSet(false);
-    // Reset coverage state
-    setCovData(null);
-    setCovLoaded(false);
+    // Reset visual filters (F3A — Necesidades/Cobertura proyectan el snapshot)
     setCovLine("ALL");
-    setCovStatusFilter("ALL");
-    setCovExpandedKey(null);
-    setCovCandidates({});
-    setCovCandidateLoading(null);
     // Reset discount state
     setDiscData(null);
     setDiscLoaded(false);
@@ -2341,11 +2106,7 @@ function DistributionStoreDrawer({
         if (data.counts) {
           setInvLineCounts(data.counts);
           // Consistency check: if summary has references but all counts are 0, flag it
-          const totalCounted = data.counts.reduce((s: number, c: { count: number }) => s + c.count, 0);
-          if (totalCounted === 0 && storeCard.totalReferences > 0) {
-            console.warn("[INV-BY-LINE] inconsistency: summary has", storeCard.totalReferences, "refs but counts total 0");
-            setInvError("Inconsistencia: el resumen muestra referencias pero la clasificacion retorno 0. Intente recargar.");
-          }
+          // (chequeo de consistencia contra el resumen viejo eliminado — F3A)
         }
       })
       .catch((err: unknown) => {
@@ -2424,52 +2185,9 @@ function DistributionStoreDrawer({
   }
 
   // ── Load warehouse-first needs (AGENTIK-STORES-NEEDS-WAREHOUSE-FIRST-RESOLUTION-01) ─
-  useEffect(() => {
-    if (tab !== "necesidades") return;
-    let cancelled = false;
-    setNdLoading(true);
-    setNdError(null);
-    setNdExpandedRef(null);
-    tiendaApi(orgSlug, {
-      action: "store_warehouse_first_needs",
-      storeId: storeCard.store.id,
-      line: ndLine,
-      sortBy: ndSortBy,
-      search: ndSearchDebounced || undefined,
-      page: ndPage,
-      pageSize: 25,
-    })
-      .then((data: WHFResponseUI & { error?: string; code?: string }) => {
-        if (cancelled) return;
-        if (data.error) {
-          setNdError(data.code === "STORE_INACTIVE" ? "Tienda desactivada" : `Error: ${data.error}`);
-          return;
-        }
-        setNdData(data);
-        // Auto-select first line with needs on initial load
-        if (!ndInitialLineSet && data.lineCounts) {
-          setNdInitialLineSet(true);
-          const preferredOrder: WHFLineUI[] = ["CASTILLITOS", "LATIN_KIDS", "ACCESSORIES", "UNCLASSIFIED"];
-          const firstWithNeeds = preferredOrder.find(l => {
-            const lc = data.lineCounts.find(c => c.line === l);
-            return lc && lc.count > 0;
-          });
-          if (firstWithNeeds && firstWithNeeds !== ndLine) {
-            setNdLine(firstWithNeeds);
-            return;
-          }
-        }
-      })
-      .catch(() => { if (!cancelled) setNdError("Error de conexion al cargar necesidades"); })
-      .finally(() => { if (!cancelled) setNdLoading(false); });
-    return () => { cancelled = true; };
-  }, [tab, storeCard.store.id, orgSlug, ndLine, ndSortBy, ndSearchDebounced, ndPage]);
+  // (Efecto WHF eliminado — F3A: el tab Necesidades proyecta el snapshot)
 
-  // Debounce needs search
-  useEffect(() => {
-    const t = setTimeout(() => { setNdSearchDebounced(ndSearch); setNdPage(1); }, 300);
-    return () => clearTimeout(t);
-  }, [ndSearch]);
+// (Debounce de búsqueda WHF eliminado — F3A)
 
   // (Legacy detail/domainCounts/filteredItems/actionCounts removed — replaced by intelligence service)
 
@@ -2482,8 +2200,9 @@ function DistributionStoreDrawer({
     });
   }
 
-  const severity = storeCard.healthStatus === "critica" ? "critical" as const
-    : storeCard.healthStatus === "requiere_surtido" ? "warning" as const
+  // F3A: severidad = mapeo 1:1 del tono del PA (la UI no deriva estados)
+  const severity = storeCard.healthTone === "critical" ? "critical" as const
+    : storeCard.healthTone === "warning" ? "warning" as const
     : "info" as const;
 
   const tabItems: { key: DistDrawerTab; label: string }[] = [
@@ -2500,9 +2219,9 @@ function DistributionStoreDrawer({
       open
       onClose={onClose}
       title={storeCard.store.name}
-      subtitle={`${storeCard.totalReferences} refs · ${storeCard.totalUnits} uds · Cobertura ${storeCard.coveragePercent >= 0 ? `${storeCard.coveragePercent}%` : "\u2014"}`}
+      subtitle={storeCard.subtitle}
       severity={severity}
-      statusLabel={DIST_HEALTH_LABEL[storeCard.healthStatus]}
+      statusLabel={storeCard.healthLabel}
       size="wide"
     >
       {/* Tab strip */}
@@ -2820,857 +2539,221 @@ function DistributionStoreDrawer({
       {/* TAB: Necesidades — warehouse-first (AGENTIK-STORES-NEEDS-WAREHOUSE-FIRST-RESOLUTION-01) */}
       {tab === "necesidades" && (
         <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-          {/* Line navigation */}
-          {ndData?.lineCounts && (
-            <div style={{ display: "flex", gap: S[1], flexWrap: "wrap" }}>
-              {(["CASTILLITOS", "LATIN_KIDS", "ACCESSORIES", "UNCLASSIFIED"] as WHFLineUI[]).map(line => {
-                const lc = ndData.lineCounts.find(c => c.line === line);
-                const count = lc?.count ?? 0;
-                const active = ndLine === line;
-                const label = line === "CASTILLITOS" ? "Castillitos"
-                  : line === "LATIN_KIDS" ? "Latin Kids"
-                  : line === "ACCESSORIES" ? "Accesorios"
-                  : "Sin clasificar";
-                return (
-                  <button key={line} onClick={() => {
-                    setNdLine(line); setNdPage(1);
-                    setNdSearch(""); setNdSearchDebounced(""); setNdExpandedRef(null); setNdShowNoSolution(false);
-                  }} style={{
-                    fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                    padding: "4px 10px", borderRadius: R.sm, cursor: "pointer",
-                    border: `1px solid ${active ? C.blueDark : C.line}`,
-                    background: active ? C.blueDark : "transparent",
-                    color: active ? C.white : C.inkMid,
-                  }}>
-                    {label} ({count})
-                  </button>
-                );
-              })}
+          {/* F3A — FUENTE ÚNICA: proyección del StoreSnapshot (plan S6 + needs S5).
+              El motor paralelo de necesidades por referencia salió de esta pantalla. */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: S[2] }}>
+            <MiniStat label="Unidades sugeridas" value={`${needsPres.totals.suggestedUnitsText} uds`} color={C.blueDark} />
+            <MiniStat label="No asignadas" value={needsPres.totals.unassignedCountText} color={C.red} />
+            <MiniStat label="Pendientes sin asignar" value={`${needsPres.totals.unassignedPendingText} uds`} color={C.amber} />
+          </div>
+
+          {/* Sugerencias del plan certificado */}
+          <div style={{ ...panel }}>
+            <div style={{ ...panelHeader }}>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
+                Sugerencias de surtido (plan certificado)
+              </span>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginLeft: "auto" }}>
+                {needsPres.suggestions.length} sugerencias
+              </span>
             </div>
-          )}
-
-          {/* Loading */}
-          {ndLoading && !ndData && (
-            <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
-              {[1, 2, 3].map(n => (
-                <div key={n} style={{ height: 48, background: C.surface, borderRadius: R.sm, animation: "pulse 1.5s infinite" }} />
-              ))}
-            </div>
-          )}
-
-          {/* Error */}
-          {ndError && (
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.red, padding: `${S[4]}px 0`, textAlign: "center" }}>
-              {ndError}
-            </div>
-          )}
-
-          {ndData && (() => {
-            const { summary, items: whfItems, pagination } = ndData;
-            // NEEDS-TAB-PLAN-ALIGNMENT-01: las "no asignadas" salen del plan
-            // certificado (Allocation Engine), NUNCA de noSolutionItems locales
-            // (aquella lógica marcaba "sin solución" solo por faltar la misma
-            // referencia, ignorando sustitutos compatibles del subgrupo).
-            const unassigned = ndUnassigned?.unassigned ?? [];
-
-            if (summary.availableForSupply === 0 && unassigned.length === 0) return (
-              <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkFaint, padding: `${S[4]}px 0`, textAlign: "center" }}>
-                Sin necesidades pendientes en esta linea
+            {needsPres.suggestions.length === 0 ? (
+              <div style={{ padding: S[4], fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight }}>
+                Sin sugerencias del plan para esta tienda.
               </div>
-            );
-
-            const MATCH_LABEL: Record<WHFMatchTypeUI, string> = {
-              MISMA_REFERENCIA: "Misma ref",
-              MISMO_GRUPO_Y_SUBGRUPO: "Grupo+Subgrupo",
-              MISMO_SUBGRUPO: "Subgrupo",
-              MISMO_SIZE_CLASS: "Tamano",
-              MISMO_SUBGRUPO_Y_SIZE_CLASS: "Subgrupo+Tamano",
-            };
-
-            return (
-              <>
-                {/* KPIs — warehouse-first */}
-                <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
-                  {([
-                    { label: "Refs con stock", value: summary.availableForSupply, color: C.blueDark },
-                    { label: "Unidades sugeridas", value: summary.totalSuggestedUnits, color: C.green },
-                    { label: "Reposiciones", value: summary.sameRefReplenishments, color: C.blueDark },
-                    { label: "Reemplazos", value: summary.replacements, color: "#6366f1" },
-                    { label: "No asignadas", value: ndUnassignedLoading ? "…" : unassigned.length, color: C.red },
-                  ]).map(kpi => (
-                    <div key={kpi.label} style={{
-                      ...panel, padding: S[3], display: "flex", flexDirection: "column", gap: S[1],
-                    }}>
-                      <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase" as const }}>
-                        {kpi.label}
+            ) : (
+              <div style={{ padding: S[2] }}>
+                {needsPres.suggestions.map((s, i) => (
+                  <div key={`${s.structureKey}-${s.referenceCode}-${i}`} style={{
+                    display: "flex", alignItems: "center", gap: S[3],
+                    padding: `${S[2]}px ${S[2]}px`, borderBottom: `1px solid ${C.lineSubtle}`,
+                  }}>
+                    <CommercialReferenceThumbnail referenceCode={s.referenceCode} imageUrl={null} size={34} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
+                        {s.referenceCode} <span style={{ fontWeight: T.wt.normal, color: C.inkLight }}>{s.productName}</span>
                       </div>
-                      <div style={{ fontFamily: T.mono, fontSize: T.sz.xl, fontWeight: T.wt.bold, color: kpi.color }}>
-                        {kpi.value}
+                      <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
+                        {s.structureKey} · {s.typeLabel}
                       </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Search + Sort */}
-                <div style={{ display: "flex", gap: S[2], alignItems: "center" }}>
-                  <input
-                    type="text"
-                    placeholder="Buscar referencia bodega, necesidad tienda, grupo..."
-                    value={ndSearch}
-                    onChange={e => setNdSearch(e.target.value)}
-                    style={{
-                      flex: 1, fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "4px 8px",
-                      border: `1px solid ${C.line}`, borderRadius: R.sm, background: C.white, color: C.ink,
-                      outline: "none",
-                    }}
-                  />
-                  <select
-                    value={ndSortBy}
-                    onChange={e => { setNdSortBy(e.target.value as WHFSortByUI); setNdPage(1); }}
-                    style={{
-                      fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "4px 6px",
-                      border: `1px solid ${C.line}`, borderRadius: R.sm, background: C.white, color: C.ink,
-                    }}
-                  >
-                    <option value="URGENCY_DESC">Mayor urgencia</option>
-                    <option value="AVAILABLE_DESC">Mayor stock bodega</option>
-                    <option value="NEEDS_COUNT_DESC">Mas necesidades</option>
-                    <option value="REFERENCE_ASC">Referencia A-Z</option>
-                  </select>
-                </div>
-
-                {/* Loading overlay */}
-                {ndLoading && (
-                  <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textAlign: "center", padding: S[1] }}>
-                    Cargando...
-                  </div>
-                )}
-
-                {/* Warehouse-first items */}
-                <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                  {whfItems.map((whRef, idx) => {
-                    const isExpanded = ndExpandedRef === whRef.warehouseReference;
-                    const resColor = whRef.resolutionType === "REPOSICION"
-                      ? { bg: `${C.blueDark}18`, text: C.blueDark, label: "Reposicion" }
-                      : { bg: "#6366f118", text: "#6366f1", label: "Reemplazo" };
-                    const rule36Label = whRef.rule36Status === "SOLO_CENTRO_CALDAS" ? "R36: Centro+Caldas" : null;
-
-                    return (
-                      <div key={idx} style={{ borderBottom: `1px solid ${C.line}` }}>
-                        {/* Primary row: warehouse reference */}
-                        <div
-                          onClick={() => setNdExpandedRef(isExpanded ? null : whRef.warehouseReference)}
-                          style={{ display: "flex", alignItems: "center", gap: S[2], padding: `${S[2]}px`, cursor: "pointer", background: isExpanded ? C.blueLight : "transparent" }}
-                        >
-                          <CommercialReferenceThumbnail imageUrl={whRef.imageUrl} reference={whRef.warehouseReference} description={whRef.description} size={32} />
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
-                              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink }}>{whRef.warehouseReference}</span>
-                              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, padding: "1px 6px", borderRadius: R.pill, background: resColor.bg, color: resColor.text }}>
-                                {resColor.label}
-                              </span>
-                              {rule36Label && (
-                                <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "1px 5px", borderRadius: R.pill, background: `${C.amber}20`, color: C.amber }}>
-                                  {rule36Label}
-                                </span>
-                              )}
-                            </div>
-                            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {whRef.description}
-                            </div>
-                            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginTop: 1 }}>
-                              {whRef.group !== "SIN_GRUPO_SAG" ? whRef.group : "\u2014"} / {whRef.subgroup !== "SIN_SUBGRUPO_SAG" ? whRef.subgroup : "\u2014"}
-                              {whRef.sizeClass && <span> / {whRef.sizeClass}</span>}
-                            </div>
-                          </div>
-                          <div style={{ textAlign: "center", minWidth: 56 }}>
-                            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Disponible</div>
-                            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.green }}>{whRef.commercialAvailableQty}</div>
-                          </div>
-                          <div style={{ textAlign: "center", minWidth: 48 }}>
-                            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Sugerido</div>
-                            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.blueDark }}>{whRef.totalSuggestedQty}</div>
-                          </div>
-                          <div style={{ textAlign: "center", minWidth: 40 }}>
-                            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Resuelve</div>
-                            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.ink }}>{whRef.needsResolvable}</div>
-                          </div>
-                          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, transform: isExpanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
-                            &#9660;
-                          </span>
+                      {s.reasons.length > 0 && (
+                        <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight, marginTop: 2 }}>
+                          {s.reasons.map(r => r.detail).join(" · ")}
                         </div>
-
-                        {/* Expanded: store needs resolved by this warehouse ref */}
-                        {isExpanded && (
-                          <div style={{ padding: `0 ${S[2]}px ${S[2]}px ${S[2] + 32 + S[2]}px`, display: "flex", flexDirection: "column", gap: S[1] }}>
-                            {/* Variant detail for warehouse ref */}
-                            {whRef.positiveVariants.length > 0 && (
-                              <div style={{ marginBottom: S[1] }}>
-                                <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkMid, marginBottom: 4 }}>
-                                  Variantes disponibles en bodega
-                                </div>
-                                <div style={{ display: "flex", gap: S[1], flexWrap: "wrap" }}>
-                                  {whRef.positiveVariants.slice(0, 12).map((v, vi) => (
-                                    <span key={vi} style={{
-                                      fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "2px 6px",
-                                      borderRadius: R.sm, background: C.surface, border: `1px solid ${C.line}`,
-                                      color: C.ink,
-                                    }}>
-                                      {v.size ?? "\u2014"}/{v.color ?? "\u2014"}: <strong style={{ color: C.green }}>{v.availableQty}</strong>
-                                    </span>
-                                  ))}
-                                  {whRef.positiveVariants.length > 12 && (
-                                    <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, padding: "2px 4px" }}>
-                                      +{whRef.positiveVariants.length - 12} mas
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Store needs children */}
-                            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkMid }}>
-                              Necesidades de tienda que resuelve ({whRef.storeNeeds.length})
-                            </div>
-                            {whRef.storeNeeds.map((sn, si) => {
-                              const snResColor = sn.resolutionType === "REPOSICION"
-                                ? { bg: `${C.blueDark}14`, text: C.blueDark }
-                                : { bg: "#6366f114", text: "#6366f1" };
-                              return (
-                                <div key={si} style={{
-                                  display: "flex", alignItems: "center", gap: S[2], padding: `${S[1]}px ${S[2]}px`,
-                                  background: snResColor.bg, borderRadius: R.sm, border: `1px solid ${C.line}`,
-                                }}>
-                                  <CommercialReferenceThumbnail imageUrl={sn.imageUrl} reference={sn.storeReference} description={sn.description} size={24} />
-                                  <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div style={{ display: "flex", alignItems: "center", gap: S[1] }}>
-                                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.ink }}>{sn.storeReference}</span>
-                                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "0px 4px", borderRadius: R.pill, background: snResColor.bg, color: snResColor.text, border: `1px solid ${snResColor.text}30` }}>
-                                        {sn.resolutionType === "REPOSICION" ? "Misma ref" : MATCH_LABEL[sn.matchType]}
-                                      </span>
-                                    </div>
-                                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                      {sn.description}
-                                    </div>
-                                  </div>
-                                  <div style={{ textAlign: "center", minWidth: 36 }}>
-                                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Tienda</div>
-                                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.ink }}>{sn.storeQty}</div>
-                                  </div>
-                                  <div style={{ textAlign: "center", minWidth: 36 }}>
-                                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Faltante</div>
-                                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.red }}>{sn.shortageQty}</div>
-                                  </div>
-                                  <div style={{ textAlign: "center", minWidth: 44 }}>
-                                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Sugerido</div>
-                                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.blueDark }}>{sn.suggestedQty}</div>
-                                  </div>
-                                  <div style={{ textAlign: "center", minWidth: 40 }}>
-                                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Cobertura</div>
-                                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: sn.coveragePossible >= 100 ? C.green : C.amber }}>
-                                      {sn.coveragePossible}%
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Necesidades no asignadas — fuente única: plan certificado (Sprint 6) */}
-                {unassigned.length > 0 && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: S[1] }}>
-                    <button
-                      onClick={() => setNdShowNoSolution(s => !s)}
-                      style={{
-                        fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                        padding: "4px 10px", borderRadius: R.sm, cursor: "pointer",
-                        border: `1px solid ${C.red}40`, background: ndShowNoSolution ? `${C.red}10` : "transparent",
-                        color: C.red, textAlign: "left",
-                      }}
-                    >
-                      {ndShowNoSolution ? "Ocultar" : "Ver"} necesidades no asignadas ({unassigned.length})
-                    </button>
-                    {ndShowNoSolution && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                        {unassigned.map((un) => (
-                          <div key={un.structureKey} style={{ display: "flex", alignItems: "flex-start", gap: S[2], padding: `${S[1]}px ${S[2]}px`, borderBottom: `1px solid ${C.line}` }}>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.ink }}>{un.label}</span>
-                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
-                                {un.structureKey}
-                              </div>
-                              {/* Razón certificada del motor — jamás texto local */}
-                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.red, marginTop: 2 }}>
-                                {un.detail}
-                              </div>
-                            </div>
-                            <div style={{ textAlign: "center", minWidth: 52 }}>
-                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Requerido</div>
-                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.ink }}>{un.requiredUnits}</div>
-                            </div>
-                            {un.allocatedUnits > 0 && (
-                              <div style={{ textAlign: "center", minWidth: 52 }}>
-                                <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Asignado</div>
-                                <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.green }}>{un.allocatedUnits}</div>
-                              </div>
-                            )}
-                            <div style={{ textAlign: "center", minWidth: 52 }}>
-                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Pendiente</div>
-                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.red }}>{un.pendingUnits}</div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Pagination */}
-                {pagination.totalPages > 1 && (
-                  <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: S[2], fontFamily: T.mono, fontSize: T.sz["2xs"] }}>
-                    <button
-                      disabled={pagination.page <= 1}
-                      onClick={() => setNdPage(p => Math.max(1, p - 1))}
-                      style={{
-                        padding: "3px 8px", borderRadius: R.sm, border: `1px solid ${C.line}`,
-                        background: C.white, color: pagination.page <= 1 ? C.inkFaint : C.ink, cursor: pagination.page <= 1 ? "default" : "pointer",
-                      }}
-                    >
-                      Anterior
-                    </button>
-                    <span style={{ color: C.inkMid }}>
-                      {pagination.page} / {pagination.totalPages} ({pagination.total} refs bodega)
+                      )}
+                    </div>
+                    <span style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: C.blueDark, flexShrink: 0 }}>
+                      {s.unitsText} uds
                     </span>
-                    <button
-                      disabled={pagination.page >= pagination.totalPages}
-                      onClick={() => setNdPage(p => Math.min(pagination.totalPages, p + 1))}
-                      style={{
-                        padding: "3px 8px", borderRadius: R.sm, border: `1px solid ${C.line}`,
-                        background: C.white, color: pagination.page >= pagination.totalPages ? C.inkFaint : C.ink,
-                        cursor: pagination.page >= pagination.totalPages ? "default" : "pointer",
-                      }}
-                    >
-                      Siguiente
-                    </button>
                   </div>
-                )}
-              </>
-            );
-          })()}
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Retiros (exceso sobre máximo — S5) */}
+          {needsPres.withdrawals.length > 0 && (
+            <div style={{ ...panel }}>
+              <div style={{ ...panelHeader }}>
+                <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.amber }}>
+                  Retiros sugeridos
+                </span>
+              </div>
+              <div style={{ padding: S[2] }}>
+                {needsPres.withdrawals.map((w, i) => (
+                  <div key={`${w.structureKey}-${i}`} style={{
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                    padding: `${S[1]}px ${S[2]}px`, borderBottom: `1px solid ${C.lineSubtle}`,
+                    fontFamily: T.mono, fontSize: T.sz.sm,
+                  }}>
+                    <span style={{ color: C.ink }}>{w.label}</span>
+                    <span style={{ color: C.amber, fontWeight: T.wt.semibold }}>{w.unitsText} uds</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Necesidades no asignadas — razones CERTIFICADAS del motor */}
+          <div style={{ ...panel }}>
+            <div style={{ ...panelHeader }}>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.red }}>
+                {needsPres.unassignedTitle}
+              </span>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginLeft: "auto" }}>
+                {needsPres.totals.unassignedCountText}
+              </span>
+            </div>
+            {needsPres.unassigned.length === 0 ? (
+              <div style={{ padding: S[4], fontFamily: T.mono, fontSize: T.sz.sm, color: C.green }}>
+                Todas las necesidades ejecutables fueron asignadas por el plan.
+              </div>
+            ) : (
+              <div style={{ padding: S[2] }}>
+                {needsPres.unassigned.map((u, i) => (
+                  <div key={`${u.structureKey}-${i}`} style={{
+                    padding: `${S[2]}px ${S[2]}px`, borderBottom: `1px solid ${C.lineSubtle}`,
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: S[2] }}>
+                      <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
+                        {u.label}
+                      </span>
+                      <span style={{
+                        fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                        padding: "2px 8px", borderRadius: R.pill,
+                        background: C.redLight, color: C.red, border: `1px solid ${C.redBorder}`,
+                        flexShrink: 0,
+                      }}>
+                        {u.code}
+                      </span>
+                    </div>
+                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight, marginTop: 2 }}>
+                      {u.detail}
+                    </div>
+                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginTop: 2 }}>
+                      Requeridas: {u.requiredText} uds · Pendientes: {u.pendingText} uds · Motor: {u.engineReason}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
-      {/* TAB: Cobertura — quantitative structural coverage (AGENTIK-STORES-COVERAGE-TAB-01) */}
       {tab === "cobertura" && (
         <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-          {covLoading && !covData && (
-            <div style={{ height: 120, background: C.surface, borderRadius: R.sm, animation: "pulse 1.5s infinite" }} />
-          )}
-          {covData && (() => {
-            // Filter by line, then by display state
-            let filteredStructures = covLine === "ALL"
-              ? covData.structures
-              : covData.structures.filter(s => s.line === covLine);
-            if (covStatusFilter !== "ALL") {
-              filteredStructures = filteredStructures.filter(s => covDisplayState(s) === covStatusFilter);
-            }
+          {/* F3A — B1 ÚNICO: el mismo campo del snapshot que muestran card y subtítulo (T4) */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: S[2] }}>
+            <MiniStat label="Cobertura (B1)" value={covPres.coverageText} color={C.blueDark} />
+            <MiniStat label="Estructuras saludables" value={covPres.healthyOfExpectedText} color={C.green} />
+          </div>
 
-            const sinCobertura = filteredStructures.filter(s => covDisplayState(s) === "SIN_COBERTURA");
-            const conBajoMinimo = filteredStructures.filter(s => covDisplayState(s) === "CON_REFERENCIAS_BAJO_MINIMO");
-            const saludables = filteredStructures.filter(s => covDisplayState(s) === "SALUDABLE");
+          {/* Filtro visual por línea (jamás refetch ni invalidación — T9) */}
+          <div style={{ display: "flex", gap: S[2] }}>
+            {["ALL", ...covPres.lineGroups.map(g => g.line)].map(line => (
+              <button key={line} onClick={() => setCovLine(line)} style={{
+                fontFamily: T.mono, fontSize: T.sz.xs, padding: `${S[1]}px ${S[3]}px`,
+                borderRadius: R.pill, cursor: "pointer",
+                background: covLine === line ? C.blueDark : C.surface,
+                color: covLine === line ? C.white : C.inkMid,
+                border: `1px solid ${covLine === line ? C.blueDark : C.line}`,
+              }}>
+                {line === "ALL" ? "Todas" : line}
+              </button>
+            ))}
+          </div>
 
-            // Candidate type labels
-            const candidateTypeLabel = (t: CoverageCandidateType) =>
-              t === "REPOSICION_MISMA_REFERENCIA" ? "Reposición"
-              : t === "COMPLEMENTO_REFERENCIA_COMPATIBLE" ? "Complemento"
-              : "Referencia nueva";
-
-            const candidateTypeVariant = (t: CoverageCandidateType) =>
-              t === "REPOSICION_MISMA_REFERENCIA" ? "info"
-              : t === "COMPLEMENTO_REFERENCIA_COMPATIBLE" ? "success"
-              : "neutral";
-
-            const refStateLabel = (s: ReferenceHealthState) =>
-              s === "BAJO_MINIMO" ? "Bajo mínimo" : s === "SOBRE_MAXIMO" ? "Sobre máximo" : "Saludable";
-            const refStateColor = (s: ReferenceHealthState) =>
-              s === "BAJO_MINIMO" ? C.red : s === "SOBRE_MAXIMO" ? C.amber : C.green;
-
-            return (
-              <>
-                {/* KPIs — 6 metrics: structural coverage + quantitative health */}
-                <div style={{ display: "flex", gap: S[4], flexWrap: "wrap" }}>
-                  <MiniStat label="Esperadas" value={String(covData.totalExpected)} color={C.ink} />
-                  <MiniStat label="Cubiertas" value={String(covData.totalCovered)} color={C.green} />
-                  <MiniStat label="Sin cobertura" value={String(covData.totalGaps)} color={covData.totalGaps > 0 ? C.red : C.ink} />
-                  <MiniStat label="Refs bajo mínimo" value={String(covData.totalWithBelowMinimum)} color={covData.totalWithBelowMinimum > 0 ? C.amber : C.ink} />
-                  <MiniStat label="Cobertura" value={`${covData.overallCoveragePercent}%`} color={covData.overallCoveragePercent >= 80 ? C.green : covData.overallCoveragePercent >= 50 ? C.amber : C.red} />
-                  <MiniStat label="Salud" value={`${covData.overallHealthPercent}%`} color={covData.overallHealthPercent >= 80 ? C.green : covData.overallHealthPercent >= 50 ? C.amber : C.red} />
-                </div>
-
-                {/* Per-line filter strip */}
-                <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
-                  <button
-                    onClick={() => setCovLine("ALL")}
-                    style={{
-                      padding: `${S[1]}px ${S[3]}px`, borderRadius: R.sm, border: `1px solid ${C.line}`,
-                      fontFamily: T.mono, fontSize: T.sz.xs, cursor: "pointer",
-                      background: covLine === "ALL" ? C.blueDark : C.surface,
-                      color: covLine === "ALL" ? "#fff" : C.ink,
-                    }}
-                  >
-                    Todas ({covData.totalExpected})
-                  </button>
-                  {covData.lineSummaries.map(ls => {
-                    const lineLabel = ls.line === "CASTILLITOS" ? "Castillitos"
-                      : ls.line === "LATIN_KIDS" ? "Latin Kids" : "Accesorios";
-                    const active = covLine === ls.line;
-                    const issues = ls.gaps + ls.withBelowMinimum;
-                    return (
-                      <button
-                        key={ls.line}
-                        onClick={() => setCovLine(ls.line)}
-                        style={{
-                          padding: `${S[1]}px ${S[3]}px`, borderRadius: R.sm, border: `1px solid ${C.line}`,
-                          fontFamily: T.mono, fontSize: T.sz.xs, cursor: "pointer",
-                          background: active ? C.blueDark : C.surface,
-                          color: active ? "#fff" : C.ink,
-                        }}
-                      >
-                        {lineLabel} ({ls.covered}/{ls.expected})
-                        {issues > 0 && (
-                          <span style={{ marginLeft: S[1], color: active ? "#fca5a5" : ls.gaps > 0 ? C.red : C.amber, fontWeight: T.wt.semibold }}>
-                            {issues} {issues === 1 ? "brecha" : "brechas"}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Status filter strip — two-dimension */}
-                <div style={{ display: "flex", gap: S[1], flexWrap: "wrap" }}>
-                  {([
-                    { key: "ALL" as CoverageStatusFilter, label: "Todas", count: covData.structures.filter(s => covLine === "ALL" || s.line === covLine).length },
-                    { key: "SALUDABLE" as CoverageStatusFilter, label: "Saludables", count: covData.structures.filter(s => covDisplayState(s) === "SALUDABLE" && (covLine === "ALL" || s.line === covLine)).length },
-                    { key: "CON_REFERENCIAS_BAJO_MINIMO" as CoverageStatusFilter, label: "Bajo mín. (unds)", count: covData.structures.filter(s => covDisplayState(s) === "CON_REFERENCIAS_BAJO_MINIMO" && (covLine === "ALL" || s.line === covLine)).length },
-                    { key: "SIN_COBERTURA" as CoverageStatusFilter, label: "Sin cobertura", count: covData.structures.filter(s => covDisplayState(s) === "SIN_COBERTURA" && (covLine === "ALL" || s.line === covLine)).length },
-                  ]).map(f => (
-                    <button
-                      key={f.key}
-                      onClick={() => setCovStatusFilter(f.key)}
-                      style={{
-                        padding: `2px ${S[2]}px`, borderRadius: R.sm, border: `1px solid ${C.line}`,
-                        fontFamily: T.mono, fontSize: "10px", cursor: "pointer",
-                        background: covStatusFilter === f.key ? C.surfaceAlt : "transparent",
-                        color: C.ink, fontWeight: covStatusFilter === f.key ? T.wt.semibold : T.wt.normal,
-                      }}
-                    >
-                      {f.label} ({f.count})
-                    </button>
-                  ))}
-                </div>
-
-                {/* Structures table */}
-                <div className="ag-op-table" style={{ fontSize: T.sz.sm }}>
-                  {/* Header */}
-                  <div className="ag-op-row" style={{
-                    fontFamily: T.mono, fontWeight: T.wt.semibold, fontSize: T.sz.xs,
-                    color: C.inkLight, borderBottom: `1px solid ${C.line}`,
-                    display: "grid", gridTemplateColumns: "140px 1fr 50px 50px 60px 60px 90px", gap: S[2],
-                    padding: `${S[1]}px ${S[2]}px`,
+          {/* Estructuras del derrotero — TOTAL agregado por subgrupo (ley S1/S4) */}
+          <div style={{ ...panel }}>
+            <div style={{ padding: S[2] }}>
+              {covPres.rows
+                .filter(r => covLine === "ALL" || r.line === covLine)
+                .map(r => (
+                  <div key={r.structureKey} style={{
+                    display: "flex", alignItems: "center", gap: S[3],
+                    padding: `${S[1]}px ${S[2]}px`, borderBottom: `1px solid ${C.lineSubtle}`,
                   }}>
-                    <span>Grupo / Línea</span>
-                    <span>Estructura</span>
-                    <span style={{ textAlign: "right" }}>Refs</span>
-                    <span style={{ textAlign: "right" }}>Uds</span>
-                    <span style={{ textAlign: "right" }}>Objetivo</span>
-                    <span style={{ textAlign: "right" }}>Faltante</span>
-                    <span style={{ textAlign: "center" }}>Estado</span>
-                  </div>
-
-                  {/* SIN_COBERTURA first, then CON_REFERENCIAS_BAJO_MINIMO, then SALUDABLE */}
-                  {[
-                    ...sinCobertura.sort((a, b) => a.priority - b.priority),
-                    ...conBajoMinimo.sort((a, b) => a.priority - b.priority),
-                    ...saludables.sort((a, b) => a.priority - b.priority),
-                  ].map(s => {
-                    const ds = covDisplayState(s);
-                    const isExpandable = ds !== "SALUDABLE";
-                    const isExpanded = covExpandedKey === s.structureKey;
-                    const candidateData = covCandidates[s.structureKey];
-                    const isLoadingCandidates = covCandidateLoading === s.structureKey;
-
-                    const statusVariant = ds === "SALUDABLE" ? "success"
-                      : ds === "CON_REFERENCIAS_BAJO_MINIMO" ? "warning" : "critical";
-                    const statusLabel = ds === "SALUDABLE" ? "Saludable"
-                      : ds === "CON_REFERENCIAS_BAJO_MINIMO"
-                        ? `${Math.max(0, s.minimumUnits - s.totalStoreUnits)} unds bajo mín.`
-                        : "Sin cobertura";
-                    const rowBg = ds === "SIN_COBERTURA" ? "rgba(239,68,68,0.04)"
-                      : ds === "CON_REFERENCIAS_BAJO_MINIMO" ? "rgba(245,158,11,0.04)" : "transparent";
-
-                    const handleToggle = () => {
-                      if (!isExpandable) return;
-                      if (isExpanded) {
-                        setCovExpandedKey(null);
-                        return;
-                      }
-                      setCovExpandedKey(s.structureKey);
-                      if (!covCandidates[s.structureKey]) {
-                        setCovCandidateLoading(s.structureKey);
-                        tiendaApi(orgSlug, {
-                          action: "store_coverage_candidates",
-                          storeId: storeCard.store.id,
-                          structureKeys: [s.structureKey],
-                          coverageStatuses: { [s.structureKey]: s.structuralCoverageStatus },
-                        })
-                          .then((data: { candidates?: CoverageCandidatesResult[] }) => {
-                            if (data.candidates?.[0]) {
-                              setCovCandidates(prev => ({ ...prev, [s.structureKey]: data.candidates![0] }));
-                            }
-                          })
-                          .catch(() => {})
-                          .finally(() => setCovCandidateLoading(null));
-                      }
-                    };
-
-                    return (
-                      <div key={s.structureKey}>
-                        <div
-                          className="ag-op-row"
-                          onClick={handleToggle}
-                          style={{
-                            display: "grid", gridTemplateColumns: "140px 1fr 50px 50px 60px 60px 90px", gap: S[2],
-                            padding: `${S[2]}px ${S[2]}px`,
-                            fontFamily: T.mono, fontSize: T.sz.sm,
-                            background: rowBg,
-                            borderBottom: isExpanded ? "none" : `1px solid ${C.line}`,
-                            cursor: isExpandable ? "pointer" : "default",
-                          }}
-                        >
-                          <span style={{ color: C.inkLight, fontSize: T.sz.xs }}>
-                            {isExpandable && <span style={{ marginRight: S[1] }}>{isExpanded ? "▾" : "▸"}</span>}
-                            {s.line === "CASTILLITOS" ? s.groupLabel ?? "CS" : s.line === "LATIN_KIDS" ? "Latin Kids" : "Accesorios"}
-                          </span>
-                          <span style={{ color: C.ink }}>{s.label}</span>
-                          <span style={{ textAlign: "right", color: s.activeReferenceCount > 0 ? C.ink : C.red, fontWeight: T.wt.semibold }}>
-                            {s.activeReferenceCount > 0 ? s.activeReferenceCount : "\u2014"}
-                          </span>
-                          <span style={{ textAlign: "right", color: C.inkLight }}>
-                            {s.totalStoreUnits > 0 ? s.totalStoreUnits : "\u2014"}
-                          </span>
-                          <span style={{ textAlign: "right", color: C.inkLight }}>
-                            {s.targetUnits}
-                          </span>
-                          <span style={{ textAlign: "right", color: s.totalShortageToTarget > 0 ? C.red : C.inkLight, fontWeight: s.totalShortageToTarget > 0 ? T.wt.semibold : T.wt.normal }}>
-                            {s.totalShortageToTarget > 0 ? s.totalShortageToTarget : "\u2014"}
-                          </span>
-                          <span style={{ textAlign: "center" }}>
-                            <span className={`ag-op-status ag-op-status--${statusVariant}`}>
-                              {statusLabel}
-                            </span>
-                          </span>
-                        </div>
-
-                        {/* Candidate expansion panel */}
-                        {isExpanded && isExpandable && (
-                          <div style={{
-                            padding: `${S[2]}px ${S[3]}px ${S[3]}px ${S[3]}px`,
-                            background: ds === "SIN_COBERTURA" ? "rgba(239,68,68,0.02)" : "rgba(245,158,11,0.02)",
-                            borderBottom: `1px solid ${C.line}`,
-                          }}>
-                            {isLoadingCandidates && !candidateData && (
-                              <div style={{ height: 48, background: C.surface, borderRadius: R.sm, animation: "pulse 1.5s infinite" }} />
-                            )}
-                            {candidateData && (() => {
-                              const ss = candidateData.solutionSummary;
-                              const totalBodegaRefs = ss.eligibleCandidates + ss.blockedCandidates;
-                              const allCandidates = [...candidateData.eligible, ...candidateData.blocked];
-                              // Store refs that can be served by a candidate (same ref = reposición)
-                              const recoverableStoreRefs = candidateData.activeStoreRefs.filter(ar =>
-                                candidateData.eligible.some(c => c.referenceCode === ar.referenceCode)
-                              );
-                              const recoverableCount = recoverableStoreRefs.length + (ds === "SIN_COBERTURA" ? ss.eligibleCandidates : 0);
-                              const coverageBase = Math.max(1, s.activeReferenceCount > 0 ? s.activeReferenceCount : (s.targetUnits > 0 ? 1 : 1));
-                              const coveragePct = ds === "SIN_COBERTURA"
-                                ? (ss.eligibleCandidates > 0 ? 100 : 0)
-                                : Math.min(100, Math.round(((candidateData.activeStoreRefs.filter(ar => ar.referenceState !== "BAJO_MINIMO").length + recoverableStoreRefs.length) / Math.max(1, candidateData.activeStoreRefs.length)) * 100));
-
-                              // Candidate card renderer (shared between eligible and blocked)
-                              const renderCandidateCard = (c: CoverageCandidate, isBlocked: boolean) => {
-                                // Find which store refs this candidate matches
-                                const matchedStoreRef = candidateData.activeStoreRefs.find(ar => ar.referenceCode === c.referenceCode);
-                                return (
-                                  <div key={`${c.referenceCode}-${isBlocked ? "b" : "e"}`} style={{
-                                    padding: `${S[2]}px ${S[3]}px`, borderRadius: R.sm,
-                                    background: isBlocked ? "rgba(245,158,11,0.03)" : C.white,
-                                    border: `1px solid ${isBlocked ? "rgba(245,158,11,0.2)" : C.line}`,
-                                    opacity: isBlocked ? 0.75 : 1,
-                                  }}>
-                                    {/* Candidate header row */}
-                                    <div style={{
-                                      display: "grid", gridTemplateColumns: "28px 1fr auto auto auto", gap: S[2],
-                                      alignItems: "center", fontFamily: T.mono, fontSize: T.sz.xs,
-                                    }}>
-                                      <CommercialReferenceThumbnail imageUrl={c.imageUrl} reference={c.referenceCode} description={c.productName} size={24} />
-                                      <div>
-                                        <div style={{ color: C.ink, fontWeight: T.wt.semibold }}>{c.referenceCode}</div>
-                                        <div style={{ color: C.inkLight, fontSize: "10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>
-                                          {c.productName}
-                                        </div>
-                                      </div>
-                                      <span style={{ color: C.ink, fontWeight: T.wt.semibold }}>{c.mainWarehouseStock} uds</span>
-                                      <span className={`ag-op-status ag-op-status--${candidateTypeVariant(c.candidateType)}`} style={{ fontSize: "10px" }}>
-                                        {candidateTypeLabel(c.candidateType)}
-                                      </span>
-                                      <span className={`ag-op-status ag-op-status--${isBlocked ? "warning" : "success"}`} style={{ fontSize: "10px" }}>
-                                        {isBlocked ? "Regla 36" : "Disponible"}
-                                      </span>
-                                    </div>
-
-                                    {/* Variant breakdown */}
-                                    {c.variants.length > 0 && (
-                                      <div style={{ marginTop: S[1], paddingLeft: 36 }}>
-                                        <div style={{ fontFamily: T.mono, fontSize: "10px", color: C.inkLight, marginBottom: 2 }}>
-                                          Variantes disponibles ({c.variants.length})
-                                        </div>
-                                        <div style={{ display: "flex", flexWrap: "wrap", gap: S[1] }}>
-                                          {c.variants.slice(0, 12).map((v, vi) => (
-                                            <span key={vi} style={{
-                                              fontFamily: T.mono, fontSize: "10px",
-                                              padding: "1px 6px", borderRadius: R.sm,
-                                              background: C.surface, border: `1px solid ${C.line}`,
-                                              color: C.ink,
-                                            }}>
-                                              {v.size}/{v.color} <strong>{v.qty}</strong>
-                                            </span>
-                                          ))}
-                                          {c.variants.length > 12 && (
-                                            <span style={{ fontFamily: T.mono, fontSize: "10px", color: C.inkLight }}>
-                                              +{c.variants.length - 12} más
-                                            </span>
-                                          )}
-                                        </div>
-                                      </div>
-                                    )}
-
-                                    {/* Matched store ref (what this candidate can supply) */}
-                                    {matchedStoreRef && (
-                                      <div style={{
-                                        marginTop: S[1], paddingLeft: 36,
-                                        padding: `${S[1]}px ${S[2]}px ${S[1]}px 36px`,
-                                        background: "rgba(59,130,246,0.04)", borderRadius: R.sm,
-                                      }}>
-                                        <div style={{ fontFamily: T.mono, fontSize: "10px", color: C.blueDark, marginBottom: 2 }}>
-                                          Abastece en tienda
-                                        </div>
-                                        <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, display: "flex", gap: S[3], alignItems: "center" }}>
-                                          <span style={{ color: C.ink }}>{matchedStoreRef.referenceCode}</span>
-                                          <span style={{ color: C.inkLight }}>{matchedStoreRef.storeQty} uds actuales</span>
-                                          {matchedStoreRef.referenceShortageToTarget > 0 && (
-                                            <span style={{ color: C.red, fontWeight: T.wt.semibold }}>falta {matchedStoreRef.referenceShortageToTarget}</span>
-                                          )}
-                                          <span style={{ fontSize: "10px", color: refStateColor(matchedStoreRef.referenceState), fontWeight: T.wt.semibold }}>
-                                            {refStateLabel(matchedStoreRef.referenceState)}
-                                          </span>
-                                        </div>
-                                      </div>
-                                    )}
-                                    {!matchedStoreRef && c.candidateType !== "REPOSICION_MISMA_REFERENCIA" && candidateData.activeStoreRefs.length > 0 && (
-                                      <div style={{
-                                        marginTop: S[1], paddingLeft: 36,
-                                        fontFamily: T.mono, fontSize: "10px", color: C.inkLight,
-                                      }}>
-                                        Complementa el subgrupo — {candidateData.activeStoreRefs.length} ref{candidateData.activeStoreRefs.length !== 1 ? "s" : ""} en tienda
-                                      </div>
-                                    )}
-                                    {c.candidateType === "REFERENCIA_NUEVA_COMPATIBLE" && candidateData.activeStoreRefs.length === 0 && (
-                                      <div style={{
-                                        marginTop: S[1], paddingLeft: 36,
-                                        fontFamily: T.mono, fontSize: "10px", color: C.inkLight,
-                                      }}>
-                                        Referencia nueva — cubre estructura sin cobertura
-                                      </div>
-                                    )}
-                                  </div>
-                                );
-                              };
-
-                              return (
-                              <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-
-                                {/* ── 1. EXECUTIVE SUMMARY ── */}
-                                <div style={{
-                                  display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: S[2],
-                                  padding: `${S[2]}px ${S[3]}px`, borderRadius: R.sm,
-                                  background: ss.eligibleCandidates > 0 ? "rgba(34,197,94,0.06)" : "rgba(239,68,68,0.04)",
-                                  border: `1px solid ${ss.eligibleCandidates > 0 ? "rgba(34,197,94,0.2)" : "rgba(239,68,68,0.15)"}`,
-                                }}>
-                                  <div style={{ fontFamily: T.mono, fontSize: T.sz.xs }}>
-                                    <div style={{ color: C.inkLight, fontSize: "10px", marginBottom: 2 }}>Refs compatibles</div>
-                                    <div style={{ color: C.ink, fontWeight: T.wt.semibold }}>{totalBodegaRefs}</div>
-                                  </div>
-                                  <div style={{ fontFamily: T.mono, fontSize: T.sz.xs }}>
-                                    <div style={{ color: C.inkLight, fontSize: "10px", marginBottom: 2 }}>Uds disponibles</div>
-                                    <div style={{ color: C.ink, fontWeight: T.wt.semibold }}>{ss.totalWarehouseUnits}</div>
-                                  </div>
-                                  <div style={{ fontFamily: T.mono, fontSize: T.sz.xs }}>
-                                    <div style={{ color: C.inkLight, fontSize: "10px", marginBottom: 2 }}>Refs recuperables</div>
-                                    <div style={{ color: recoverableCount > 0 ? C.green : C.inkLight, fontWeight: T.wt.semibold }}>
-                                      {recoverableCount > 0 ? recoverableCount : "\u2014"}
-                                    </div>
-                                  </div>
-                                  <div style={{ fontFamily: T.mono, fontSize: T.sz.xs }}>
-                                    <div style={{ color: C.inkLight, fontSize: "10px", marginBottom: 2 }}>Cobertura estimada</div>
-                                    <div style={{ color: ss.eligibleCandidates > 0 ? C.green : C.red, fontWeight: T.wt.semibold }}>
-                                      {ss.eligibleCandidates > 0 ? `${coveragePct}%` : "0%"}
-                                    </div>
-                                  </div>
-                                </div>
-
-                                {/* ── 2. SUBGROUP STATE IN STORE ── */}
-                                <div>
-                                  <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.blueDark, fontWeight: T.wt.semibold, marginBottom: S[1] }}>
-                                    Estado en tienda
-                                  </div>
-                                  <div style={{
-                                    display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: S[2],
-                                    padding: `${S[2]}px ${S[3]}px`, borderRadius: R.sm,
-                                    background: C.surface, border: `1px solid ${C.line}`,
-                                  }}>
-                                    <div style={{ fontFamily: T.mono, fontSize: T.sz.xs }}>
-                                      <div style={{ color: C.inkLight, fontSize: "10px", marginBottom: 2 }}>Refs existentes</div>
-                                      <div style={{ color: C.ink, fontWeight: T.wt.semibold }}>{s.activeReferenceCount > 0 ? s.activeReferenceCount : "\u2014"}</div>
-                                    </div>
-                                    <div style={{ fontFamily: T.mono, fontSize: T.sz.xs }}>
-                                      <div style={{ color: C.inkLight, fontSize: "10px", marginBottom: 2 }}>Unidades actuales</div>
-                                      <div style={{ color: C.ink, fontWeight: T.wt.semibold }}>{s.totalStoreUnits > 0 ? s.totalStoreUnits : "\u2014"}</div>
-                                    </div>
-                                    <div style={{ fontFamily: T.mono, fontSize: T.sz.xs }}>
-                                      <div style={{ color: C.inkLight, fontSize: "10px", marginBottom: 2 }}>Faltante total</div>
-                                      <div style={{ color: s.totalShortageToTarget > 0 ? C.red : C.inkLight, fontWeight: T.wt.semibold }}>
-                                        {s.totalShortageToTarget > 0 ? s.totalShortageToTarget : "\u2014"}
-                                      </div>
-                                    </div>
-                                  </div>
-                                  {candidateData.activeStoreRefs.length > 0 && (
-                                    <div style={{ marginTop: S[1] }}>
-                                      {candidateData.activeStoreRefs.map(ar => (
-                                        <div key={ar.referenceCode} style={{
-                                          display: "grid", gridTemplateColumns: "28px 1fr auto auto auto auto", gap: S[2],
-                                          padding: `${S[1]}px 0`, alignItems: "center",
-                                          fontFamily: T.mono, fontSize: T.sz.xs,
-                                          borderBottom: `1px solid ${C.line}`,
-                                        }}>
-                                          <CommercialReferenceThumbnail imageUrl={ar.imageUrl} reference={ar.referenceCode} description={ar.productName} size={24} />
-                                          <div>
-                                            <div style={{ color: C.ink, fontWeight: T.wt.medium }}>{ar.referenceCode}</div>
-                                            <div style={{ color: C.inkLight, fontSize: "10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>
-                                              {ar.productName}
-                                            </div>
-                                          </div>
-                                          <span style={{ color: C.ink, textAlign: "right" }}>{ar.storeQty} uds</span>
-                                          <span style={{ color: C.inkLight, textAlign: "right", fontSize: "10px" }}>
-                                            {ar.minimumUnits}/{ar.targetUnits}/{ar.maximumUnits}
-                                          </span>
-                                          <span style={{ textAlign: "right", color: ar.referenceShortageToTarget > 0 ? C.red : C.inkLight, fontWeight: ar.referenceShortageToTarget > 0 ? T.wt.semibold : T.wt.normal, fontSize: "10px" }}>
-                                            {ar.referenceShortageToTarget > 0 ? `-${ar.referenceShortageToTarget}` : "\u2014"}
-                                          </span>
-                                          <span>
-                                            <span style={{ fontSize: "10px", color: refStateColor(ar.referenceState), fontWeight: T.wt.semibold }}>
-                                              {refStateLabel(ar.referenceState)}
-                                            </span>
-                                          </span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-
-                                {/* ── 3. BODEGA PRINCIPAL TEXTIL — detailed candidate cards ── */}
-                                {candidateData.eligible.length > 0 && (
-                                  <div>
-                                    <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.green, fontWeight: T.wt.semibold, marginBottom: S[1] }}>
-                                      Disponibles para enviar ({candidateData.eligible.length})
-                                    </div>
-                                    <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
-                                      {candidateData.eligible.map(c => renderCandidateCard(c, false))}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* ── 4. BLOCKED — Limited by Rule 36 ── */}
-                                {candidateData.blocked.length > 0 && (
-                                  <div>
-                                    <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.amber, fontWeight: T.wt.semibold, marginBottom: S[1] }}>
-                                      Limitadas por Regla 36 ({candidateData.blocked.length})
-                                    </div>
-                                    <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
-                                      {candidateData.blocked.map(c => renderCandidateCard(c, true))}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* No candidates */}
-                                {candidateData.totalCompatible === 0 && candidateData.activeStoreRefs.length === 0 && (
-                                  <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight, padding: S[2] }}>
-                                    No hay referencias compatibles en bodega principal
-                                  </div>
-                                )}
-
-                                {/* "Ver en Necesidades" navigation */}
-                                <div style={{ marginTop: S[1] }}>
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setTab("necesidades");
-                                    }}
-                                    style={{
-                                      fontFamily: T.mono, fontSize: T.sz.xs, color: C.blueDark,
-                                      background: "none", border: "none", cursor: "pointer",
-                                      textDecoration: "underline", padding: 0,
-                                    }}
-                                  >
-                                    Ver en Necesidades →
-                                  </button>
-                                </div>
-                              </div>
-                              );
-                            })()}
-                            {!isLoadingCandidates && !candidateData && (
-                              <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight, padding: S[2] }}>
-                                Error al cargar candidatos
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-
-                  {filteredStructures.length === 0 && (
-                    <div style={{ padding: S[4], textAlign: "center", fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight }}>
-                      No hay estructuras para este filtro
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
+                        {r.label}
+                      </span>
+                      {r.groupLabel && (
+                        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}> · {r.groupLabel}</span>
+                      )}
                     </div>
-                  )}
-                </div>
-              </>
-            );
-          })()}
-          {!covLoading && !covData && covLoaded && (
-            <div style={{ padding: S[4], textAlign: "center", fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight }}>
-              No se pudo cargar la cobertura estructural
+                    <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, width: 90, textAlign: "right" }}>
+                      regla {r.ruleText}
+                    </span>
+                    <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold, color: C.ink, width: 64, textAlign: "right" }}>
+                      {r.totalUnitsText} uds
+                    </span>
+                    <span style={{
+                      fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                      padding: "2px 8px", borderRadius: R.pill, width: 190, textAlign: "center",
+                      background: TONE_BADGE[r.statusTone].bg, color: TONE_BADGE[r.statusTone].text,
+                    }}>
+                      {r.statusKey}
+                    </span>
+                  </div>
+                ))}
+            </div>
+          </div>
+
+          {/* Reglas especiales por tienda (S4, verbatim) */}
+          {covPres.specialRules.length > 0 && (
+            <div style={{ ...panel }}>
+              <div style={{ ...panelHeader }}>
+                <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
+                  Reglas especiales
+                </span>
+              </div>
+              <div style={{ padding: S[2] }}>
+                {covPres.specialRules.map(sr => (
+                  <div key={sr.pattern} style={{
+                    display: "flex", alignItems: "center", gap: S[3],
+                    padding: `${S[1]}px ${S[2]}px`, borderBottom: `1px solid ${C.lineSubtle}`,
+                    fontFamily: T.mono, fontSize: T.sz.sm,
+                  }}>
+                    <span style={{ flex: 1, color: C.ink }}>{sr.label}</span>
+                    <span style={{ color: C.inkFaint, fontSize: T.sz["2xs"] }}>
+                      {sr.totalUnitsText} uds / ideal {sr.idealUnitsText}
+                    </span>
+                    <span style={{
+                      fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                      padding: "2px 8px", borderRadius: R.pill,
+                      background: TONE_BADGE[sr.tone].bg, color: TONE_BADGE[sr.tone].text,
+                    }}>
+                      {sr.statusKey}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
       )}
 
-      {/* TAB: Descuentos — aging-based discount recommendations (AGENTIK-STORES-DISCOUNTS-TAB-01) */}
       {tab === "descuentos" && (
         <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
           {discLoading && !discData && (

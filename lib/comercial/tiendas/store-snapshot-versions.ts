@@ -20,4 +20,9 @@
 
 export const STORE_SNAPSHOT_SCHEMA_VERSION = 1 as const;
 export const SNAPSHOT_PIPELINE_VERSION = 1 as const;
-export const SNAPSHOT_RULES_VERSION = 1 as const;
+/**
+ * v2 — F3A: bloque presentationHints (actionKey por tienda, tonos de KPIs de
+ * módulo, proyección certificada de Necesidades) + perStore.inventory
+ * (unidades/referencias por tienda para paridad visual de cards).
+ */
+export const SNAPSHOT_RULES_VERSION = 2 as const;

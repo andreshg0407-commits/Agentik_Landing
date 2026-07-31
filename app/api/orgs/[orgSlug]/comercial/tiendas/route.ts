@@ -64,7 +64,7 @@ import type { NeedLine, NeedType, NeedSortBy, NeedSizeClass } from "@/lib/comerc
 import { loadWarehouseFirstNeeds } from "@/lib/comercial/tiendas/store-warehouse-first-needs";
 import type { WHFLine, WHFSortBy } from "@/lib/comercial/tiendas/store-warehouse-first-needs";
 import { loadStoreCoverage, loadStoreCoverageCandidates } from "@/lib/comercial/tiendas/store-coverage-service";
-import { getStoreSnapshotWithMeta } from "@/lib/comercial/tiendas/store-snapshot-service";
+import { getStoreSnapshotWithMeta, invalidateStoreSnapshot } from "@/lib/comercial/tiendas/store-snapshot-service";
 import { loadStoreUnitNeeds } from "@/lib/comercial/tiendas/store-unit-needs-service";
 import { loadStoreReplenishmentPlan } from "@/lib/comercial/tiendas/store-replenishment-plan-service";
 import {
@@ -329,6 +329,7 @@ export async function POST(
         const status = result.validationErrors ? 400 : 403;
         return NextResponse.json({ error: result.error, validationErrors: result.validationErrors }, { status });
       }
+      invalidateStoreSnapshot(orgId);   // I2 — las políticas alimentan structureRules
       return NextResponse.json({ ok: true, config: result.config });
     }
 
@@ -475,6 +476,7 @@ export async function POST(
       if (!storeId) return NextResponse.json({ error: "Missing storeId" }, { status: 400 });
       try {
         const record = await activateStore(orgId, storeId, user.id, membership.role);
+        invalidateStoreSnapshot(orgId);   // I1 — gobernanza altera el universo del snapshot
         return NextResponse.json({ ok: true, store: record });
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Error";
@@ -494,6 +496,7 @@ export async function POST(
       }
       try {
         const record = await deactivateStore(orgId, storeId, reason, user.id, membership.role);
+        invalidateStoreSnapshot(orgId);   // I1 — gobernanza altera el universo del snapshot
         return NextResponse.json({ ok: true, store: record });
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Error";
@@ -590,6 +593,7 @@ export async function POST(
       try {
         const generatedBy = (body.generatedBy as string) || "sistema";
         const result = await createReplenishmentDocuments(orgId, generatedBy);
+        invalidateStoreSnapshot(orgId);   // I4 — documentRefs cambia (openCount/lastNumber)
         return NextResponse.json({ result });
       } catch (err) {
         console.error("[REPLENISHMENT-DOC-CREATE] error", err instanceof Error ? err.message : err);
@@ -663,6 +667,7 @@ export async function POST(
             idempotencyKey: body.idempotencyKey as string | undefined,
           },
         );
+        invalidateStoreSnapshot(orgId);   // I5 — el status del documento altera documentRefs
         return NextResponse.json({ result, allowedNext: allowedTransitions(result.status) });
       } catch (err) {
         if (err instanceof InvalidWorkflowTransitionError) {

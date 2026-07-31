@@ -72,6 +72,10 @@ import {
   type AssembledStoreData,
   type AssembledItem,
 } from "./store-snapshot-assembler";
+import {
+  buildStoreNeedsTabPresentation,
+  type StoreNeedsTabPresentation,
+} from "./store-unit-needs-presentation";
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Umbrales de la ley de negocio (D1–D3 del F0, recomendados certificados).
@@ -142,13 +146,42 @@ export interface SnapshotStoreKpis {
   readonly requiresAttention: boolean;
 }
 
+/**
+ * F3A (ajuste del arquitecto): estados destinados EXCLUSIVAMENTE a la
+ * proyección visual, en bloque independiente — jamás mezclados con KPIs.
+ * El PresentationAssembler lee sus estados únicamente de aquí.
+ */
+export type SnapshotActionKey =
+  | "ATENDER_REGLA_ESPECIAL"
+  | "SURTIR_Y_RETIRAR"
+  | "SURTIR"
+  | "RETIRAR"
+  | "AL_DIA";
+
+export interface SnapshotStorePresentationHints {
+  readonly actionKey: SnapshotActionKey;
+  /** Proyección certificada del tab Necesidades (ley del fix NEEDS-SINGLE-SOURCE, verbatim). */
+  readonly needs: StoreNeedsTabPresentation;
+}
+
+/** Estados visuales de los KPIs de módulo (tono lo mapea el PA, 1:1). */
+export interface SnapshotModulePresentationHints {
+  readonly requierenAtencion: "ALERTA" | "OK";
+  readonly unidadesPorSurtir: "PENDIENTE" | "OK";
+  readonly unidadesPorRetirar: "PENDIENTE" | "OK";
+  readonly coberturaRed: "OK" | "SIN_BASE";
+}
+
 export interface SnapshotPerStore {
   readonly storeId: string;
   readonly displayName: string;
+  /** Hechos de inventario de la tienda (paridad visual de cards). */
+  readonly inventory: { readonly totalUnits: number; readonly referenceCount: number };
   readonly coverage: SnapshotStoreCoverage;
   /** VERBATIM del motor S5. */
   readonly needs: StoreUnitNeedsResult;
   readonly kpis: SnapshotStoreKpis;
+  readonly presentationHints: SnapshotStorePresentationHints;
 }
 
 /** KPIs de módulo — diccionario F0 §4.A. A6 lo adjunta el servicio (referencias S7). */
@@ -191,6 +224,8 @@ export interface StoreSnapshot {
   readonly thresholds: StoreSnapshotThresholds;
   readonly activeStores: readonly { readonly storeId: string; readonly displayName: string }[];
   readonly perStore: readonly SnapshotPerStore[];
+  /** Estados visuales de módulo (F3A) — bloque independiente de moduleKpis. */
+  readonly presentationHints: SnapshotModulePresentationHints;
   /** VERBATIM del motor S6 (poolUsage serializado sin Map). */
   readonly plan: Omit<StoreReplenishmentPlan, "poolUsage"> & { readonly poolUsage: readonly SnapshotPlanPoolUsage[] };
   readonly moduleKpis: SnapshotModuleKpis;
@@ -339,6 +374,39 @@ export function computeStoreKpis(
     excessStructures,
     healthStatus: critical ? "CRITICA" : requiresAttention ? "ATENCION" : "SALUDABLE",
     requiresAttention,
+  };
+}
+
+/**
+ * F3A — estados visuales por tienda. Función pura, separada de computeStoreKpis
+ * (no mezclar hints con KPIs). Precedencia fija certificada.
+ */
+export function computeStorePresentationHints(
+  coverage: SnapshotStoreCoverage,
+  needs: StoreUnitNeedsResult,
+  needsProjection: StoreNeedsTabPresentation,
+): SnapshotStorePresentationHints {
+  const shortage = needs.summary.replenishment.requiredUnits;
+  const withdrawal = needs.summary.removals.requiredUnits;
+  const specialAlta = coverage.specialRules.some(
+    r => r.severity === "high" && (r.status === "NO_AUTORIZADA" || r.status === "FALTANTE"),
+  );
+  const actionKey: SnapshotActionKey = specialAlta
+    ? "ATENDER_REGLA_ESPECIAL"
+    : shortage > 0 && withdrawal > 0 ? "SURTIR_Y_RETIRAR"
+    : shortage > 0 ? "SURTIR"
+    : withdrawal > 0 ? "RETIRAR"
+    : "AL_DIA";
+  return { actionKey, needs: needsProjection };
+}
+
+/** F3A — estados visuales de módulo (bloque independiente de moduleKpis). */
+export function computeModulePresentationHints(moduleKpis: SnapshotModuleKpis): SnapshotModulePresentationHints {
+  return {
+    requierenAtencion: moduleKpis.requierenAtencion > 0 ? "ALERTA" : "OK",
+    unidadesPorSurtir: moduleKpis.unidadesPorSurtir > 0 ? "PENDIENTE" : "OK",
+    unidadesPorRetirar: moduleKpis.unidadesPorRetirar > 0 ? "PENDIENTE" : "OK",
+    coberturaRed: moduleKpis.coberturaRed === null ? "SIN_BASE" : "OK",
   };
 }
 
@@ -567,12 +635,20 @@ export function runStoreSnapshotPipeline(assembled: AssembledStoreData): StoreSn
     .sort((a, b) => a.storeId.localeCompare(b.storeId))
     .map(gov => {
       const stage = stageByStore.get(gov.storeId)!;
+      const storeInventory = itemsByStoreId.get(gov.storeId) ?? [];
+      // Proyección certificada del tab Necesidades (fix NEEDS-SINGLE-SOURCE, verbatim)
+      const needsProjection = buildStoreNeedsTabPresentation(plan, stage.needs);
       return {
         storeId: gov.storeId,
         displayName: displayNameByStore.get(gov.storeId) ?? gov.storeId,
+        inventory: {
+          totalUnits: storeInventory.reduce((s, i) => s + i.units, 0),
+          referenceCount: storeInventory.length,
+        },
         coverage: stage.coverage,
         needs: stage.needs,
         kpis: computeStoreKpis(stage.coverage, stage.needs, allocatedByStore.get(gov.storeId) ?? 0, thresholds),
+        presentationHints: computeStorePresentationHints(stage.coverage, stage.needs, needsProjection),
       };
     });
 
@@ -594,6 +670,7 @@ export function runStoreSnapshotPipeline(assembled: AssembledStoreData): StoreSn
     thresholds,
     activeStores: [...assembled.activeStores].sort((a, b) => a.storeId.localeCompare(b.storeId)),
     perStore,
+    presentationHints: computeModulePresentationHints(moduleKpis),
     plan: { ...planRest, poolUsage },
     moduleKpis,
   };

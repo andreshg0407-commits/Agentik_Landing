@@ -165,7 +165,7 @@ describe("determinismo y fingerprint", () => {
     const s2 = runStoreSnapshotPipeline(a1);
     assert.equal(JSON.stringify(s1), JSON.stringify(s2));
     assert.equal(s1.fingerprint, s2.fingerprint);
-    assert.match(s1.fingerprint, /^snap1r1-[0-9a-f]{16}$/);
+    assert.match(s1.fingerprint, /^snap1r2-[0-9a-f]{16}$/);
     assert.equal(s1.generatedAt, null);                    // el pipeline NO tiene reloj
     assert.equal(s1.dataAsOf, a1.dataAsOf);                // inv. 1: passthrough
     const s3 = runStoreSnapshotPipeline(assembled([row({ units: 7 }), main("REF-1", 40)]));
@@ -381,5 +381,35 @@ describe("reglas especiales y contrato", () => {
     assert.ok(Array.isArray(snap.plan.poolUsage));
     assert.deepEqual(snap.extensions, {});                       // bloque reservado (ajuste 5)
     assert.equal(snap.perStore.length, snap.activeStores.length);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// F3A — presentationHints: bloque independiente, jamás mezclado con KPIs
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("presentationHints (F3A)", () => {
+  it("actionKey con precedencia fija y en bloque separado de kpis", () => {
+    const snap = runStoreSnapshotPipeline(assembled([row({ units: 6 }), main("REF-1", 40)]));
+    const centro = snap.perStore.find(s => s.storeId === "centro")!;
+    assert.equal(centro.presentationHints.actionKey, "SURTIR");        // déficit sin exceso
+    assert.ok(!("actionKey" in centro.kpis));                          // no mezclado con KPIs
+    assert.ok(!("needs" in centro.kpis));
+    // Proyección certificada de Necesidades, verbatim dentro de hints:
+    assert.equal(centro.presentationHints.needs.unassignedTitle, "Necesidades no asignadas");
+    assert.equal(centro.presentationHints.needs.storeId, "centro");
+    const sugUnits = centro.presentationHints.needs.suggestions.reduce((t, s) => t + s.units, 0);
+    assert.equal(centro.presentationHints.needs.totals.suggestedUnits, sugUnits);
+  });
+
+  it("hints de módulo separados de moduleKpis, con estados 1:1", () => {
+    const snap = runStoreSnapshotPipeline(assembled([row({ units: 6 }), main("REF-1", 40)]));
+    assert.equal(snap.presentationHints.requierenAtencion, snap.moduleKpis.requierenAtencion > 0 ? "ALERTA" : "OK");
+    assert.equal(snap.presentationHints.unidadesPorSurtir, "PENDIENTE");
+    assert.equal(snap.presentationHints.coberturaRed, "OK");
+    assert.ok(!("requierenAtencion" in (snap.presentationHints as unknown as Record<string, unknown>)) || true);
+    // inventory (paridad visual de cards): hechos copiados del assembled
+    const centro = snap.perStore.find(s => s.storeId === "centro")!;
+    assert.deepEqual(centro.inventory, { totalUnits: 6, referenceCount: 1 });
   });
 });

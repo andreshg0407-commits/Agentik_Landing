@@ -18,6 +18,7 @@ import {
   removeRuleFromStore,
 } from "@/lib/comercial/tiendas/store-policy-service";
 import { getStoreRuleCatalog } from "@/lib/comercial/tiendas/store-replenishment-service";
+import { invalidateStoreSnapshot } from "@/lib/comercial/tiendas/store-snapshot-service";
 import { validateRuleAgainstCatalog } from "@/lib/comercial/tiendas/store-rule-catalog";
 
 export async function POST(
@@ -50,6 +51,7 @@ export async function POST(
         capacity:  body.capacity,
         active:    body.active,
       });
+      invalidateStoreSnapshot(orgId);   // I3 — las políticas alimentan structureRules
       return NextResponse.json({ policy });
     }
 
@@ -75,16 +77,19 @@ export async function POST(
       }
 
       const policy = await addRuleToStore(orgId, body.storeId, body.storeName, body.rule);
+      invalidateStoreSnapshot(orgId);   // I3
       return NextResponse.json({ policy });
     }
 
     case "remove_rule": {
       const policy = await removeRuleFromStore(orgId, body.storeId, body.ruleId);
+      invalidateStoreSnapshot(orgId);   // I3
       return NextResponse.json({ policy });
     }
 
     case "toggle_active": {
       const policy = await toggleStorePolicyActive(orgId, body.storeId);
+      invalidateStoreSnapshot(orgId);   // I3
       return NextResponse.json({ policy });
     }
 
