@@ -293,7 +293,7 @@ function SizeGroupList({ sizeGroups, classKey, grid, onDetail }: {
                     onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
                   >
                     <span style={{ ...cell, display: "grid", gridTemplateColumns: grid, width: "100%", alignItems: "center" }}>
-                      <CommercialReferenceThumbnail imageUrl={item.imageUrl} reference={item.reference} description={item.description} />
+                      <CommercialReferenceThumbnail imageUrl={item.imageUrl} referenceCode={item.reference} description={item.description} />
                       <span style={{ ...cell, fontWeight: T.wt.semibold, color: C.blueDark }}>{item.reference}</span>
                       <span style={{ ...cell, color: C.inkMid }}>{item.description}</span>
                       <span style={{ ...cell, fontSize: T.sz["2xs"] }}>{item.sizeClass ? SIZE_LABELS[item.sizeClass] : "\u2014"}</span>
@@ -414,7 +414,7 @@ function RotacionView({ items, onDetail }: { items: ImportSupplyIntelligenceItem
               onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
             >
               <span style={{ ...cell, display: "grid", gridTemplateColumns: GRID, width: "100%", alignItems: "center" }}>
-                <CommercialReferenceThumbnail imageUrl={item.imageUrl} reference={item.reference} description={item.description} />
+                <CommercialReferenceThumbnail imageUrl={item.imageUrl} referenceCode={item.reference} description={item.description} />
                 <span style={{ ...cell, color: C.inkFaint, fontSize: T.sz["2xs"] }}>{i + 1}</span>
                 <span style={{ ...cell, fontWeight: T.wt.semibold, color: C.blueDark }}>{item.reference}</span>
                 <span style={{ ...cell, color: C.inkMid }}>{item.description}</span>
@@ -481,7 +481,7 @@ function InventarioLentoView({ items, onDetail }: { items: ImportSupplyIntellige
                 onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
               >
                 <span style={{ ...cell, display: "grid", gridTemplateColumns: GRID, width: "100%", alignItems: "center" }}>
-                  <CommercialReferenceThumbnail imageUrl={item.imageUrl} reference={item.reference} description={item.description} />
+                  <CommercialReferenceThumbnail imageUrl={item.imageUrl} referenceCode={item.reference} description={item.description} />
                   <span style={{ ...cell, fontWeight: T.wt.semibold, color: C.blueDark }}>{item.reference}</span>
                   <span style={{ ...cell, color: C.inkMid }}>{item.description}</span>
                   {(() => { const s = fmtStock(item); return <span style={{ ...cell, color: s.color, fontWeight: s.weight }}>{s.text}</span>; })()}

@@ -1096,7 +1096,7 @@ export function WholesaleOrderWizard({
                           <div style={{ display: "flex", gap: S[2], alignItems: "flex-start" }}>
                             <CommercialReferenceThumbnail
                               imageUrl={p.thumbnailUrl}
-                              reference={p.referenceCode}
+                              referenceCode={p.referenceCode}
                               description={p.productName}
                               size={40}
                             />
@@ -1148,7 +1148,7 @@ export function WholesaleOrderWizard({
                         <div style={{ display: "flex", gap: S[2], alignItems: "flex-start" }}>
                           <CommercialReferenceThumbnail
                             imageUrl={p.thumbnailUrl}
-                            reference={p.referenceCode}
+                            referenceCode={p.referenceCode}
                             description={p.productName}
                             size={40}
                           />
@@ -1190,7 +1190,7 @@ export function WholesaleOrderWizard({
                     <div style={{ display: "flex", gap: S[3], alignItems: "center" }}>
                       <CommercialReferenceThumbnail
                         imageUrl={selectedProduct.thumbnailUrl}
-                        reference={selectedProduct.referenceCode}
+                        referenceCode={selectedProduct.referenceCode}
                         description={selectedProduct.productName}
                         size={48}
                       />
@@ -1497,7 +1497,7 @@ export function WholesaleOrderWizard({
                   <div style={{ display: "flex", gap: S[2], alignItems: "center" }}>
                     <CommercialReferenceThumbnail
                       imageUrl={selectedProduct.thumbnailUrl}
-                      reference={selectedProduct.referenceCode}
+                      referenceCode={selectedProduct.referenceCode}
                       description={selectedProduct.productName}
                       size={40}
                     />
@@ -1967,7 +1967,7 @@ function OrderLinesGrouped({
               <div style={{ display: "flex", gap: S[2], alignItems: "center", minWidth: 0 }}>
                 <CommercialReferenceThumbnail
                   imageUrl={group.thumbnailUrl}
-                  reference={refCode}
+                  referenceCode={refCode}
                   description={group.name}
                   size={28}
                 />

@@ -1436,7 +1436,7 @@ export function MaletasClient({
                                       }}
                                     >
                                       {/* Thumbnail — MALETAS-REFERENCIAS-GRUPO-IMAGEN-01 */}
-                                      <CommercialReferenceThumbnail imageUrl={ref.imageUrl} reference={ref.reference} description={ref.description} />
+                                      <CommercialReferenceThumbnail imageUrl={ref.imageUrl} referenceCode={ref.reference} description={ref.description} />
 
                                       {/* Ref code */}
                                       <div style={{
@@ -1655,7 +1655,7 @@ export function MaletasClient({
                                         gap: S[2],
                                       }}
                                     >
-                                      <CommercialReferenceThumbnail imageUrl={ref.imageUrl} reference={ref.reference} description={ref.description} />
+                                      <CommercialReferenceThumbnail imageUrl={ref.imageUrl} referenceCode={ref.reference} description={ref.description} />
                                       <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 600, color: C.titleDeep, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, minWidth: 0 }}>
                                         {ref.reference}
                                       </div>

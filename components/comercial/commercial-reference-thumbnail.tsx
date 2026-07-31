@@ -20,9 +20,9 @@ interface CommercialReferenceThumbnailProps {
   /** CDN URL for the product hero image (null = no image available) */
   imageUrl: string | null;
   /** Product reference code — used for initials fallback */
-  reference: string;
-  /** Full product description — used as alt text */
-  description: string;
+  referenceCode: string;
+  /** Full product description — used as alt text (defaults to referenceCode) */
+  description?: string;
   /** Thumbnail size in px (default: 32) */
   size?: number;
   /** Accessible alt text override (defaults to description) */
@@ -37,7 +37,7 @@ interface CommercialReferenceThumbnailProps {
  */
 export function CommercialReferenceThumbnail({
   imageUrl,
-  reference,
+  referenceCode,
   description,
   size = 32,
   alt,
@@ -45,19 +45,23 @@ export function CommercialReferenceThumbnail({
   const [failed, setFailed] = useState(false);
   const showImage = imageUrl && !failed;
 
+  const label = description || referenceCode || "";
+
   // Extract up to 2 initials from reference code (e.g. "C8-838-5" → "C8")
-  const initials = reference.replace(/[^A-Z0-9]/gi, "").slice(0, 2).toUpperCase();
+  const initials = referenceCode
+    ? referenceCode.replace(/[^A-Z0-9]/gi, "").slice(0, 2).toUpperCase()
+    : "?";
 
   return (
     <div
       style={{ width: size, height: size, flexShrink: 0, position: "relative" }}
       role="img"
-      aria-label={alt ?? description}
+      aria-label={alt ?? label}
     >
       {showImage ? (
         <img
           src={imageUrl}
-          alt={alt ?? description}
+          alt={alt ?? label}
           loading="lazy"
           onError={() => setFailed(true)}
           style={{

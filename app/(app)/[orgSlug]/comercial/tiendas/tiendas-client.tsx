@@ -1815,7 +1815,7 @@ function ReplacementCandidatesPanel({ replacement, canonicalLine }: {
             }}>
               <CommercialReferenceThumbnail
                 imageUrl={c.imageUrl}
-                reference={c.referenceCode}
+                referenceCode={c.referenceCode}
                 description={c.description}
                 size={36}
               />
@@ -2428,7 +2428,7 @@ function DistributionStoreDrawer({
                           style={{ display: "flex", alignItems: "center", gap: S[2], padding: `${S[2]}px`, cursor: item.variantCount > 1 ? "pointer" : "default" }}
                           onClick={() => { if (item.variantCount > 1) toggleInvRef(item.referenceCode); }}
                         >
-                          <CommercialReferenceThumbnail imageUrl={item.imageUrl} reference={item.referenceCode} description={item.productName} size={32} />
+                          <CommercialReferenceThumbnail imageUrl={item.imageUrl} referenceCode={item.referenceCode} description={item.productName} size={32} />
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
                               <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink }}>{item.referenceCode}</span>
@@ -2587,7 +2587,7 @@ function DistributionStoreDrawer({
                     display: "flex", alignItems: "center", gap: S[3],
                     padding: `${S[2]}px ${S[2]}px`, borderBottom: `1px solid ${C.lineSubtle}`,
                   }}>
-                    <CommercialReferenceThumbnail referenceCode={s.referenceCode} imageUrl={null} size={34} />
+                    <CommercialReferenceThumbnail referenceCode={s.referenceCode} imageUrl={null} description={s.productName} size={34} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
                         {s.referenceCode} <span style={{ fontWeight: T.wt.normal, color: C.inkLight }}>{s.productName}</span>
@@ -2900,7 +2900,7 @@ function DistributionStoreDrawer({
                         alignItems: "center",
                       }}>
                         {/* Thumbnail */}
-                        <CommercialReferenceThumbnail imageUrl={rec.imageUrl} reference={rec.referenceCode} description={rec.description} size={28} />
+                        <CommercialReferenceThumbnail imageUrl={rec.imageUrl} referenceCode={rec.referenceCode} description={rec.description} size={28} />
 
                         {/* Reference + description + reason */}
                         <div style={{ minWidth: 0 }}>
@@ -3246,7 +3246,7 @@ function StoreIntelligenceTab({ certifiedIntel, certifiedIntelLoading }: {
                 }}>
                   <CommercialReferenceThumbnail
                     imageUrl={item.imageUrl}
-                    reference={item.referenceCode}
+                    referenceCode={item.referenceCode}
                     description={item.description}
                     size={32}
                   />

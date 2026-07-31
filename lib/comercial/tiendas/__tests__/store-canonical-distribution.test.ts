@@ -1868,10 +1868,10 @@ describe("VIGESIMOTERCERO — Thumbnail imageUrl batch resolution (NOVENO)", () 
     assert.equal(item.imageUrl, null);
   });
 
-  it("CommercialReferenceThumbnail expects imageUrl, reference, description", () => {
+  it("CommercialReferenceThumbnail expects imageUrl, referenceCode, description", () => {
     // This is a structural test — the component exists and accepts these props
-    const props = { imageUrl: null as string | null, reference: "REF001", description: "Test product" };
-    assert.ok(props.reference);
+    const props = { imageUrl: null as string | null, referenceCode: "REF001", description: "Test product" };
+    assert.ok(props.referenceCode);
     assert.ok(props.description);
   });
 });
