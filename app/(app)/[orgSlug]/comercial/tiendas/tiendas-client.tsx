@@ -38,6 +38,7 @@ import {
   type PresentationStoreCard,
   type PresentationTone,
 } from "@/lib/comercial/tiendas/store-presentation-assembler";
+import { createSnapshotRefresher } from "@/lib/comercial/tiendas/store-snapshot-refresher";
 import { ACTIVE_STORE_SLUGS } from "@/lib/comercial/tiendas/store-distribution-types";
 import type { StoreGovernanceRecord } from "@/lib/comercial/tiendas/store-governance-types";
 import { StoreSupplyRulesTab } from "@/components/comercial/store-supply-rules-tab";
@@ -200,6 +201,20 @@ export function TiendasClient({ orgSlug }: Props) {
     [snapshot],
   );
 
+  // ── F3A.1: refetch tras escrituras — ÚNICA función de refresco ────────────
+  // Single-flight + coalescido + guardia de secuencia; un fallo conserva el
+  // snapshot visible. Las presentaciones se reconstruyen solas (useMemo).
+  const [snapshotRefreshing, setSnapshotRefreshing] = useState(false);
+  const snapshotRefresher = useMemo(() => createSnapshotRefresher<StoreSnapshot>({
+    fetchSnapshot: async () => {
+      const data = await tiendaApi(orgSlug, { action: "get_store_snapshot" });
+      return data && data.snapshot ? (data.snapshot as StoreSnapshot) : null;
+    },
+    onSnapshot: setSnapshot,
+    onRefreshingChange: setSnapshotRefreshing,
+  }), [orgSlug]);
+  const refreshSnapshot = snapshotRefresher.refresh;
+
   // ── Drawer state (QUINTO — lazy per-store loading) ──────────────────────
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
   const [activeGov, setActiveGov] = useState<StoreGovernanceRecord[]>([]);
@@ -332,9 +347,10 @@ export function TiendasClient({ orgSlug }: Props) {
             ? `${govConfirm.storeName} fue activada. Su inteligencia se recalculara con la proxima actualizacion.`
             : `${govConfirm.storeName} fue desactivada.`
         );
-        // Refresh both lists
+        // F3A.1: escritura exitosa → refetch del snapshot (estado visible se
+        // reemplaza al llegar la corrida nueva; nunca se borra antes)
+        refreshSnapshot();
         setInactiveLoaded(false);
-        retryDistribution();
         if (inactiveOpen) {
           // Reload inactive list
           setTimeout(() => loadInactiveStores(), 500);
@@ -388,7 +404,7 @@ export function TiendasClient({ orgSlug }: Props) {
             background: C.greenLight, color: C.green,
             border: `1px solid ${C.greenBorder}`,
           }}>
-            Dato real · {snapshot.dataAsOf ? formatTimeAgo(snapshot.dataAsOf) : "sin sync"}
+            Dato real · {snapshot.dataAsOf ? formatTimeAgo(snapshot.dataAsOf) : "sin sync"}{snapshotRefreshing ? " · actualizando…" : ""}
           </span>
         </div>
       )}
@@ -646,6 +662,7 @@ export function TiendasClient({ orgSlug }: Props) {
             <DistributionStoreDrawer
               orgSlug={orgSlug}
               snapshot={snapshot}
+              onSnapshotRefresh={refreshSnapshot}
               storeCard={{
                 store: {
                   id: selectedStoreId,
@@ -1943,11 +1960,13 @@ type DistDrawerTab = "inventario" | "necesidades" | "cobertura" | "descuentos" |
 function DistributionStoreDrawer({
   orgSlug,
   snapshot,
+  onSnapshotRefresh,
   storeCard,
   onClose,
 }: {
   orgSlug: string;
   snapshot: StoreSnapshot;
+  onSnapshotRefresh: () => void;
   storeCard: {
     store: { id: string; name: string; sagWarehouseCode: string; city: string };
     coverageText: string;
@@ -2949,7 +2968,7 @@ function DistributionStoreDrawer({
 
       {/* TAB: Derrotero — supply rules editor (AGENTIK-STORES-SUPPLY-RULES-RESET-01) */}
       {tab === "derrotero" && (
-        <StoreSupplyRulesTab orgSlug={orgSlug} storeId={storeCard.store.id} storeName={storeCard.store.name} />
+        <StoreSupplyRulesTab orgSlug={orgSlug} storeId={storeCard.store.id} storeName={storeCard.store.name} onSaved={onSnapshotRefresh} />
       )}
 
       {/* TAB: Inteligencia — commercial intelligence dashboard */}

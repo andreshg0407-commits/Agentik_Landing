@@ -158,11 +158,12 @@ const SECTION_NAV: { key: RulesSection; label: string }[] = [
 export function StoreSupplyRulesTab({
   orgSlug,
   storeId,
-  storeName,
-}: {
+  storeName, onSaved }: {
   orgSlug: string;
   storeId: string;
   storeName: string;
+  /** F3A.1: notifica una escritura exitosa (refetch del snapshot). */
+  onSaved?: () => void;
 }) {
   const [config, setConfig] = useState<EffectiveStoreConfig | null>(null);
   const [catalog, setCatalog] = useState<DerroteroCatalog | null>(null);
@@ -318,6 +319,7 @@ export function StoreSupplyRulesTab({
       setPreview(null);
       setSuccess("Reglas guardadas exitosamente");
       setTimeout(() => setSuccess(null), 3000);
+      onSaved?.();   // F3A.1: escritura exitosa → refetch del StoreSnapshot
     } catch { setError("Error al guardar configuracion"); }
     finally { setSaving(false); }
   }

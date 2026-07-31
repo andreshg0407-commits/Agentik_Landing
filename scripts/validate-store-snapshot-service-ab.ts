@@ -31,7 +31,7 @@ import { loadStoreReplenishmentPlan } from "@/lib/comercial/tiendas/store-replen
 import { loadStoreCoverage } from "@/lib/comercial/tiendas/store-coverage-service";
 import { buildCanonicalStoreDistribution } from "@/lib/comercial/tiendas/store-distribution-service";
 import { resolveActiveStores } from "@/lib/comercial/tiendas/store-governance-service";
-import { getStoreSnapshotWithMeta } from "@/lib/comercial/tiendas/store-snapshot-service";
+import { getStoreSnapshotWithMeta, invalidateStoreSnapshot } from "@/lib/comercial/tiendas/store-snapshot-service";
 import { computeSnapshotFingerprint, computeModuleKpis } from "@/lib/comercial/tiendas/store-snapshot-pipeline";
 
 let unexplained = 0;
@@ -128,6 +128,14 @@ async function main() {
   } else {
     console.log(`\n✓ (e) A6 documentosAbiertos = ${openCount} (COUNT real — adiós propuestasPendientes:0)`);
   }
+
+  // ── (h) F3A.1 — obligatoria 5: invalidación → cacheHit false → true ──
+  invalidateStoreSnapshot(org.id);
+  const h1 = await getStoreSnapshotWithMeta(org.id);
+  const h2 = await getStoreSnapshotWithMeta(org.id);
+  if (h1.metrics.cacheHit !== false) report("INEXPLICADA", `(h) tras invalidar, la primera lectura debe ser corrida nueva (cacheHit=${h1.metrics.cacheHit})`);
+  else if (h2.metrics.cacheHit !== true) report("INEXPLICADA", `(h) la lectura consecutiva debe venir de cache (cacheHit=${h2.metrics.cacheHit})`);
+  else console.log(`\n✓ (h) invalidación → corrida nueva (${h1.metrics.totalMs}ms) → cache compartida (cacheHit=true)`);
 
   console.log(`\n═══ RESULTADO: ${expectedDiffs} diferencias ESPERADAS (clasificadas) · ${unexplained} INEXPLICADAS ═══`);
   console.log(unexplained === 0
