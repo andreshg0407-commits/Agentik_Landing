@@ -388,8 +388,8 @@ describe("Client — EligibleNeedsView", () => {
   });
 
   it("client shows KPI strip with 6 KPIs", () => {
-    assert.ok(CLIENT_SOURCE.includes("Bajo minimo"));
-    assert.ok(CLIENT_SOURCE.includes("Saludables"));
+    assert.ok(CLIENT_SOURCE.includes("Requieren surtido"));
+    assert.ok(CLIENT_SOURCE.includes("Objetivo cumplido"));
     assert.ok(CLIENT_SOURCE.includes("Sobrestock"));
     assert.ok(CLIENT_SOURCE.includes("Oportunidades"));
   });

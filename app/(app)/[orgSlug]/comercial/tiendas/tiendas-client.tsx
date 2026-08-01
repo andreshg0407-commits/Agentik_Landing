@@ -1708,17 +1708,17 @@ function InvLineSummaryStrip({ summary, activeKpi, onKpiClick, sortBy, onSortCha
 
   if (summary.type === "textile") {
     kpis = [
-      { key: "ALL",             label: "Referencias",   value: Number(d.referenciasActivas ?? 0), color: C.ink },
-      { key: "ALL",             label: "Unidades",      value: Number(d.unidades ?? 0),           color: C.ink },
-      { key: "BELOW_MINIMUM",   label: "Bajo minimo",   value: Number(d.bajoMinimo ?? 0),         color: C.red },
-      { key: "HEALTHY",         label: "Saludables",     value: Number(d.saludables ?? 0),         color: C.green },
+      { key: "ALL",             label: "Referencias",       value: Number(d.referenciasActivas ?? 0), color: C.ink },
+      { key: "ALL",             label: "Unidades",           value: Number(d.unidades ?? 0),           color: C.ink },
+      { key: "BELOW_MINIMUM",   label: "Requieren surtido", value: Number(d.bajoMinimo ?? 0),         color: C.red },
+      { key: "HEALTHY",         label: "Objetivo cumplido",  value: Number(d.saludables ?? 0),         color: C.green },
     ];
   } else if (summary.type === "accessory") {
     kpis = [
-      { key: "ALL",             label: "Referencias",   value: Number(d.referenciasActivas ?? 0), color: C.ink },
-      { key: "ALL",             label: "Unidades",      value: Number(d.unidades ?? 0),           color: C.ink },
-      { key: "BELOW_MINIMUM",   label: "Bajo objetivo", value: Number(d.bajoObjetivo ?? 0),       color: C.red },
-      { key: "HEALTHY",         label: "Saludables",     value: Number(d.saludables ?? 0),         color: C.green },
+      { key: "ALL",             label: "Referencias",       value: Number(d.referenciasActivas ?? 0), color: C.ink },
+      { key: "ALL",             label: "Unidades",           value: Number(d.unidades ?? 0),           color: C.ink },
+      { key: "BELOW_MINIMUM",   label: "Requieren surtido", value: Number(d.bajoObjetivo ?? 0),       color: C.red },
+      { key: "HEALTHY",         label: "Objetivo cumplido",  value: Number(d.saludables ?? 0),         color: C.green },
     ];
   } else if (summary.type === "unclassified") {
     kpis = [
@@ -2306,33 +2306,42 @@ function DistributionStoreDrawer({
       {/* TAB: Inventario — organized by commercial line (AGENTIK-STORES-INVENTORY-BY-LINE-01) */}
       {tab === "inventario" && (
         <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-          {/* LINE NAVIGATION — 5 commercial lines */}
-          <div style={{ display: "flex", gap: S[1], flexWrap: "wrap" }}>
-            {([
-              { key: "CASTILLITOS" as InvLine, label: "Castillitos" },
-              { key: "LATIN_KIDS" as InvLine, label: "Latin Kids" },
-              { key: "ACCESSORIES" as InvLine, label: "Accesorios" },
-              { key: "UNCLASSIFIED" as InvLine, label: "Sin clasificar" },
-              { key: "OUT_OF_STOCK" as InvLine, label: "Agotados" },
-            ]).map(ln => {
-              const cnt = invLineCounts.find(c => c.line === ln.key)?.count ?? 0;
-              const isActive = invLine === ln.key;
-              return (
-                <button
-                  key={ln.key}
-                  onClick={() => { setInvLine(ln.key); setInvPage(1); setInvGroup(undefined); setInvSubgroup(undefined); setInvSizeClass(undefined); setInvInvState(undefined); setInvKpiFilter("ALL"); setInvSortBy("QUANTITY_ASC"); setInvExpandedRefs(new Set()); }}
-                  style={{
-                    fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                    padding: "3px 10px", borderRadius: R.pill, cursor: "pointer",
-                    background: isActive ? C.blueDark : C.surface,
-                    color: isActive ? C.white : C.inkMid,
-                    border: `1px solid ${isActive ? C.blueDark : C.line}`,
-                  }}
-                >
-                  {ln.label} ({invLineCountsLoading ? "\u2014" : cnt})
-                </button>
-              );
-            })}
+          {/* Subtitle */}
+          <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight }}>
+            Disponibilidad actual de la tienda
+          </div>
+
+          {/* LINE NAVIGATION — commercial line filter */}
+          <div style={{ display: "flex", flexDirection: "column", gap: S[1] }}>
+            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkFaint, textTransform: "uppercase" as const, letterSpacing: "0.05em" }}>
+              Línea comercial
+            </div>
+            <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
+              {([
+                { key: "CASTILLITOS" as InvLine, label: "Castillitos" },
+                { key: "LATIN_KIDS" as InvLine, label: "Latin Kids" },
+                { key: "ACCESSORIES" as InvLine, label: "Accesorios" },
+                { key: "UNCLASSIFIED" as InvLine, label: "Sin clasificar" },
+                { key: "OUT_OF_STOCK" as InvLine, label: "Agotados" },
+              ]).map(ln => {
+                const isActive = invLine === ln.key;
+                return (
+                  <button
+                    key={ln.key}
+                    onClick={() => { setInvLine(ln.key); setInvPage(1); setInvGroup(undefined); setInvSubgroup(undefined); setInvSizeClass(undefined); setInvInvState(undefined); setInvKpiFilter("ALL"); setInvSortBy("QUANTITY_ASC"); setInvExpandedRefs(new Set()); }}
+                    style={{
+                      fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
+                      padding: "6px 14px", borderRadius: R.sm, cursor: "pointer",
+                      background: isActive ? C.blueDark : C.white,
+                      color: isActive ? C.white : C.ink,
+                      border: `1.5px solid ${isActive ? C.blueDark : C.line}`,
+                    }}
+                  >
+                    {ln.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* ERROR STATE — differentiate empty vs error (OCTAVO) */}

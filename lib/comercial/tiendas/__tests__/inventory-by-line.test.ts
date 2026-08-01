@@ -378,8 +378,8 @@ describe("DECIMONOVENO — Human-readable labels", () => {
   it("has INV_SIZE_LABEL for size classes", () => {
     assert.ok(CLIENT_SOURCE.includes("INV_SIZE_LABEL"));
   });
-  it("labels include Bajo minimo", () => {
-    assert.ok(CLIENT_SOURCE.includes("Bajo minimo"));
+  it("labels include Requieren surtido", () => {
+    assert.ok(CLIENT_SOURCE.includes("Requieren surtido"));
   });
   it("labels include En rango", () => {
     assert.ok(CLIENT_SOURCE.includes("En rango"));
@@ -642,24 +642,22 @@ describe("VIGESIMO_TERCERO — KPI actions and sorting", () => {
     assert.ok(!textileKpis.includes('"Exceso"'), "Exceso must NOT appear as textile KPI");
   });
 
-  it("textile KPIs are exactly 5: Referencias, Unidades, Bajo minimo, Reemplazos, Saludables", () => {
-    // The InvLineSummaryStrip builds kpis array for textile with these labels
+  it("textile KPIs: Referencias, Unidades, Requieren surtido, Objetivo cumplido", () => {
     const fnStart = CLIENT_SOURCE.indexOf("function InvLineSummaryStrip(");
     const fnEnd = CLIENT_SOURCE.indexOf("\nfunction ", fnStart + 10);
     const fnBody = CLIENT_SOURCE.slice(fnStart, fnEnd > -1 ? fnEnd : fnStart + 3000);
-    // Check textile block has all 5 KPI labels
     assert.ok(fnBody.includes('"Referencias"'), "must have Referencias");
     assert.ok(fnBody.includes('"Unidades"'), "must have Unidades");
-    assert.ok(fnBody.includes('"Bajo minimo"'), "must have Bajo minimo");
-    assert.ok(fnBody.includes('"Reemplazos"'), "must have Reemplazos");
-    assert.ok(fnBody.includes('"Saludables"'), "must have Saludables");
+    assert.ok(fnBody.includes('"Requieren surtido"'), "must have Requieren surtido");
+    assert.ok(fnBody.includes('"Objetivo cumplido"'), "must have Objetivo cumplido");
   });
 
-  it("accessory KPIs use Bajo objetivo instead of Bajo minimo", () => {
+  it("accessory KPIs use same official labels as textile", () => {
     const fnStart = CLIENT_SOURCE.indexOf("function InvLineSummaryStrip(");
     const fnEnd = CLIENT_SOURCE.indexOf("\nfunction ", fnStart + 10);
     const fnBody = CLIENT_SOURCE.slice(fnStart, fnEnd > -1 ? fnEnd : fnStart + 3000);
-    assert.ok(fnBody.includes('"Bajo objetivo"'), "accessories must have Bajo objetivo");
+    assert.ok(fnBody.includes('"Requieren surtido"'), "accessories must have Requieren surtido");
+    assert.ok(fnBody.includes('"Objetivo cumplido"'), "accessories must have Objetivo cumplido");
   });
 
   it("KPIs are clickable (onKpiClick prop)", () => {
