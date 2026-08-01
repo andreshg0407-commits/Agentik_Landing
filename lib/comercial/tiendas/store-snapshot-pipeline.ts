@@ -71,6 +71,7 @@ import {
   canonicalAssemblerJson,
   type AssembledStoreData,
   type AssembledItem,
+  type ReferenceCatalogEntry,
 } from "./store-snapshot-assembler";
 import {
   buildStoreNeedsTabPresentation,
@@ -214,6 +215,8 @@ export interface StoreSnapshot {
   readonly schemaVersion: typeof STORE_SNAPSHOT_SCHEMA_VERSION;
   readonly pipelineVersion: typeof SNAPSHOT_PIPELINE_VERSION;
   readonly rulesVersion: typeof SNAPSHOT_RULES_VERSION;
+  /** Commercial taxonomy version used during assembly (independent axis). */
+  readonly commercialTaxonomyVersion: number;
   readonly organizationId: string;
   /** Huella de la corrida — excluye generatedAt/metrics/documentRefs (inv. 9). */
   readonly fingerprint: string;
@@ -224,6 +227,8 @@ export interface StoreSnapshot {
   readonly thresholds: StoreSnapshotThresholds;
   readonly activeStores: readonly { readonly storeId: string; readonly displayName: string }[];
   readonly perStore: readonly SnapshotPerStore[];
+  /** Static reference metadata — passthrough from assembler (obs. 1). */
+  readonly referenceCatalog: readonly ReferenceCatalogEntry[];
   /** Estados visuales de módulo (F3A) — bloque independiente de moduleKpis. */
   readonly presentationHints: SnapshotModulePresentationHints;
   /** VERBATIM del motor S6 (poolUsage serializado sin Map). */
@@ -665,11 +670,13 @@ export function runStoreSnapshotPipeline(assembled: AssembledStoreData): StoreSn
     schemaVersion: STORE_SNAPSHOT_SCHEMA_VERSION,
     pipelineVersion: SNAPSHOT_PIPELINE_VERSION,
     rulesVersion: SNAPSHOT_RULES_VERSION,
+    commercialTaxonomyVersion: assembled.commercialTaxonomyVersion,
     organizationId: assembled.organizationId,
     dataAsOf: assembled.dataAsOf,
     thresholds,
     activeStores: [...assembled.activeStores].sort((a, b) => a.storeId.localeCompare(b.storeId)),
     perStore,
+    referenceCatalog: assembled.referenceCatalog,
     presentationHints: computeModulePresentationHints(moduleKpis),
     plan: { ...planRest, poolUsage },
     moduleKpis,

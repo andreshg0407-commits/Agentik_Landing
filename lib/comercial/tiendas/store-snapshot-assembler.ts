@@ -44,6 +44,9 @@
 
 import { isSpecialCollectionReference } from "../commercial-exclusions";
 import { resolveBusinessLineId } from "./store-business-lines";
+import type { CommercialFamilyKey } from "@/lib/products/commercial-taxonomy/commercial-taxonomy-types";
+import { resolveCommercialTaxonomy } from "@/lib/products/commercial-taxonomy/commercial-taxonomy-resolver";
+import { COMMERCIAL_TAXONOMY_VERSION } from "@/lib/products/commercial-taxonomy/commercial-taxonomy-data";
 import {
   CASTILLITOS_TEXTILE_COVERAGE,
   LATIN_KIDS_TEXTILE_COVERAGE,
@@ -184,6 +187,12 @@ export interface ReferenceCatalogEntry {
   readonly sizeClass: string | null;
   readonly heroImageUrl: string | null;
   readonly entryDate: string | null;
+  /**
+   * Canonical commercial family — resolved once via commercial-taxonomy domain.
+   * null when the product is outside the governed taxonomy scope
+   * (e.g. textiles: castillitos, latin_kids — taxonomy governs ACC only).
+   */
+  readonly commercialFamily: CommercialFamilyKey | null;
 }
 
 export interface AssembledMainStockEntry {
@@ -220,6 +229,8 @@ export interface AssembledStoreData {
   readonly dataAsOf: string | null;
   /** `asm1-<fnv64>` sobre el JSON canónico del resto del objeto (obs. 5). */
   readonly fingerprint: string;
+  /** Version of the commercial taxonomy used (independent of pipeline/rules versions). */
+  readonly commercialTaxonomyVersion: number;
   readonly activeStores: readonly SnapshotGovernanceStore[];
   readonly stores: readonly AssembledStoreInventory[];
   readonly referenceCatalog: readonly ReferenceCatalogEntry[];
@@ -541,6 +552,11 @@ export function assembleSnapshotSource(source: SnapshotSourceRows): AssembledSto
     // Catálogo estático (obs. 1): first-wins + primer no-nulo para opcionales
     const existing = catalogAcc.get(referenceId);
     if (!existing) {
+      const lineId = resolveBusinessLineId(row.productLine);
+      const isAccGoverned = lineId === "accesorios_importacion";
+      const commercialFamily: CommercialFamilyKey | null = isAccGoverned
+        ? resolveCommercialTaxonomy({ referenceCode, subgrupoSag: row.subgrupoSag }).familyKey
+        : null;
       catalogAcc.set(referenceId, {
         referenceId,
         identitySource,
@@ -551,6 +567,7 @@ export function assembleSnapshotSource(source: SnapshotSourceRows): AssembledSto
         sizeClass,
         heroImageUrl: row.heroImageUrl,
         entryDate: resolveEntryDate(row.createdAtSag),
+        commercialFamily,
       });
     } else if (!existing.heroImageUrl && row.heroImageUrl) {
       catalogAcc.set(referenceId, { ...existing, heroImageUrl: row.heroImageUrl });
@@ -679,6 +696,7 @@ export function assembleSnapshotSource(source: SnapshotSourceRows): AssembledSto
     assemblerVersion: ASSEMBLER_VERSION,
     organizationId: source.organizationId,
     dataAsOf,
+    commercialTaxonomyVersion: COMMERCIAL_TAXONOMY_VERSION,
     activeStores: [...source.governanceStores].sort((a, b) => a.storeId.localeCompare(b.storeId)),
     stores,
     referenceCatalog: [...catalogAcc.values()].sort((a, b) => a.referenceId.localeCompare(b.referenceId)),
