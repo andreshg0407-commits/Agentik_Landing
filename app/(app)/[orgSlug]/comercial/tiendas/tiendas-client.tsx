@@ -38,6 +38,8 @@ import {
   type DashboardPresentation,
   type PresentationStoreCard,
   type PresentationTone,
+  type OperativeNeedsPresentation,
+  type NeedsTabPresentation,
 } from "@/lib/comercial/tiendas/store-presentation-assembler";
 import { createSnapshotRefresher } from "@/lib/comercial/tiendas/store-snapshot-refresher";
 import { ACTIVE_STORE_SLUGS } from "@/lib/comercial/tiendas/store-distribution-types";
@@ -59,6 +61,14 @@ import {
   TREND_COLOR,
   INTELLIGENCE_YEAR as CERTIFIED_YEAR,
 } from "@/lib/comercial/tiendas/store-certified-intelligence-types";
+
+// ── Business line labels for Needs tab filter (AGENTIK-STORES-NEEDS-UX-02.3.1) ──
+const NEEDS_LINE_LABEL: Record<string, string> = {
+  castillitos: "Castillitos",
+  latin_kids: "Latin Kids",
+  accesorios_importacion: "Accesorios",
+};
+const NEEDS_COMMERCIAL_LINES = new Set(["castillitos", "latin_kids", "accesorios_importacion"]);
 
 // ── Rule provenance (AGENTIK-STORES-SUPPLY-RULES-CONSUMPTION-CERTIFICATION-01) ─
 
@@ -1521,39 +1531,312 @@ function MiniStat({ label, value, color }: { label: string; value: string; color
   );
 }
 
-function NeedsUnassignedRow({ item }: { item: { structureLabel: string; pendingText: string; cause: string; technicalDetail: string; engineReason: string } }) {
-  const [showDetail, setShowDetail] = useState(false);
+/** Collapsible structure accordion for Needs tab (AGENTIK-STORES-NEEDS-UX-02) */
+function NeedsStructureAccordion({ group: g }: { group: { structureKey: string; label: string; suggestedText: string; requiredText: string; pendingText: string; fullyCovered: boolean; items: readonly { referenceCode: string; productName: string; unitsText: string; typeLabel: string }[] } }) {
+  const [open, setOpen] = useState(false);
+  const totalUnits = g.items.length;
   return (
-    <div style={{ padding: `${S[2]}px ${S[2]}px`, borderBottom: `1px solid ${C.lineSubtle}` }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: S[2] }}>
-        <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
-          {item.structureLabel}
-        </span>
-        <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.red, flexShrink: 0 }}>
-          {item.pendingText} uds
-        </span>
-      </div>
-      <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, marginTop: 2 }}>
-        {item.cause}
-      </div>
+    <div style={{ borderBottom: `1px solid ${C.line}` }}>
+      {/* Accordion header */}
       <button
         type="button"
-        onClick={() => setShowDetail(v => !v)}
+        onClick={() => setOpen(v => !v)}
         style={{
-          fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.blueDark,
-          background: "none", border: "none", padding: 0, marginTop: 4,
-          cursor: "pointer", textDecoration: "underline",
+          display: "flex", alignItems: "center", gap: S[2], width: "100%",
+          padding: `${S[2]}px ${S[3]}px`, background: C.surfaceAlt,
+          border: "none", cursor: "pointer", textAlign: "left",
         }}
       >
-        {showDetail ? "Ocultar explicación" : "Ver explicación"}
-      </button>
-      {showDetail && (
-        <div style={{
-          fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint,
-          marginTop: 4, padding: S[2], background: C.surfaceAlt, borderRadius: R.xs,
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid, width: 16, flexShrink: 0 }}>
+          {open ? "▼" : "▶"}
+        </span>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink, flex: 1, minWidth: 0 }}>
+          {g.label} ({g.suggestedText} uds)
+        </span>
+        <span style={{
+          fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+          padding: "2px 8px", borderRadius: R.pill, flexShrink: 0,
+          background: C.blueDark, color: C.white,
         }}>
-          {item.technicalDetail}
+          Enviar {g.suggestedText}
+        </span>
+        {!g.fullyCovered && (
+          <span style={{
+            fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+            padding: "2px 8px", borderRadius: R.pill, flexShrink: 0,
+            background: C.amberLight, color: C.amber, border: `1px solid ${C.amberBorder}`,
+          }}>
+            Pend. {g.pendingText}
+          </span>
+        )}
+      </button>
+      {/* Accordion body — aligned grid: Grupo | Referencia | Tipo | Cantidad */}
+      {open && (
+        <div style={{ padding: `0 ${S[3]}px` }}>
+          {/* Column headers */}
+          <div style={{
+            display: "grid", gridTemplateColumns: "36px 1fr auto 80px",
+            gap: S[2], padding: `${S[1]}px 0`,
+            borderBottom: `1px solid ${C.lineSubtle}`,
+          }}>
+            <span />
+            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase" }}>Referencia</span>
+            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase" }}>Tipo</span>
+            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase", textAlign: "right" }}>Cantidad</span>
+          </div>
+          {g.items.map((item, ii) => (
+            <div key={`${item.referenceCode}-${ii}`} style={{
+              display: "grid", gridTemplateColumns: "36px 1fr auto 80px",
+              gap: S[2], alignItems: "center",
+              padding: `${S[2]}px 0`, borderBottom: ii < totalUnits - 1 ? `1px solid ${C.lineSubtle}` : "none",
+            }}>
+              <CommercialReferenceThumbnail referenceCode={item.referenceCode} imageUrl={null} description={item.productName} size={30} />
+              <div style={{ minWidth: 0 }}>
+                <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
+                  {item.referenceCode}
+                </span>
+                <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {item.productName}
+                </div>
+              </div>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, flexShrink: 0 }}>
+                {item.typeLabel}
+              </span>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold, color: C.blueDark, textAlign: "right" }}>
+                {item.unitsText} uds
+              </span>
+            </div>
+          ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** Needs tab with line filter + two outer accordions closed by default (AGENTIK-STORES-NEEDS-UX-02.3) */
+function NeedsTabContent({ opNeeds, needsPres }: { opNeeds: OperativeNeedsPresentation; needsPres: NeedsTabPresentation }) {
+  const [needsLine, setNeedsLine] = useState<string>("ALL");
+  const [surtidoOpen, setSurtidoOpen] = useState(false);
+  const [pendientesOpen, setPendientesOpen] = useState(false);
+
+  const surtidoId = "needs-surtido-body";
+  const pendientesId = "needs-pendientes-body";
+
+  // Derive unique commercial lines from structure groups + unassigned (exclude non-commercial)
+  const availableLines = useMemo(() => {
+    const lineSet = new Set<string>();
+    for (const g of opNeeds.structureGroups) if (g.line && NEEDS_COMMERCIAL_LINES.has(g.line)) lineSet.add(g.line);
+    for (const u of opNeeds.unassigned) if (u.line && NEEDS_COMMERCIAL_LINES.has(u.line)) lineSet.add(u.line);
+    return [...lineSet].sort();
+  }, [opNeeds.structureGroups, opNeeds.unassigned]);
+
+  // Filter data by selected line
+  const filteredGroups = useMemo(
+    () => needsLine === "ALL" ? opNeeds.structureGroups : opNeeds.structureGroups.filter(g => g.line === needsLine),
+    [opNeeds.structureGroups, needsLine],
+  );
+  const filteredUnassigned = useMemo(
+    () => needsLine === "ALL" ? opNeeds.unassigned : opNeeds.unassigned.filter(u => u.line === needsLine),
+    [opNeeds.unassigned, needsLine],
+  );
+
+  // Per-line KPI totals (client-side sum of filtered groups — presentation only)
+  const kpiSuggested = useMemo(() => {
+    let total = 0;
+    for (const g of filteredGroups) total += g.suggestedUnits;
+    return total;
+  }, [filteredGroups]);
+  const kpiPending = useMemo(() => {
+    let total = 0;
+    for (const g of filteredGroups) total += g.pendingUnits;
+    for (const u of filteredUnassigned) total += u.pendingUnits;
+    return total;
+  }, [filteredGroups, filteredUnassigned]);
+  const kpiCovered = useMemo(() => filteredGroups.filter(g => g.fullyCovered).length, [filteredGroups]);
+  const kpiTotal = filteredGroups.length + filteredUnassigned.length;
+
+  const fmtN = (n: number) => n.toLocaleString("es-CO");
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
+      {/* Contextual header (AGENTIK-STORES-NEEDS-UX-02.2) */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.base, fontWeight: T.wt.semibold, color: C.ink }}>
+          Necesidades de surtido
+        </span>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
+          Revisa la mercancía que puede enviarse desde la bodega principal para mejorar la cobertura de esta tienda.
+        </span>
+      </div>
+
+      {/* KPI cards — react to line filter */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: S[2] }}>
+        <div className="ag-kpi-card" style={{ padding: S[3], display: "flex", flexDirection: "column", gap: 2 }}>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, textTransform: "uppercase", letterSpacing: "0.04em" }}>Podemos surtir</span>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: C.blueDark }}>{fmtN(kpiSuggested)} uds</span>
+        </div>
+        <div className="ag-kpi-card" style={{ padding: S[3], display: "flex", flexDirection: "column", gap: 2 }}>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, textTransform: "uppercase", letterSpacing: "0.04em" }}>Quedará pendiente</span>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: kpiPending > 0 ? C.red : C.green }}>{fmtN(kpiPending)} uds</span>
+        </div>
+        <div className="ag-kpi-card" style={{ padding: S[3], display: "flex", flexDirection: "column", gap: 2 }}>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, textTransform: "uppercase", letterSpacing: "0.04em" }}>Cobertura lograda</span>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: C.green }}>{fmtN(kpiCovered)} de {fmtN(kpiTotal)} grupos</span>
+        </div>
+      </div>
+
+      {/* Line filter — same visual as Inventory tab (AGENTIK-STORES-NEEDS-UX-02.3) */}
+      {availableLines.length > 1 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: S[1] }}>
+          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkFaint, textTransform: "uppercase" as const, letterSpacing: "0.05em" }}>
+            Línea comercial
+          </div>
+          <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
+            {[{ key: "ALL", label: "Todas" }, ...availableLines.map(l => ({ key: l, label: NEEDS_LINE_LABEL[l] ?? l }))].map(ln => {
+              const isActive = needsLine === ln.key;
+              return (
+                <button
+                  key={ln.key}
+                  onClick={() => { setNeedsLine(ln.key); setSurtidoOpen(false); setPendientesOpen(false); }}
+                  style={{
+                    fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
+                    padding: "6px 14px", borderRadius: R.sm, cursor: "pointer",
+                    background: isActive ? C.blueDark : C.white,
+                    color: isActive ? C.white : C.ink,
+                    border: `1.5px solid ${isActive ? C.blueDark : C.line}`,
+                  }}
+                >
+                  {ln.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ═══ Outer accordion 1: Propuesta de surtido ═══ */}
+      <div style={{ ...panel }}>
+        <button
+          type="button"
+          aria-expanded={surtidoOpen}
+          aria-controls={surtidoId}
+          onClick={() => setSurtidoOpen(v => !v)}
+          style={{
+            ...panelHeader, display: "flex", alignItems: "center", gap: S[2],
+            width: "100%", border: "none", cursor: "pointer", textAlign: "left",
+          }}
+        >
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid, width: 16, flexShrink: 0 }}>
+            {surtidoOpen ? "▼" : "▶"}
+          </span>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink, flex: 1 }}>
+            Propuesta de surtido para esta tienda
+          </span>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, flexShrink: 0 }}>
+            {filteredGroups.length} grupos · {fmtN(kpiSuggested)} uds
+          </span>
+        </button>
+        {surtidoOpen && (
+          <div id={surtidoId}>
+            {filteredGroups.length === 0 ? (
+              <div style={{ padding: S[4], fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight }}>
+                No hay mercancía sugerida para esta línea en este momento.
+              </div>
+            ) : (
+              <div>
+                {filteredGroups.map(g => (
+                  <NeedsStructureAccordion key={g.structureKey} group={g} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Retiros sugeridos */}
+      {opNeeds.withdrawals.length > 0 && (
+        <div style={{ ...panel }}>
+          <div style={{ ...panelHeader }}>
+            <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.amber }}>
+              Mercancía a retirar
+            </span>
+          </div>
+          <div style={{ padding: S[2] }}>
+            {opNeeds.withdrawals.map((w, i) => (
+              <div key={`${w.structureKey}-${i}`} style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                padding: `${S[1]}px ${S[2]}px`, borderBottom: `1px solid ${C.lineSubtle}`,
+                fontFamily: T.mono, fontSize: T.sz.sm,
+              }}>
+                <span style={{ color: C.ink }}>{w.label}</span>
+                <span style={{ color: C.amber, fontWeight: T.wt.semibold }}>{w.unitsText} uds</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ═══ Outer accordion 2: Pendientes sin inventario ═══ */}
+      <div style={{ ...panel }}>
+        <button
+          type="button"
+          aria-expanded={pendientesOpen}
+          aria-controls={pendientesId}
+          onClick={() => setPendientesOpen(v => !v)}
+          style={{
+            ...panelHeader, display: "flex", alignItems: "center", gap: S[2],
+            width: "100%", border: "none", cursor: "pointer", textAlign: "left",
+          }}
+        >
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid, width: 16, flexShrink: 0 }}>
+            {pendientesOpen ? "▼" : "▶"}
+          </span>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.red, flex: 1 }}>
+            Pendientes sin inventario disponible
+          </span>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, flexShrink: 0 }}>
+            {filteredUnassigned.length} grupos · {fmtN(kpiPending)} uds
+          </span>
+        </button>
+        {pendientesOpen && (
+          <div id={pendientesId}>
+            {filteredUnassigned.length === 0 ? (
+              <div style={{ padding: S[4], fontFamily: T.mono, fontSize: T.sz.sm, color: C.green }}>
+                Todas las necesidades de esta línea pueden cubrirse con el inventario disponible.
+              </div>
+            ) : (
+              <div style={{ padding: S[2] }}>
+                {filteredUnassigned.map((u, i) => (
+                  <div key={`unassigned-${i}`} style={{ padding: `${S[2]}px ${S[2]}px`, borderBottom: `1px solid ${C.lineSubtle}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: S[2] }}>
+                      <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
+                        {u.structureLabel}
+                      </span>
+                      <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.red, flexShrink: 0 }}>
+                        {u.pendingText} uds
+                      </span>
+                    </div>
+                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, marginTop: 2 }}>
+                      {u.cause}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* CTA — Picking Draft integration point (TODO: AGENTIK-PICKING-DRAFT-01) */}
+      {opNeeds.hasSuggestions && (
+        <button
+          type="button"
+          className="ag-action-primary"
+          style={{ alignSelf: "flex-start", fontFamily: T.mono, fontSize: T.sz.sm, opacity: 0.6, cursor: "default" }}
+          disabled
+        >
+          Generar propuesta de surtido · Próximamente disponible
+        </button>
       )}
     </div>
   );
@@ -2607,152 +2890,9 @@ function DistributionStoreDrawer({
         </div>
       )}
 
-      {/* TAB: Necesidades — UX operativa (AGENTIK-STORES-NEEDS-OPERATIVE-UX-01) */}
+      {/* TAB: Necesidades — UX operativa (AGENTIK-STORES-NEEDS-UX-02.1) */}
       {tab === "necesidades" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-          {/* KPIs operativos */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: S[2] }}>
-            <MiniStat label="Se puede enviar" value={`${opNeeds.totalSuggestedText} uds`} color={C.blueDark} />
-            <MiniStat label="Quedará pendiente" value={`${opNeeds.totalPendingText} uds`} color={opNeeds.unassigned.length > 0 ? C.red : C.green} />
-            <MiniStat label="Estructuras cubiertas" value={`${opNeeds.coveredStructuresText} de ${opNeeds.totalStructuresText}`} color={C.green} />
-          </div>
-
-          {/* Mercancía disponible para enviar — agrupada por estructura del derrotero */}
-          <div style={{ ...panel }}>
-            <div style={{ ...panelHeader }}>
-              <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
-                Mercancía disponible para enviar
-              </span>
-            </div>
-            {opNeeds.structureGroups.length === 0 ? (
-              <div style={{ padding: S[4], fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight }}>
-                No hay mercancía sugerida para esta tienda en este momento.
-              </div>
-            ) : (
-              <div>
-                {opNeeds.structureGroups.map(g => (
-                  <div key={g.structureKey} style={{ borderBottom: `1px solid ${C.line}` }}>
-                    {/* Structure header — what's needed, what we can send, what's pending */}
-                    <div style={{
-                      display: "flex", alignItems: "center", gap: S[2],
-                      padding: `${S[2]}px ${S[3]}px`, background: C.surfaceAlt,
-                    }}>
-                      <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink, flex: 1, minWidth: 0 }}>
-                        {g.label}
-                      </span>
-                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight, flexShrink: 0 }}>
-                        Faltan {g.requiredText}
-                      </span>
-                      <span style={{
-                        fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                        padding: "2px 8px", borderRadius: R.pill, flexShrink: 0,
-                        background: C.blueDark, color: C.white,
-                      }}>
-                        Enviar {g.suggestedText} uds
-                      </span>
-                      {!g.fullyCovered && (
-                        <span style={{
-                          fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                          padding: "2px 8px", borderRadius: R.pill, flexShrink: 0,
-                          background: C.amberLight, color: C.amber, border: `1px solid ${C.amberBorder}`,
-                        }}>
-                          Pend. {g.pendingText}
-                        </span>
-                      )}
-                    </div>
-                    {/* Reference items within this structure */}
-                    <div style={{ padding: `0 ${S[3]}px` }}>
-                      {g.items.map((item, ii) => (
-                        <div key={`${item.referenceCode}-${ii}`} style={{
-                          display: "flex", alignItems: "center", gap: S[3],
-                          padding: `${S[2]}px 0`, borderBottom: ii < g.items.length - 1 ? `1px solid ${C.lineSubtle}` : "none",
-                        }}>
-                          <CommercialReferenceThumbnail referenceCode={item.referenceCode} imageUrl={null} description={item.productName} size={30} />
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
-                              {item.referenceCode}
-                            </span>
-                            <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight, marginLeft: S[2] }}>
-                              {item.productName}
-                            </span>
-                          </div>
-                          <span style={{
-                            fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, flexShrink: 0,
-                          }}>
-                            {item.typeLabel}
-                          </span>
-                          <span style={{
-                            fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold, color: C.blueDark, flexShrink: 0,
-                          }}>
-                            {item.unitsText} uds
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Retiros sugeridos */}
-          {opNeeds.withdrawals.length > 0 && (
-            <div style={{ ...panel }}>
-              <div style={{ ...panelHeader }}>
-                <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.amber }}>
-                  Mercancía a retirar
-                </span>
-              </div>
-              <div style={{ padding: S[2] }}>
-                {opNeeds.withdrawals.map((w, i) => (
-                  <div key={`${w.structureKey}-${i}`} style={{
-                    display: "flex", justifyContent: "space-between", alignItems: "center",
-                    padding: `${S[1]}px ${S[2]}px`, borderBottom: `1px solid ${C.lineSubtle}`,
-                    fontFamily: T.mono, fontSize: T.sz.sm,
-                  }}>
-                    <span style={{ color: C.ink }}>{w.label}</span>
-                    <span style={{ color: C.amber, fontWeight: T.wt.semibold }}>{w.unitsText} uds</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Faltantes que no podemos cubrir hoy */}
-          <div style={{ ...panel }}>
-            <div style={{ ...panelHeader }}>
-              <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.red }}>
-                Faltantes que no podemos cubrir hoy
-              </span>
-              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginLeft: "auto" }}>
-                {needsPres.totals.unassignedCountText}
-              </span>
-            </div>
-            {opNeeds.unassigned.length === 0 ? (
-              <div style={{ padding: S[4], fontFamily: T.mono, fontSize: T.sz.sm, color: C.green }}>
-                Todas las necesidades pueden cubrirse con el stock disponible.
-              </div>
-            ) : (
-              <div style={{ padding: S[2] }}>
-                {opNeeds.unassigned.map((u, i) => (
-                  <NeedsUnassignedRow key={`unassigned-${i}`} item={u} />
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* CTA — closes drawer so user can access replenishment on main screen */}
-          {opNeeds.hasSuggestions && (
-            <button
-              type="button"
-              className="ag-action-primary"
-              style={{ alignSelf: "flex-start", fontFamily: T.mono, fontSize: T.sz.sm }}
-              onClick={onClose}
-            >
-              Generar propuesta de surtido
-            </button>
-          )}
-        </div>
+        <NeedsTabContent opNeeds={opNeeds} needsPres={needsPres} />
       )}
 
       {tab === "cobertura" && (

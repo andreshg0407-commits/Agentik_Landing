@@ -69,8 +69,8 @@ const SPECIAL_STATUS_TONE: Record<string, PresentationTone> = {
 };
 
 const CANDIDATE_TYPE_LABEL: Record<string, string> = {
-  REPOSICION_MISMA_REFERENCIA: "Reposición",
-  COMPLEMENTO_REFERENCIA_COMPATIBLE: "Complemento compatible",
+  REPOSICION_MISMA_REFERENCIA: "Reposición directa",
+  COMPLEMENTO_REFERENCIA_COMPATIBLE: "Mercancía disponible",
   REFERENCIA_NUEVA_COMPATIBLE: "Referencia nueva",
 };
 
@@ -195,11 +195,11 @@ export interface NeedsTabPresentation {
 // ── Lenguaje comercial para causas de faltantes ──────────────────────────────
 
 const UNASSIGNED_HUMAN_CAUSE: Record<string, string> = {
-  SIN_DATOS_DISPONIBILIDAD: "Sin datos de disponibilidad",
-  SIN_COMPATIBLES_CON_STOCK: "Sin stock compatible en bodega",
-  COMPATIBLES_EXCLUIDAS_POR_REGLAS: "Stock reservado por Regla 36",
-  ASIGNACION_PARCIAL: "Pool agotado (asignación parcial)",
-  ESCASEZ_GLOBAL_POOL_AGOTADO: "Pool agotado",
+  SIN_DATOS_DISPONIBILIDAD: "Sin información de inventario disponible",
+  SIN_COMPATIBLES_CON_STOCK: "No hay mercancía disponible en bodega para este grupo",
+  COMPATIBLES_EXCLUIDAS_POR_REGLAS: "Mercancía reservada para otras tiendas",
+  ASIGNACION_PARCIAL: "Inventario insuficiente para cubrir todas las tiendas",
+  ESCASEZ_GLOBAL_POOL_AGOTADO: "Inventario insuficiente para cubrir todas las tiendas",
 };
 
 // ── Operative Needs DTO ──────────────────────────────────────────────────────
@@ -213,6 +213,9 @@ export interface OperativeNeedsSuggestionItem {
 
 export interface OperativeNeedsUnassignedItem {
   readonly structureLabel: string;
+  /** Line from coverage (e.g. "CS" for Castillitos) */
+  readonly line: string;
+  readonly pendingUnits: number;
   readonly pendingText: string;
   readonly cause: string;
   /** Technical detail — hidden by default, shown in "Ver explicación" */
@@ -224,8 +227,11 @@ export interface OperativeNeedsStructureGroup {
   /** Derrotero structure label (e.g. "PANTALÓN CLÁSICO — 30") */
   readonly structureKey: string;
   readonly label: string;
-  /** Line from coverage (e.g. "1" for Textil) */
+  /** Line from coverage (e.g. "CS" for Castillitos) */
   readonly line: string;
+  /** Raw unit counts for client-side line filtering */
+  readonly suggestedUnits: number;
+  readonly pendingUnits: number;
   /** How many units this structure needs (from coverage deficit) */
   readonly requiredText: string;
   /** How many units the plan can send now */
@@ -287,6 +293,8 @@ export function buildOperativeNeedsPresentation(snapshot: StoreSnapshot, storeId
       structureKey: key,
       label: cov?.label ?? key,
       line: cov?.line ?? "",
+      suggestedUnits,
+      pendingUnits: pending,
       requiredText: fmtInt(requiredUnits),
       suggestedText: fmtInt(suggestedUnits),
       pendingText: fmtInt(pending),
@@ -303,6 +311,8 @@ export function buildOperativeNeedsPresentation(snapshot: StoreSnapshot, storeId
   // Unassigned — human-readable
   const unassigned: OperativeNeedsUnassignedItem[] = projection.unassigned.map(u => ({
     structureLabel: u.label,
+    line: u.line,
+    pendingUnits: u.pendingUnits,
     pendingText: fmtInt(u.pendingUnits),
     cause: UNASSIGNED_HUMAN_CAUSE[u.code] ?? u.code,
     technicalDetail: u.detail,
