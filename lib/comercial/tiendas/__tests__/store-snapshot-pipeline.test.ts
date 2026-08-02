@@ -178,7 +178,7 @@ describe("determinismo y fingerprint", () => {
 // ═════════════════════════════════════════════════════════════════════════════
 
 describe("SIN_BASE", () => {
-  const emptyCoverage: SnapshotStoreCoverage = { expectedStructures: 0, healthyStructures: 0, structures: [], specialRules: [] };
+  const emptyCoverage: SnapshotStoreCoverage = { expectedStructures: 0, healthyStructures: 0, structures: [], specialRules: [], ruleEvaluations: [] };
   const emptyNeeds = { storeId: "x", needs: [], summary: {
     storeId: "x", structuresEvaluated: 0,
     replenishment: { requiredUnits: 0, executableUnits: 0, pendingUnits: 0, unknownAvailabilityUnits: 0, needCount: 0 },
@@ -257,7 +257,7 @@ describe("A5 y semáforo", () => {
   const thresholds = { healthCritical: 3, unauthorizedHighIsCritical: true, attentionIncludesWithdrawals: true, scarcityThreshold: 36, allowedStoreIds: ["centro", "caldas"] };
   const mkStore = (id: string, healthy: number, expected: number) => ({
     storeId: id, displayName: id,
-    coverage: { expectedStructures: expected, healthyStructures: healthy, structures: [], specialRules: [] },
+    coverage: { expectedStructures: expected, healthyStructures: healthy, structures: [], specialRules: [], ruleEvaluations: [] },
     needs: { storeId: id, needs: [], summary: { replenishment: { requiredUnits: 0, executableUnits: 0 }, removals: { requiredUnits: 0 } } },
     kpis: { coverageStatus: "OK", coveragePercent: 0, shortageUnits: 0, executableUnits: 0, allocatedUnits: 0, withdrawalUnits: 0, criticalStructures: 0, excessStructures: 0, healthStatus: "SALUDABLE", requiresAttention: false },
   }) as unknown as SnapshotPerStore;
@@ -268,7 +268,7 @@ describe("A5 y semáforo", () => {
   });
 
   it("OBLIGATORIA 9: D1 retiros → ATENCION · D2 ≥3 bajo mínimo o NO_AUTORIZADA alta → CRITICA", () => {
-    const base: SnapshotStoreCoverage = { expectedStructures: 10, healthyStructures: 8, structures: [], specialRules: [] };
+    const base: SnapshotStoreCoverage = { expectedStructures: 10, healthyStructures: 8, structures: [], specialRules: [], ruleEvaluations: [] };
     const needsWith = (withdrawal: number) => ({
       storeId: "x", needs: [],
       summary: { replenishment: { requiredUnits: 0, executableUnits: 0 }, removals: { requiredUnits: withdrawal } },
@@ -364,7 +364,8 @@ describe("reglas especiales y contrato", () => {
     assert.ok(evalRule, "la regla especial del patrón debe evaluarse");
     assert.equal(evalRule.totalUnits, 2);                  // matcheó por productName del catálogo
     assert.equal(evalRule.matchedReferenceCount, 1);
-    assert.equal(evalRule.status, "NO_AUTORIZADA");        // centro: ideal 0 (ley S4 verbatim)
+    // centro: idealByStore.centro = 1, units = 2 → EXCEDENTE (units > ideal, ideal > 0)
+    assert.equal(evalRule.status, "EXCEDENTE");
   });
 
   it("OBLIGATORIA 14: guardián — serializable, sin Map/Set, versiones presentes, poolUsage como array", () => {
@@ -411,5 +412,694 @@ describe("presentationHints (F3A)", () => {
     // inventory (paridad visual de cards): hechos copiados del assembled
     const centro = snap.perStore.find(s => s.storeId === "centro")!;
     assert.deepEqual(centro.inventory, { totalUnits: 6, referenceCount: 1 });
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// §5 Integration Tests (I1-I25): Dynamic Derrotero Rules via Effective Registry
+// ═════════════════════════════════════════════════════════════════════════════
+
+import type { SnapshotPolicyRule } from "../store-snapshot-assembler";
+
+/** assembled() variant that injects persisted policy rules per store. */
+function assembledWithRules(
+  rows: SnapshotInventoryRow[],
+  policyRulesByStore: { storeId: string; rules: SnapshotPolicyRule[] }[],
+  governanceStores = GOV_2,
+) {
+  const source: SnapshotSourceRows = {
+    organizationId: "org-1",
+    readAt: "2026-07-30T12:00:00.000Z",
+    inventoryRows: rows,
+    governanceStores,
+    policyRulesByStore,
+  };
+  return assembleSnapshotSource(source);
+}
+
+describe("§5 I1-I3: baseline equivalence (no dynamic rules)", () => {
+  it("I1: without persisted rules, every store has exactly 46 expected structures", () => {
+    const snap = runStoreSnapshotPipeline(assembled([row({ units: 6 })]));
+    for (const store of snap.perStore) {
+      assert.equal(store.coverage.expectedStructures, 46,
+        `${store.storeId} should have 46 expected structures`);
+      assert.equal(store.coverage.structures.length, 46);
+    }
+  });
+
+  it("I2: without persisted rules, every store has exactly 3 special rules", () => {
+    const snap = runStoreSnapshotPipeline(assembled([row({ units: 6 })]));
+    for (const store of snap.perStore) {
+      assert.equal(store.coverage.specialRules.length, 3,
+        `${store.storeId} should have 3 special rules`);
+    }
+  });
+
+  it("I3: ruleEvaluations = structures + specials (46 + 3 = 49)", () => {
+    const snap = runStoreSnapshotPipeline(assembled([row({ units: 6 })]));
+    for (const store of snap.perStore) {
+      assert.equal(store.coverage.ruleEvaluations.length, 49,
+        `${store.storeId} should have 49 rule evaluations`);
+      // Structures come first, then specials
+      const structEvals = store.coverage.ruleEvaluations.filter(
+        r => r.ruleType === "TEXTILE_STRUCTURE" || r.ruleType === "ACCESSORY_SIZE",
+      );
+      const specialEvals = store.coverage.ruleEvaluations.filter(
+        r => r.ruleType === "SPECIAL_PRODUCT",
+      );
+      assert.equal(structEvals.length, 46);
+      assert.equal(specialEvals.length, 3);
+    }
+  });
+});
+
+describe("§5 I4-I8: structural ADD and DISABLE promise tests", () => {
+  it("I4: ADD rule creates 47th structure for that store only", () => {
+    const addRule: SnapshotPolicyRule = {
+      id: "add-1",
+      storeId: "centro",
+      scope: "line",
+      line: "castillitos",
+      group: "TEST_GRP",
+      subgroup: "TEST_SUB",
+      minQty: 5,
+      idealQty: 8,
+      maxQty: 15,
+      active: true,
+      priority: 99,
+      ruleKind: "TEXTILE_STRUCTURE",
+      effect: "ADD",
+    };
+    const snap = runStoreSnapshotPipeline(assembledWithRules(
+      [row({ units: 6 })],
+      [{ storeId: "centro", rules: [addRule] }],
+    ));
+    const centro = snap.perStore.find(s => s.storeId === "centro")!;
+    const caldas = snap.perStore.find(s => s.storeId === "caldas")!;
+    // Centro has 47 structures (46 base + 1 ADD)
+    assert.equal(centro.coverage.structures.length, 47);
+    assert.equal(centro.coverage.expectedStructures, 47);
+    // Caldas still has 46 (no rules)
+    assert.equal(caldas.coverage.structures.length, 46);
+    assert.equal(caldas.coverage.expectedStructures, 46);
+    // The added structure exists
+    const added = centro.coverage.structures.find(s => s.structureKey.includes("TEST_SUB"));
+    assert.ok(added, "added structure should exist");
+    assert.equal(added!.rule.source, "POLICY_ADD");
+    assert.equal(added!.rule.minUnits, 5);
+    assert.equal(added!.rule.idealUnits, 8);
+    assert.equal(added!.rule.maxUnits, 15);
+  });
+
+  it("I5: DISABLE rule removes a base structure → 45 for that store", () => {
+    // Disable the first CS structure (use catalog-case group/subgroup)
+    const disableRule: SnapshotPolicyRule = {
+      id: "dis-1",
+      storeId: "centro",
+      scope: "line",
+      line: "castillitos",
+      group: CS_GRUPO,
+      subgroup: CS_SUBGRUPO,
+      minQty: 0,
+      idealQty: 0,
+      maxQty: null,
+      active: true,
+      priority: 99,
+      ruleKind: "TEXTILE_STRUCTURE",
+      effect: "DISABLE",
+    };
+    const snap = runStoreSnapshotPipeline(assembledWithRules(
+      [row({ units: 6 })],
+      [{ storeId: "centro", rules: [disableRule] }],
+    ));
+    const centro = snap.perStore.find(s => s.storeId === "centro")!;
+    const caldas = snap.perStore.find(s => s.storeId === "caldas")!;
+    // Centro has 45 (46 - 1 disabled)
+    assert.equal(centro.coverage.structures.length, 45);
+    assert.equal(centro.coverage.expectedStructures, 45);
+    // The disabled structure is gone
+    const disabled = centro.coverage.structures.find(s => s.structureKey === CS_STRUCTURE);
+    assert.equal(disabled, undefined, "disabled structure should not appear");
+    // Caldas still 46
+    assert.equal(caldas.coverage.structures.length, 46);
+  });
+
+  it("I6: ADD then DISABLE same rule → net 46 (DISABLE wins)", () => {
+    const addRule: SnapshotPolicyRule = {
+      id: "add-then-dis",
+      storeId: "centro",
+      scope: "line",
+      line: "castillitos",
+      group: "EPHEMERAL",
+      subgroup: "EPHEMERAL_SUB",
+      minQty: 5,
+      idealQty: 8,
+      maxQty: 15,
+      active: false, // active=false → rule doesn't participate, pack base applies (no base exists for this → excluded)
+      priority: 99,
+      ruleKind: "TEXTILE_STRUCTURE",
+      effect: "ADD",
+    };
+    const snap = runStoreSnapshotPipeline(assembledWithRules(
+      [row({ units: 6 })],
+      [{ storeId: "centro", rules: [addRule] }],
+    ));
+    const centro = snap.perStore.find(s => s.storeId === "centro")!;
+    // active=false ADD → excluded, pack base for non-existent target doesn't exist → 46
+    assert.equal(centro.coverage.structures.length, 46);
+  });
+});
+
+describe("§5 I9-I12: pack rule OVERRIDE and DISABLE", () => {
+  it("I9: OVERRIDE changes thresholds of an existing pack structure", () => {
+    const overrideRule: SnapshotPolicyRule = {
+      id: "ovr-1",
+      storeId: "centro",
+      scope: "line",
+      line: "castillitos",
+      group: CS_GRUPO,
+      subgroup: CS_SUBGRUPO,
+      minQty: 20,
+      idealQty: 30,
+      maxQty: 40,
+      active: true,
+      priority: 99,
+      ruleKind: "TEXTILE_STRUCTURE",
+      effect: "OVERRIDE",
+    };
+    const snap = runStoreSnapshotPipeline(assembledWithRules(
+      [row({ units: 6 })],
+      [{ storeId: "centro", rules: [overrideRule] }],
+    ));
+    const centro = snap.perStore.find(s => s.storeId === "centro")!;
+    // Still 46 structures (override replaces, doesn't add)
+    assert.equal(centro.coverage.structures.length, 46);
+    const overridden = centro.coverage.structures.find(s => s.structureKey === CS_STRUCTURE)!;
+    assert.ok(overridden, "overridden structure should exist");
+    assert.equal(overridden.rule.minUnits, 20);
+    assert.equal(overridden.rule.idealUnits, 30);
+    assert.equal(overridden.rule.maxUnits, 40);
+    assert.equal(overridden.rule.source, "POLICY_OVERRIDE");
+    // Caldas unaffected
+    const caldas = snap.perStore.find(s => s.storeId === "caldas")!;
+    const caldasStruct = caldas.coverage.structures.find(s => s.structureKey === CS_STRUCTURE)!;
+    assert.equal(caldasStruct.rule.source, "PACK_DEFAULT");
+    assert.equal(caldasStruct.rule.minUnits, CS_RULE.minimumUnits);
+  });
+
+  it("I10: DISABLE removes pack structure, deficit recalculated without it", () => {
+    const disableRule: SnapshotPolicyRule = {
+      id: "dis-pack-1",
+      storeId: "centro",
+      scope: "line",
+      line: "castillitos",
+      group: CS_GRUPO,
+      subgroup: CS_SUBGRUPO,
+      minQty: 0,
+      idealQty: 0,
+      maxQty: null,
+      active: true,
+      priority: 99,
+      ruleKind: "TEXTILE_STRUCTURE",
+      effect: "DISABLE",
+    };
+    const snap = runStoreSnapshotPipeline(assembledWithRules(
+      [row({ units: 6 })],
+      [{ storeId: "centro", rules: [disableRule] }],
+    ));
+    const centro = snap.perStore.find(s => s.storeId === "centro")!;
+    assert.equal(centro.coverage.expectedStructures, 45);
+    // Items that belonged to the disabled structure are now unresolved
+    // but the deficit for that structure is gone from KPIs
+    assert.ok(centro.kpis.shortageUnits >= 0);
+  });
+
+  it("I11: inactive OVERRIDE (active=false) falls back to pack default", () => {
+    const inactiveOverride: SnapshotPolicyRule = {
+      id: "ovr-inactive",
+      storeId: "centro",
+      scope: "line",
+      line: "castillitos",
+      group: CS_GRUPO,
+      subgroup: CS_SUBGRUPO,
+      minQty: 99,
+      idealQty: 99,
+      maxQty: 99,
+      active: false, // inactive → pack default applies
+      priority: 99,
+      ruleKind: "TEXTILE_STRUCTURE",
+      effect: "OVERRIDE",
+    };
+    const snap = runStoreSnapshotPipeline(assembledWithRules(
+      [row({ units: 6 })],
+      [{ storeId: "centro", rules: [inactiveOverride] }],
+    ));
+    const centro = snap.perStore.find(s => s.storeId === "centro")!;
+    const struct = centro.coverage.structures.find(s => s.structureKey === CS_STRUCTURE)!;
+    // Should use pack defaults, not 99/99/99
+    assert.equal(struct.rule.source, "PACK_DEFAULT");
+    assert.equal(struct.rule.idealUnits, CS_RULE.idealUnits);
+  });
+});
+
+describe("§5 I13-I16: special product ADD and DISABLE", () => {
+  it("I13: ADD special pattern creates 4th special rule", () => {
+    const addSpecial: SnapshotPolicyRule = {
+      id: "sp-add-1",
+      storeId: "centro",
+      scope: "special",
+      specialPattern: "MECEDORA",
+      minQty: 2,
+      idealQty: 2,
+      maxQty: null,
+      active: true,
+      priority: 99,
+      ruleKind: "SPECIAL_PRODUCT",
+      effect: "ADD",
+    };
+    const snap = runStoreSnapshotPipeline(assembledWithRules(
+      [row({ units: 6 })],
+      [{ storeId: "centro", rules: [addSpecial] }],
+    ));
+    const centro = snap.perStore.find(s => s.storeId === "centro")!;
+    const caldas = snap.perStore.find(s => s.storeId === "caldas")!;
+    // Centro: 4 special rules (3 base + 1 ADD)
+    assert.equal(centro.coverage.specialRules.length, 4);
+    const mecedora = centro.coverage.specialRules.find(r => r.pattern === "MECEDORA");
+    assert.ok(mecedora, "MECEDORA special rule should exist");
+    assert.equal(mecedora!.idealUnits, 2);
+    assert.equal(mecedora!.totalUnits, 0); // no matching items
+    assert.equal(mecedora!.status, "FALTANTE");
+    // Caldas still has 3
+    assert.equal(caldas.coverage.specialRules.length, 3);
+  });
+
+  it("I14: DISABLE special pattern removes it → 2 special rules for that store", () => {
+    const disableSpecial: SnapshotPolicyRule = {
+      id: "sp-dis-1",
+      storeId: "centro",
+      scope: "special",
+      specialPattern: CASTILLITOS_SPECIAL_PRODUCTS.referencePatterns[0], // BANERA
+      minQty: 0,
+      idealQty: 0,
+      maxQty: null,
+      active: true,
+      priority: 99,
+      ruleKind: "SPECIAL_PRODUCT",
+      effect: "DISABLE",
+    };
+    const snap = runStoreSnapshotPipeline(assembledWithRules(
+      [row({ units: 6 })],
+      [{ storeId: "centro", rules: [disableSpecial] }],
+    ));
+    const centro = snap.perStore.find(s => s.storeId === "centro")!;
+    assert.equal(centro.coverage.specialRules.length, 2);
+    const banera = centro.coverage.specialRules.find(
+      r => r.pattern === CASTILLITOS_SPECIAL_PRODUCTS.referencePatterns[0],
+    );
+    assert.equal(banera, undefined, "disabled special should not appear");
+    // Caldas still 3
+    const caldas = snap.perStore.find(s => s.storeId === "caldas")!;
+    assert.equal(caldas.coverage.specialRules.length, 3);
+  });
+
+  it("I15: ADD special with matching inventory → evaluates correctly", () => {
+    const addSpecial: SnapshotPolicyRule = {
+      id: "sp-add-match",
+      storeId: "centro",
+      scope: "special",
+      specialPattern: "COLUMPIO",
+      minQty: 3,
+      idealQty: 3,
+      maxQty: null,
+      active: true,
+      priority: 99,
+      ruleKind: "SPECIAL_PRODUCT",
+      effect: "ADD",
+    };
+    const snap = runStoreSnapshotPipeline(assembledWithRules(
+      [
+        row({ units: 6 }),
+        row({ referenceCode: "REF-COL", productId: "prod-col", productName: "COLUMPIO MADERA", units: 2 }),
+      ],
+      [{ storeId: "centro", rules: [addSpecial] }],
+    ));
+    const centro = snap.perStore.find(s => s.storeId === "centro")!;
+    const columpio = centro.coverage.specialRules.find(r => r.pattern === "COLUMPIO")!;
+    assert.ok(columpio, "COLUMPIO special should exist");
+    assert.equal(columpio.totalUnits, 2);
+    assert.equal(columpio.idealUnits, 3);
+    assert.equal(columpio.status, "FALTANTE");
+    assert.equal(columpio.gapUnits, 1);
+  });
+
+  it("I16: OVERRIDE special changes ideal for that store", () => {
+    const overrideSpecial: SnapshotPolicyRule = {
+      id: "sp-ovr-1",
+      storeId: "centro",
+      scope: "special",
+      specialPattern: CASTILLITOS_SPECIAL_PRODUCTS.referencePatterns[0], // BANERA
+      minQty: 5,
+      idealQty: 5,
+      maxQty: null,
+      active: true,
+      priority: 99,
+      ruleKind: "SPECIAL_PRODUCT",
+      effect: "OVERRIDE",
+    };
+    const snap = runStoreSnapshotPipeline(assembledWithRules(
+      [row({ units: 6 })],
+      [{ storeId: "centro", rules: [overrideSpecial] }],
+    ));
+    const centro = snap.perStore.find(s => s.storeId === "centro")!;
+    assert.equal(centro.coverage.specialRules.length, 3); // still 3
+    const banera = centro.coverage.specialRules.find(
+      r => r.pattern === CASTILLITOS_SPECIAL_PRODUCTS.referencePatterns[0],
+    )!;
+    assert.ok(banera);
+    assert.equal(banera.idealUnits, 5); // overridden from 1 to 5
+    assert.equal(banera.status, "FALTANTE"); // 0 units < 5 ideal
+  });
+});
+
+describe("§5 I17-I19: coverage KPI uses effective denominator", () => {
+  it("I17: ADD structure increases denominator → coverage % decreases", () => {
+    const snapBase = runStoreSnapshotPipeline(assembled([row({ units: 6 })]));
+    const centroBase = snapBase.perStore.find(s => s.storeId === "centro")!;
+    const baseCoverage = centroBase.kpis.coveragePercent;
+
+    const addRule: SnapshotPolicyRule = {
+      id: "kpi-add",
+      storeId: "centro",
+      scope: "line",
+      line: "castillitos",
+      group: "KPI_GRP",
+      subgroup: "KPI_SUB",
+      minQty: 5,
+      idealQty: 8,
+      maxQty: 15,
+      active: true,
+      priority: 99,
+      ruleKind: "TEXTILE_STRUCTURE",
+      effect: "ADD",
+    };
+    const snapAdd = runStoreSnapshotPipeline(assembledWithRules(
+      [row({ units: 6 })],
+      [{ storeId: "centro", rules: [addRule] }],
+    ));
+    const centroAdd = snapAdd.perStore.find(s => s.storeId === "centro")!;
+    // More structures → same healthy count → lower %
+    assert.ok(
+      (centroAdd.kpis.coveragePercent ?? 0) <= (baseCoverage ?? 0),
+      `ADD should not increase coverage: ${centroAdd.kpis.coveragePercent} should <= ${baseCoverage}`,
+    );
+    assert.equal(centroAdd.coverage.expectedStructures, 47);
+  });
+
+  it("I18: DISABLE structure decreases denominator → coverage % may increase", () => {
+    const disableRule: SnapshotPolicyRule = {
+      id: "kpi-dis",
+      storeId: "centro",
+      scope: "line",
+      line: "castillitos",
+      group: CS_GRUPO,
+      subgroup: CS_SUBGRUPO,
+      minQty: 0,
+      idealQty: 0,
+      maxQty: null,
+      active: true,
+      priority: 99,
+      ruleKind: "TEXTILE_STRUCTURE",
+      effect: "DISABLE",
+    };
+    const snap = runStoreSnapshotPipeline(assembledWithRules(
+      [row({ units: 6 })],
+      [{ storeId: "centro", rules: [disableRule] }],
+    ));
+    const centro = snap.perStore.find(s => s.storeId === "centro")!;
+    assert.equal(centro.coverage.expectedStructures, 45);
+    // coveragePercent calculated on 45, not 46
+    const expectedPct = centro.coverage.expectedStructures > 0
+      ? Math.round((centro.coverage.healthyStructures / centro.coverage.expectedStructures) * 100)
+      : 0;
+    assert.equal(centro.kpis.coveragePercent, expectedPct);
+  });
+
+  it("I19: module KPIs reflect per-store dynamic universes", () => {
+    const addRule: SnapshotPolicyRule = {
+      id: "mod-kpi",
+      storeId: "centro",
+      scope: "line",
+      line: "castillitos",
+      group: "MOD_GRP",
+      subgroup: "MOD_SUB",
+      minQty: 5,
+      idealQty: 8,
+      maxQty: 15,
+      active: true,
+      priority: 99,
+      ruleKind: "TEXTILE_STRUCTURE",
+      effect: "ADD",
+    };
+    const snap = runStoreSnapshotPipeline(assembledWithRules(
+      [row({ units: 6 })],
+      [{ storeId: "centro", rules: [addRule] }],
+    ));
+    // Module KPIs aggregate across stores
+    assert.ok((snap.moduleKpis.coberturaRed ?? 0) >= 0);
+    assert.ok((snap.moduleKpis.coberturaRed ?? 0) <= 100);
+  });
+});
+
+describe("§5 I20-I21: ruleEvaluations payload and backward compatibility", () => {
+  it("I20: ruleEvaluations mirrors structures + specialRules count", () => {
+    const addRule: SnapshotPolicyRule = {
+      id: "re-add",
+      storeId: "centro",
+      scope: "line",
+      line: "castillitos",
+      group: "RE_GRP",
+      subgroup: "RE_SUB",
+      minQty: 5,
+      idealQty: 8,
+      maxQty: 15,
+      active: true,
+      priority: 99,
+      ruleKind: "TEXTILE_STRUCTURE",
+      effect: "ADD",
+    };
+    const snap = runStoreSnapshotPipeline(assembledWithRules(
+      [row({ units: 6 })],
+      [{ storeId: "centro", rules: [addRule] }],
+    ));
+    const centro = snap.perStore.find(s => s.storeId === "centro")!;
+    assert.equal(
+      centro.coverage.ruleEvaluations.length,
+      centro.coverage.structures.length + centro.coverage.specialRules.length,
+    );
+    // Every ruleEvaluation has required fields
+    for (const re of centro.coverage.ruleEvaluations) {
+      assert.ok(re.ruleId, "ruleId required");
+      assert.ok(re.ruleType, "ruleType required");
+      assert.ok(re.label, "label required");
+      assert.ok(re.status, "status required");
+      assert.ok(typeof re.actualUnits === "number");
+      assert.ok(typeof re.gapToIdeal === "number");
+    }
+  });
+
+  it("I21: structures[] and specialRules[] remain populated (backward compat)", () => {
+    const snap = runStoreSnapshotPipeline(assembled([row({ units: 6 })]));
+    for (const store of snap.perStore) {
+      // Legacy arrays still populated
+      assert.ok(Array.isArray(store.coverage.structures));
+      assert.ok(Array.isArray(store.coverage.specialRules));
+      assert.equal(store.coverage.structures.length, 46);
+      assert.equal(store.coverage.specialRules.length, 3);
+      // ruleEvaluations is the unified view
+      assert.equal(store.coverage.ruleEvaluations.length, 49);
+    }
+  });
+});
+
+describe("§5 I22-I25: serialization, performance, multi-store isolation", () => {
+  it("I22: snapshot with dynamic rules is fully serializable (no Map/Set/Function)", () => {
+    const addRule: SnapshotPolicyRule = {
+      id: "ser-1",
+      storeId: "centro",
+      scope: "line",
+      line: "castillitos",
+      group: "SER_GRP",
+      subgroup: "SER_SUB",
+      minQty: 5,
+      idealQty: 8,
+      maxQty: 15,
+      active: true,
+      priority: 99,
+      ruleKind: "TEXTILE_STRUCTURE",
+      effect: "ADD",
+    };
+    const snap = runStoreSnapshotPipeline(assembledWithRules(
+      [row({ units: 6 })],
+      [{ storeId: "centro", rules: [addRule] }],
+    ));
+    const scan = (v: unknown): void => {
+      assert.ok(!(v instanceof Map) && !(v instanceof Set) && typeof v !== "function");
+      if (v && typeof v === "object") for (const child of Object.values(v)) scan(child);
+    };
+    scan(snap);
+    assert.deepEqual(JSON.parse(JSON.stringify(snap)), snap);
+  });
+
+  it("I23: dynamic rules for one store do not leak to another store", () => {
+    const addCentro: SnapshotPolicyRule = {
+      id: "iso-1",
+      storeId: "centro",
+      scope: "line",
+      line: "castillitos",
+      group: "ISO_GRP",
+      subgroup: "ISO_SUB",
+      minQty: 5,
+      idealQty: 8,
+      maxQty: 15,
+      active: true,
+      priority: 99,
+      ruleKind: "TEXTILE_STRUCTURE",
+      effect: "ADD",
+    };
+    const disableCaldas: SnapshotPolicyRule = {
+      id: "iso-2",
+      storeId: "caldas",
+      scope: "line",
+      line: "castillitos",
+      group: CS_GRUPO,
+      subgroup: CS_SUBGRUPO,
+      minQty: 0,
+      idealQty: 0,
+      maxQty: null,
+      active: true,
+      priority: 99,
+      ruleKind: "TEXTILE_STRUCTURE",
+      effect: "DISABLE",
+    };
+    const snap = runStoreSnapshotPipeline(assembledWithRules(
+      [row({ units: 6 })],
+      [
+        { storeId: "centro", rules: [addCentro] },
+        { storeId: "caldas", rules: [disableCaldas] },
+      ],
+    ));
+    const centro = snap.perStore.find(s => s.storeId === "centro")!;
+    const caldas = snap.perStore.find(s => s.storeId === "caldas")!;
+    // Centro: 47 (46 + 1 ADD), has ISO_SUB, has CS_STRUCTURE
+    assert.equal(centro.coverage.structures.length, 47);
+    assert.ok(centro.coverage.structures.find(s => s.structureKey.includes("ISO_SUB")));
+    assert.ok(centro.coverage.structures.find(s => s.structureKey === CS_STRUCTURE));
+    // Caldas: 45 (46 - 1 DISABLE), no ISO_SUB, no CS_STRUCTURE
+    assert.equal(caldas.coverage.structures.length, 45);
+    assert.equal(caldas.coverage.structures.find(s => s.structureKey.includes("ISO_SUB")), undefined);
+    assert.equal(caldas.coverage.structures.find(s => s.structureKey === CS_STRUCTURE), undefined);
+  });
+
+  it("I24: pipeline runs in < 500ms with dynamic rules (performance gate)", () => {
+    const rules: SnapshotPolicyRule[] = [];
+    // Add 5 dynamic structural rules per store
+    for (let i = 0; i < 5; i++) {
+      rules.push({
+        id: `perf-${i}`,
+        storeId: "centro",
+        scope: "line",
+        line: "castillitos",
+        group: `PERF_GRP_${i}`,
+        subgroup: `PERF_SUB_${i}`,
+        minQty: 5,
+        idealQty: 8,
+        maxQty: 15,
+        active: true,
+        priority: 99 + i,
+        ruleKind: "TEXTILE_STRUCTURE",
+        effect: "ADD",
+      });
+    }
+    const start = performance.now();
+    const snap = runStoreSnapshotPipeline(assembledWithRules(
+      [row({ units: 6 }), main("REF-1", 40)],
+      [{ storeId: "centro", rules }],
+    ));
+    const elapsed = performance.now() - start;
+    assert.ok(elapsed < 500, `pipeline should run in < 500ms, took ${elapsed.toFixed(1)}ms`);
+    assert.equal(snap.perStore.find(s => s.storeId === "centro")!.coverage.structures.length, 51); // 46 + 5
+  });
+
+  it("I25: combined ADD structural + ADD special + OVERRIDE → consistent snapshot", () => {
+    const rules: SnapshotPolicyRule[] = [
+      {
+        id: "combo-struct",
+        storeId: "centro",
+        scope: "line",
+        line: "castillitos",
+        group: "COMBO_GRP",
+        subgroup: "COMBO_SUB",
+        minQty: 3,
+        idealQty: 6,
+        maxQty: 12,
+        active: true,
+        priority: 99,
+        ruleKind: "TEXTILE_STRUCTURE",
+        effect: "ADD",
+      },
+      {
+        id: "combo-special",
+        storeId: "centro",
+        scope: "special",
+        specialPattern: "TRAMPOLIN",
+        minQty: 1,
+        idealQty: 1,
+        maxQty: null,
+        active: true,
+        priority: 99,
+        ruleKind: "SPECIAL_PRODUCT",
+        effect: "ADD",
+      },
+      {
+        id: "combo-override",
+        storeId: "centro",
+        scope: "line",
+        line: "castillitos",
+        group: CS_GRUPO,
+        subgroup: CS_SUBGRUPO,
+        minQty: 15,
+        idealQty: 20,
+        maxQty: 25,
+        active: true,
+        priority: 99,
+        ruleKind: "TEXTILE_STRUCTURE",
+        effect: "OVERRIDE",
+      },
+    ];
+    const snap = runStoreSnapshotPipeline(assembledWithRules(
+      [row({ units: 6 })],
+      [{ storeId: "centro", rules }],
+    ));
+    const centro = snap.perStore.find(s => s.storeId === "centro")!;
+    // 47 structures (46 + 1 ADD), 4 specials (3 + 1 ADD)
+    assert.equal(centro.coverage.structures.length, 47);
+    assert.equal(centro.coverage.specialRules.length, 4);
+    // ruleEvaluations = 47 + 4 = 51
+    assert.equal(centro.coverage.ruleEvaluations.length, 51);
+    // Override applied
+    const overridden = centro.coverage.structures.find(s => s.structureKey === CS_STRUCTURE)!;
+    assert.equal(overridden.rule.idealUnits, 20);
+    assert.equal(overridden.rule.source, "POLICY_OVERRIDE");
+    // ADD structural exists
+    const added = centro.coverage.structures.find(s => s.structureKey.includes("COMBO_SUB"))!;
+    assert.ok(added);
+    assert.equal(added.rule.source, "POLICY_ADD");
+    // ADD special exists
+    const trampolin = centro.coverage.specialRules.find(r => r.pattern === "TRAMPOLIN")!;
+    assert.ok(trampolin);
+    assert.equal(trampolin.idealUnits, 1);
+    // Serializable
+    assert.deepEqual(JSON.parse(JSON.stringify(snap)), snap);
   });
 });

@@ -98,6 +98,32 @@ export interface StoreCapacityProfile {
  */
 export type CoverageStrategy = "SUBGROUP" | "SIZE";
 
+// ── Rule kind (Sprint DYNAMIC-DERROTERO-RULES-01) ────────────────────────
+
+/**
+ * Discriminator for coverage rule projection.
+ * Determines which target dimensions are meaningful.
+ */
+export type StorePolicyRuleKind =
+  | "TEXTILE_STRUCTURE"
+  | "ACCESSORY_SIZE"
+  | "SPECIAL_PRODUCT";
+
+// ── Rule effect (Sprint DYNAMIC-DERROTERO-RULES-01) ──────────────────────
+
+/**
+ * Semantic effect of a persisted rule relative to the Policy Pack base.
+ *
+ *   OVERRIDE — replaces thresholds/config of an equivalent base rule.
+ *   DISABLE  — suppresses an equivalent base rule from the effective universe.
+ *   ADD      — introduces a new rule that does not exist in the pack.
+ *
+ * IMPORTANT: active=false means "this persisted entry does not participate"
+ * (pack base keeps applying). effect=DISABLE + active=true means "pack base
+ * is explicitly suppressed".
+ */
+export type StorePolicyRuleEffect = "OVERRIDE" | "DISABLE" | "ADD";
+
 // ── Policy rule ─────────────────────────────────────────────────────────────
 
 export interface StorePolicyRule {
@@ -108,6 +134,8 @@ export interface StorePolicyRule {
 
   /** Match filters — populated based on scope */
   line?:          string;
+  /** SAG grupo (for CS textiles — group+subgroup = structure identity) */
+  group?:         string;
   subgroup?:      string;
   sizeClass?:     StoreSizeClass;
   referenceCode?: string;
@@ -118,7 +146,7 @@ export interface StorePolicyRule {
   /** Thresholds */
   minQty:   number;
   idealQty: number;
-  maxQty:   number;
+  maxQty:   number | null;
 
   /** Behavior flags */
   allowReplacement:          boolean;
@@ -131,11 +159,24 @@ export interface StorePolicyRule {
   /** How this rule defines coverage — SUBGROUP (textil) or SIZE (importacion) */
   coverageStrategy?: CoverageStrategy;
 
+  /** Coverage rule kind discriminator (Sprint DYNAMIC-DERROTERO-RULES-01) */
+  ruleKind?: StorePolicyRuleKind;
+
+  /** Semantic effect relative to Policy Pack base */
+  effect?: StorePolicyRuleEffect;
+
+  /** Pattern identifier for special products (e.g. "BAÑERA") */
+  specialPattern?: string;
+
   /** Vigencia — optional temporal applicability */
   validFrom?: string | null;
   validTo?:   string | null;
   season?:    string | null;
   notes?:     string | null;
+
+  /** Audit metadata for disable operations */
+  disabledAt?:     string | null;
+  disableReason?:  string | null;
 }
 
 // ── Store policy (aggregate) ────────────────────────────────────────────────

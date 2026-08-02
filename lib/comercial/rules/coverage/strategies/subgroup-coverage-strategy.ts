@@ -52,13 +52,13 @@ export function evaluateSubgroupStrategy(
 
   const gapToMin = Math.max(0, minQty - currentCoverage);
   const gapToIdeal = Math.max(0, idealQty - currentCoverage);
-  const excessOverMax = Math.max(0, currentCoverage - maxQty);
+  const excessOverMax = maxQty !== null ? Math.max(0, currentCoverage - maxQty) : 0;
 
   let state: CoverageState;
   if (currentCoverage < minQty) state = "BELOW_MIN";
   else if (currentCoverage < idealQty) state = "BELOW_IDEAL";
   else if (currentCoverage === idealQty) state = "AT_IDEAL";
-  else if (currentCoverage <= maxQty) state = "ABOVE_IDEAL";
+  else if (maxQty === null || currentCoverage <= maxQty) state = "ABOVE_IDEAL";
   else state = "ABOVE_MAX";
 
   return {

@@ -125,15 +125,24 @@ export interface SnapshotGovernanceStore {
 
 /** Subconjunto verbatim de StorePolicyRule que la ley de vigencia necesita. */
 export interface SnapshotPolicyRule {
+  readonly id?: string;
+  readonly storeId?: string;
   readonly scope: string;
   readonly line?: string;
+  readonly group?: string;
+  readonly subgroup?: string;
   readonly sizeClass?: string;
   readonly minQty: number;
   readonly idealQty: number;
-  readonly maxQty: number;
+  readonly maxQty: number | null;
   readonly active: boolean;
+  readonly priority?: number;
   readonly validFrom?: string | null;
   readonly validTo?: string | null;
+  /** Dynamic rule fields (Sprint DYNAMIC-DERROTERO-RULES-01) */
+  readonly ruleKind?: string;
+  readonly effect?: string;
+  readonly specialPattern?: string;
 }
 
 export interface SnapshotSourceRows {
@@ -209,7 +218,7 @@ export interface StructureRule {
   readonly minUnits: number;
   readonly idealUnits: number;
   readonly maxUnits: number | null;
-  readonly source: "PACK_DEFAULT" | "POLICY_OVERRIDE";
+  readonly source: "PACK_DEFAULT" | "POLICY_OVERRIDE" | "POLICY_ADD";
 }
 
 export interface ExpectedStructure {
@@ -237,6 +246,11 @@ export interface AssembledStoreData {
   readonly mainStock: readonly AssembledMainStockEntry[];
   readonly structureRules: readonly StructureRule[];
   readonly expectedStructures: readonly ExpectedStructure[];
+  /** Raw persisted policy rules passthrough for dynamic rule evaluation (§5). */
+  readonly policyRulesByStore: readonly {
+    readonly storeId: string;
+    readonly rules: readonly SnapshotPolicyRule[];
+  }[];
   readonly scarcity: {
     readonly threshold: number;
     readonly allowedStoreIds: readonly string[];
@@ -473,7 +487,7 @@ function resolveTextileRule(
 ): { minUnits: number; idealUnits: number; maxUnits: number; source: StructureRule["source"] } {
   const override = rules.find(r => r.active && r.scope === "line" && r.line === lineId);
   if (override && isRuleInForce(override, readAt)) {
-    return { minUnits: override.minQty, idealUnits: override.idealQty, maxUnits: override.maxQty, source: "POLICY_OVERRIDE" };
+    return { minUnits: override.minQty, idealUnits: override.idealQty, maxUnits: override.maxQty ?? defaults.maximumUnits, source: "POLICY_OVERRIDE" };
   }
   return { minUnits: defaults.minimumUnits, idealUnits: defaults.idealUnits, maxUnits: defaults.maximumUnits, source: "PACK_DEFAULT" };
 }
@@ -703,6 +717,8 @@ export function assembleSnapshotSource(source: SnapshotSourceRows): AssembledSto
     mainStock: [...mainStockAcc.values()].sort((a, b) => a.referenceId.localeCompare(b.referenceId)),
     structureRules,
     expectedStructures: [...lookup.expected].sort((a, b) => a.structureKey.localeCompare(b.structureKey)),
+    policyRulesByStore: [...source.policyRulesByStore]
+      .sort((a, b) => a.storeId.localeCompare(b.storeId)),
     scarcity: {
       threshold: CASTILLITOS_GLOBAL_LOW_STOCK.threshold,
       allowedStoreIds: [...CASTILLITOS_GLOBAL_LOW_STOCK.allowedStoreIds],

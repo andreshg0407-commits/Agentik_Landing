@@ -43,8 +43,13 @@ import {
 import {
   evaluateUnitStructureCoverage,
   evaluateSpecialRules,
+  type SpecialRuleConfig,
   type SpecialRuleEvaluation,
 } from "./store-unit-coverage-engine";
+import {
+  buildCoverageRuleProjection,
+  type CoverageRuleEvaluation,
+} from "./coverage-rule-projection";
 import {
   buildStoreUnitNeeds,
   type StoreUnitNeedsResult,
@@ -60,7 +65,25 @@ import {
 import type { UnitsRuleEvaluation } from "../derrotero-semantics";
 import { isRule36Eligible } from "./store-rule36-eligibility";
 import { CANONICAL_SALES_STORES } from "../sales-canonical-source";
-import { CASTILLITOS_SPECIAL_PRODUCTS } from "./store-policy-pack-config";
+import {
+  CASTILLITOS_SPECIAL_PRODUCTS,
+  CASTILLITOS_TEXTILE_COVERAGE,
+  LATIN_KIDS_TEXTILE_COVERAGE,
+  CASTILLITOS_ACCESSORY_COVERAGE,
+} from "./store-policy-pack-config";
+import {
+  buildEffectiveStoreRules,
+  buildPackCatalogEntries,
+  resolveMaximumForEvaluation,
+  type EffectiveRule,
+  type EffectiveTextileStructureRule,
+  type EffectiveAccessorySizeRule,
+  type EffectiveSpecialProductRule,
+  type PolicyPackDefaults,
+  type PackStructureEntry,
+} from "./store-effective-rule-registry";
+import type { StorePolicyRule } from "./store-policy-types";
+import type { SnapshotPolicyRule } from "./store-snapshot-assembler";
 import {
   resolveCatalogInfo,
   findCompatibleRefs,
@@ -145,6 +168,8 @@ export interface SnapshotStoreCoverage {
   readonly healthyStructures: number;
   readonly structures: readonly SnapshotCoverageStructure[];
   readonly specialRules: readonly SpecialRuleEvaluation[];
+  /** Canonical projection of ALL active rules (structures + specials) into a generic contract. */
+  readonly ruleEvaluations: readonly CoverageRuleEvaluation[];
 }
 
 export type SnapshotHealthStatus = "SALUDABLE" | "ATENCION" | "CRITICA";
@@ -461,6 +486,117 @@ export function computeModuleKpis(
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// Dynamic rule resolution (§5: effective rule registry integration)
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Cached pack catalog entries (pure, deterministic — safe to cache). */
+let _packCatalogEntries: readonly PackStructureEntry[] | null = null;
+function getPackCatalogEntries() {
+  if (!_packCatalogEntries) _packCatalogEntries = buildPackCatalogEntries();
+  return _packCatalogEntries;
+}
+
+/**
+ * Derive the assembler's structureKey format from an effective rule.
+ * Must match the keys produced by buildStructureLookup() in the assembler.
+ */
+function deriveStructureKeyFromEffective(eff: EffectiveRule): string {
+  switch (eff.ruleKind) {
+    case "TEXTILE_STRUCTURE": {
+      const r = eff as EffectiveTextileStructureRule;
+      if (r.line === "castillitos") return `CS|${r.group}|${r.subgroup}`;
+      if (r.line === "latin_kids") return `LK|${r.subgroup}`;
+      // Dynamic ADD with non-standard line
+      return `DYN|${r.line}|${r.group || ""}|${r.subgroup}`;
+    }
+    case "ACCESSORY_SIZE":
+      return `ACC|${eff.label}`;
+    case "SPECIAL_PRODUCT":
+      return `SPECIAL|${(eff as EffectiveSpecialProductRule).specialPattern}`;
+  }
+}
+
+/**
+ * Resolve groupLabel from an effective rule (for ADD rules not in catalog).
+ */
+function resolveGroupLabelFromEffective(eff: EffectiveRule): string | null {
+  switch (eff.ruleKind) {
+    case "TEXTILE_STRUCTURE": {
+      const r = eff as EffectiveTextileStructureRule;
+      return r.group || null;
+    }
+    case "ACCESSORY_SIZE":
+      return "ACCESORIOS";
+    case "SPECIAL_PRODUCT":
+      return null;
+  }
+}
+
+/**
+ * Resolve line from an effective rule.
+ */
+function resolveLineFromEffective(eff: EffectiveRule): string {
+  switch (eff.ruleKind) {
+    case "TEXTILE_STRUCTURE":
+      return (eff as EffectiveTextileStructureRule).line;
+    case "ACCESSORY_SIZE":
+      return (eff as EffectiveAccessorySizeRule).line;
+    case "SPECIAL_PRODUCT":
+      return "especiales";
+  }
+}
+
+/**
+ * Convert a SnapshotPolicyRule (stripped) to StorePolicyRule (full) for the
+ * effective rule registry. Missing fields get safe defaults.
+ */
+function toStorePolicyRule(r: SnapshotPolicyRule, storeId: string): StorePolicyRule {
+  return {
+    id: r.id ?? `snap_${storeId}_${r.scope}_${r.line ?? ""}_${r.subgroup ?? r.sizeClass ?? r.specialPattern ?? ""}`,
+    storeId: r.storeId ?? storeId,
+    scope: r.scope as StorePolicyRule["scope"],
+    productClass: "textile",
+    line: r.line,
+    group: r.group,
+    subgroup: r.subgroup,
+    sizeClass: r.sizeClass as StorePolicyRule["sizeClass"],
+    minQty: r.minQty,
+    idealQty: r.idealQty,
+    maxQty: r.maxQty,
+    allowReplacement: false,
+    allowProductionSignal: false,
+    allowMainWarehouseTransfer: true,
+    priority: r.priority ?? 50,
+    active: r.active,
+    ruleKind: r.ruleKind as StorePolicyRule["ruleKind"],
+    effect: r.effect as StorePolicyRule["effect"],
+    specialPattern: r.specialPattern,
+    validFrom: r.validFrom,
+    validTo: r.validTo,
+  };
+}
+
+/**
+ * Build effective rules for one store using the registry.
+ * Returns structural + special effective rules, sorted by priority.
+ */
+function buildStoreEffectiveRules(
+  storeId: string,
+  persistedRules: readonly SnapshotPolicyRule[],
+  evaluationDate: string,
+): readonly EffectiveRule[] {
+  const packDefaults: PolicyPackDefaults = {
+    castillitosTextile: CASTILLITOS_TEXTILE_COVERAGE,
+    latinKidsTextile: LATIN_KIDS_TEXTILE_COVERAGE,
+    accessoryCoverage: CASTILLITOS_ACCESSORY_COVERAGE,
+    specialProducts: CASTILLITOS_SPECIAL_PRODUCTS,
+    storeId,
+  };
+  const converted = persistedRules.map(r => toStorePolicyRule(r, storeId));
+  return buildEffectiveStoreRules(packDefaults, getPackCatalogEntries(), converted, evaluationDate);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // Pipeline principal
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -482,12 +618,18 @@ export function runStoreSnapshotPipeline(assembled: AssembledStoreData): StoreSn
   for (const m of assembled.mainStock) {
     mainStockByCode.set(m.referenceCode, (mainStockByCode.get(m.referenceCode) ?? 0) + m.units);
   }
-  const rulesByStoreStructure = new Map<string, (typeof assembled.structureRules)[number]>();
-  for (const r of assembled.structureRules) rulesByStoreStructure.set(`${r.storeId}|${r.structureKey}`, r);
-
   const { order, materialPriorityStoreIds } = buildSnapshotStoreOrder(assembled);
   const itemsByStoreId = new Map(assembled.stores.map(s => [s.storeId, s.items]));
   const displayNameByStore = new Map(assembled.activeStores.map(s => [s.storeId, s.displayName]));
+
+  // §5: effective rule registry pre-computation
+  const persistedByStore = new Map(
+    assembled.policyRulesByStore.map(e => [e.storeId, e.rules]),
+  );
+  const evaluationDate = assembled.dataAsOf ?? new Date().toISOString();
+  const catalogEntryByStructureKey = new Map(
+    getPackCatalogEntries().map(e => [e.structureKey, e]),
+  );
 
   // ── E2/E3: cobertura (S4) + disponibilidad + necesidades (S5), por tienda ──
   interface StoreStage { coverage: SnapshotStoreCoverage; needs: StoreUnitNeedsResult; itemsWithStock: ReadonlySet<string> }
@@ -517,20 +659,28 @@ export function runStoreSnapshotPipeline(assembled: AssembledStoreData): StoreSn
       }
     }
 
-    const structures: SnapshotCoverageStructure[] = assembled.expectedStructures.map(exp => {
-      const rule = rulesByStoreStructure.get(`${storeId}|${exp.structureKey}`);
-      if (!rule) {
-        // El assembler certifica I9 (una regla por estructura×tienda); ausencia = corrupción.
-        throw new Error(`[SNAPSHOT_PIPELINE] estructura sin regla efectiva: ${storeId}|${exp.structureKey}`);
-      }
-      const refUnits = unitsByStructure.get(exp.structureKey) ?? [];
+    // §5: build effective rules for this store via registry
+    const storePersistedRules = persistedByStore.get(storeId) ?? [];
+    const storeEffectiveRules = buildStoreEffectiveRules(storeId, storePersistedRules, evaluationDate);
+    const effectiveStructural = storeEffectiveRules.filter(
+      r => r.ruleKind !== "SPECIAL_PRODUCT",
+    );
+    const effectiveSpecials = storeEffectiveRules.filter(
+      (r): r is EffectiveSpecialProductRule => r.ruleKind === "SPECIAL_PRODUCT",
+    );
+
+    // §5: evaluate coverage from effective structural rules (dynamic universe)
+    const structures: SnapshotCoverageStructure[] = effectiveStructural.map(eff => {
+      const structureKey = deriveStructureKeyFromEffective(eff);
+      const catalogEntry = catalogEntryByStructureKey.get(structureKey);
+      const refUnits = unitsByStructure.get(structureKey) ?? [];
       const cov = evaluateUnitStructureCoverage(refUnits, {
-        minUnits: rule.minUnits,
-        idealUnits: rule.idealUnits,
-        maxUnits: rule.maxUnits ?? Number.MAX_SAFE_INTEGER,   // ley ACC del coverage-service
+        minUnits: eff.minimum,
+        idealUnits: eff.ideal,
+        maxUnits: resolveMaximumForEvaluation(eff.maximum),
       });
       // ACC composition: sorted by units DESC, then familyKey ASC
-      const familyMap = accComp.get(exp.structureKey);
+      const familyMap = accComp.get(structureKey);
       const compositionByFamily: SnapshotFamilyBucket[] | null = familyMap
         ? [...familyMap.entries()]
             .map(([familyKey, b]) => ({
@@ -543,14 +693,14 @@ export function runStoreSnapshotPipeline(assembled: AssembledStoreData): StoreSn
         : null;
 
       return {
-        structureKey: exp.structureKey,
-        label: exp.label,
-        groupLabel: exp.groupLabel,
-        line: exp.line,
-        priority: exp.priority,
-        refCount: refCountByStructure.get(exp.structureKey) ?? 0,
+        structureKey,
+        label: catalogEntry?.label ?? eff.label,
+        groupLabel: catalogEntry?.groupLabel ?? resolveGroupLabelFromEffective(eff),
+        line: resolveLineFromEffective(eff),
+        priority: eff.priority,
+        refCount: refCountByStructure.get(structureKey) ?? 0,
         totalUnits: cov.unitRule.totalUnits,
-        rule: { minUnits: rule.minUnits, idealUnits: rule.idealUnits, maxUnits: rule.maxUnits, source: rule.source },
+        rule: { minUnits: eff.minimum, idealUnits: eff.ideal, maxUnits: eff.maximum, source: eff.source },
         unitRule: cov.unitRule,
         structuralCoverageStatus: cov.structuralStatus,
         quantitativeStatus: cov.quantitativeStatus,
@@ -558,14 +708,27 @@ export function runStoreSnapshotPipeline(assembled: AssembledStoreData): StoreSn
       };
     });
 
-    const specialRules = evaluateSpecialRules(
-      storeId,
-      items.map(i => ({
-        referenceCode: i.referenceCode,
-        productName: refInfoByCode.get(i.referenceCode)?.productName ?? i.referenceCode,
-        currentUnits: i.units,
-      })),
-      CASTILLITOS_SPECIAL_PRODUCTS,
+    // §5: evaluate special rules from effective specials (per-pattern ideals)
+    const specialItems = items.map(i => ({
+      referenceCode: i.referenceCode,
+      productName: refInfoByCode.get(i.referenceCode)?.productName ?? i.referenceCode,
+      currentUnits: i.units,
+    }));
+    const specialRules: SpecialRuleEvaluation[] = [];
+    for (const eff of effectiveSpecials) {
+      const perPatternConfig: SpecialRuleConfig = {
+        referencePatterns: [eff.specialPattern],
+        idealByStore: { [storeId]: eff.ideal },
+        defaultIdeal: eff.ideal,
+      };
+      specialRules.push(...evaluateSpecialRules(storeId, specialItems, perPatternConfig));
+    }
+    // Sort combined specials: most severe first (same order as evaluateSpecialRules)
+    const specialStatusOrder: Record<string, number> = {
+      NO_AUTORIZADA: 0, FALTANTE: 1, EXCEDENTE: 2, CUMPLIDA: 3,
+    };
+    specialRules.sort(
+      (a, b) => (specialStatusOrder[a.status] ?? 9) - (specialStatusOrder[b.status] ?? 9) || b.gapUnits - a.gapUnits,
     );
 
     // Disponibilidad solo para estructuras con déficit (ley del unit-needs-service)
@@ -610,13 +773,15 @@ export function runStoreSnapshotPipeline(assembled: AssembledStoreData): StoreSn
       availability,
     });
 
+    const coverageData: SnapshotStoreCoverage = {
+      expectedStructures: structures.length,
+      healthyStructures: structures.filter(s => s.quantitativeStatus === "SALUDABLE").length,
+      structures,
+      specialRules,
+      ruleEvaluations: [], // placeholder — projected after coverage is fully built
+    };
     stageByStore.set(storeId, {
-      coverage: {
-        expectedStructures: structures.length,
-        healthyStructures: structures.filter(s => s.quantitativeStatus === "SALUDABLE").length,
-        structures,
-        specialRules,
-      },
+      coverage: coverageData,
       needs,
       itemsWithStock: new Set(items.map(i => i.referenceCode)),
     });
@@ -696,6 +861,11 @@ export function runStoreSnapshotPipeline(assembled: AssembledStoreData): StoreSn
       const storeInventory = itemsByStoreId.get(gov.storeId) ?? [];
       // Proyección certificada del tab Necesidades (fix NEEDS-SINGLE-SOURCE, verbatim)
       const needsProjection = buildStoreNeedsTabPresentation(plan, stage.needs);
+      // Project canonical rule evaluations (structures + specials → unified)
+      const coverageWithProjection: SnapshotStoreCoverage = {
+        ...stage.coverage,
+        ruleEvaluations: buildCoverageRuleProjection(stage.coverage),
+      };
       return {
         storeId: gov.storeId,
         displayName: displayNameByStore.get(gov.storeId) ?? gov.storeId,
@@ -703,10 +873,10 @@ export function runStoreSnapshotPipeline(assembled: AssembledStoreData): StoreSn
           totalUnits: storeInventory.reduce((s, i) => s + i.units, 0),
           referenceCount: storeInventory.length,
         },
-        coverage: stage.coverage,
+        coverage: coverageWithProjection,
         needs: stage.needs,
-        kpis: computeStoreKpis(stage.coverage, stage.needs, allocatedByStore.get(gov.storeId) ?? 0, thresholds),
-        presentationHints: computeStorePresentationHints(stage.coverage, stage.needs, needsProjection),
+        kpis: computeStoreKpis(coverageWithProjection, stage.needs, allocatedByStore.get(gov.storeId) ?? 0, thresholds),
+        presentationHints: computeStorePresentationHints(coverageWithProjection, stage.needs, needsProjection),
       };
     });
 

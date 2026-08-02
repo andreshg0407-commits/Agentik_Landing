@@ -151,7 +151,7 @@ export async function getEffectiveStoreConfig(
 }
 
 function resolveTextileConfig(
-  rules: Array<{ scope: string; line?: string; minQty: number; idealQty: number; maxQty: number; active: boolean; validFrom?: string | null; validTo?: string | null; season?: string | null; notes?: string | null }>,
+  rules: Array<{ scope: string; line?: string; minQty: number; idealQty: number; maxQty: number | null; active: boolean; validFrom?: string | null; validTo?: string | null; season?: string | null; notes?: string | null }>,
   lineId: string,
   defaults: { minimumUnits: number; idealUnits: number; maximumUnits: number },
 ): EffectiveTextileConfig {
@@ -171,7 +171,7 @@ function resolveTextileConfig(
       return {
         enabled:     true,
         minUnits:    override.minQty,
-        maxUnits:    override.maxQty,
+        maxUnits:    override.maxQty ?? defaults.maximumUnits,
         targetUnits: override.idealQty,
         validFrom:   override.validFrom ?? null,
         validTo:     override.validTo ?? null,
@@ -233,7 +233,7 @@ function resolveAccessoryConfig(
 }
 
 function resolveScarcityConfig(
-  rules: Array<{ scope: string; active: boolean; line?: string; minQty: number; maxQty: number }>,
+  rules: Array<{ scope: string; active: boolean; line?: string; minQty: number; maxQty: number | null }>,
 ): EffectiveScarcityConfig {
   // Scarcity config comes from tenant defaults (CASTILLITOS_GLOBAL_LOW_STOCK)
   // Store overrides could add/remove this store from allowed list, but that's tenant-level

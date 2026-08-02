@@ -80,7 +80,7 @@ export function calculateStoreNeeds(
 
     const rule = resolveStorePolicyForVariant(resolutionInput, policyRules);
     const thresholds = rule
-      ? { minQty: rule.minQty, idealQty: rule.idealQty, maxQty: rule.maxQty }
+      ? { minQty: rule.minQty, idealQty: rule.idealQty, maxQty: rule.maxQty ?? getDefaultThresholds(item.productClass).maxQty }
       : getDefaultThresholds(item.productClass);
 
     const status = deriveNeedStatus(item.currentQty, thresholds);

@@ -160,15 +160,23 @@ export async function loadSnapshotSource(orgId: string): Promise<SnapshotSourceR
     governanceStores.map(async s => {
       const policy = await getStorePolicyByStoreId(orgId, s.storeId);
       const rules: SnapshotPolicyRule[] = (policy?.rules ?? []).map(r => ({
+        id: r.id,
+        storeId: r.storeId,
         scope: r.scope,
         line: r.line,
+        group: r.group,
+        subgroup: r.subgroup,
         sizeClass: r.sizeClass,
         minQty: r.minQty,
         idealQty: r.idealQty,
         maxQty: r.maxQty,
         active: r.active,
+        priority: r.priority,
         validFrom: r.validFrom ?? null,
         validTo: r.validTo ?? null,
+        ruleKind: r.ruleKind,
+        effect: r.effect,
+        specialPattern: r.specialPattern,
       }));
       return { storeId: s.storeId, rules };
     }),
