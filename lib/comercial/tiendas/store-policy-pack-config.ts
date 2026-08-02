@@ -86,10 +86,12 @@ export interface SpecialProductConfig {
 }
 
 export const CASTILLITOS_SPECIAL_PRODUCTS: SpecialProductConfig = {
-  referencePatterns: ["BANERA", "CUNA_COLECHO", "CORRAL"],
+  referencePatterns: ["BAÑERA", "CUNA_COLECHO", "CORRAL"],
   idealByStore: {
     san_diego: 3,
     caldas: 3,
+    centro: 1,
+    gran_plaza: 1,
   },
   defaultIdeal: 0,
 };

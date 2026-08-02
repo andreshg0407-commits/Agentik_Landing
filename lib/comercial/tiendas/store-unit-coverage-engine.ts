@@ -106,25 +106,37 @@ export type SpecialRuleStatus =
   | "EXCEDENTE"       // units > ideal, ideal > 0
   | "NO_AUTORIZADA";  // ideal === 0 and units > 0 (high severity)
 
+export interface SpecialMatchedReference {
+  referenceCode: string;
+  productName: string;
+  units: number;
+}
+
 export interface SpecialRuleEvaluation {
-  pattern: string;          // "BANERA" | "CUNA_COLECHO" | "CORRAL" | ...
+  pattern: string;          // "BAÑERA" | "CUNA_COLECHO" | "CORRAL" | ...
   label: string;            // human label ("CUNA COLECHO")
   storeId: string;
   idealUnits: number;
   totalUnits: number;
   matchedReferenceCount: number;
+  matchedReferences: readonly SpecialMatchedReference[];
   status: SpecialRuleStatus;
   gapUnits: number;         // FALTANTE: ideal-units · EXCEDENTE/NO_AUTORIZADA: units-ideal
   severity: "high" | "medium" | "low" | "none";
 }
 
 /**
- * Pattern match with underscore↔space normalization: the config pattern
- * "CUNA_COLECHO" must match a product named "CUNA COLECHO" (and vice versa).
+ * Pattern match with underscore↔space normalization and Unicode NFD
+ * diacritics stripping: "BAÑERA" matches "BANERA" and vice versa,
+ * "CUNA_COLECHO" matches "CUNA COLECHO".
  */
+function stripDiacritics(s: string): string {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
 export function matchesSpecialPattern(text: string, pattern: string): boolean {
-  const t = text.toUpperCase();
-  const p = pattern.toUpperCase();
+  const t = stripDiacritics(text.toUpperCase());
+  const p = stripDiacritics(pattern.toUpperCase());
   return t.includes(p) || t.includes(p.replace(/_/g, " "));
 }
 
@@ -184,6 +196,11 @@ export function evaluateSpecialRules(
       idealUnits,
       totalUnits,
       matchedReferenceCount: matched.length,
+      matchedReferences: matched.map(m => ({
+        referenceCode: m.referenceCode,
+        productName: m.productName,
+        units: m.currentUnits,
+      })),
       status,
       gapUnits,
       severity,

@@ -36,6 +36,7 @@ import {
   buildNeedsTabPresentation,
   buildOperativeNeedsPresentation,
   buildAccessoryCompositionPresentation,
+  buildSpecialProductsPresentation,
   type DashboardPresentation,
   type PresentationStoreCard,
   type PresentationTone,
@@ -2332,7 +2333,7 @@ function DistributionStoreDrawer({
   }, [tab, storeCard.store.id, orgSlug, certifiedIntelLoaded]);
 
   // ── Inventory-by-line state (AGENTIK-STORES-INVENTORY-BY-LINE-01) ──────
-  type InvLine = "CASTILLITOS" | "LATIN_KIDS" | "ACCESSORIES" | "UNCLASSIFIED" | "OUT_OF_STOCK";
+  type InvLine = "CASTILLITOS" | "LATIN_KIDS" | "ACCESSORIES" | "UNCLASSIFIED" | "OUT_OF_STOCK" | "ESPECIALES";
   type InvState = "BAJO_MINIMO" | "EN_RANGO" | "EXCESO" | "SIN_REGLA" | "AGOTADO" | "CLASIFICACION_PENDIENTE";
 
   const [invLine, setInvLine] = useState<InvLine>("CASTILLITOS");
@@ -2372,6 +2373,11 @@ function DistributionStoreDrawer({
   // ── Accessory composition (AGENTIK-STORES-ACCESSORIES-COMPOSITION-UX-01) ──
   const accComposition = useMemo(
     () => buildAccessoryCompositionPresentation(snapshot, storeCard.store.id),
+    [snapshot, storeCard.store.id],
+  );
+  // ── Special products (AGENTIK-STORES-SPECIAL-PRODUCTS-INVENTORY-01) ──────
+  const specialProductsPres = useMemo(
+    () => buildSpecialProductsPresentation(snapshot, storeCard.store.id),
     [snapshot, storeCard.store.id],
   );
   // Filtro VISUAL de línea (jamás invalida ni refetch — T9)
@@ -2615,6 +2621,7 @@ function DistributionStoreDrawer({
                 { key: "ACCESSORIES" as InvLine, label: "Accesorios" },
                 { key: "UNCLASSIFIED" as InvLine, label: "Sin clasificar" },
                 { key: "OUT_OF_STOCK" as InvLine, label: "Agotados" },
+                { key: "ESPECIALES" as InvLine, label: "Especiales" },
               ]).map(ln => {
                 const isActive = invLine === ln.key;
                 return (
@@ -2636,8 +2643,8 @@ function DistributionStoreDrawer({
             </div>
           </div>
 
-          {/* ERROR STATE — differentiate empty vs error (OCTAVO) */}
-          {invError && (
+          {/* ERROR STATE — differentiate empty vs error (OCTAVO). Hidden for ESPECIALES (snapshot-based) */}
+          {invLine !== "ESPECIALES" && invError && (
             <div style={{
               fontFamily: T.mono, fontSize: T.sz.sm, color: C.red,
               padding: `${S[2]}px ${S[3]}px`, background: C.redLight,
@@ -2658,8 +2665,8 @@ function DistributionStoreDrawer({
             </div>
           )}
 
-          {/* LINE SUMMARY — 5 clickable KPIs (KPI-ACTIONS-AND-SORTING-01) */}
-          {invData?.summary && (
+          {/* LINE SUMMARY — 5 clickable KPIs (KPI-ACTIONS-AND-SORTING-01). Hidden for ESPECIALES */}
+          {invLine !== "ESPECIALES" && invData?.summary && (
             <InvLineSummaryStrip
               summary={invData.summary}
               activeKpi={invKpiFilter}
@@ -2674,6 +2681,118 @@ function DistributionStoreDrawer({
             <AccessoryCompositionSection composition={accComposition} />
           )}
 
+          {/* ESPECIALES — transversal view from snapshot special rules (SPECIAL-PRODUCTS-INVENTORY-01) */}
+          {invLine === "ESPECIALES" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
+              {/* KPI strip */}
+              <div style={{ display: "flex", gap: S[3], flexWrap: "wrap" }}>
+                <div style={{
+                  flex: 1, minWidth: 120, padding: S[2], borderRadius: R.sm,
+                  border: `1px solid ${C.line}`, background: C.white,
+                }}>
+                  <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase" as const }}>Referencias</div>
+                  <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: C.ink }}>{specialProductsPres.totalSpecialReferences}</div>
+                </div>
+                <div style={{
+                  flex: 1, minWidth: 120, padding: S[2], borderRadius: R.sm,
+                  border: `1px solid ${C.line}`, background: C.white,
+                }}>
+                  <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase" as const }}>Unidades</div>
+                  <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: C.ink }}>{specialProductsPres.totalSpecialUnits}</div>
+                </div>
+                <div style={{
+                  flex: 1, minWidth: 120, padding: S[2], borderRadius: R.sm,
+                  border: `1px solid ${C.line}`, background: C.white,
+                }}>
+                  <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase" as const }}>Requieren surtido</div>
+                  <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: specialProductsPres.rules.filter(r => r.statusKey === "FALTANTE").length > 0 ? C.red : C.ink }}>{specialProductsPres.rules.filter(r => r.statusKey === "FALTANTE").length}</div>
+                </div>
+                <div style={{
+                  flex: 1, minWidth: 120, padding: S[2], borderRadius: R.sm,
+                  border: `1px solid ${C.line}`, background: C.white,
+                }}>
+                  <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase" as const }}>Requieren retiro</div>
+                  <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: specialProductsPres.rules.filter(r => r.statusKey === "EXCEDENTE").length > 0 ? C.amber : C.ink }}>{specialProductsPres.rules.filter(r => r.statusKey === "EXCEDENTE").length}</div>
+                </div>
+              </div>
+
+              {/* Rules — always show all 3 */}
+              {specialProductsPres.rules.map(rule => (
+                <div key={rule.pattern} style={{
+                  border: `1px solid ${C.line}`, borderRadius: R.sm, background: C.white, overflow: "hidden",
+                }}>
+                  {/* Rule header */}
+                  <div style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    padding: `${S[2]}px ${S[3]}px`,
+                    borderBottom: rule.matchedReferences.length > 0 ? `1px solid ${C.lineSubtle}` : "none",
+                    background: C.surface,
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
+                      <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
+                        {rule.label}
+                      </span>
+                      <span style={{
+                        fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                        padding: "2px 8px", borderRadius: R.pill,
+                        background: TONE_BADGE[rule.tone].bg, color: TONE_BADGE[rule.tone].text,
+                      }}>
+                        {rule.statusKey}
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: S[3] }}>
+                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
+                        Actual {rule.totalUnits} · Objetivo {rule.idealUnits}
+                      </span>
+                      {rule.gapText !== "—" && (
+                        <span style={{
+                          fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                          color: rule.tone === "critical" ? C.red : rule.tone === "warning" ? C.amber : C.inkMid,
+                        }}>
+                          {rule.gapText}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Matched references table */}
+                  {rule.matchedReferences.length > 0 ? (
+                    <div className="ag-op-table" style={{ margin: 0 }}>
+                      {rule.matchedReferences.map(ref => (
+                        <div key={ref.referenceCode} className="ag-op-row" style={{
+                          display: "flex", alignItems: "center", gap: S[2],
+                          padding: `${S[1]}px ${S[3]}px`,
+                        }}>
+                          <CommercialReferenceThumbnail imageUrl={ref.thumbnailUrl} referenceCode={ref.referenceCode} description={ref.productName} size={36} />
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1, minWidth: 0 }}>
+                            <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink }}>
+                              {ref.referenceCode}
+                            </span>
+                            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {ref.productName}
+                            </span>
+                          </div>
+                          <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold, color: C.ink, flexShrink: 0 }}>
+                            {ref.units} uds
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{
+                      padding: `${S[2]}px ${S[3]}px`,
+                      fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint,
+                    }}>
+                      Sin referencias con stock — revisar abastecimiento
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Normal inventory flow — hidden when ESPECIALES (transversal view uses snapshot, not API) */}
+          {invLine !== "ESPECIALES" && (<>
           {/* SEARCH */}
           <div style={{ display: "flex", gap: S[2], alignItems: "center" }}>
             <input
@@ -2901,6 +3020,7 @@ function DistributionStoreDrawer({
               )}
             </>
           )}
+          </>)}
         </div>
       )}
 
@@ -3617,11 +3737,12 @@ function AccessoryFamilyDrillDown({ family, isLast }: { family: AccessoryFamilyR
           </div>
           {family.references.map((r) => (
             <div key={r.referenceId} style={{
-              display: "grid", gridTemplateColumns: "100px 1fr 60px",
+              display: "grid", gridTemplateColumns: "36px 100px 1fr 60px",
               gap: S[2], alignItems: "center",
               padding: `${S[1]}px 0`,
               borderBottom: `1px solid ${C.lineSubtle}`,
             }}>
+              <CommercialReferenceThumbnail imageUrl={r.thumbnailUrl} referenceCode={r.referenceCode} description={r.description} size={36} />
               <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
                 {r.referenceCode}
               </span>

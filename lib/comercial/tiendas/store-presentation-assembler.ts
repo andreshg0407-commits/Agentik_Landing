@@ -158,6 +158,11 @@ export interface CoverageTabPresentation {
     readonly tone: PresentationTone;
     readonly totalUnitsText: string;
     readonly idealUnitsText: string;
+    readonly matchedReferences: readonly {
+      readonly referenceCode: string;
+      readonly productName: string;
+      readonly units: number;
+    }[];
   }[];
 }
 
@@ -456,6 +461,11 @@ export function buildCoverageTabPresentation(snapshot: StoreSnapshot, storeId: s
       tone: SPECIAL_STATUS_TONE[r.status] ?? "neutral",
       totalUnitsText: fmtInt(r.totalUnits),
       idealUnitsText: fmtInt(r.idealUnits),
+      matchedReferences: r.matchedReferences.map(m => ({
+        referenceCode: m.referenceCode,
+        productName: m.productName,
+        units: m.units,
+      })),
     })),
   };
 }
@@ -522,6 +532,7 @@ export interface AccessoryFamilyReferencePresentation {
   readonly referenceCode: string;
   readonly description: string;
   readonly units: number;
+  readonly thumbnailUrl: string | null;
 }
 
 export interface AccessoryFamilyRow {
@@ -561,10 +572,12 @@ export function buildAccessoryCompositionPresentation(
     s => s.structureKey.startsWith("ACC|"),
   );
 
-  // Build referenceId → productName lookup from catalog (no DB, no resolution)
+  // Build referenceId → metadata lookup from catalog (no DB, no resolution)
   const nameById = new Map<string, string>();
+  const imageById = new Map<string, string | null>();
   for (const c of snapshot.referenceCatalog) {
     nameById.set(c.referenceId, c.productName);
+    imageById.set(c.referenceId, c.heroImageUrl);
   }
 
   const sizes: AccessorySizeBlock[] = accStructures.map(s => {
@@ -590,6 +603,7 @@ export function buildAccessoryCompositionPresentation(
         referenceCode: r.referenceCode,
         description: nameById.get(r.referenceId) ?? r.referenceCode,
         units: r.units,
+        thumbnailUrl: imageById.get(r.referenceId) ?? null,
       })),
     }));
 
@@ -607,6 +621,86 @@ export function buildAccessoryCompositionPresentation(
   });
 
   return { storeId, sizes };
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Special Products — ESPECIALES transversal view (SPECIAL-PRODUCTS-INVENTORY-01)
+// ═════════════════════════════════════════════════════════════════════════════
+
+export interface SpecialProductRulePresentation {
+  readonly pattern: string;
+  readonly label: string;
+  readonly statusKey: string;
+  readonly tone: PresentationTone;
+  readonly idealUnits: number;
+  readonly totalUnits: number;
+  readonly gapUnits: number;
+  readonly gapText: string;          // "Faltan 1" | "+2 sobre ideal" | "—"
+  readonly semanticText: string;     // human explanation of rule status
+  readonly matchedReferences: readonly {
+    readonly referenceCode: string;
+    readonly productName: string;
+    readonly units: number;
+    readonly thumbnailUrl: string | null;
+  }[];
+}
+
+export interface SpecialProductsPresentation {
+  readonly storeId: string;
+  readonly rules: readonly SpecialProductRulePresentation[];
+  readonly totalSpecialUnits: number;
+  readonly totalSpecialReferences: number;
+}
+
+function buildGapText(status: string, gapUnits: number): string {
+  if (status === "FALTANTE") return `Faltan ${fmtInt(gapUnits)} para el objetivo`;
+  if (status === "EXCEDENTE") return `+${fmtInt(gapUnits)} sobre el objetivo`;
+  if (status === "NO_AUTORIZADA") return `+${fmtInt(gapUnits)} sobre el objetivo`;
+  return "—";
+}
+
+function buildSemanticText(status: string, idealUnits: number, totalUnits: number, label: string): string {
+  if (status === "FALTANTE") return `${label}: ${fmtInt(totalUnits)} de ${fmtInt(idealUnits)} uds — faltan ${fmtInt(idealUnits - totalUnits)}`;
+  if (status === "EXCEDENTE" || status === "NO_AUTORIZADA") return `${label}: ${fmtInt(totalUnits)} uds (objetivo ${fmtInt(idealUnits)})`;
+  return `${label}: objetivo cumplido (${fmtInt(totalUnits)} uds)`;
+}
+
+export function buildSpecialProductsPresentation(
+  snapshot: StoreSnapshot,
+  storeId: string,
+): SpecialProductsPresentation {
+  const store = requireStore(snapshot, storeId);
+
+  // Build referenceCode → heroImageUrl lookup from catalog (join by code, no DB)
+  const imageByCode = new Map<string, string | null>();
+  for (const c of snapshot.referenceCatalog) {
+    imageByCode.set(c.referenceCode, c.heroImageUrl);
+  }
+
+  const rules = store.coverage.specialRules.map(r => ({
+    pattern: r.pattern,
+    label: r.label,
+    statusKey: r.status,
+    tone: (SPECIAL_STATUS_TONE[r.status] ?? "neutral") as PresentationTone,
+    idealUnits: r.idealUnits,
+    totalUnits: r.totalUnits,
+    gapUnits: r.gapUnits,
+    gapText: buildGapText(r.status, r.gapUnits),
+    semanticText: buildSemanticText(r.status, r.idealUnits, r.totalUnits, r.label),
+    matchedReferences: r.matchedReferences.map(m => ({
+      referenceCode: m.referenceCode,
+      productName: m.productName,
+      units: m.units,
+      thumbnailUrl: imageByCode.get(m.referenceCode) ?? null,
+    })),
+  }));
+
+  return {
+    storeId,
+    rules,
+    totalSpecialUnits: rules.reduce((s, r) => s + r.totalUnits, 0),
+    totalSpecialReferences: rules.reduce((s, r) => s + r.matchedReferences.length, 0),
+  };
 }
 
 export function buildReplenishmentPresentation(snapshot: StoreSnapshot): ReplenishmentPresentation {
