@@ -77,6 +77,9 @@ import {
   buildStoreNeedsTabPresentation,
   type StoreNeedsTabPresentation,
 } from "./store-unit-needs-presentation";
+// CommercialFamilyKey extracted from ReferenceCatalogEntry to preserve FS guardian
+// (pipeline must NOT import from commercial-taxonomy/ directly).
+type CommercialFamilyKey = NonNullable<ReferenceCatalogEntry["commercialFamily"]>;
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Umbrales de la ley de negocio (D1–D3 del F0, recomendados certificados).
@@ -104,6 +107,13 @@ const RULES_D1_D2 = {
 // Contrato de salida (sin Map — arrays readonly en orden canónico)
 // ═════════════════════════════════════════════════════════════════════════════
 
+/** Analytical breakdown of ACC inventory by commercial family (read-only projection). */
+export interface SnapshotFamilyBucket {
+  readonly familyKey: CommercialFamilyKey;
+  readonly units: number;
+  readonly refCount: number;
+}
+
 export interface SnapshotCoverageStructure {
   readonly structureKey: string;
   readonly label: string;
@@ -117,6 +127,8 @@ export interface SnapshotCoverageStructure {
   readonly unitRule: UnitsRuleEvaluation;
   readonly structuralCoverageStatus: "CUBIERTA" | "SIN_COBERTURA";
   readonly quantitativeStatus: string;
+  /** ACC only: analytical composition by commercial family. null for textiles. */
+  readonly compositionByFamily: readonly SnapshotFamilyBucket[] | null;
 }
 
 export interface SnapshotStoreCoverage {
@@ -451,6 +463,11 @@ export function runStoreSnapshotPipeline(assembled: AssembledStoreData): StoreSn
   };
 
   const refInfoByCode = buildRefInfoByCode(assembled);
+  const familyByRefId = new Map<string, CommercialFamilyKey>(
+    assembled.referenceCatalog
+      .filter(c => c.commercialFamily !== null)
+      .map(c => [c.referenceId, c.commercialFamily!]),
+  );
   const compatIndex = buildCompatibilityIndexFromAssembled(assembled, refInfoByCode);
   const mainStockByCode = new Map<string, number>();
   for (const m of assembled.mainStock) {
@@ -471,11 +488,22 @@ export function runStoreSnapshotPipeline(assembled: AssembledStoreData): StoreSn
     const items: readonly AssembledItem[] = itemsByStoreId.get(storeId) ?? [];
     const unitsByStructure = new Map<string, number[]>();
     const refCountByStructure = new Map<string, number>();
+    // ACC composition: structureKey → familyKey → { units, refCount }
+    const accComp = new Map<string, Map<CommercialFamilyKey, { units: number; refCount: number }>>();
     for (const item of items) {
       if (!item.structureKey) continue;
       if (!unitsByStructure.has(item.structureKey)) unitsByStructure.set(item.structureKey, []);
       unitsByStructure.get(item.structureKey)!.push(item.units);
       refCountByStructure.set(item.structureKey, (refCountByStructure.get(item.structureKey) ?? 0) + 1);
+      // ACC composition accumulation (only for ACC structures)
+      if (item.structureKey.startsWith("ACC|")) {
+        if (!accComp.has(item.structureKey)) accComp.set(item.structureKey, new Map());
+        const familyKey = familyByRefId.get(item.referenceId) ?? "sin_clasificar";
+        const bucket = accComp.get(item.structureKey)!;
+        const prev = bucket.get(familyKey);
+        if (prev) { prev.units += item.units; prev.refCount += 1; }
+        else { bucket.set(familyKey, { units: item.units, refCount: 1 }); }
+      }
     }
 
     const structures: SnapshotCoverageStructure[] = assembled.expectedStructures.map(exp => {
@@ -490,6 +518,14 @@ export function runStoreSnapshotPipeline(assembled: AssembledStoreData): StoreSn
         idealUnits: rule.idealUnits,
         maxUnits: rule.maxUnits ?? Number.MAX_SAFE_INTEGER,   // ley ACC del coverage-service
       });
+      // ACC composition: sorted by units DESC, then familyKey ASC
+      const familyMap = accComp.get(exp.structureKey);
+      const compositionByFamily: SnapshotFamilyBucket[] | null = familyMap
+        ? [...familyMap.entries()]
+            .map(([familyKey, b]) => ({ familyKey, units: b.units, refCount: b.refCount }))
+            .sort((a, b) => b.units - a.units || a.familyKey.localeCompare(b.familyKey))
+        : null;
+
       return {
         structureKey: exp.structureKey,
         label: exp.label,
@@ -502,6 +538,7 @@ export function runStoreSnapshotPipeline(assembled: AssembledStoreData): StoreSn
         unitRule: cov.unitRule,
         structuralCoverageStatus: cov.structuralStatus,
         quantitativeStatus: cov.quantitativeStatus,
+        compositionByFamily,
       };
     });
 
