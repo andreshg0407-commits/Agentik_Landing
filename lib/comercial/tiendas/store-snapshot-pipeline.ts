@@ -107,11 +107,20 @@ const RULES_D1_D2 = {
 // Contrato de salida (sin Map — arrays readonly en orden canónico)
 // ═════════════════════════════════════════════════════════════════════════════
 
+/** Individual reference within a family bucket (drill-down projection). */
+export interface SnapshotFamilyReference {
+  readonly referenceId: string;
+  readonly referenceCode: string;
+  readonly units: number;
+}
+
 /** Analytical breakdown of ACC inventory by commercial family (read-only projection). */
 export interface SnapshotFamilyBucket {
   readonly familyKey: CommercialFamilyKey;
   readonly units: number;
   readonly refCount: number;
+  /** Per-reference detail for drill-down. Sorted units DESC, referenceCode ASC. */
+  readonly references: readonly SnapshotFamilyReference[];
 }
 
 export interface SnapshotCoverageStructure {
@@ -488,8 +497,9 @@ export function runStoreSnapshotPipeline(assembled: AssembledStoreData): StoreSn
     const items: readonly AssembledItem[] = itemsByStoreId.get(storeId) ?? [];
     const unitsByStructure = new Map<string, number[]>();
     const refCountByStructure = new Map<string, number>();
-    // ACC composition: structureKey → familyKey → { units, refCount }
-    const accComp = new Map<string, Map<CommercialFamilyKey, { units: number; refCount: number }>>();
+    // ACC composition: structureKey → familyKey → { units, refCount, refs[] }
+    type AccBucket = { units: number; refCount: number; refs: SnapshotFamilyReference[] };
+    const accComp = new Map<string, Map<CommercialFamilyKey, AccBucket>>();
     for (const item of items) {
       if (!item.structureKey) continue;
       if (!unitsByStructure.has(item.structureKey)) unitsByStructure.set(item.structureKey, []);
@@ -500,9 +510,10 @@ export function runStoreSnapshotPipeline(assembled: AssembledStoreData): StoreSn
         if (!accComp.has(item.structureKey)) accComp.set(item.structureKey, new Map());
         const familyKey = familyByRefId.get(item.referenceId) ?? "sin_clasificar";
         const bucket = accComp.get(item.structureKey)!;
+        const ref: SnapshotFamilyReference = { referenceId: item.referenceId, referenceCode: item.referenceCode, units: item.units };
         const prev = bucket.get(familyKey);
-        if (prev) { prev.units += item.units; prev.refCount += 1; }
-        else { bucket.set(familyKey, { units: item.units, refCount: 1 }); }
+        if (prev) { prev.units += item.units; prev.refCount += 1; prev.refs.push(ref); }
+        else { bucket.set(familyKey, { units: item.units, refCount: 1, refs: [ref] }); }
       }
     }
 
@@ -522,7 +533,12 @@ export function runStoreSnapshotPipeline(assembled: AssembledStoreData): StoreSn
       const familyMap = accComp.get(exp.structureKey);
       const compositionByFamily: SnapshotFamilyBucket[] | null = familyMap
         ? [...familyMap.entries()]
-            .map(([familyKey, b]) => ({ familyKey, units: b.units, refCount: b.refCount }))
+            .map(([familyKey, b]) => ({
+              familyKey,
+              units: b.units,
+              refCount: b.refCount,
+              references: [...b.refs].sort((a, c) => c.units - a.units || a.referenceCode.localeCompare(c.referenceCode)),
+            }))
             .sort((a, b) => b.units - a.units || a.familyKey.localeCompare(b.familyKey))
         : null;
 

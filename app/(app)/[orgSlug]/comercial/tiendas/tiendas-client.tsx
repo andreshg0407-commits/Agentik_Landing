@@ -35,14 +35,26 @@ import {
   buildCoverageTabPresentation,
   buildNeedsTabPresentation,
   buildOperativeNeedsPresentation,
+  buildAccessoryCompositionPresentation,
   type DashboardPresentation,
   type PresentationStoreCard,
   type PresentationTone,
   type OperativeNeedsPresentation,
   type NeedsTabPresentation,
+  type AccessoryCompositionPresentation,
+  type AccessorySizeBlock,
+  type AccessoryFamilyRow,
+  type AccessoryFamilyReferencePresentation,
 } from "@/lib/comercial/tiendas/store-presentation-assembler";
 import { createSnapshotRefresher } from "@/lib/comercial/tiendas/store-snapshot-refresher";
 import { ACTIVE_STORE_SLUGS } from "@/lib/comercial/tiendas/store-distribution-types";
+// ── Business line labels for Needs tab filter (AGENTIK-STORES-NEEDS-UX-02.3.1) ──
+const NEEDS_LINE_LABEL: Record<string, string> = {
+  castillitos: "Castillitos",
+  latin_kids: "Latin Kids",
+  accesorios_importacion: "Accesorios",
+};
+const NEEDS_COMMERCIAL_LINES = new Set(["castillitos", "latin_kids", "accesorios_importacion"]);
 import type { StoreGovernanceRecord } from "@/lib/comercial/tiendas/store-governance-types";
 import { StoreSupplyRulesTab } from "@/components/comercial/store-supply-rules-tab";
 import type {
@@ -61,14 +73,6 @@ import {
   TREND_COLOR,
   INTELLIGENCE_YEAR as CERTIFIED_YEAR,
 } from "@/lib/comercial/tiendas/store-certified-intelligence-types";
-
-// ── Business line labels for Needs tab filter (AGENTIK-STORES-NEEDS-UX-02.3.1) ──
-const NEEDS_LINE_LABEL: Record<string, string> = {
-  castillitos: "Castillitos",
-  latin_kids: "Latin Kids",
-  accesorios_importacion: "Accesorios",
-};
-const NEEDS_COMMERCIAL_LINES = new Set(["castillitos", "latin_kids", "accesorios_importacion"]);
 
 // ── Rule provenance (AGENTIK-STORES-SUPPLY-RULES-CONSUMPTION-CERTIFICATION-01) ─
 
@@ -2365,6 +2369,11 @@ function DistributionStoreDrawer({
     () => buildCoverageTabPresentation(snapshot, storeCard.store.id),
     [snapshot, storeCard.store.id],
   );
+  // ── Accessory composition (AGENTIK-STORES-ACCESSORIES-COMPOSITION-UX-01) ──
+  const accComposition = useMemo(
+    () => buildAccessoryCompositionPresentation(snapshot, storeCard.store.id),
+    [snapshot, storeCard.store.id],
+  );
   // Filtro VISUAL de línea (jamás invalida ni refetch — T9)
   const [covLine, setCovLine] = useState<string>("ALL");
 
@@ -2658,6 +2667,11 @@ function DistributionStoreDrawer({
               sortBy={invSortBy}
               onSortChange={(s) => { setInvSortBy(s); setInvPage(1); }}
             />
+          )}
+
+          {/* ACCESSORY COMPOSITION — only visible when line = ACCESSORIES */}
+          {invLine === "ACCESSORIES" && accComposition && accComposition.sizes.length > 0 && (
+            <AccessoryCompositionSection composition={accComposition} />
           )}
 
           {/* SEARCH */}
@@ -3545,6 +3559,178 @@ function StoreIntelligenceTab({ certifiedIntel, certifiedIntelLoading }: {
         Periodo: Ene\u2013Dic {CERTIFIED_YEAR}.
         {ci.snapshotAt && ` Snapshot: ${ci.snapshotAt.slice(0, 16).replace("T", " ")}`}
       </div>
+    </div>
+  );
+}
+
+// ── Accessory Composition Accordion (AGENTIK-STORES-ACCESSORIES-COMPOSITION-UX-01/02) ──
+
+function AccessoryFamilyDrillDown({ family, isLast }: { family: AccessoryFamilyRow; isLast: boolean }) {
+  const [open, setOpen] = useState(false);
+  const hasRefs = family.references.length > 0;
+  return (
+    <div style={{ borderBottom: isLast ? "none" : `1px solid ${C.lineSubtle}` }}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => hasRefs && setOpen(v => !v)}
+        style={{
+          display: "grid", gridTemplateColumns: "1fr 80px 60px 60px",
+          gap: S[2], alignItems: "center", width: "100%",
+          padding: `${S[2]}px 0`, background: "transparent",
+          border: "none", cursor: hasRefs ? "pointer" : "default", textAlign: "left",
+        }}
+      >
+        <span style={{
+          fontFamily: T.mono, fontSize: T.sz.sm, color: C.ink,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          display: "flex", alignItems: "center", gap: S[1],
+        }}>
+          {hasRefs && (
+            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, width: 12, flexShrink: 0 }}>
+              {open ? "▼" : "▶"}
+            </span>
+          )}
+          {family.label}
+        </span>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold, color: C.ink, textAlign: "right" }}>
+          {family.units}
+        </span>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textAlign: "right" }}>
+          {family.refCount}
+        </span>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, textAlign: "right" }}>
+          {family.percentage}%
+        </span>
+      </button>
+      {open && hasRefs && (
+        <div style={{ paddingLeft: S[4], paddingBottom: S[2] }}>
+          {/* Reference sub-header */}
+          <div style={{
+            display: "grid", gridTemplateColumns: "100px 1fr 60px",
+            gap: S[2], padding: `${S[1]}px 0`,
+            borderBottom: `1px solid ${C.lineSubtle}`,
+          }}>
+            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase" }}>Referencia</span>
+            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase" }}>Descripción</span>
+            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase", textAlign: "right" }}>Uds</span>
+          </div>
+          {family.references.map((r) => (
+            <div key={r.referenceId} style={{
+              display: "grid", gridTemplateColumns: "100px 1fr 60px",
+              gap: S[2], alignItems: "center",
+              padding: `${S[1]}px 0`,
+              borderBottom: `1px solid ${C.lineSubtle}`,
+            }}>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
+                {r.referenceCode}
+              </span>
+              <span style={{
+                fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.ink,
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              }}>
+                {r.description}
+              </span>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.ink, textAlign: "right" }}>
+                {r.units}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AccessorySizeAccordion({ block }: { block: AccessorySizeBlock }) {
+  const [open, setOpen] = useState(false);
+  const deltaColor = block.deltaState === "over" ? C.blueDark
+    : block.deltaState === "exact" ? C.green : C.amber;
+  return (
+    <div style={{ borderBottom: `1px solid ${C.line}` }}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen(v => !v)}
+        style={{
+          display: "flex", alignItems: "center", gap: S[2], width: "100%",
+          padding: `${S[2]}px ${S[3]}px`, background: C.surfaceAlt,
+          border: "none", cursor: "pointer", textAlign: "left",
+        }}
+      >
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid, width: 16, flexShrink: 0 }}>
+          {open ? "▼" : "▶"}
+        </span>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink, flex: 1, minWidth: 0 }}>
+          {block.sizeLabel}
+        </span>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, flexShrink: 0 }}>
+          {block.units} uds · obj {block.target} · {block.familyCount} {block.familyCount === 1 ? "categoría" : "categorías"}
+        </span>
+        <span style={{
+          fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+          padding: "2px 8px", borderRadius: R.pill, flexShrink: 0,
+          background: deltaColor === C.green ? C.greenLight
+            : deltaColor === C.amber ? C.amberLight : C.blueLight,
+          color: deltaColor,
+          border: `1px solid ${deltaColor === C.green ? C.greenBorder
+            : deltaColor === C.amber ? C.amberBorder : C.blueBorder}`,
+        }}>
+          {block.deltaText}
+        </span>
+      </button>
+      {open && (
+        <div style={{ padding: `0 ${S[3]}px` }}>
+          {block.families.length === 0 ? (
+            <div style={{
+              fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint,
+              padding: `${S[3]}px 0`, textAlign: "center",
+            }}>
+              No hay accesorios de este tamaño en la tienda.
+            </div>
+          ) : (
+            <>
+              {/* Column headers */}
+              <div style={{
+                display: "grid", gridTemplateColumns: "1fr 80px 60px 60px",
+                gap: S[2], padding: `${S[1]}px 0`,
+                borderBottom: `1px solid ${C.lineSubtle}`,
+              }}>
+                <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase" }}>Familia</span>
+                <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase", textAlign: "right" }}>Unidades</span>
+                <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase", textAlign: "right" }}>Refs</span>
+                <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase", textAlign: "right" }}>%</span>
+              </div>
+              {block.families.map((f, fi) => (
+                <AccessoryFamilyDrillDown
+                  key={f.key}
+                  family={f}
+                  isLast={fi === block.families.length - 1}
+                />
+              ))}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AccessoryCompositionSection({ composition }: { composition: AccessoryCompositionPresentation }) {
+  const uniqueFamilies = new Set(composition.sizes.flatMap(b => b.families.map(f => f.key))).size;
+  return (
+    <div style={{ ...panel, padding: 0, overflow: "hidden" }}>
+      <div style={{ ...panelHeader, padding: `${S[2]}px ${S[3]}px` }}>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
+          Composición de accesorios
+        </span>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
+          {uniqueFamilies} {uniqueFamilies === 1 ? "categoría de producto" : "categorías de producto"}
+        </span>
+      </div>
+      {composition.sizes.map(block => (
+        <AccessorySizeAccordion key={block.structureKey} block={block} />
+      ))}
     </div>
   );
 }

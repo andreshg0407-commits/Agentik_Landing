@@ -27,7 +27,9 @@ import type {
   SnapshotHealthStatus,
   SnapshotActionKey,
   SnapshotCoverageStructure,
+  SnapshotFamilyBucket,
 } from "./store-snapshot-pipeline";
+import { COMMERCIAL_FAMILIES } from "@/lib/products/commercial-taxonomy/commercial-taxonomy-data";
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Tonos y diccionarios fijos (mapeo 1:1 de enums — jamás de números)
@@ -492,6 +494,119 @@ export function buildNeedsTabPresentation(snapshot: StoreSnapshot, storeId: stri
       unassignedPendingText: fmtInt(projection.totals.unassignedPendingUnits),
     },
   };
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Accessory Composition — presentation projection (COMPOSITION-UX-01)
+// ═════════════════════════════════════════════════════════════════════════════
+
+// Title Case conversion preserving Unicode (tildes, ñ).
+function toTitleCase(s: string): string {
+  return s.toLowerCase().replace(/(^|\s)\S/g, c => c.toUpperCase());
+}
+
+// familyKey → human display label, derived from canonical COMMERCIAL_FAMILIES.
+// NO manual dictionary — single source of truth.
+const FAMILY_LABEL: Record<string, string> = Object.fromEntries(
+  COMMERCIAL_FAMILIES.map(f => [f.key, toTitleCase(f.label)]),
+);
+
+const SIZE_LABEL: Record<string, string> = {
+  "ACC|Pequeño": "Pequeños",
+  "ACC|Mediano": "Medianos",
+  "ACC|Grande": "Grandes",
+};
+
+export interface AccessoryFamilyReferencePresentation {
+  readonly referenceId: string;
+  readonly referenceCode: string;
+  readonly description: string;
+  readonly units: number;
+}
+
+export interface AccessoryFamilyRow {
+  readonly key: string;
+  readonly label: string;
+  readonly units: number;
+  readonly refCount: number;
+  readonly percentage: number;
+  readonly references: readonly AccessoryFamilyReferencePresentation[];
+}
+
+export type AccessoryDeltaState = "over" | "exact" | "under";
+
+export interface AccessorySizeBlock {
+  readonly structureKey: string;
+  readonly sizeLabel: string;
+  readonly units: number;
+  readonly target: number;
+  readonly delta: number;
+  readonly deltaState: AccessoryDeltaState;
+  readonly deltaText: string;
+  readonly familyCount: number;
+  readonly families: readonly AccessoryFamilyRow[];
+}
+
+export interface AccessoryCompositionPresentation {
+  readonly storeId: string;
+  readonly sizes: readonly AccessorySizeBlock[];
+}
+
+export function buildAccessoryCompositionPresentation(
+  snapshot: StoreSnapshot,
+  storeId: string,
+): AccessoryCompositionPresentation {
+  const store = requireStore(snapshot, storeId);
+  const accStructures = store.coverage.structures.filter(
+    s => s.structureKey.startsWith("ACC|"),
+  );
+
+  // Build referenceId → productName lookup from catalog (no DB, no resolution)
+  const nameById = new Map<string, string>();
+  for (const c of snapshot.referenceCatalog) {
+    nameById.set(c.referenceId, c.productName);
+  }
+
+  const sizes: AccessorySizeBlock[] = accStructures.map(s => {
+    const target = s.rule.idealUnits;
+    const units = s.totalUnits;
+    const delta = units - target;
+    const deltaState: AccessoryDeltaState =
+      delta > 0 ? "over" : delta === 0 ? "exact" : "under";
+    const deltaText =
+      delta > 0 ? `+${fmtInt(delta)} sobre el objetivo`
+      : delta === 0 ? "Objetivo cumplido"
+      : `Faltan ${fmtInt(Math.abs(delta))} para el objetivo`;
+
+    const comp: readonly SnapshotFamilyBucket[] = s.compositionByFamily ?? [];
+    const families: AccessoryFamilyRow[] = comp.map(b => ({
+      key: b.familyKey,
+      label: FAMILY_LABEL[b.familyKey] ?? b.familyKey,
+      units: b.units,
+      refCount: b.refCount,
+      percentage: units > 0 ? Math.round((b.units / units) * 100) : 0,
+      references: b.references.map(r => ({
+        referenceId: r.referenceId,
+        referenceCode: r.referenceCode,
+        description: nameById.get(r.referenceId) ?? r.referenceCode,
+        units: r.units,
+      })),
+    }));
+
+    return {
+      structureKey: s.structureKey,
+      sizeLabel: SIZE_LABEL[s.structureKey] ?? s.structureKey,
+      units,
+      target,
+      delta,
+      deltaState,
+      deltaText,
+      familyCount: families.length,
+      families,
+    };
+  });
+
+  return { storeId, sizes };
 }
 
 export function buildReplenishmentPresentation(snapshot: StoreSnapshot): ReplenishmentPresentation {

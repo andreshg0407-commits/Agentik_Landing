@@ -524,7 +524,9 @@ describe("T13 — 663/663 certification through assembler boundary", () => {
 // ═════════════════════════════════════════════════════════════════════════════
 
 describe("T15 — FS guardian: single resolver boundary", () => {
-  it("resolveCommercialTaxonomy is NOT called from engines, presentation, or UI within tiendas/", async () => {
+  // RESOLUTION AUTHORITY: only the assembler may call resolveCommercialTaxonomy()
+  // or import the resolver module. This is the core FS boundary.
+  it("resolveCommercialTaxonomy is NOT called outside assembler", async () => {
     const fs = await import("node:fs");
     const path = await import("node:path");
     const tiendasDir = path.resolve(new URL(".", import.meta.url).pathname, "..");
@@ -532,17 +534,43 @@ describe("T15 — FS guardian: single resolver boundary", () => {
 
     const violations: string[] = [];
     for (const file of files) {
-      if (file === "store-snapshot-assembler.ts") continue; // approved boundary
+      if (file === "store-snapshot-assembler.ts") continue; // approved resolution boundary
       const content = fs.readFileSync(path.join(tiendasDir, file), "utf-8");
       if (content.includes("resolveCommercialTaxonomy")) {
         violations.push(`${file} imports/calls resolveCommercialTaxonomy — must only be in assembler`);
       }
-      if (/from\s+["'].*commercial-taxonomy/.test(content)) {
-        violations.push(`${file} imports from commercial-taxonomy — must only be in assembler`);
+      // Check for resolver imports (resolution authority)
+      if (/from\s+["'].*commercial-taxonomy\/commercial-taxonomy-resolver/.test(content)) {
+        violations.push(`${file} imports taxonomy resolver — must only be in assembler`);
       }
     }
 
     assert.deepEqual(violations, [], "Only store-snapshot-assembler.ts may invoke the taxonomy resolver");
+  });
+
+  // READ-ONLY METADATA: presentation may import COMMERCIAL_FAMILIES for labels.
+  // This is NOT resolution — it's display metadata lookup.
+  it("taxonomy metadata imports are limited to assembler and presentation", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const tiendasDir = path.resolve(new URL(".", import.meta.url).pathname, "..");
+    const files = fs.readdirSync(tiendasDir).filter((f: string) => f.endsWith(".ts") && !f.includes("__tests__"));
+
+    const METADATA_APPROVED = new Set([
+      "store-snapshot-assembler.ts",     // resolution authority
+      "store-presentation-assembler.ts", // read-only metadata for labels
+    ]);
+
+    const violations: string[] = [];
+    for (const file of files) {
+      if (METADATA_APPROVED.has(file)) continue;
+      const content = fs.readFileSync(path.join(tiendasDir, file), "utf-8");
+      if (/from\s+["'].*commercial-taxonomy/.test(content)) {
+        violations.push(`${file} imports from commercial-taxonomy — not in approved list`);
+      }
+    }
+
+    assert.deepEqual(violations, [], "Only assembler and presentation may import from commercial-taxonomy");
   });
 
   it("no parallel commercialFamily switch/map exists in tiendas/ (outside assembler)", async () => {
