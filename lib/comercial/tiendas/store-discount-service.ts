@@ -2,22 +2,20 @@
  * lib/comercial/tiendas/store-discount-service.ts
  *
  * AGENTIK-STORES-DISCOUNTS-TAB-01 — Store Discount Recommendation Service
+ * AGENTIK-STORES-DISCOUNTS-AGING-SOURCE-01 — Real aging from InventoryTransfer
  *
  * Identifies references eligible for automatic discount based on their
- * time-in-store (daysInStore = today - entryDate).
+ * time-in-store (daysInStore = last transfer date into store).
  *
  * Architecture:
- *   - Consumes getCanonicalStoreDetail() — same cached data as Inventory tab
- *   - Zero additional DB queries, zero SOAP
- *   - Pure function over cached data
+ *   - Consumes getCanonicalStoreDetail() for store items/refs
+ *   - Consumes loadStoreDiscountAgingFacts() for real aging from transfers
  *   - Recommendations only — does NOT modify prices or write to DB
  *
- * Future evolution:
- *   This service is the first consumer of the aging engine.
- *   Future consumers: Campaigns, Promotions, Liquidations, Black Friday, Outlet.
- *   The DiscountTier/DiscountRecommendation types are designed to be
- *   extended with additional fields (campaignId, promotionId, overridePercent)
- *   without changing the base architecture.
+ * Aging source (AGENTIK-STORES-DISCOUNTS-AGING-SOURCE-01):
+ *   - PRIMARY: InventoryTransfer.documentDate (SAG MOVIMIENTOS fuente 34/206)
+ *   - NEVER: ProductEntity.createdAtSag (product creation, not store entry)
+ *   - FALLBACK: SIN_FECHA if no transfer exists
  */
 
 import "server-only";
@@ -25,6 +23,7 @@ import "server-only";
 import { getCanonicalStoreDetail } from "./store-distribution-service";
 import type { StoreDistributionItem } from "./store-distribution-types";
 import { isExcludedFromAutomaticPricing } from "../commercial-exclusions";
+import { loadStoreDiscountAgingFacts } from "./store-discount-aging-service";
 
 // Re-export everything from client-safe types file
 export type {
@@ -55,7 +54,6 @@ import type {
 import {
   DISCOUNT_TIER_SORT_ORDER,
   resolveDiscountTier,
-  computeDaysInStore,
 } from "./store-discount-types";
 
 // ── Line classification ──────────────────────────────────────────────────────
@@ -93,14 +91,12 @@ export async function loadStoreDiscounts(
     };
   }
 
-  const now = new Date();
   const items = detail.items;
 
-  // Consolidate by reference: sum units, take earliest entryDate
+  // Consolidate by reference: sum units, collect items
   const refMap = new Map<string, {
     items: StoreDistributionItem[];
     totalQty: number;
-    earliestEntry: string | null;
   }>();
 
   for (const item of items) {
@@ -108,35 +104,40 @@ export async function loadStoreDiscounts(
     if (existing) {
       existing.items.push(item);
       existing.totalQty += item.currentUnits;
-      // Keep earliest entry date
-      if (item.entryDate && (!existing.earliestEntry || item.entryDate < existing.earliestEntry)) {
-        existing.earliestEntry = item.entryDate;
-      }
     } else {
       refMap.set(item.referenceCode, {
         items: [item],
         totalQty: item.currentUnits,
-        earliestEntry: item.entryDate ?? null,
       });
     }
   }
 
-  const recommendations: DiscountRecommendation[] = [];
+  // Filter: exclude CD-* and qty <= 0 before aging query
+  const eligibleRefs: string[] = [];
   let excludedSpecialCollection = 0;
 
   for (const [ref, data] of refMap) {
-    // AGENTIK-COMMERCIAL-CD-LINE-GLOBAL-EXCLUSION-01:
-    // CD-* (colección especial) NUNCA entra a descuentos automáticos.
     if (isExcludedFromAutomaticPricing(ref)) {
       excludedSpecialCollection++;
       continue;
     }
-
-    // Skip references with qty 0 in store
     if (data.totalQty <= 0) continue;
+    eligibleRefs.push(ref);
+  }
 
+  // AGENTIK-STORES-DISCOUNTS-AGING-SOURCE-01:
+  // Resolve aging from InventoryTransfer records (not createdAtSag).
+  const agingFacts = await loadStoreDiscountAgingFacts(orgId, storeId, eligibleRefs);
+
+  const recommendations: DiscountRecommendation[] = [];
+
+  for (const ref of eligibleRefs) {
+    const data = refMap.get(ref)!;
     const first = data.items[0];
-    const daysInStore = computeDaysInStore(data.earliestEntry, now);
+
+    // Aging from transfer records — NOT from item.entryDate
+    const fact = agingFacts.get(ref);
+    const daysInStore = fact?.daysInStore ?? null;
     const { tier, percent } = resolveDiscountTier(daysInStore);
     const reason = buildReason(daysInStore, tier, percent);
 
@@ -144,7 +145,7 @@ export async function loadStoreDiscounts(
       referenceCode:   ref,
       description:     first.productName,
       imageUrl:        first.imageUrl,
-      entryDate:       data.earliestEntry,
+      entryDate:       fact?.lastTransferDate ?? null,
       daysInStore,
       storeQty:        data.totalQty,
       discountPercent: percent,
