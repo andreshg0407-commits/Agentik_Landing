@@ -26,9 +26,12 @@ import type {
   SnapshotPerStore,
   SnapshotHealthStatus,
   SnapshotActionKey,
-  SnapshotCoverageStructure,
   SnapshotFamilyBucket,
 } from "./store-snapshot-pipeline";
+import type {
+  CoverageRuleEvaluation,
+  CoverageRuleStatus,
+} from "./coverage-rule-projection";
 import { COMMERCIAL_FAMILIES } from "@/lib/products/commercial-taxonomy/commercial-taxonomy-data";
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -54,13 +57,6 @@ const MODULE_HINT_TONE: Record<string, PresentationTone> = {
   ALERTA: "critical",
   PENDIENTE: "warning",
   SIN_BASE: "neutral",
-};
-
-const QUANTITATIVE_TONE: Record<string, PresentationTone> = {
-  SALUDABLE: "positive",
-  CON_REFERENCIAS_BAJO_MINIMO: "critical",
-  CON_EXCESO: "warning",
-  SIN_REFERENCIAS: "neutral",
 };
 
 const SPECIAL_STATUS_TONE: Record<string, PresentationTone> = {
@@ -131,40 +127,211 @@ export interface DashboardPresentation {
   readonly documentsOpenText: string;
 }
 
-export interface PresentationCoverageRow {
-  readonly structureKey: string;
+// ═════════════════════════════════════════════════════════════════════════════
+// COVERAGE-UX-01 BEGIN — tab Cobertura proyectado desde coverage.ruleEvaluations
+// (fuente canónica, corrección 1). El guardián estricto del contrato endurecido
+// aplica íntegro a esta sección: cero aritmética, estados por diccionario 1:1,
+// conteos solo como cardinalidades de listas proyectadas o campos del snapshot.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Estados humanos 1:1 (corrección 7). Jamás derivados de números. */
+const COVERAGE_RULE_STATUS_LABEL: Record<CoverageRuleStatus, string> = {
+  SIN_COBERTURA: "Sin cobertura",
+  BAJO_MINIMO: "Bajo mínimo",
+  DENTRO_DE_RANGO: "En rango",
+  SOBRE_MAXIMO: "Sobre máximo",
+  CUMPLIDA: "Objetivo cumplido",
+  FALTANTE: "Requiere surtido",
+  EXCEDENTE: "Sobre objetivo",
+  NO_AUTORIZADA: "Presencia no autorizada",
+};
+
+const COVERAGE_RULE_STATUS_TONE: Record<CoverageRuleStatus, PresentationTone> = {
+  SIN_COBERTURA: "critical",
+  BAJO_MINIMO: "warning",
+  DENTRO_DE_RANGO: "positive",
+  SOBRE_MAXIMO: "warning",
+  CUMPLIDA: "positive",
+  FALTANTE: "critical",
+  EXCEDENTE: "warning",
+  NO_AUTORIZADA: "critical",
+};
+
+/** Diccionario 1:1: estados sanos para B1 (ley del pipeline: SOBRE_MAXIMO sigue sano). */
+const COVERAGE_RULE_STATUS_HEALTHY: Record<CoverageRuleStatus, boolean> = {
+  SIN_COBERTURA: false,
+  BAJO_MINIMO: false,
+  DENTRO_DE_RANGO: true,
+  SOBRE_MAXIMO: true,
+  CUMPLIDA: true,
+  FALTANTE: false,
+  EXCEDENTE: false,
+  NO_AUTORIZADA: false,
+};
+
+/** Diccionario 1:1: estados que requieren atención (corrección 12). */
+const COVERAGE_RULE_STATUS_ATTENTION: Record<CoverageRuleStatus, boolean> = {
+  SIN_COBERTURA: true,
+  BAJO_MINIMO: true,
+  DENTRO_DE_RANGO: false,
+  SOBRE_MAXIMO: false,
+  CUMPLIDA: false,
+  FALTANTE: false,
+  EXCEDENTE: false,
+  NO_AUTORIZADA: false,
+};
+
+/** Etiquetas de línea 1:1 con fallback humanizado (corrección 6): una línea
+ *  nueva del Derrotero aparece con etiqueta legible sin tocar este código. */
+const COVERAGE_LINE_LABEL: Record<string, string> = {
+  castillitos: "Castillitos",
+  latin_kids: "Latin Kids",
+  accesorios_importacion: "Accesorios",
+};
+
+/** Prefijo de structureKey → id de línea (mismo mapeo que deriveStructureKeyFromEffective). */
+const RULE_PREFIX_LINE: Record<string, string> = {
+  CS: "castillitos",
+  LK: "latin_kids",
+  ACC: "accesorios_importacion",
+};
+
+/** Orden de presentación de secciones (diccionario 1:1 por id de línea;
+ *  líneas desconocidas van después, en orden de aparición). */
+const COVERAGE_LINE_ORDER: Record<string, number> = {
+  castillitos: 1,
+  latin_kids: 2,
+  accesorios_importacion: 3,
+};
+
+function humanizeToken(token: string): string {
+  return toTitleCase(token.replace(/_/g, " "));
+}
+
+/**
+ * Jerarquía derivada del ruleId (proyección de texto, jamás evaluación):
+ *   "STRUCT:CS|{grupo}|{subgrupo}"  → línea castillitos, grupo real
+ *   "STRUCT:LK|{subgrupo}"          → línea latin_kids, plano
+ *   "STRUCT:ACC|{tamaño}"           → línea accesorios, plano
+ *   "STRUCT:DYN|{line}|{grupo}|{s}" → línea dinámica (ADD no estándar)
+ *   prefijo desconocido             → sección propia humanizada (corrección 6)
+ */
+function resolveRuleHierarchy(ev: CoverageRuleEvaluation): {
+  line: string;
+  groupLabel: string | null;
+  structureKey: string | null;
+} {
+  if (!ev.ruleId.startsWith("STRUCT:")) {
+    return { line: "especiales", groupLabel: null, structureKey: null };
+  }
+  const structureKey = ev.ruleId.slice("STRUCT:".length);
+  const parts = structureKey.split("|");
+  if (parts[0] === "DYN" && parts.length >= 4) {
+    return {
+      line: parts[1] || "DYN",
+      groupLabel: ev.ruleType === "TEXTILE_STRUCTURE" && parts[2] ? parts[2] : null,
+      structureKey,
+    };
+  }
+  return {
+    line: RULE_PREFIX_LINE[parts[0]] ?? parts[0],
+    groupLabel: ev.ruleType === "TEXTILE_STRUCTURE" && parts.length >= 3 ? parts[1] : null,
+    structureKey,
+  };
+}
+
+/** "CS NIÑA BEBE" → "Niña Bebe": quita el prefijo redundante de línea y aplica Title Case. */
+function formatGroupDisplay(groupLabel: string, keyPrefix: string): string {
+  const stripped = groupLabel.startsWith(`${keyPrefix} `)
+    ? groupLabel.slice(`${keyPrefix} `.length)
+    : groupLabel;
+  return toTitleCase(stripped);
+}
+
+/** Detalle por estado — plantillas fijas con campos verbatim (corrección 8;
+ *  copy BAJO_MINIMO gobernado por minimum — real-data gate §4/§5).
+ *  deficitToMin y excessOverMax se enriquecen verbatim desde
+ *  structures[].unitRule (el motor ya los computa; aquí jamás se calculan). */
+function buildStructuralDetailText(
+  ev: CoverageRuleEvaluation,
+  deficitToMin: number | null,
+  excessOverMax: number | null,
+): string | null {
+  switch (ev.status) {
+    case "SIN_COBERTURA":
+      // Sin referencias: el faltante al mínimo es el mínimo mismo (campo verbatim).
+      return `Sin referencias con inventario · Faltan ${fmtInt(ev.minimum)} uds para alcanzar el mínimo`;
+    case "BAJO_MINIMO":
+      // Estado gobernado por minimum: jamás copy sobre el ideal (el ideal
+      // sigue visible en ruleText). Sin enriquecimiento, condición sin cifra.
+      return deficitToMin === null
+        ? `Por debajo del mínimo de ${fmtInt(ev.minimum)} uds`
+        : `Faltan ${fmtInt(deficitToMin)} uds para alcanzar el mínimo`;
+    case "SOBRE_MAXIMO":
+      return excessOverMax === null
+        ? "Cumple cobertura · sobre el máximo"
+        : `Cumple cobertura · ${fmtInt(excessOverMax)} uds sobre el máximo`;
+    default:
+      return null;
+  }
+}
+
+export interface CoverageRuleRowPresentation {
+  readonly ruleId: string;
   readonly label: string;
-  readonly groupLabel: string | null;
-  readonly line: string;
-  readonly totalUnitsText: string;
-  readonly ruleText: string;                    // "min / ideal / max" verbatim
-  readonly statusKey: string;                   // quantitativeStatus (enum verbatim)
-  readonly statusTone: PresentationTone;
-  readonly deficitToIdealText: string;
-  readonly excessText: string;
-  readonly covered: boolean;                    // structuralCoverageStatus === CUBIERTA (enum)
+  readonly statusKey: CoverageRuleStatus;       // enum verbatim
+  readonly statusLabel: string;                 // diccionario 1:1 (corrección 7)
+  readonly tone: PresentationTone;
+  readonly actualUnitsText: string;             // actualUnits verbatim
+  readonly ruleText: string;                    // "min / ideal / max" verbatim ("—" sin tope)
+  readonly detailText: string | null;           // déficit/exceso con campos verbatim
+  readonly healthy: boolean;                    // diccionario 1:1 por enum
+  readonly requiresAttention: boolean;          // diccionario 1:1 por enum
+}
+
+export interface CoverageGroupPresentation {
+  readonly key: string;                         // `${line}::${groupLabel ?? ""}`
+  readonly groupLabel: string | null;           // verbatim del ruleId (null = lista plana)
+  readonly groupDisplay: string | null;
+  readonly headerText: string | null;           // "N de M en cobertura" (cardinalidades)
+  readonly rows: readonly CoverageRuleRowPresentation[];
+}
+
+export interface CoverageSectionPresentation {
+  readonly line: string;                        // id verbatim
+  readonly lineLabel: string;                   // diccionario 1:1 + fallback humanizado
+  readonly ruleCountText: string;               // cardinalidad de filas proyectadas
+  readonly groups: readonly CoverageGroupPresentation[];
+}
+
+export interface CoverageSpecialRowPresentation {
+  readonly ruleId: string;
+  readonly label: string;
+  readonly statusKey: CoverageRuleStatus;
+  readonly statusLabel: string;
+  readonly tone: PresentationTone;
+  readonly actualUnitsText: string;
+  readonly idealUnitsText: string;
+  readonly detailText: string | null;
 }
 
 export interface CoverageTabPresentation {
   readonly storeId: string;
-  readonly coverageText: string;                // B1 — MISMO campo que la card (T4)
-  readonly healthyOfExpectedText: string;
-  readonly rows: readonly PresentationCoverageRow[];
-  readonly lineGroups: readonly { readonly line: string; readonly rows: readonly PresentationCoverageRow[] }[];
-  readonly specialRules: readonly {
-    readonly pattern: string;
-    readonly label: string;
-    readonly statusKey: string;
-    readonly tone: PresentationTone;
-    readonly totalUnitsText: string;
-    readonly idealUnitsText: string;
-    readonly matchedReferences: readonly {
-      readonly referenceCode: string;
-      readonly productName: string;
-      readonly units: number;
-    }[];
-  }[];
+  /** CONCEPTO 1 — cobertura estructural (TEXTILE_STRUCTURE + ACCESSORY_SIZE). */
+  readonly structural: {
+    readonly coverageText: string;              // B1 verbatim — MISMO campo que la card (T4)
+    readonly coverageDetailText: string;        // "N de M reglas estructurales cumplen" (verbatim)
+    readonly healthyCountText: string;          // healthyStructures verbatim
+    readonly attentionCountText: string;        // cardinalidad de filas en atención
+    readonly sections: readonly CoverageSectionPresentation[];
+  };
+  /** CONCEPTO 2 — reglas especiales: cumplimiento propio, jamás en el porcentaje. */
+  readonly specials: {
+    readonly summaryText: string;               // "N de M cumplidas" (cardinalidades)
+    readonly rows: readonly CoverageSpecialRowPresentation[];
+  };
 }
+// ═════ COVERAGE-UX-01 (interfaces) — el builder vive junto a los demás ═══════
 
 export interface NeedsTabPresentation {
   readonly storeId: string;
@@ -426,49 +593,144 @@ export function buildDashboardPresentation(snapshot: StoreSnapshot): DashboardPr
   };
 }
 
-function coverageRow(st: SnapshotCoverageStructure): PresentationCoverageRow {
-  return {
-    structureKey: st.structureKey,
-    label: st.label,
-    groupLabel: st.groupLabel,
-    line: st.line,
-    totalUnitsText: fmtInt(st.totalUnits),
-    ruleText: st.rule.maxUnits === null
-      ? `${st.rule.minUnits} / ${st.rule.idealUnits} / —`
-      : `${st.rule.minUnits} / ${st.rule.idealUnits} / ${st.rule.maxUnits}`,
-    statusKey: st.quantitativeStatus,
-    statusTone: QUANTITATIVE_TONE[st.quantitativeStatus] ?? "neutral",
-    deficitToIdealText: fmtInt(st.unitRule.deficitToIdeal),
-    excessText: fmtInt(st.unitRule.excessOverMax),
-    covered: st.structuralCoverageStatus === "CUBIERTA",
-  };
-}
-
+/**
+ * COVERAGE-UX-01 — tab Cobertura proyectado desde coverage.ruleEvaluations
+ * (fuente canónica, corrección 1). Las filas están GOBERNADAS por la
+ * proyección: una regla ADD sintética aparece sin tocar structures (G2) y una
+ * regla removida de la proyección desaparece aunque structures la traiga (G3).
+ * structures[]/specialRules[] se usan SOLO como enriquecimiento verbatim de
+ * cifras que la proyección no trae (exceso sobre máximo, exceso sobre objetivo).
+ */
 export function buildCoverageTabPresentation(snapshot: StoreSnapshot, storeId: string): CoverageTabPresentation {
   const store = requireStore(snapshot, storeId);
-  const rows = store.coverage.structures.map(coverageRow);
-  const lines = [...new Set(rows.map(r => r.line))];
+  const evaluations = store.coverage.ruleEvaluations;
+
+  // Enriquecimiento verbatim (jamás gobierna filas)
+  const structureByKey = new Map(store.coverage.structures.map(s => [s.structureKey, s]));
+  const specialByRuleKey = new Map(
+    store.coverage.specialRules.map(sr => [`SPECIAL:${sr.storeId}:${sr.pattern}`, sr]),
+  );
+
+  const structuralEvals = evaluations.filter(ev => ev.ruleType !== "SPECIAL_PRODUCT");
+  const specialEvals = evaluations.filter(ev => ev.ruleType === "SPECIAL_PRODUCT");
+
+  // Orden estable por priority (campo verbatim) y label — sin aritmética
+  const sorted = [...structuralEvals].sort((a, b) =>
+    a.priority < b.priority ? -1 : a.priority > b.priority ? 1 : a.label.localeCompare(b.label),
+  );
+
+  // Secciones y grupos en orden de aparición — jamás cardinalidades fijas
+  type GroupAcc = { groupLabel: string | null; keyPrefix: string; rows: CoverageRuleRowPresentation[] };
+  const sectionOrder: string[] = [];
+  const groupsByLine = new Map<string, Map<string, GroupAcc>>();
+  const allRows: CoverageRuleRowPresentation[] = [];
+
+  for (const ev of sorted) {
+    const h = resolveRuleHierarchy(ev);
+    const st = h.structureKey ? structureByKey.get(h.structureKey) : undefined;
+    const row: CoverageRuleRowPresentation = {
+      ruleId: ev.ruleId,
+      label: ev.label,
+      statusKey: ev.status,
+      statusLabel: COVERAGE_RULE_STATUS_LABEL[ev.status] ?? ev.status,
+      tone: COVERAGE_RULE_STATUS_TONE[ev.status] ?? "neutral",
+      actualUnitsText: fmtInt(ev.actualUnits),
+      ruleText: ev.maximum === null
+        ? `${fmtInt(ev.minimum)} / ${fmtInt(ev.ideal)} / —`
+        : `${fmtInt(ev.minimum)} / ${fmtInt(ev.ideal)} / ${fmtInt(ev.maximum)}`,
+      detailText: buildStructuralDetailText(
+        ev,
+        ev.status === "BAJO_MINIMO" ? (st?.unitRule.deficitToMin ?? null) : null,
+        ev.status === "SOBRE_MAXIMO" ? (st?.unitRule.excessOverMax ?? null) : null,
+      ),
+      healthy: COVERAGE_RULE_STATUS_HEALTHY[ev.status] ?? false,
+      requiresAttention: COVERAGE_RULE_STATUS_ATTENTION[ev.status] ?? false,
+    };
+    allRows.push(row);
+
+    if (!groupsByLine.has(h.line)) {
+      groupsByLine.set(h.line, new Map());
+      sectionOrder.push(h.line);
+    }
+    const groups = groupsByLine.get(h.line)!;
+    const groupKey = `${h.line}::${h.groupLabel ?? ""}`;
+    if (!groups.has(groupKey)) {
+      const keyPrefix = h.structureKey ? h.structureKey.split("|")[0] : "";
+      groups.set(groupKey, { groupLabel: h.groupLabel, keyPrefix, rows: [] });
+    }
+    groups.get(groupKey)!.rows.push(row);
+  }
+
+  // Orden de secciones: diccionario 1:1 de líneas conocidas; desconocidas al
+  // final en orden de aparición (sin aritmética: comparación pura).
+  const orderedLines = [...sectionOrder].sort((a, b) => {
+    const oa = COVERAGE_LINE_ORDER[a] ?? Number.MAX_SAFE_INTEGER;
+    const ob = COVERAGE_LINE_ORDER[b] ?? Number.MAX_SAFE_INTEGER;
+    if (oa < ob) return -1;
+    if (oa > ob) return 1;
+    return sectionOrder.indexOf(a) < sectionOrder.indexOf(b) ? -1 : 1;
+  });
+
+  const sections: CoverageSectionPresentation[] = orderedLines.map(line => {
+    const groups = [...groupsByLine.get(line)!.entries()].map(([key, g]) => ({
+      key,
+      groupLabel: g.groupLabel,
+      groupDisplay: g.groupLabel === null ? null : formatGroupDisplay(g.groupLabel, g.keyPrefix),
+      // "N de M en cobertura" — cardinalidades de la lista proyectada
+      headerText: g.groupLabel === null
+        ? null
+        : `${fmtInt(g.rows.filter(r => r.healthy).length)} de ${fmtInt(g.rows.length)} en cobertura`,
+      rows: g.rows,
+    }));
+    const sectionRows = groups.flatMap(g => g.rows);
+    return {
+      line,
+      lineLabel: COVERAGE_LINE_LABEL[line] ?? humanizeToken(line),
+      ruleCountText: `${fmtInt(sectionRows.length)} reglas evaluadas`,
+      groups,
+    };
+  });
+
+  // CONCEPTO 2 — reglas especiales (cumplimiento propio, jamás en el porcentaje)
+  const specialRows: CoverageSpecialRowPresentation[] = specialEvals.map(ev => {
+    const sr = specialByRuleKey.get(ev.ruleId);
+    let detailText: string | null = null;
+    if (ev.status === "FALTANTE") {
+      detailText = `Faltan ${fmtInt(ev.gapToIdeal)} uds para el objetivo`;
+    } else if (ev.status === "EXCEDENTE" || ev.status === "NO_AUTORIZADA") {
+      // Exceso enriquecido verbatim desde specialRules[]; sin él, condición sin cifra
+      detailText = sr === undefined
+        ? "Sobre el objetivo"
+        : `+${fmtInt(sr.gapUnits)} uds sobre el objetivo`;
+    }
+    return {
+      ruleId: ev.ruleId,
+      label: ev.label,
+      statusKey: ev.status,
+      statusLabel: COVERAGE_RULE_STATUS_LABEL[ev.status] ?? ev.status,
+      tone: COVERAGE_RULE_STATUS_TONE[ev.status] ?? "neutral",
+      actualUnitsText: fmtInt(ev.actualUnits),
+      idealUnitsText: fmtInt(ev.ideal),
+      detailText,
+    };
+  });
+
   return {
     storeId,
-    coverageText: fmtCoverage(store.kpis.coveragePercent, store.kpis.coverageStatus),   // T4: mismo campo que la card
-    healthyOfExpectedText: `${fmtInt(store.coverage.healthyStructures)} de ${fmtInt(store.coverage.expectedStructures)} estructuras saludables`,
-    rows,
-    lineGroups: lines.map(line => ({ line, rows: rows.filter(r => r.line === line) })),
-    specialRules: store.coverage.specialRules.map(r => ({
-      pattern: r.pattern,
-      label: r.label,
-      statusKey: r.status,
-      tone: SPECIAL_STATUS_TONE[r.status] ?? "neutral",
-      totalUnitsText: fmtInt(r.totalUnits),
-      idealUnitsText: fmtInt(r.idealUnits),
-      matchedReferences: r.matchedReferences.map(m => ({
-        referenceCode: m.referenceCode,
-        productName: m.productName,
-        units: m.units,
-      })),
-    })),
+    structural: {
+      coverageText: fmtCoverage(store.kpis.coveragePercent, store.kpis.coverageStatus),   // T4: mismo campo que la card
+      coverageDetailText: `${fmtInt(store.coverage.healthyStructures)} de ${fmtInt(store.coverage.expectedStructures)} reglas estructurales cumplen`,
+      healthyCountText: fmtInt(store.coverage.healthyStructures),
+      attentionCountText: fmtInt(allRows.filter(r => r.requiresAttention).length),
+      sections,
+    },
+    specials: {
+      summaryText: `${fmtInt(specialRows.filter(r => r.statusKey === "CUMPLIDA").length)} de ${fmtInt(specialRows.length)} cumplidas`,
+      rows: specialRows,
+    },
   };
 }
+// ═════ COVERAGE-UX-01 END ════════════════════════════════════════════════════
 
 export function buildNeedsTabPresentation(snapshot: StoreSnapshot, storeId: string): NeedsTabPresentation {
   const store = requireStore(snapshot, storeId);

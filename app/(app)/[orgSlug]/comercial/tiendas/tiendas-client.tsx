@@ -42,6 +42,7 @@ import {
   type PresentationTone,
   type OperativeNeedsPresentation,
   type NeedsTabPresentation,
+  type CoverageRuleRowPresentation,
   type AccessoryCompositionPresentation,
   type AccessorySizeBlock,
   type AccessoryFamilyRow,
@@ -1536,6 +1537,41 @@ function MiniStat({ label, value, color }: { label: string; value: string; color
   );
 }
 
+/** COVERAGE-UX-01 — fila de regla del tab Cobertura: render puro del DTO
+ *  (label, "Actual N · Regla m/i/M", estado humano, detalle). Cero derivación. */
+function CoverageRuleRowLine({ row }: { row: CoverageRuleRowPresentation }) {
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: S[3],
+      padding: `${S[1]}px ${S[2]}px`, borderBottom: `1px solid ${C.lineSubtle}`,
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
+          {row.label}
+        </span>
+        {row.detailText && (
+          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
+            {row.detailText}
+          </div>
+        )}
+      </div>
+      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, width: 100, textAlign: "right" }}>
+        Regla {row.ruleText}
+      </span>
+      <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold, color: C.ink, width: 72, textAlign: "right" }}>
+        {row.actualUnitsText} uds
+      </span>
+      <span style={{
+        fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+        padding: "2px 8px", borderRadius: R.pill, width: 170, textAlign: "center",
+        background: TONE_BADGE[row.tone].bg, color: TONE_BADGE[row.tone].text,
+      }}>
+        {row.statusLabel}
+      </span>
+    </div>
+  );
+}
+
 /** Collapsible structure accordion for Needs tab (AGENTIK-STORES-NEEDS-UX-02) */
 function NeedsStructureAccordion({ group: g }: { group: { structureKey: string; label: string; suggestedText: string; requiredText: string; pendingText: string; fullyCovered: boolean; items: readonly { referenceCode: string; productName: string; unitsText: string; typeLabel: string }[] } }) {
   const [open, setOpen] = useState(false);
@@ -2380,8 +2416,11 @@ function DistributionStoreDrawer({
     () => buildSpecialProductsPresentation(snapshot, storeCard.store.id),
     [snapshot, storeCard.store.id],
   );
-  // Filtro VISUAL de línea (jamás invalida ni refetch — T9)
+  // Filtro VISUAL de línea (jamás invalida ni refetch — T9).
+  // COVERAGE-UX-01: chips dinámicos desde las secciones proyectadas ("ALL" |
+  // line id | "ESPECIALES"); grupos textiles colapsados por defecto (corrección 13).
   const [covLine, setCovLine] = useState<string>("ALL");
+  const [covOpenGroups, setCovOpenGroups] = useState<Set<string>>(new Set());
 
   // ── Discount state (AGENTIK-STORES-DISCOUNTS-TAB-01) ───────────────────
   const [discData, setDiscData] = useState<StoreDiscountResponse | null>(null);
@@ -2441,6 +2480,7 @@ function DistributionStoreDrawer({
     setInvKpiFilter("ALL");
     // Reset visual filters (F3A — Necesidades/Cobertura proyectan el snapshot)
     setCovLine("ALL");
+    setCovOpenGroups(new Set());
     // Reset discount state
     setDiscData(null);
     setDiscLoaded(false);
@@ -3031,88 +3071,156 @@ function DistributionStoreDrawer({
 
       {tab === "cobertura" && (
         <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-          {/* F3A — B1 ÚNICO: el mismo campo del snapshot que muestran card y subtítulo (T4) */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: S[2] }}>
-            <MiniStat label="Cobertura (B1)" value={covPres.coverageText} color={C.blueDark} />
-            <MiniStat label="Estructuras saludables" value={covPres.healthyOfExpectedText} color={C.green} />
-          </div>
-
-          {/* Filtro visual por línea (jamás refetch ni invalidación — T9) */}
-          <div style={{ display: "flex", gap: S[2] }}>
-            {["ALL", ...covPres.lineGroups.map(g => g.line)].map(line => (
-              <button key={line} onClick={() => setCovLine(line)} style={{
-                fontFamily: T.mono, fontSize: T.sz.xs, padding: `${S[1]}px ${S[3]}px`,
-                borderRadius: R.pill, cursor: "pointer",
-                background: covLine === line ? C.blueDark : C.surface,
-                color: covLine === line ? C.white : C.inkMid,
-                border: `1px solid ${covLine === line ? C.blueDark : C.line}`,
+          {/* COVERAGE-UX-01 — el tab proyecta coverage.ruleEvaluations (fuente
+              canónica). Cards compactas con el lenguaje visual del drawer
+              (mismo patrón de KPI cards de Inventario): campos verbatim del
+              snapshot + cardinalidades de listas proyectadas (corrección 12).
+              B1 ÚNICO: mismo campo que card y subtítulo (T4). */}
+          <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
+            {[
+              { label: "Cobertura (B1)", value: covPres.structural.coverageText, color: C.blueDark },
+              { label: "Cumplen", value: covPres.structural.healthyCountText, color: C.green },
+              { label: "Requieren atención", value: covPres.structural.attentionCountText, color: C.red },
+              { label: "Reglas especiales", value: covPres.specials.summaryText, color: C.amber },
+            ].map(k => (
+              <div key={k.label} style={{
+                ...panel, padding: `${S[2]}px ${S[3]}px`, display: "flex", flexDirection: "column", gap: 2,
+                flex: 1, minWidth: 80,
               }}>
-                {line === "ALL" ? "Todas" : line}
-              </button>
+                <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase" as const }}>
+                  {k.label}
+                </span>
+                <span style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: k.color }}>
+                  {k.value}
+                </span>
+              </div>
             ))}
           </div>
+          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
+            {covPres.structural.coverageDetailText}
+          </div>
 
-          {/* Estructuras del derrotero — TOTAL agregado por subgrupo (ley S1/S4) */}
-          <div style={{ ...panel }}>
-            <div style={{ padding: S[2] }}>
-              {covPres.rows
-                .filter(r => covLine === "ALL" || r.line === covLine)
-                .map(r => (
-                  <div key={r.structureKey} style={{
-                    display: "flex", alignItems: "center", gap: S[3],
-                    padding: `${S[1]}px ${S[2]}px`, borderBottom: `1px solid ${C.lineSubtle}`,
+          {/* ZONA DE FILTROS — misma identidad visual que Inventario (label
+              superior + estado activo azul). Opciones dinámicas: líneas
+              presentes en la proyección + Especiales si existen (corrección 6
+              — jamás un chip vacío ni una línea fija). Filtro visual — jamás
+              refetch ni invalidación (T9). */}
+          <div style={{ display: "flex", flexDirection: "column", gap: S[1] }}>
+            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkFaint, textTransform: "uppercase" as const, letterSpacing: "0.05em" }}>
+              Línea comercial
+            </div>
+            <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
+              {[
+                { key: "ALL", label: "Todas" },
+                ...covPres.structural.sections.map(sec => ({ key: sec.line, label: sec.lineLabel })),
+                ...(covPres.specials.rows.length > 0 ? [{ key: "ESPECIALES", label: "Especiales" }] : []),
+              ].map(chip => {
+                const isActive = covLine === chip.key;
+                return (
+                  <button key={chip.key} onClick={() => setCovLine(chip.key)} style={{
+                    fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
+                    padding: "6px 14px", borderRadius: R.sm, cursor: "pointer",
+                    background: isActive ? C.blueDark : C.white,
+                    color: isActive ? C.white : C.ink,
+                    border: `1.5px solid ${isActive ? C.blueDark : C.line}`,
                   }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
-                        {r.label}
-                      </span>
-                      {r.groupLabel && (
-                        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}> · {r.groupLabel}</span>
-                      )}
-                    </div>
-                    <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, width: 90, textAlign: "right" }}>
-                      regla {r.ruleText}
-                    </span>
-                    <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold, color: C.ink, width: 64, textAlign: "right" }}>
-                      {r.totalUnitsText} uds
-                    </span>
-                    <span style={{
-                      fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                      padding: "2px 8px", borderRadius: R.pill, width: 190, textAlign: "center",
-                      background: TONE_BADGE[r.statusTone].bg, color: TONE_BADGE[r.statusTone].text,
-                    }}>
-                      {r.statusKey}
-                    </span>
-                  </div>
-                ))}
+                    {chip.label}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
-          {/* Reglas especiales por tienda (S4, verbatim) */}
-          {covPres.specialRules.length > 0 && (
+          {/* CONCEPTO 1 — cobertura estructural: jerarquía dinámica
+              línea → grupo (si existe) → regla (corrección 5). Grupos
+              colapsados por defecto (corrección 13). */}
+          {covPres.structural.sections
+            .filter(sec => covLine === "ALL" || covLine === sec.line)
+            .map(sec => (
+              <div key={sec.line} style={{ ...panel }}>
+                <div style={{ ...panelHeader, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
+                    {sec.lineLabel}
+                  </span>
+                  <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
+                    {sec.ruleCountText}
+                  </span>
+                </div>
+                <div style={{ padding: S[2] }}>
+                  {sec.groups.map(g =>
+                    g.groupLabel === null ? (
+                      // Lista plana (LK, ACC, líneas dinámicas sin grupo)
+                      <div key={g.key}>
+                        {g.rows.map(r => <CoverageRuleRowLine key={r.ruleId} row={r} />)}
+                      </div>
+                    ) : (
+                      // Grupo colapsable (CS): "▸ Grupo — N de M en cobertura"
+                      <div key={g.key} style={{ borderBottom: `1px solid ${C.lineSubtle}` }}>
+                        <button
+                          onClick={() => setCovOpenGroups(prev => {
+                            const next = new Set(prev);
+                            if (next.has(g.key)) next.delete(g.key); else next.add(g.key);
+                            return next;
+                          })}
+                          style={{
+                            width: "100%", display: "flex", alignItems: "center",
+                            justifyContent: "space-between", gap: S[2],
+                            padding: `${S[2]}px ${S[2]}px`, background: "none",
+                            border: "none", cursor: "pointer", textAlign: "left",
+                          }}
+                        >
+                          <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
+                            {covOpenGroups.has(g.key) ? "▾" : "▸"} {g.groupDisplay}
+                          </span>
+                          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
+                            {g.headerText}
+                          </span>
+                        </button>
+                        {covOpenGroups.has(g.key) && g.rows.map(r => (
+                          <CoverageRuleRowLine key={r.ruleId} row={r} />
+                        ))}
+                      </div>
+                    )
+                  )}
+                </div>
+              </div>
+            ))}
+
+          {/* CONCEPTO 2 — reglas especiales: sección hermana con cumplimiento
+              propio "N de M cumplidas"; jamás contaminan el porcentaje
+              estructural (corrección 11). Lista compacta (corrección 13). */}
+          {covPres.specials.rows.length > 0 && (covLine === "ALL" || covLine === "ESPECIALES") && (
             <div style={{ ...panel }}>
-              <div style={{ ...panelHeader }}>
+              <div style={{ ...panelHeader, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
                   Reglas especiales
                 </span>
+                <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
+                  {covPres.specials.summaryText}
+                </span>
               </div>
               <div style={{ padding: S[2] }}>
-                {covPres.specialRules.map(sr => (
-                  <div key={sr.pattern} style={{
+                {covPres.specials.rows.map(sr => (
+                  <div key={sr.ruleId} style={{
                     display: "flex", alignItems: "center", gap: S[3],
                     padding: `${S[1]}px ${S[2]}px`, borderBottom: `1px solid ${C.lineSubtle}`,
                     fontFamily: T.mono, fontSize: T.sz.sm,
                   }}>
-                    <span style={{ flex: 1, color: C.ink }}>{sr.label}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ color: C.ink }}>{sr.label}</span>
+                      {sr.detailText && (
+                        <div style={{ fontSize: T.sz["2xs"], color: C.inkFaint }}>{sr.detailText}</div>
+                      )}
+                    </div>
                     <span style={{ color: C.inkFaint, fontSize: T.sz["2xs"] }}>
-                      {sr.totalUnitsText} uds / ideal {sr.idealUnitsText}
+                      Actual {sr.actualUnitsText} · Objetivo {sr.idealUnitsText}
                     </span>
                     <span style={{
                       fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
                       padding: "2px 8px", borderRadius: R.pill,
                       background: TONE_BADGE[sr.tone].bg, color: TONE_BADGE[sr.tone].text,
                     }}>
-                      {sr.statusKey}
+                      {sr.statusLabel}
                     </span>
                   </div>
                 ))}
