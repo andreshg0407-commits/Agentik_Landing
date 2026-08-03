@@ -179,7 +179,7 @@ export function calculateStoreReplenishmentNeed(
   const rule = resolveStorePolicyForVariant(resolutionInput, rules);
 
   const thresholds = rule
-    ? { minQty: rule.minQty, idealQty: rule.idealQty, maxQty: rule.maxQty ?? getDefaultThresholds(input.productClass).maxQty }
+    ? { minQty: rule.minQty ?? 0, idealQty: rule.idealQty ?? 0, maxQty: rule.maxQty ?? getDefaultThresholds(input.productClass).maxQty }
     : getDefaultThresholds(input.productClass);
 
   const resolvedBy = rule?.scope ?? "default";

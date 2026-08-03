@@ -13,6 +13,11 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import type { StorePolicyRule, StorePolicy } from "./store-policy-types";
+import type { AgingDiscountBandConfig } from "./store-policy-pack-config";
+import {
+  buildEffectiveAgingDiscountPolicy,
+} from "./store-effective-rule-registry";
+import type { AgingDiscountPolicyValidationError } from "./store-effective-rule-registry";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -224,4 +229,109 @@ async function findPolicyRow(orgId: string, storeId: string): Promise<any | null
   } catch {
     return null;
   }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01 §3-5
+// Atomic batch persistence with validate-before-write
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Result of a batch aging discount rule operation.
+ */
+export interface AgingDiscountBatchResult {
+  ok: boolean;
+  /** Validation errors — if any, NO rules were persisted */
+  errors: readonly AgingDiscountPolicyValidationError[];
+  /** The resulting policy after applying candidate rules (null if rejected) */
+  policy: StorePolicy | null;
+}
+
+/**
+ * A candidate operation for the batch.
+ */
+export interface AgingDiscountRuleCandidate {
+  id?: string;
+  effect: "OVERRIDE" | "DISABLE" | "ADD";
+  minDays?: number;
+  maxDays?: number | null;
+  discountPercent?: number;
+  priority?: number;
+  active?: boolean;
+  validFrom?: string;
+  validTo?: string;
+}
+
+/**
+ * Save aging discount rules atomically with validate-before-write.
+ *
+ * Contract:
+ *   1. Read current persisted rules for the store
+ *   2. Merge non-AGING_DISCOUNT rules (preserved) + candidate AGING_DISCOUNT rules
+ *   3. Build candidate effective policy from defaults + merged rules
+ *   4. Validate candidate policy — if errors, REJECT (no DB mutation)
+ *   5. If valid, persist ALL rules in a single write
+ *
+ * This function is the ONLY write path for AGING_DISCOUNT rules.
+ * Single-rule edits (CREATE/EDIT/DISABLE/REACTIVATE) also go through here.
+ */
+export async function saveAgingDiscountRulesBatch(
+  orgId: string,
+  storeId: string,
+  storeName: string,
+  candidates: AgingDiscountRuleCandidate[],
+  defaultBands: readonly AgingDiscountBandConfig[],
+): Promise<AgingDiscountBatchResult> {
+  // 1. Read current persisted rules
+  const currentPolicy = await getStorePolicyByStoreId(orgId, storeId);
+  const currentRules = currentPolicy?.rules ?? [];
+
+  // 2. Separate non-aging rules (preserved) from aging rules (replaced)
+  const nonAgingRules = currentRules.filter(r => r.ruleKind !== "AGING_DISCOUNT");
+
+  // 3. Build candidate AGING_DISCOUNT StorePolicyRules
+  const candidateRules: StorePolicyRule[] = candidates.map((c, i) => ({
+    id: c.id || generateRuleId(),
+    storeId,
+    scope: "store" as const,
+    productClass: "textile" as const,
+    allowReplacement: false,
+    allowProductionSignal: false,
+    allowMainWarehouseTransfer: false,
+    priority: c.priority ?? (i * 10),
+    active: c.active ?? true,
+    ruleKind: "AGING_DISCOUNT" as const,
+    effect: c.effect,
+    minDays: c.minDays,
+    maxDays: c.maxDays,
+    discountPercent: c.discountPercent,
+    validFrom: c.validFrom,
+    validTo: c.validTo,
+  }));
+
+  // 4. Build candidate effective policy to validate
+  const evaluationDate = new Date().toISOString().slice(0, 10);
+  const { errors } = buildEffectiveAgingDiscountPolicy(
+    defaultBands,
+    candidateRules,
+    storeId,
+    evaluationDate,
+  );
+
+  // 5. REJECT if invalid — no DB mutation
+  if (errors.length > 0) {
+    return { ok: false, errors, policy: null };
+  }
+
+  // 6. Merge and persist atomically (single write)
+  const mergedRules = [...nonAgingRules, ...candidateRules];
+  const saved = await saveStorePolicy(orgId, {
+    storeId,
+    storeName: currentPolicy?.storeName ?? storeName,
+    rules: mergedRules,
+    capacity: currentPolicy?.capacity,
+    active: currentPolicy?.active ?? true,
+  });
+
+  return { ok: true, errors: [], policy: saved };
 }

@@ -419,9 +419,9 @@ function resolveThresholds(
 
   if (rule) {
     return {
-      minUnits:    rule.minQty,
-      idealUnits:  rule.idealQty,
-      maxUnits:    rule.maxQty ?? rule.idealQty,
+      minUnits:    rule.minQty ?? 0,
+      idealUnits:  rule.idealQty ?? 0,
+      maxUnits:    rule.maxQty ?? rule.idealQty ?? 0,
       resolvedBy:  rule.scope,
       dataQuality: "CONFIRMED",
     };

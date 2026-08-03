@@ -46,6 +46,11 @@ export const DISCOUNT_TIER_SORT_ORDER: Record<DiscountTier, number> = {
 
 // ── Discount rules (pure functions, no server deps) ─────────────────────────
 
+/**
+ * @deprecated AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01
+ * Legacy hardcoded discount rules. Replaced by EffectiveAgingDiscountPolicy
+ * from the effective rule registry. Kept for backward compatibility only.
+ */
 export const DISCOUNT_RULES: { minDays: number; maxDays: number; percent: number; tier: DiscountTier }[] = [
   { minDays: 0,   maxDays: 89,  percent: 0,  tier: "NONE" },
   { minDays: 90,  maxDays: 179, percent: 10, tier: "TEN_PERCENT" },
@@ -54,6 +59,10 @@ export const DISCOUNT_RULES: { minDays: number; maxDays: number; percent: number
   { minDays: 365, maxDays: Infinity, percent: 70, tier: "SEVENTY_PERCENT" },
 ];
 
+/**
+ * @deprecated AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01
+ * Use evaluateAgingDiscount() from store-effective-rule-registry instead.
+ */
 export function resolveDiscountTier(daysInStore: number | null): { tier: DiscountTier; percent: number } {
   if (daysInStore === null) return { tier: "SIN_FECHA", percent: 0 };
   for (const rule of DISCOUNT_RULES) {
@@ -109,6 +118,8 @@ export interface DiscountKpis {
    * nunca evaluadas para descuento automático.
    */
   excludedSpecialCollection: number;
+  /** AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01: dynamic discount buckets */
+  buckets: Array<{ percent: number; count: number }>;
 }
 
 // ── Response ─────────────────────────────────────────────────────────────────
@@ -119,4 +130,46 @@ export interface StoreDiscountResponse {
   recommendations: DiscountRecommendation[];
   kpis:          DiscountKpis;
   computedAt:    string;
+  /** AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01: set when policy validation fails */
+  policyStatus?: "VALID" | "POLICY_INVALID";
+  /** Validation errors when policyStatus === "POLICY_INVALID" */
+  policyErrors?: string[];
+}
+
+// ── Aging discount evaluation (AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01) ──
+
+export type AgingDiscountStatus = "EVALUATED" | "SIN_FECHA" | "NO_RULE" | "POLICY_INVALID";
+
+export interface AgingDiscountEvaluation {
+  referenceCode: string;
+  daysInStore: number | null;
+  agingSource: "TRANSFER" | "SIN_FECHA";
+  matchedRuleId: string | null;
+  discountPercent: number | null;
+  status: AgingDiscountStatus;
+  reason: string;
+}
+
+// ── DiscountTier backward compatibility ─────────────────────────────────────
+
+/**
+ * AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01
+ *
+ * Derive legacy DiscountTier from dynamic discountPercent + evaluation status.
+ * Used to maintain backward compat with UI consumers that still use
+ * DiscountTier for colors, labels, and sort order.
+ *
+ * IMPORTANT: discountPercent=80 is preserved as canonical data.
+ * The compat tier maps it to SEVENTY_PERCENT for legacy display only.
+ */
+export function deriveDiscountTierCompat(
+  percent: number | null,
+  status: AgingDiscountStatus,
+): DiscountTier {
+  if (status === "SIN_FECHA" || status === "POLICY_INVALID") return "SIN_FECHA";
+  if (percent === null || percent === 0) return "NONE";
+  if (percent <= 10) return "TEN_PERCENT";
+  if (percent <= 30) return "THIRTY_PERCENT";
+  if (percent <= 50) return "FIFTY_PERCENT";
+  return "SEVENTY_PERCENT";
 }

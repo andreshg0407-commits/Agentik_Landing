@@ -40,14 +40,16 @@ export function evaluateSizeStrategy(
       gapToMin: 0,
       gapToIdeal: 0,
       excessOverMax: 0,
-      minQty: rule.minQty,
-      idealQty: rule.idealQty,
-      maxQty: rule.maxQty,
+      minQty: rule.minQty ?? 0,
+      idealQty: rule.idealQty ?? 0,
+      maxQty: rule.maxQty ?? null,
     };
   }
 
   const currentCoverage = input.currentUnits + (input.incomingUnits ?? 0);
-  const { minQty, idealQty, maxQty } = rule;
+  const minQty = rule.minQty ?? 0;
+  const idealQty = rule.idealQty ?? 0;
+  const maxQty = rule.maxQty ?? null;
 
   const gapToMin = Math.max(0, minQty - currentCoverage);
   const gapToIdeal = Math.max(0, idealQty - currentCoverage);

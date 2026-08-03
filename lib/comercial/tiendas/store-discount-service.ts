@@ -3,6 +3,7 @@
  *
  * AGENTIK-STORES-DISCOUNTS-TAB-01 — Store Discount Recommendation Service
  * AGENTIK-STORES-DISCOUNTS-AGING-SOURCE-01 — Real aging from InventoryTransfer
+ * AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01 — Dynamic aging discount policy
  *
  * Identifies references eligible for automatic discount based on their
  * time-in-store (daysInStore = last transfer date into store).
@@ -10,12 +11,17 @@
  * Architecture:
  *   - Consumes getCanonicalStoreDetail() for store items/refs
  *   - Consumes loadStoreDiscountAgingFacts() for real aging from transfers
+ *   - Consumes buildEffectiveAgingDiscountPolicy() for dynamic discount rules
  *   - Recommendations only — does NOT modify prices or write to DB
  *
  * Aging source (AGENTIK-STORES-DISCOUNTS-AGING-SOURCE-01):
  *   - PRIMARY: InventoryTransfer.documentDate (SAG MOVIMIENTOS fuente 34/206)
  *   - NEVER: ProductEntity.createdAtSag (product creation, not store entry)
  *   - FALLBACK: SIN_FECHA if no transfer exists
+ *
+ * Discount authority (AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01):
+ *   - SINGLE AUTHORITY: EffectiveAgingDiscountPolicy from Derrotero registry
+ *   - NEVER: DISCOUNT_RULES or CASTILLITOS_AUTOMATIC_MARKDOWN independently
  */
 
 import "server-only";
@@ -24,6 +30,12 @@ import { getCanonicalStoreDetail } from "./store-distribution-service";
 import type { StoreDistributionItem } from "./store-distribution-types";
 import { isExcludedFromAutomaticPricing } from "../commercial-exclusions";
 import { loadStoreDiscountAgingFacts } from "./store-discount-aging-service";
+import {
+  buildEffectiveAgingDiscountPolicy,
+  evaluateAgingDiscount,
+} from "./store-effective-rule-registry";
+import { CASTILLITOS_DEFAULT_AGING_DISCOUNT_BANDS } from "./store-policy-pack-config";
+import { getStoreRules } from "./store-policy-service";
 
 // Re-export everything from client-safe types file
 export type {
@@ -32,6 +44,8 @@ export type {
   DiscountRecommendation,
   DiscountKpis,
   StoreDiscountResponse,
+  AgingDiscountEvaluation,
+  AgingDiscountStatus,
 } from "./store-discount-types";
 
 export {
@@ -41,10 +55,10 @@ export {
   DISCOUNT_RULES,
   resolveDiscountTier,
   computeDaysInStore,
+  deriveDiscountTierCompat,
 } from "./store-discount-types";
 
 import type {
-  DiscountTier,
   DiscountLineName,
   DiscountRecommendation,
   DiscountKpis,
@@ -53,7 +67,7 @@ import type {
 
 import {
   DISCOUNT_TIER_SORT_ORDER,
-  resolveDiscountTier,
+  deriveDiscountTierCompat,
 } from "./store-discount-types";
 
 // ── Line classification ──────────────────────────────────────────────────────
@@ -65,20 +79,18 @@ function resolveDiscountLine(item: StoreDistributionItem): DiscountLineName {
   return "SIN_CLASIFICAR";
 }
 
-// ── Reason builder ───────────────────────────────────────────────────────────
-
-function buildReason(daysInStore: number | null, tier: DiscountTier, percent: number): string {
-  if (tier === "SIN_FECHA") return "Sin fecha de ingreso disponible. No se puede calcular descuento.";
-  if (tier === "NONE") return `${daysInStore} dias en tienda. Sin descuento (menos de 90 dias).`;
-  return `${daysInStore} dias en tienda. Descuento recomendado: ${percent}%.`;
-}
-
 // ── Main entry point ─────────────────────────────────────────────────────────
 
 export async function loadStoreDiscounts(
   orgId: string,
   storeId: string,
 ): Promise<StoreDiscountResponse> {
+  const emptyKpis: DiscountKpis = {
+    totalEvaluated: 0, none: 0, tenPercent: 0, thirtyPercent: 0,
+    fiftyPercent: 0, seventyPercent: 0, sinFecha: 0,
+    excludedSpecialCollection: 0, buckets: [],
+  };
+
   const detail = await getCanonicalStoreDetail(orgId, storeId);
 
   if (!detail) {
@@ -86,7 +98,7 @@ export async function loadStoreDiscounts(
       storeId,
       storeName: storeId,
       recommendations: [],
-      kpis: { totalEvaluated: 0, none: 0, tenPercent: 0, thirtyPercent: 0, fiftyPercent: 0, seventyPercent: 0, sinFecha: 0, excludedSpecialCollection: 0 },
+      kpis: emptyKpis,
       computedAt: new Date().toISOString(),
     };
   }
@@ -129,17 +141,57 @@ export async function loadStoreDiscounts(
   // Resolve aging from InventoryTransfer records (not createdAtSag).
   const agingFacts = await loadStoreDiscountAgingFacts(orgId, storeId, eligibleRefs);
 
+  // AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01:
+  // Build effective aging discount policy from Derrotero (1x per store)
+  let persistedRules: import("./store-policy-types").StorePolicyRule[] = [];
+  try {
+    persistedRules = await getStoreRules(orgId, storeId);
+  } catch {
+    // No persisted rules — use defaults only
+  }
+
+  const evaluationDate = new Date().toISOString().slice(0, 10);
+  const { policy, errors: policyErrors } = buildEffectiveAgingDiscountPolicy(
+    CASTILLITOS_DEFAULT_AGING_DISCOUNT_BANDS,
+    persistedRules,
+    storeId,
+    evaluationDate,
+  );
+
+  // AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01 §1: FAIL CLOSED
+  // Invalid policy → zero recommendations. Never evaluate with a partial/broken policy.
+  if (policyErrors.length > 0) {
+    return {
+      storeId,
+      storeName: detail.store.name,
+      recommendations: [],
+      kpis: {
+        ...emptyKpis,
+        totalEvaluated: eligibleRefs.length,
+        excludedSpecialCollection,
+      },
+      computedAt: new Date().toISOString(),
+      policyStatus: "POLICY_INVALID",
+      policyErrors: policyErrors.map(e => e.message),
+    };
+  }
+
+  // Evaluate N references in memory (no N+1)
   const recommendations: DiscountRecommendation[] = [];
 
   for (const ref of eligibleRefs) {
     const data = refMap.get(ref)!;
     const first = data.items[0];
 
-    // Aging from transfer records — NOT from item.entryDate
     const fact = agingFacts.get(ref);
     const daysInStore = fact?.daysInStore ?? null;
-    const { tier, percent } = resolveDiscountTier(daysInStore);
-    const reason = buildReason(daysInStore, tier, percent);
+    const agingSource = fact?.source ?? "SIN_FECHA";
+
+    // Evaluate using effective policy (SINGLE AUTHORITY)
+    const evaluation = evaluateAgingDiscount(ref, daysInStore, agingSource, policy);
+
+    // Derive legacy tier for backward compat (no UI changes)
+    const compatTier = deriveDiscountTierCompat(evaluation.discountPercent, evaluation.status);
 
     recommendations.push({
       referenceCode:   ref,
@@ -148,14 +200,14 @@ export async function loadStoreDiscounts(
       entryDate:       fact?.lastTransferDate ?? null,
       daysInStore,
       storeQty:        data.totalQty,
-      discountPercent: percent,
-      discountTier:    tier,
+      discountPercent: evaluation.discountPercent ?? 0,
+      discountTier:    compatTier,
       canonicalLine:   resolveDiscountLine(first),
       group:           first.group,
       subgroup:        first.subgroup,
       sizeClass:       first.sizeClass,
       variantCount:    data.items.length,
-      reason,
+      reason:          evaluation.reason,
     });
   }
 
@@ -168,7 +220,16 @@ export async function loadStoreDiscounts(
     return b.storeQty - a.storeQty;
   });
 
-  // Build KPIs
+  // Build KPIs — legacy named fields + dynamic buckets
+  const bucketMap = new Map<number, number>();
+  for (const r of recommendations) {
+    const p = r.discountPercent;
+    bucketMap.set(p, (bucketMap.get(p) ?? 0) + 1);
+  }
+  const buckets = [...bucketMap.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .map(([percent, count]) => ({ percent, count }));
+
   const kpis: DiscountKpis = {
     totalEvaluated:  recommendations.length,
     none:            recommendations.filter(r => r.discountTier === "NONE").length,
@@ -178,6 +239,7 @@ export async function loadStoreDiscounts(
     seventyPercent:  recommendations.filter(r => r.discountTier === "SEVENTY_PERCENT").length,
     sinFecha:        recommendations.filter(r => r.discountTier === "SIN_FECHA").length,
     excludedSpecialCollection,
+    buckets,
   };
 
   return {
@@ -186,5 +248,6 @@ export async function loadStoreDiscounts(
     recommendations,
     kpis,
     computedAt: new Date().toISOString(),
+    policyStatus: "VALID",
   };
 }

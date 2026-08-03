@@ -66,8 +66,8 @@ export function calculateStoreShortages(
 
     // Resolve thresholds: rule overrides adapter defaults
     const rule = findApplicableRule(v, rules);
-    const minUnits   = rule ? rule.minQty   : v.minUnits;
-    const idealUnits = rule ? rule.idealQty : v.idealUnits;
+    const minUnits   = rule ? (rule.minQty ?? 0)   : v.minUnits;
+    const idealUnits = rule ? (rule.idealQty ?? 0) : v.idealUnits;
 
     if (v.currentUnits >= minUnits) continue;
 
@@ -259,7 +259,7 @@ export function calculateStoreHealth(
     const expected = storeInventory.filter(v => hasApplicableRule(v, rules));
     const covered  = expected.filter(v => {
       const rule = findApplicableRule(v, rules);
-      const minQty = rule ? rule.minQty : 1;
+      const minQty = rule ? (rule.minQty ?? 0) : 1;
       return v.currentUnits >= minQty;
     });
     coverage = expected.length > 0

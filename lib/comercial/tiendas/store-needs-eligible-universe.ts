@@ -339,8 +339,8 @@ export async function loadEligibleStoreNeeds(
     const rule = resolveStorePolicyForVariant(policyInput, allRules);
     let oMin: number, oMax: number;
     if (rule) {
-      oMin = rule.minQty;
-      oMax = rule.maxQty ?? rule.idealQty;
+      oMin = rule.minQty ?? 0;
+      oMax = rule.maxQty ?? rule.idealQty ?? 0;
     } else {
       oMin = isTextile ? TEXTILE_MIN : IMPORT_MIN;
       oMax = isTextile ? TEXTILE_MAX : IMPORT_MAX;

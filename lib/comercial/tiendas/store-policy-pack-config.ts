@@ -112,6 +112,12 @@ export interface AutomaticMarkdownConfig {
   tiers: MarkdownTier[];
 }
 
+/**
+ * @deprecated AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01
+ * Legacy months-based markdown config. Replaced by CASTILLITOS_DEFAULT_AGING_DISCOUNT_BANDS
+ * which uses exact day boundaries. Kept for backward compatibility only.
+ * NOT an authoritative source — all discount decisions use EffectiveAgingDiscountPolicy.
+ */
 export const CASTILLITOS_AUTOMATIC_MARKDOWN: AutomaticMarkdownConfig = {
   applicableStoreIds: ["centro", "caldas"],
   tiers: [
@@ -121,6 +127,33 @@ export const CASTILLITOS_AUTOMATIC_MARKDOWN: AutomaticMarkdownConfig = {
     { monthsThreshold: 12, discountPct: 70 },
   ],
 };
+
+// ── FASE 6b: Aging Discount Bands (AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01)
+
+/**
+ * Single default aging discount band configuration.
+ * Uses DAYS as the canonical unit — no month conversion.
+ */
+export interface AgingDiscountBandConfig {
+  minDays: number;
+  maxDays: number | null;
+  discountPercent: number;
+}
+
+/**
+ * CANONICAL DEFAULT aging discount policy for Castillitos.
+ * This is the SINGLE authoritative default. All stores share these bands
+ * unless overridden via Derrotero persisted rules.
+ *
+ * Replaces both DISCOUNT_RULES and CASTILLITOS_AUTOMATIC_MARKDOWN.
+ */
+export const CASTILLITOS_DEFAULT_AGING_DISCOUNT_BANDS: readonly AgingDiscountBandConfig[] = [
+  { minDays: 0,   maxDays: 89,   discountPercent: 0  },
+  { minDays: 90,  maxDays: 179,  discountPercent: 10 },
+  { minDays: 180, maxDays: 269,  discountPercent: 30 },
+  { minDays: 270, maxDays: 364,  discountPercent: 50 },
+  { minDays: 365, maxDays: null, discountPercent: 70 },
+];
 
 // ── FASE 7: Slow Rotation ───────────────────────────────────────────────────
 
@@ -188,11 +221,13 @@ export interface StorePolicyPackConfig {
   automaticMarkdown: AutomaticMarkdownConfig;
   slowRotation: SlowRotationConfig;
   replacement: ReplacementConfig;
+  /** AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01: canonical aging discount defaults */
+  agingDiscount: readonly AgingDiscountBandConfig[];
 }
 
 export const CASTILLITOS_STORE_POLICY_PACK_CONFIG: StorePolicyPackConfig = {
   tenantId: "castillitos",
-  version: "1.1.0",
+  version: "1.2.0",
   textileCoverage: CASTILLITOS_TEXTILE_COVERAGE,
   latinKidsTextileCoverage: LATIN_KIDS_TEXTILE_COVERAGE,
   globalLowStock: CASTILLITOS_GLOBAL_LOW_STOCK,
@@ -201,4 +236,5 @@ export const CASTILLITOS_STORE_POLICY_PACK_CONFIG: StorePolicyPackConfig = {
   automaticMarkdown: CASTILLITOS_AUTOMATIC_MARKDOWN,
   slowRotation: CASTILLITOS_SLOW_ROTATION,
   replacement: CASTILLITOS_REPLACEMENT_CONFIG,
+  agingDiscount: CASTILLITOS_DEFAULT_AGING_DISCOUNT_BANDS,
 };

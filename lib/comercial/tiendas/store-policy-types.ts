@@ -107,7 +107,8 @@ export type CoverageStrategy = "SUBGROUP" | "SIZE";
 export type StorePolicyRuleKind =
   | "TEXTILE_STRUCTURE"
   | "ACCESSORY_SIZE"
-  | "SPECIAL_PRODUCT";
+  | "SPECIAL_PRODUCT"
+  | "AGING_DISCOUNT";
 
 // ── Rule effect (Sprint DYNAMIC-DERROTERO-RULES-01) ──────────────────────
 
@@ -143,10 +144,13 @@ export interface StorePolicyRule {
   size?:          string;
   color?:         string;
 
-  /** Thresholds */
-  minQty:   number;
-  idealQty: number;
-  maxQty:   number | null;
+  /**
+   * Coverage thresholds — required for TEXTILE_STRUCTURE, ACCESSORY_SIZE,
+   * SPECIAL_PRODUCT. NOT used by AGING_DISCOUNT (uses minDays/maxDays/discountPercent).
+   */
+  minQty?:   number;
+  idealQty?: number;
+  maxQty?:   number | null;
 
   /** Behavior flags */
   allowReplacement:          boolean;
@@ -167,6 +171,16 @@ export interface StorePolicyRule {
 
   /** Pattern identifier for special products (e.g. "BAÑERA") */
   specialPattern?: string;
+
+  /**
+   * AGING_DISCOUNT fields — minimum days in store for this discount band.
+   * Sprint: AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01
+   */
+  minDays?:          number;
+  /** Maximum days in store for this band. null = open-ended (e.g. 365+). */
+  maxDays?:          number | null;
+  /** Discount percentage for this aging band (0–100). */
+  discountPercent?:  number;
 
   /** Vigencia — optional temporal applicability */
   validFrom?: string | null;

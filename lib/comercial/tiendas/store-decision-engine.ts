@@ -35,6 +35,8 @@ import type {
 } from "./store-decision-types";
 
 import type { StorePolicyPackConfig } from "./store-policy-pack-config";
+import type { EffectiveAgingDiscountPolicy } from "./store-effective-rule-registry";
+import { buildEffectiveAgingDiscountPolicy } from "./store-effective-rule-registry";
 import { isExcludedFromAutomaticPricing } from "../commercial-exclusions";
 
 // ── Evidence builder ────────────────────────────────────────────────────────
@@ -365,20 +367,26 @@ export function evaluateSpecialProducts(
 
 // ── FASE 6: Automatic Markdowns ─────────────────────────────────────────────
 
+/**
+ * AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01:
+ * Evaluates automatic markdowns using EffectiveAgingDiscountPolicy (day-based bands).
+ * Falls back to legacy config.automaticMarkdown if no agingPolicy provided.
+ *
+ * @param agingPolicy — effective aging discount policy (SINGLE AUTHORITY).
+ *   When provided, replaces legacy CASTILLITOS_AUTOMATIC_MARKDOWN.
+ *   All stores are evaluated (tenant-wide). No Math.floor(days/30).
+ */
 export function evaluateAutomaticMarkdowns(
   inventory: StoreInventorySnapshot[],
   config: StorePolicyPackConfig,
+  agingPolicy?: EffectiveAgingDiscountPolicy,
 ): AutomaticMarkdownResult[] {
-  const { applicableStoreIds, tiers } = config.automaticMarkdown;
   const results: AutomaticMarkdownResult[] = [];
-
-  // Sort tiers descending (highest months first)
-  const sortedTiers = [...tiers].sort((a, b) => b.monthsThreshold - a.monthsThreshold);
 
   // AGENTIK-COMMERCIAL-CD-LINE-GLOBAL-EXCLUSION-01:
   // CD-* (colección especial) NUNCA recibe markdown automático.
   const applicableItems = inventory.filter(
-    i => applicableStoreIds.includes(i.storeId) && (i.daysInStore ?? 0) > 0 && i.currentUnits > 0
+    i => (i.daysInStore ?? 0) > 0 && i.currentUnits > 0
       && !isExcludedFromAutomaticPricing(i.referenceCode),
   );
 
@@ -386,9 +394,30 @@ export function evaluateAutomaticMarkdowns(
     const days = item.daysInStore ?? 0;
     const months = Math.floor(days / 30);
 
-    // Find the highest applicable tier
-    const tier = sortedTiers.find(t => months >= t.monthsThreshold);
-    if (!tier) continue;
+    // AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01:
+    // Use effective aging policy bands (day-based) instead of legacy months
+    let discountPct = 0;
+    if (agingPolicy) {
+      const sortedBands = [...agingPolicy.bands].sort((a, b) => b.minDays - a.minDays);
+      const matched = sortedBands.find(b => days >= b.minDays);
+      discountPct = matched?.discountPercent ?? 0;
+    } else {
+      // Legacy fallback (deprecated path)
+      const sortedTiers = [...config.automaticMarkdown.tiers].sort((a, b) => b.monthsThreshold - a.monthsThreshold);
+      const tier = sortedTiers.find(t => months >= t.monthsThreshold);
+      discountPct = tier?.discountPct ?? 0;
+    }
+
+    if (discountPct === 0) continue;
+
+    const policyDescription = agingPolicy
+      ? agingPolicy.bands
+          .filter(b => b.discountPercent > 0)
+          .map(b => `- ${b.minDays}d → ${b.discountPercent}%`)
+          .join("\n")
+      : config.automaticMarkdown.tiers
+          .map(t => `- ${t.monthsThreshold} meses → ${t.discountPct}%`)
+          .join("\n");
 
     const markdown = [
       `## Sugerencia de Descuento`,
@@ -398,11 +427,11 @@ export function evaluateAutomaticMarkdowns(
       `**Tienda:** ${item.storeName}`,
       `**Dias en tienda:** ${days} (${months} meses)`,
       `**Inventario actual:** ${item.currentUnits} und`,
-      `**Descuento sugerido:** ${tier.discountPct}%`,
+      `**Descuento sugerido:** ${discountPct}%`,
       ``,
       `### Politica aplicada`,
       `Segun la politica de descuentos automaticos:`,
-      ...tiers.map(t => `- ${t.monthsThreshold} meses → ${t.discountPct}%`),
+      policyDescription,
       ``,
       `> Este descuento es una **sugerencia**. Requiere aprobacion antes de aplicarse.`,
     ].join("\n");
@@ -415,13 +444,13 @@ export function evaluateAutomaticMarkdowns(
       daysInStore: days,
       monthsInStore: months,
       currentUnits: item.currentUnits,
-      suggestedDiscountPct: tier.discountPct,
+      suggestedDiscountPct: discountPct,
       suggestedMarkdown: markdown,
       evidence: buildEvidence(
         "STORE_AUTOMATIC_MARKDOWN",
         `md-${item.storeId}-${item.referenceCode}`,
         "Descuento Automatico por Antiguedad",
-        `${item.referenceCode} en ${item.storeName} lleva ${months} meses (${days} dias). Aplica descuento de ${tier.discountPct}%.`,
+        `${item.referenceCode} en ${item.storeName} lleva ${days} dias. Aplica descuento de ${discountPct}%.`,
         {
           storeId: item.storeId,
           storeName: item.storeName,
@@ -429,13 +458,13 @@ export function evaluateAutomaticMarkdowns(
           daysInStore: days,
           monthsInStore: months,
           currentUnits: item.currentUnits,
-          tierApplied: tier,
-          allTiers: tiers,
+          suggestedDiscountPct: discountPct,
+          policySource: agingPolicy ? "EFFECTIVE_AGING_POLICY" : "LEGACY_AUTOMATIC_MARKDOWN",
         },
-        `Sugerir descuento de ${tier.discountPct}% para ${item.referenceCode} en ${item.storeName}`,
-        `El producto lleva ${months} meses en tienda con ${item.currentUnits} und sin vender. Segun politica de descuentos: ${tier.monthsThreshold} meses = ${tier.discountPct}%.`,
+        `Sugerir descuento de ${discountPct}% para ${item.referenceCode} en ${item.storeName}`,
+        `El producto lleva ${days} dias en tienda con ${item.currentUnits} und sin vender. Descuento sugerido: ${discountPct}%.`,
         0.85,
-        months >= 9 ? "high" : months >= 6 ? "medium" : "low",
+        days >= 270 ? "high" : days >= 180 ? "medium" : "low",
       ),
     });
   }
@@ -445,15 +474,21 @@ export function evaluateAutomaticMarkdowns(
 
 // ── FASE 7: Slow Rotation ───────────────────────────────────────────────────
 
+/**
+ * AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01:
+ * Evaluates slow rotation using EffectiveAgingDiscountPolicy (day-based bands).
+ * Falls back to legacy config.automaticMarkdown if no agingPolicy provided.
+ *
+ * @param agingPolicy — effective aging discount policy (SINGLE AUTHORITY).
+ *   When provided, replaces legacy CASTILLITOS_AUTOMATIC_MARKDOWN for discount lookup.
+ */
 export function evaluateSlowRotation(
   inventory: StoreInventorySnapshot[],
   config: StorePolicyPackConfig,
+  agingPolicy?: EffectiveAgingDiscountPolicy,
 ): SlowRotationResult[] {
   const { minimumDaysThreshold } = config.slowRotation;
-  const { tiers } = config.automaticMarkdown;
   const results: SlowRotationResult[] = [];
-
-  const sortedTiers = [...tiers].sort((a, b) => b.monthsThreshold - a.monthsThreshold);
 
   // AGENTIK-COMMERCIAL-CD-LINE-GLOBAL-EXCLUSION-01:
   // CD-* (colección especial) NUNCA se señala como baja rotación.
@@ -466,8 +501,20 @@ export function evaluateSlowRotation(
     const days = item.daysInStore ?? 0;
     const months = Math.floor(days / 30);
 
-    const tier = sortedTiers.find(t => months >= t.monthsThreshold);
-    const discountPct = tier?.discountPct ?? 0;
+    // AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01:
+    // Use effective aging policy bands (day-based) instead of legacy months
+    let discountPct = 0;
+    if (agingPolicy) {
+      const sortedBands = [...agingPolicy.bands].sort((a, b) => b.minDays - a.minDays);
+      const matched = sortedBands.find(b => days >= b.minDays);
+      discountPct = matched?.discountPercent ?? 0;
+    } else {
+      // Legacy fallback (deprecated path)
+      const { tiers } = config.automaticMarkdown;
+      const sortedTiers = [...tiers].sort((a, b) => b.monthsThreshold - a.monthsThreshold);
+      const tier = sortedTiers.find(t => months >= t.monthsThreshold);
+      discountPct = tier?.discountPct ?? 0;
+    }
 
     results.push({
       storeId: item.storeId,
@@ -492,6 +539,7 @@ export function evaluateSlowRotation(
           currentUnits: item.currentUnits,
           minimumDaysThreshold,
           suggestedDiscountPct: discountPct,
+          policySource: agingPolicy ? "EFFECTIVE_AGING_POLICY" : "LEGACY_AUTOMATIC_MARKDOWN",
         },
         discountPct > 0
           ? `Aplicar descuento de ${discountPct}% o transferir a tienda con mayor rotacion`
@@ -702,8 +750,22 @@ export function evaluateStorePolicyPack(
   const globalLowStock = evaluateGlobalLowStock(inventory, config);
   const accessoryCoverage = evaluateAccessoryCoverage(inventory, config);
   const specialProducts = evaluateSpecialProducts(inventory, config);
-  const automaticMarkdowns = evaluateAutomaticMarkdowns(inventory, config);
-  const slowRotation = evaluateSlowRotation(inventory, config);
+  // AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01:
+  // Build effective aging policy from defaults (no persisted rules in this context).
+  // This ensures evaluateAutomaticMarkdowns and evaluateSlowRotation use the
+  // canonical day-based policy, not legacy CASTILLITOS_AUTOMATIC_MARKDOWN.
+  // AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01 §2: FAIL CLOSED
+  // Invalid aging policy → skip markdown + slow rotation evaluation entirely.
+  const evaluationDate = new Date().toISOString().slice(0, 10);
+  const { policy: agingPolicy, errors: agingPolicyErrors } = buildEffectiveAgingDiscountPolicy(
+    config.agingDiscount, [], config.tenantId, evaluationDate,
+  );
+  const automaticMarkdowns = agingPolicyErrors.length === 0
+    ? evaluateAutomaticMarkdowns(inventory, config, agingPolicy)
+    : [];
+  const slowRotation = agingPolicyErrors.length === 0
+    ? evaluateSlowRotation(inventory, config, agingPolicy)
+    : [];
   const assortmentSuggestions = evaluateAssortmentSuggestion(inventory, salesHistory, config);
   const comparativeReport = evaluateComparativeReport(salesHistory);
 

@@ -30,7 +30,7 @@ import type {
   StoreSizeClass,
 } from "./store-policy-types";
 
-import type { TextileCoverageConfig, AccessoryCoverageConfig, SpecialProductConfig } from "./store-policy-pack-config";
+import type { TextileCoverageConfig, AccessoryCoverageConfig, SpecialProductConfig, AgingDiscountBandConfig } from "./store-policy-pack-config";
 import {
   buildCastillitosTextilCatalog,
   buildLatinKidsTextilCatalog,
@@ -84,6 +84,33 @@ export type EffectiveRule =
   | EffectiveTextileStructureRule
   | EffectiveAccessorySizeRule
   | EffectiveSpecialProductRule;
+
+// ── AGING_DISCOUNT effective rule (AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01)
+
+/**
+ * Effective aging discount band — own shape, NOT extending EffectiveRuleBase
+ * because aging discounts use minDays/maxDays/discountPercent, not
+ * minimum/ideal/maximum coverage thresholds.
+ */
+export interface EffectiveAgingDiscountRule {
+  readonly targetKey: string;
+  readonly ruleKind: "AGING_DISCOUNT";
+  readonly minDays: number;
+  readonly maxDays: number | null;
+  readonly discountPercent: number;
+  readonly priority: number;
+  readonly source: "PACK_DEFAULT" | "POLICY_OVERRIDE" | "POLICY_ADD";
+  readonly persistedRuleId: string | null;
+}
+
+export interface EffectiveAgingDiscountPolicy {
+  readonly bands: readonly EffectiveAgingDiscountRule[];
+  readonly validatedAt: string;
+}
+
+export interface AgingDiscountPolicyValidationError {
+  readonly message: string;
+}
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Canonical identity normalization
@@ -145,6 +172,8 @@ export function buildCoverageRuleTargetKey(
     subgroup?: string;
     sizeClass?: string;
     specialPattern?: string;
+    minDays?: number;
+    maxDays?: number | null;
   },
 ): string {
   const n = normalizeCoverageRuleIdentityPart;
@@ -155,6 +184,8 @@ export function buildCoverageRuleTargetKey(
       return `ACC:${n(dimensions.line ?? "")}:${n(dimensions.sizeClass ?? "")}`;
     case "SPECIAL_PRODUCT":
       return `SPECIAL:${n(dimensions.specialPattern ?? "")}`;
+    case "AGING_DISCOUNT":
+      return `AGING:${dimensions.minDays ?? 0}:${dimensions.maxDays === null || dimensions.maxDays === undefined ? "OPEN" : dimensions.maxDays}`;
   }
 }
 
@@ -167,6 +198,7 @@ export function buildCoverageRuleTargetKey(
  * Uses scope + available fields to determine the most likely kind.
  */
 function inferRuleKind(rule: StorePolicyRule): StorePolicyRuleKind {
+  if (rule.minDays !== undefined || rule.discountPercent !== undefined) return "AGING_DISCOUNT";
   if (rule.specialPattern) return "SPECIAL_PRODUCT";
   if (rule.scope === "class_size" && rule.sizeClass) return "ACCESSORY_SIZE";
   return "TEXTILE_STRUCTURE";
@@ -213,22 +245,22 @@ export function validateStorePolicyRule(rule: StorePolicyRule): readonly RuleVal
   const kind = rule.ruleKind ?? inferRuleKind(rule);
   const effect = rule.effect ?? "OVERRIDE";
 
-  if (!["TEXTILE_STRUCTURE", "ACCESSORY_SIZE", "SPECIAL_PRODUCT"].includes(kind)) {
+  if (!["TEXTILE_STRUCTURE", "ACCESSORY_SIZE", "SPECIAL_PRODUCT", "AGING_DISCOUNT"].includes(kind)) {
     errors.push({ field: "ruleKind", message: `invalid ruleKind: ${kind}` });
   }
   if (!["OVERRIDE", "DISABLE", "ADD"].includes(effect)) {
     errors.push({ field: "effect", message: `invalid effect: ${effect}` });
   }
 
-  // Threshold validations (skip for DISABLE — thresholds are irrelevant)
-  if (effect !== "DISABLE") {
+  // Threshold validations — coverage kinds only (skip for DISABLE and AGING_DISCOUNT)
+  if (effect !== "DISABLE" && kind !== "AGING_DISCOUNT") {
     if (typeof rule.minQty !== "number" || isNaN(rule.minQty) || rule.minQty < 0) {
       errors.push({ field: "minQty", message: "minQty must be a non-negative number" });
     }
     if (typeof rule.idealQty !== "number" || isNaN(rule.idealQty) || rule.idealQty < 0) {
       errors.push({ field: "idealQty", message: "idealQty must be a non-negative number" });
     }
-    if (rule.maxQty !== null) {
+    if (rule.maxQty !== null && rule.maxQty !== undefined) {
       if (typeof rule.maxQty !== "number" || isNaN(rule.maxQty) || rule.maxQty < 0) {
         errors.push({ field: "maxQty", message: "maxQty must be a non-negative number or null" });
       }
@@ -240,7 +272,7 @@ export function validateStorePolicyRule(rule: StorePolicyRule): readonly RuleVal
         errors.push({ field: "minQty", message: "minQty must be <= idealQty" });
       }
     }
-    if (typeof rule.idealQty === "number" && rule.maxQty !== null && typeof rule.maxQty === "number") {
+    if (typeof rule.idealQty === "number" && rule.maxQty !== null && rule.maxQty !== undefined && typeof rule.maxQty === "number") {
       if (rule.idealQty > rule.maxQty) {
         errors.push({ field: "idealQty", message: "idealQty must be <= maxQty when maxQty is not null" });
       }
@@ -266,6 +298,24 @@ export function validateStorePolicyRule(rule: StorePolicyRule): readonly RuleVal
       break;
     case "SPECIAL_PRODUCT":
       if (!rule.specialPattern) errors.push({ field: "specialPattern", message: "specialPattern is required for SPECIAL_PRODUCT" });
+      break;
+    case "AGING_DISCOUNT":
+      if (effect !== "DISABLE") {
+        if (typeof rule.minDays !== "number" || isNaN(rule.minDays) || rule.minDays < 0) {
+          errors.push({ field: "minDays", message: "minDays must be a non-negative number" });
+        }
+        if (rule.maxDays !== null && rule.maxDays !== undefined) {
+          if (typeof rule.maxDays !== "number" || isNaN(rule.maxDays) || rule.maxDays < 0) {
+            errors.push({ field: "maxDays", message: "maxDays must be a non-negative number or null" });
+          }
+          if (typeof rule.minDays === "number" && typeof rule.maxDays === "number" && rule.maxDays < rule.minDays) {
+            errors.push({ field: "maxDays", message: "maxDays must be >= minDays" });
+          }
+        }
+        if (typeof rule.discountPercent !== "number" || isNaN(rule.discountPercent) || rule.discountPercent < 0 || rule.discountPercent > 100) {
+          errors.push({ field: "discountPercent", message: "discountPercent must be between 0 and 100" });
+        }
+      }
       break;
   }
 
@@ -472,10 +522,10 @@ export function buildEffectiveStoreRules(
     baseByTarget.set(special.targetKey, special);
   }
 
-  // 2. Normalize + filter persisted rules
+  // 2. Normalize + filter persisted rules (exclude AGING_DISCOUNT — separate pipeline)
   const normalized = persistedRules
     .map(normalizeStorePolicyRule)
-    .filter(r => r.active && isRuleInForce(r, evaluationDate));
+    .filter(r => r.active && isRuleInForce(r, evaluationDate) && r.ruleKind !== "AGING_DISCOUNT");
 
   // 3. Separate broad-scope rules (line, class_size) from specific rules
   const broadRules: StorePolicyRule[] = [];
@@ -610,9 +660,9 @@ function findBroadMatches(
 function applyOverride(base: EffectiveRule, override: StorePolicyRule): EffectiveRule {
   const common = {
     ...base,
-    minimum: override.minQty,
-    ideal: override.idealQty,
-    maximum: override.maxQty,
+    minimum: override.minQty ?? base.minimum,
+    ideal: override.idealQty ?? base.ideal,
+    maximum: override.maxQty !== undefined ? override.maxQty : base.maximum,
     source: "POLICY_OVERRIDE" as const,
     persistedRuleId: override.id,
     priority: override.priority ?? base.priority,
@@ -624,7 +674,7 @@ function applyOverride(base: EffectiveRule, override: StorePolicyRule): Effectiv
     case "ACCESSORY_SIZE":
       return { ...common, ruleKind: "ACCESSORY_SIZE", line: base.line, sizeClass: base.sizeClass };
     case "SPECIAL_PRODUCT":
-      return { ...common, ruleKind: "SPECIAL_PRODUCT", specialPattern: base.specialPattern, storeIdealUnits: override.idealQty };
+      return { ...common, ruleKind: "SPECIAL_PRODUCT", specialPattern: base.specialPattern, storeIdealUnits: override.idealQty ?? base.ideal };
   }
 }
 
@@ -659,9 +709,9 @@ function buildEffectiveFromAdd(rule: StorePolicyRule): EffectiveRule | null {
         targetKey,
         ruleKind: "TEXTILE_STRUCTURE",
         label: rule.subgroup,
-        minimum: rule.minQty,
-        ideal: rule.idealQty,
-        maximum: rule.maxQty,
+        minimum: rule.minQty ?? 0,
+        ideal: rule.idealQty ?? 0,
+        maximum: rule.maxQty ?? null,
         priority: rule.priority,
         source: "POLICY_ADD",
         persistedRuleId: rule.id,
@@ -680,9 +730,9 @@ function buildEffectiveFromAdd(rule: StorePolicyRule): EffectiveRule | null {
         targetKey,
         ruleKind: "ACCESSORY_SIZE",
         label: rule.sizeClass,
-        minimum: rule.minQty,
-        ideal: rule.idealQty,
-        maximum: rule.maxQty,
+        minimum: rule.minQty ?? 0,
+        ideal: rule.idealQty ?? 0,
+        maximum: rule.maxQty ?? null,
         priority: rule.priority,
         source: "POLICY_ADD",
         persistedRuleId: rule.id,
@@ -699,14 +749,14 @@ function buildEffectiveFromAdd(rule: StorePolicyRule): EffectiveRule | null {
         targetKey,
         ruleKind: "SPECIAL_PRODUCT",
         label: rule.specialPattern,
-        minimum: rule.idealQty,
-        ideal: rule.idealQty,
+        minimum: rule.idealQty ?? 0,
+        ideal: rule.idealQty ?? 0,
         maximum: null,
         priority: rule.priority,
         source: "POLICY_ADD",
         persistedRuleId: rule.id,
         specialPattern: rule.specialPattern,
-        storeIdealUnits: rule.idealQty,
+        storeIdealUnits: rule.idealQty ?? 0,
       };
     }
   }
@@ -783,4 +833,248 @@ export function buildPackCatalogEntries(): readonly PackStructureEntry[] {
   }
 
   return entries;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// AGING DISCOUNT POLICY (AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01)
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Validate an aging discount policy (set of bands) for completeness.
+ *
+ * A valid policy:
+ *   - Starts at day 0
+ *   - Has no gaps between bands
+ *   - Has no overlapping bands
+ *   - Has exactly one open-ended band (maxDays === null) at the end
+ *   - All bands have valid minDays/maxDays/discountPercent
+ */
+export function validateAgingDiscountPolicy(
+  bands: readonly EffectiveAgingDiscountRule[],
+): readonly AgingDiscountPolicyValidationError[] {
+  const errors: AgingDiscountPolicyValidationError[] = [];
+  if (bands.length === 0) {
+    errors.push({ message: "Policy must have at least one band" });
+    return errors;
+  }
+
+  const sorted = [...bands].sort((a, b) => a.minDays - b.minDays);
+
+  // Must start at day 0
+  if (sorted[0].minDays !== 0) {
+    errors.push({ message: `First band must start at day 0, starts at ${sorted[0].minDays}` });
+  }
+
+  // Per-band validation
+  for (const band of sorted) {
+    if (typeof band.minDays !== "number" || isNaN(band.minDays) || band.minDays < 0) {
+      errors.push({ message: `Band ${band.targetKey}: minDays must be non-negative` });
+    }
+    if (band.maxDays !== null) {
+      if (typeof band.maxDays !== "number" || isNaN(band.maxDays) || band.maxDays < band.minDays) {
+        errors.push({ message: `Band ${band.targetKey}: maxDays must be >= minDays or null` });
+      }
+    }
+    if (typeof band.discountPercent !== "number" || isNaN(band.discountPercent) || band.discountPercent < 0 || band.discountPercent > 100) {
+      errors.push({ message: `Band ${band.targetKey}: discountPercent must be 0–100` });
+    }
+  }
+
+  // Check gaps and overlaps
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const current = sorted[i];
+    const next = sorted[i + 1];
+
+    if (current.maxDays === null) {
+      errors.push({ message: `Band ${current.targetKey}: open-ended band must be last, but ${next.targetKey} follows` });
+      continue;
+    }
+
+    const expectedNext = current.maxDays + 1;
+    if (next.minDays > expectedNext) {
+      errors.push({ message: `Gap between bands: ${current.maxDays}–${next.minDays - 1} has no rule` });
+    }
+    if (next.minDays < expectedNext) {
+      errors.push({ message: `Overlap between bands: ${current.targetKey} and ${next.targetKey} overlap at day ${next.minDays}` });
+    }
+  }
+
+  // Last band must be open-ended
+  const last = sorted[sorted.length - 1];
+  if (last.maxDays !== null) {
+    errors.push({ message: `Last band ${last.targetKey} must be open-ended (maxDays=null)` });
+  }
+
+  return errors;
+}
+
+/**
+ * Build the effective aging discount policy for a store.
+ *
+ * Resolution:
+ *   1. Convert default bands from Policy Pack → EffectiveAgingDiscountRule[] (PACK_DEFAULT)
+ *   2. Filter persisted AGING_DISCOUNT rules: active + in-force + matching storeId
+ *   3. Apply effects: OVERRIDE replaces, DISABLE suppresses, ADD introduces
+ *   4. Validate resulting policy (no gaps, no overlaps)
+ *   5. Return validated policy
+ *
+ * If validation fails, returns the policy with errors — caller decides
+ * whether to reject or fall back.
+ */
+export function buildEffectiveAgingDiscountPolicy(
+  defaultBands: readonly AgingDiscountBandConfig[],
+  persistedRules: readonly StorePolicyRule[],
+  storeId: string,
+  evaluationDate: string,
+): { policy: EffectiveAgingDiscountPolicy; errors: readonly AgingDiscountPolicyValidationError[] } {
+  // 1. Build defaults
+  const bandsByTarget = new Map<string, EffectiveAgingDiscountRule>();
+
+  for (let i = 0; i < defaultBands.length; i++) {
+    const band = defaultBands[i];
+    const targetKey = buildCoverageRuleTargetKey("AGING_DISCOUNT", {
+      minDays: band.minDays,
+      maxDays: band.maxDays,
+    });
+    bandsByTarget.set(targetKey, {
+      targetKey,
+      ruleKind: "AGING_DISCOUNT",
+      minDays: band.minDays,
+      maxDays: band.maxDays,
+      discountPercent: band.discountPercent,
+      priority: i * 100,
+      source: "PACK_DEFAULT",
+      persistedRuleId: null,
+    });
+  }
+
+  // 2. Filter persisted AGING_DISCOUNT rules for this store
+  const agingRules = persistedRules
+    .map(normalizeStorePolicyRule)
+    .filter(r =>
+      r.ruleKind === "AGING_DISCOUNT"
+      && r.active
+      && isRuleInForce(r, evaluationDate)
+      && r.storeId === storeId,
+    );
+
+  // 3. Group by targetKey and resolve conflicts
+  const byTarget = new Map<string, StorePolicyRule[]>();
+  for (const r of agingRules) {
+    const targetKey = buildCoverageRuleTargetKey("AGING_DISCOUNT", {
+      minDays: r.minDays,
+      maxDays: r.maxDays,
+    });
+    const existing = byTarget.get(targetKey);
+    if (existing) existing.push(r);
+    else byTarget.set(targetKey, [r]);
+  }
+
+  for (const [targetKey, rules] of byTarget) {
+    const winner = resolveConflict(rules);
+    const effect = winner.effect as StorePolicyRuleEffect;
+
+    switch (effect) {
+      case "DISABLE":
+        bandsByTarget.delete(targetKey);
+        break;
+
+      case "OVERRIDE": {
+        const base = bandsByTarget.get(targetKey);
+        if (base) {
+          bandsByTarget.set(targetKey, {
+            ...base,
+            discountPercent: winner.discountPercent ?? base.discountPercent,
+            source: "POLICY_OVERRIDE",
+            persistedRuleId: winner.id,
+            priority: winner.priority ?? base.priority,
+          });
+        }
+        break;
+      }
+
+      case "ADD": {
+        bandsByTarget.set(targetKey, {
+          targetKey,
+          ruleKind: "AGING_DISCOUNT",
+          minDays: winner.minDays ?? 0,
+          maxDays: winner.maxDays ?? null,
+          discountPercent: winner.discountPercent ?? 0,
+          priority: winner.priority,
+          source: "POLICY_ADD",
+          persistedRuleId: winner.id,
+        });
+        break;
+      }
+    }
+  }
+
+  // 4. Sort by minDays and validate
+  const sortedBands = [...bandsByTarget.values()].sort((a, b) => a.minDays - b.minDays);
+  const errors = validateAgingDiscountPolicy(sortedBands);
+
+  const policy: EffectiveAgingDiscountPolicy = {
+    bands: sortedBands,
+    validatedAt: evaluationDate,
+  };
+
+  return { policy, errors };
+}
+
+/**
+ * Evaluate aging discount for a single reference.
+ *
+ * Pure function: takes a daysInStore fact and an effective policy,
+ * returns the discount evaluation.
+ *
+ * Does NOT compute aging — only applies policy to a fact.
+ */
+export function evaluateAgingDiscount(
+  referenceCode: string,
+  daysInStore: number | null,
+  agingSource: "TRANSFER" | "SIN_FECHA",
+  policy: EffectiveAgingDiscountPolicy,
+): import("./store-discount-types").AgingDiscountEvaluation {
+  if (daysInStore === null || agingSource === "SIN_FECHA") {
+    return {
+      referenceCode,
+      daysInStore: null,
+      agingSource: "SIN_FECHA",
+      matchedRuleId: null,
+      discountPercent: null,
+      status: "SIN_FECHA",
+      reason: "Sin fecha de ingreso disponible. No se puede calcular descuento.",
+    };
+  }
+
+  const matched = policy.bands.find(band =>
+    daysInStore >= band.minDays && (band.maxDays === null || daysInStore <= band.maxDays),
+  );
+
+  if (!matched) {
+    return {
+      referenceCode,
+      daysInStore,
+      agingSource,
+      matchedRuleId: null,
+      discountPercent: null,
+      status: "NO_RULE",
+      reason: `${daysInStore} dias en tienda. No hay regla de descuento aplicable.`,
+    };
+  }
+
+  const percent = matched.discountPercent;
+  const reason = percent === 0
+    ? `${daysInStore} dias en tienda. Sin descuento (menos de ${(policy.bands.find(b => b.discountPercent > 0)?.minDays ?? 90)} dias).`
+    : `${daysInStore} dias en tienda. Descuento recomendado: ${percent}%.`;
+
+  return {
+    referenceCode,
+    daysInStore,
+    agingSource,
+    matchedRuleId: matched.targetKey,
+    discountPercent: percent,
+    status: "EVALUATED",
+    reason,
+  };
 }
