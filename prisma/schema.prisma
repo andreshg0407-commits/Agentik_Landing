@@ -437,6 +437,9 @@ model Organization {
   vendorBagIdealRouteRules           VendorBagIdealRouteRule[]
   assortmentIdealOverrides           AssortmentIdealOverride[]
 
+  // ── Store Sale Lines (SAG MOVIMIENTOS_ITEMS) ──────────────────────────
+  storeSaleLines                     StoreSaleLineRecord[]
+
   // ── Tenant Branding ─────────────────────────────────────────────────────
   branding                           OrganizationBranding?
 
@@ -9903,4 +9906,64 @@ model StoreReplenishmentDocumentEvent {
   @@unique([documentId, idempotencyKey])
   @@index([organizationId, documentId, occurredAt])
   @@index([organizationId, batchId, occurredAt])
+}
+
+// ── AGENTIK-STORES-PRODUCT-SALES-SYNC-01 ─────────────────────────────────────
+// Line-level store sales from SAG MOVIMIENTOS_ITEMS.
+// Source: MOVIMIENTOS (header) + MOVIMIENTOS_ITEMS (lines) + v_articulos (ref).
+// Fuente codes: FC/FD/FG/FA (facturas), NT/NS/NG/NA (notas credito).
+// Semantics certified in Phase 1 dry-run:
+//   n_valor     = LINE TOTAL (not per-unit). SUM(n_valor) === SaleRecord.amount.
+//   n_descuento = DISCOUNT PERCENTAGE (0-100). n_valor already has discount applied.
+//   n_iva       = IVA RATE (0 or 19).
+//   NC lines:   n_cantidad > 0, n_valor < 0. Do NOT multiply by revenueSign.
+model StoreSaleLineRecord {
+  id              String   @id @default(cuid())
+  organizationId  String
+
+  // ── SAG PKs ────────────────────────────────────────────────────────────────
+  erpItemId       Int      // ka_nl_movimiento_item — stable SAG line PK
+  erpMovId        Int      // ka_nl_movimiento — parent document PK
+  articleId       Int      // ka_nl_articulo — SAG product FK
+
+  // ── Product reference (from v_articulos JOIN) ──────────────────────────────
+  referenceCode   String   // k_sc_codigo_articulo
+  articleName     String   // sc_detalle_articulo
+
+  // ── Line measures (certified semantics) ────────────────────────────────────
+  quantity        Decimal  @db.Decimal(18, 2) // n_cantidad (positive for FC, positive for NC)
+  lineTotal       Decimal  @db.Decimal(18, 2) // n_valor = LINE TOTAL (positive for FC, negative for NC)
+  discountPercent Decimal  @db.Decimal(5, 2)  // n_descuento (0-100 percentage)
+  ivaRate         Decimal  @db.Decimal(5, 2)  // n_iva (0 or 19)
+
+  // ── Variant ────────────────────────────────────────────────────────────────
+  size            String?  // ss_talla
+  color           String?  // ss_color
+  warehouseId     Int?     // ka_nl_bodega
+
+  // ── Document context ───────────────────────────────────────────────────────
+  documentDate    DateTime // MOVIMIENTOS.d_fecha — document date
+  comprobanteCode String   // Fuente code: FG, NG, FC, NT, etc.
+  comprobante     String?  // Document number: "FG-001234"
+
+  // ── Store attribution (from sales-canonical-source.ts) ─────────────────────
+  storeId         String   // canonical slug: "centro" | "san_diego" | "gran_plaza" | "caldas"
+  storeName       String   // display name
+
+  // ── Document family ────────────────────────────────────────────────────────
+  documentFamily  String   // "FACTURA" | "NOTA_CREDITO"
+
+  // ── Optional FK to SaleRecord (for reconciliation) ─────────────────────────
+  saleRecordId    String?
+
+  // ── Sync metadata ──────────────────────────────────────────────────────────
+  syncedAt        DateTime @default(now()) @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, erpItemId])
+  @@index([organizationId, storeId, documentDate])
+  @@index([organizationId, referenceCode])
+  @@index([organizationId, erpMovId])
+  @@index([organizationId, comprobanteCode, documentDate])
 }
