@@ -21,6 +21,13 @@
 
 import { consultaSagJson } from "@/lib/connectors/pya/client";
 import type { PyaApiConfig } from "@/lib/connectors/pya/types";
+import {
+  getSagConnection,
+  resolveSagSourcesForRange,
+  resolveSagSourceForDate,
+  SAG_CURRENT_START_DATE,
+  type SagSource,
+} from "@/lib/connectors/pya/sag-source-router";
 import { prisma } from "@/lib/prisma";
 import {
   resolveCanonicalSalesSource,
@@ -405,5 +412,100 @@ export async function syncStoreSaleLines(
     success: metrics.errors.length === 0,
     dryRun,
     metrics,
+  };
+}
+
+// ── Source-routed sync ─────────────────────────────────────────────────────
+
+/**
+ * AGENTIK-SAG-STORE-SALE-LINES-CURRENT-CUTOVER-01
+ *
+ * Source-aware wrapper around syncStoreSaleLines().
+ *
+ * Resolves SAG config from the central router instead of Connector.config.
+ * Handles cross-cutoff date ranges by splitting into segments and syncing
+ * each against the authoritative database.
+ *
+ * For current-only syncs (dateFrom >= 2026-07-21), a single CURRENT call
+ * is made. For ranges crossing the cutoff, two calls are made and results
+ * are merged.
+ */
+export interface RoutedStoreSaleLinesSyncOptions {
+  organizationId: string;
+  fuenteCodes: string[];
+  dateFrom: string;
+  dateTo: string;
+  dryRun?: boolean;
+  batchSize?: number;
+}
+
+export async function syncStoreSaleLinesRouted(
+  opts: RoutedStoreSaleLinesSyncOptions,
+): Promise<StoreSaleLinesSyncResult> {
+  const route = resolveSagSourcesForRange(opts.dateFrom, opts.dateTo);
+
+  console.log(
+    `[store-sale-lines] routed sync: ${route.sourcesUsed.join("+")} ` +
+    `(${opts.dateFrom} → ${opts.dateTo}, ${route.segments.length} segment(s))`,
+  );
+
+  const results: StoreSaleLinesSyncResult[] = [];
+
+  for (const segment of route.segments) {
+    const config = getSagConnection(segment.source);
+    console.log(
+      `[store-sale-lines] segment ${segment.source}: ${segment.from} → ${segment.to} ` +
+      `(database=${config.database})`,
+    );
+
+    const segResult = await syncStoreSaleLines({
+      organizationId: opts.organizationId,
+      sagConfig: config,
+      sagDatabase: config.database!,
+      fuenteCodes: opts.fuenteCodes,
+      dateFrom: segment.from,
+      dateTo: segment.to,
+      dryRun: opts.dryRun,
+      batchSize: opts.batchSize,
+    });
+
+    results.push(segResult);
+  }
+
+  // Single segment — return directly
+  if (results.length === 1) return results[0];
+
+  // Merge multi-segment results
+  const merged: StoreSaleLinesSyncMetrics = {
+    headersRead: 0,
+    linesRead: 0,
+    linesWritten: 0,
+    linesSkipped: 0,
+    linesErrored: 0,
+    errors: [],
+    durationMs: 0,
+    perCode: {},
+  };
+
+  for (const r of results) {
+    merged.headersRead += r.metrics.headersRead;
+    merged.linesRead += r.metrics.linesRead;
+    merged.linesWritten += r.metrics.linesWritten;
+    merged.linesSkipped += r.metrics.linesSkipped;
+    merged.linesErrored += r.metrics.linesErrored;
+    merged.errors.push(...r.metrics.errors);
+    merged.durationMs += r.metrics.durationMs;
+
+    for (const [code, stats] of Object.entries(r.metrics.perCode)) {
+      if (!merged.perCode[code]) merged.perCode[code] = { headers: 0, lines: 0 };
+      merged.perCode[code].headers += stats.headers;
+      merged.perCode[code].lines += stats.lines;
+    }
+  }
+
+  return {
+    success: results.every((r) => r.success),
+    dryRun: opts.dryRun ?? false,
+    metrics: merged,
   };
 }
