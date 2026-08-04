@@ -83,6 +83,7 @@ import { InvalidWorkflowTransitionError, allowedTransitions } from "@/lib/comerc
 import { loadStoreDiscounts } from "@/lib/comercial/tiendas/store-discount-service";
 import { getStoreDerroteroCoverage, getAllStoresDerroteroCoverageSummary } from "@/lib/comercial/tiendas/store-derrotero-service";
 import { buildStoreDerroteroFromSalesPortfolioDerrotero } from "@/lib/comercial/tiendas/store-derrotero-adapter";
+import { buildStoreProductIntelligence } from "@/lib/comercial/tiendas/store-product-intelligence-engine";
 import { loadCertifiedStoreIntelligence } from "@/lib/comercial/tiendas/store-certified-intelligence-service";
 
 export const maxDuration = 60;
@@ -797,6 +798,45 @@ export async function POST(
       } catch (err) {
         console.error("[CERTIFIED-STORE-INTELLIGENCE] error", storeId, err instanceof Error ? err.message : err);
         return NextResponse.json({ error: "Error al cargar inteligencia certificada" }, { status: 500 });
+      }
+    }
+
+    // ── STORE PRODUCT INTELLIGENCE (INTELLIGENCE-UX-IMPLEMENTATION-01) ────────
+    // Wiring de entrega únicamente: invoca el engine certificado VERBATIM
+    // (PRODUCT-INTELLIGENCE-ENGINE-01, sin cambios de dominio).
+    case "store_product_intelligence": {
+      const storeId = body.storeId as string;
+      if (!storeId) return NextResponse.json({ error: "Missing storeId" }, { status: 400 });
+      const windowId = (body.windowId as string) || "LAST_90_DAYS";
+      if (!["LAST_30_DAYS", "LAST_60_DAYS", "LAST_90_DAYS", "YTD"].includes(windowId)) {
+        return NextResponse.json({ error: "Invalid windowId" }, { status: 400 });
+      }
+      try {
+        const productIntelligence = await buildStoreProductIntelligence({
+          orgId,
+          storeId,
+          asOfDate: new Date().toISOString().slice(0, 10),
+          windowId: windowId as import("@/lib/comercial/tiendas/store-product-intelligence-types").WindowId,
+        });
+        // HOTFIX GATE: serialización BigInt-safe en la capa de wiring (el engine
+        // no se toca). Si algún agregado crudo escapara como BigInt, JSON.stringify
+        // lanzaría DENTRO de NextResponse.json y el 500 escondería la causa.
+        const payload = JSON.stringify({ productIntelligence }, (_k, v) =>
+          typeof v === "bigint" ? Number(v) : v,
+        );
+        return new NextResponse(payload, {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      } catch (err) {
+        // HOTFIX GATE: el 500 expone la causa real (message) — antes era genérico
+        // y el Network trace no podía diagnosticar. Stack completo al server log.
+        const message = err instanceof Error ? err.message : String(err);
+        console.error("[STORE-PRODUCT-INTELLIGENCE] error", storeId, message, err instanceof Error ? err.stack : "");
+        return NextResponse.json(
+          { error: "Error al cargar inteligencia de productos", detail: message },
+          { status: 500 },
+        );
       }
     }
 

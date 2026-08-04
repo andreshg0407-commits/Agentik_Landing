@@ -70,11 +70,11 @@ import {
 import type {
   CertifiedStoreIntelligenceResponse,
 } from "@/lib/comercial/tiendas/store-certified-intelligence-types";
-import {
-  TREND_LABEL,
-  TREND_COLOR,
-  INTELLIGENCE_YEAR as CERTIFIED_YEAR,
-} from "@/lib/comercial/tiendas/store-certified-intelligence-types";
+// AGENTIK-STORES-INTELLIGENCE-UX-IMPLEMENTATION-01: TREND_LABEL/TREND_COLOR/
+// INTELLIGENCE_YEAR (deuda deprecada) retirados — el tab nuevo es render-only
+// sobre el PresentationAssembler.
+import { StoreIntelligenceTab } from "@/components/comercial/store-intelligence-tab";
+import type { StoreProductIntelligence, WindowId } from "@/lib/comercial/tiendas/store-product-intelligence-types";
 
 // ── Rule provenance (AGENTIK-STORES-SUPPLY-RULES-CONSUMPTION-CERTIFICATION-01) ─
 
@@ -2352,21 +2352,49 @@ function DistributionStoreDrawer({
   const [certifiedIntel, setCertifiedIntel] = useState<CertifiedStoreIntelligenceResponse | null>(null);
   const [certifiedIntelLoading, setCertifiedIntelLoading] = useState(false);
   const [certifiedIntelLoaded, setCertifiedIntelLoaded] = useState(false);
+  const [certifiedIntelError, setCertifiedIntelError] = useState(false);
+  // AGENTIK-STORES-INTELLIGENCE-UX-IMPLEMENTATION-01: product intelligence
+  // (segunda carga certificada — 2 llamadas totales, cero N+1 por sección).
+  const [productIntel, setProductIntel] = useState<StoreProductIntelligence | null>(null);
+  const [productIntelLoading, setProductIntelLoading] = useState(false);
+  const [productIntelError, setProductIntelError] = useState(false);
+  const [intelPeriod, setIntelPeriod] = useState<WindowId>("LAST_90_DAYS");
+  const [productIntelKey, setProductIntelKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (tab !== "inteligencia" || certifiedIntelLoaded) return;
     let cancelled = false;
     setCertifiedIntelLoading(true);
+    setCertifiedIntelError(false);
     tiendaApi(orgSlug, { action: "certified_store_intelligence", storeId: storeCard.store.id })
       .then((data: { certifiedIntelligence?: CertifiedStoreIntelligenceResponse }) => {
         if (cancelled) return;
         if (data.certifiedIntelligence) setCertifiedIntel(data.certifiedIntelligence);
+        else setCertifiedIntelError(true);
         setCertifiedIntelLoaded(true);
       })
-      .catch(() => { if (!cancelled) setCertifiedIntelLoaded(true); })
+      .catch(() => { if (!cancelled) { setCertifiedIntelError(true); setCertifiedIntelLoaded(true); } })
       .finally(() => { if (!cancelled) setCertifiedIntelLoading(false); });
     return () => { cancelled = true; };
   }, [tab, storeCard.store.id, orgSlug, certifiedIntelLoaded]);
+
+  useEffect(() => {
+    const key = `${storeCard.store.id}:${intelPeriod}`;
+    if (tab !== "inteligencia" || productIntelKey === key) return;
+    let cancelled = false;
+    setProductIntelLoading(true);
+    setProductIntelError(false);
+    tiendaApi(orgSlug, { action: "store_product_intelligence", storeId: storeCard.store.id, windowId: intelPeriod })
+      .then((data: { productIntelligence?: StoreProductIntelligence }) => {
+        if (cancelled) return;
+        if (data.productIntelligence) setProductIntel(data.productIntelligence);
+        else setProductIntelError(true);
+        setProductIntelKey(key);
+      })
+      .catch(() => { if (!cancelled) { setProductIntelError(true); setProductIntelKey(key); } })
+      .finally(() => { if (!cancelled) setProductIntelLoading(false); });
+    return () => { cancelled = true; };
+  }, [tab, storeCard.store.id, orgSlug, intelPeriod, productIntelKey]);
 
   // ── Inventory-by-line state (AGENTIK-STORES-INVENTORY-BY-LINE-01) ──────
   type InvLine = "CASTILLITOS" | "LATIN_KIDS" | "ACCESSORIES" | "UNCLASSIFIED" | "OUT_OF_STOCK" | "ESPECIALES";
@@ -2462,6 +2490,11 @@ function DistributionStoreDrawer({
     setExpandedRows(new Set());
     setCertifiedIntel(null);
     setCertifiedIntelLoaded(false);
+    setCertifiedIntelError(false);
+    setProductIntel(null);
+    setProductIntelKey(null);
+    setProductIntelError(false);
+    setIntelPeriod("LAST_90_DAYS");
     setCertifiedIntelLoading(false);
     setInvLine("CASTILLITOS");
     setInvLineCounts([]);
@@ -3428,368 +3461,25 @@ function DistributionStoreDrawer({
         <StoreSupplyRulesTab orgSlug={orgSlug} storeId={storeCard.store.id} storeName={storeCard.store.name} onSaved={onSnapshotRefresh} />
       )}
 
-      {/* TAB: Inteligencia — commercial intelligence dashboard */}
+      {/* TAB: Inteligencia — lectura ejecutiva diaria (INTELLIGENCE-UX-IMPLEMENTATION-01) */}
       {tab === "inteligencia" && (
-        <StoreIntelligenceTab certifiedIntel={certifiedIntel} certifiedIntelLoading={certifiedIntelLoading} />
+        <StoreIntelligenceTab
+          certifiedIntel={certifiedIntel}
+          certifiedLoading={certifiedIntelLoading}
+          certifiedError={certifiedIntelError}
+          productIntel={productIntel}
+          productLoading={productIntelLoading}
+          productError={productIntelError}
+          periodKey={intelPeriod}
+          onPeriodChange={setIntelPeriod}
+          onRetryCertified={() => { setCertifiedIntelError(false); setCertifiedIntelLoaded(false); }}
+          onRetryProduct={() => { setProductIntelError(false); setProductIntelKey(null); }}
+        />
       )}
     </OperationalSideDrawer>
   );
 }
 
-
-// ── Store Intelligence Tab — Executive Dashboard (CERTIFIED-MVP-01) ────────
-
-function StoreIntelligenceTab({ certifiedIntel, certifiedIntelLoading }: {
-  certifiedIntel: CertifiedStoreIntelligenceResponse | null;
-  certifiedIntelLoading: boolean;
-}) {
-  const loading = certifiedIntelLoading;
-  const ci = certifiedIntel;
-
-  if (loading && !ci) {
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-        {[80, 48, 120, 60].map((h, i) => (
-          <div key={i} style={{ height: h, background: C.surface, borderRadius: R.sm, animation: "pulse 1.5s infinite" }} />
-        ))}
-      </div>
-    );
-  }
-
-  if (!ci) {
-    return (
-      <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkFaint, padding: `${S[4]}px 0`, textAlign: "center" }}>
-        No se pudo cargar la inteligencia comercial certificada.
-      </div>
-    );
-  }
-
-  const k = ci.salesKpis;
-  const trend = ci.sixMonthTrend;
-  const bm = ci.storeBenchmark;
-  const disc = ci.discountOpportunities;
-  const insights = ci.executiveInsights;
-  const monthly = ci.monthlySales;
-
-  const SEVERITY_COLOR: Record<string, string> = {
-    INFO: C.blueDark,
-    WARNING: C.amber,
-    CRITICAL: C.red,
-  };
-
-  const SEVERITY_BG: Record<string, string> = {
-    INFO: C.blueDark + "0A",
-    WARNING: C.amber + "0A",
-    CRITICAL: C.red + "0A",
-  };
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-
-      {/* Certification badge */}
-      <div style={{ display: "flex", alignItems: "center", gap: S[2], flexWrap: "wrap" }}>
-        <span className="ag-op-status ag-op-status--success" style={{
-          fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-          padding: `${S[1]}px ${S[2]}px`, borderRadius: R.sm,
-        }}>
-          Ventas certificadas {CERTIFIED_YEAR}
-        </span>
-        {ci.period.isPartialYear && (
-          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
-            {ci.period.dataMonths} meses con datos
-          </span>
-        )}
-      </div>
-
-      {/* Row 1: Primary KPIs — 2x2 grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
-        <MiniStat label={`Ventas netas ${CERTIFIED_YEAR}`} value={formatCurrency(k.netSales)} color={C.ink} />
-        <MiniStat label="Facturas" value={String(k.invoiceCount)} color={C.ink} />
-        <MiniStat label="Ticket promedio" value={k.averageTicket > 0 ? formatCurrency(k.averageTicket) : "\u2014"} color={C.ink} />
-        <MiniStat
-          label="Crecimiento mensual"
-          value={k.monthlyGrowthPct !== null ? `${k.monthlyGrowthPct >= 0 ? "+" : ""}${k.monthlyGrowthPct.toFixed(1)}%` : "\u2014"}
-          color={k.monthlyGrowthPct !== null ? (k.monthlyGrowthPct >= 0 ? C.green : C.red) : C.inkFaint}
-        />
-      </div>
-
-      {/* Row 2: Secondary strip — notas credito + progreso anual */}
-      <div style={{ display: "flex", gap: S[3], flexWrap: "wrap" }}>
-        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: k.creditNoteCount > 0 ? C.amber : C.inkFaint }}>
-          {k.creditNoteCount} notas credito ({k.creditNotes !== 0 ? formatCurrency(Math.abs(k.creditNotes)) : "$0"})
-        </span>
-        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
-          {k.documentCount} documentos total
-        </span>
-        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
-          Progreso anual: {k.yearProgressPct.toFixed(0)}%
-        </span>
-      </div>
-
-      {/* Row 3: Monthly sales chart */}
-      {monthly.length > 0 && (
-        <div style={{ ...panel, padding: S[3] }}>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink, marginBottom: S[2] }}>
-            Ventas mensuales {CERTIFIED_YEAR}
-          </div>
-          {(() => {
-            const maxRev = Math.max(...monthly.map(m => Math.abs(m.netSales)), 1);
-            return (
-              <div style={{ display: "flex", flexDirection: "column", gap: S[1] }}>
-                {monthly.map(m => (
-                  <div key={m.month} style={{ display: "grid", gridTemplateColumns: "36px 1fr 80px", gap: S[2], alignItems: "center" }}>
-                    <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, fontWeight: T.wt.medium }}>
-                      {m.monthLabel}
-                    </span>
-                    <div style={{ position: "relative", height: 18, background: C.lineSubtle, borderRadius: R.sm, overflow: "hidden" }}
-                      title={`${m.monthLabel} ${CERTIFIED_YEAR}: ${m.invoiceCount} facturas, ${m.creditNoteCount} NC, neto ${formatCurrency(m.netSales)}`}
-                    >
-                      <div style={{
-                        position: "absolute", top: 0, left: 0, height: "100%", borderRadius: R.sm,
-                        width: `${Math.max(2, (Math.abs(m.netSales) / maxRev) * 100)}%`,
-                        background: m.netSales >= 0 ? C.blueDark : C.red,
-                      }} />
-                      <span style={{
-                        position: "absolute", top: 1, left: S[1],
-                        fontFamily: T.mono, fontSize: 10, color: "#fff", fontWeight: T.wt.semibold,
-                        textShadow: "0 0 2px rgba(0,0,0,0.5)",
-                      }}>
-                        {m.invoiceCount} fact
-                      </span>
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.ink }}>
-                        {formatCurrency(m.netSales)}
-                      </span>
-                      {m.monthOverMonthGrowthPct !== null && (
-                        <span style={{
-                          fontFamily: T.mono, fontSize: 10, marginLeft: S[1],
-                          color: m.monthOverMonthGrowthPct >= 0 ? C.green : C.red,
-                        }}>
-                          {m.monthOverMonthGrowthPct >= 0 ? "+" : ""}{m.monthOverMonthGrowthPct.toFixed(0)}%
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            );
-          })()}
-        </div>
-      )}
-
-      {/* Row 4: 6-month trend */}
-      {trend.months >= 2 && (
-        <div style={{ ...panel, padding: S[3] }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: S[2] }}>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink }}>
-              Tendencia {trend.months} meses
-            </div>
-            <span className="ag-op-status" style={{
-              fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-              padding: `${S[1]}px ${S[2]}px`, borderRadius: R.sm,
-              background: TREND_COLOR[trend.trend] + "18",
-              color: TREND_COLOR[trend.trend],
-            }}>
-              {TREND_LABEL[trend.trend]}
-            </span>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: S[2] }}>
-            <div>
-              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Primer mes</div>
-              <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
-                {formatCurrency(trend.firstMonthSales)}
-              </div>
-            </div>
-            <div>
-              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Ultimo mes</div>
-              <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
-                {formatCurrency(trend.lastMonthSales)}
-              </div>
-            </div>
-            <div>
-              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Crecimiento</div>
-              <div style={{
-                fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold,
-                color: trend.accumulatedGrowthPct !== null
-                  ? (trend.accumulatedGrowthPct >= 0 ? C.green : C.red)
-                  : C.inkFaint,
-              }}>
-                {trend.accumulatedGrowthPct !== null
-                  ? `${trend.accumulatedGrowthPct >= 0 ? "+" : ""}${trend.accumulatedGrowthPct.toFixed(1)}%`
-                  : "\u2014"}
-              </div>
-            </div>
-          </div>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginTop: S[2] }}>
-            Promedio mensual: {formatCurrency(trend.averageMonthlySales)}
-          </div>
-        </div>
-      )}
-
-      {/* Row 5: Store benchmark — position in network */}
-      <div style={{ ...panel, padding: S[3] }}>
-        <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink, marginBottom: S[2] }}>
-          Posicion en red de tiendas
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: S[2] }}>
-          <div>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Puesto</div>
-            <div style={{
-              fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold,
-              color: bm.positionByNetSales <= 2 ? C.green : C.amber,
-            }}>
-              {bm.positionByNetSales}/{bm.totalActiveStores}
-            </div>
-          </div>
-          <div>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Participacion</div>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: C.ink }}>
-              {bm.participationPct.toFixed(1)}%
-            </div>
-          </div>
-          <div>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Total red</div>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
-              {formatCurrency(bm.allStoresNetSales)}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Row 6: Discount opportunities */}
-      {disc.totalReferences > 0 && (
-        <div style={{ ...panel, padding: S[3] }}>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink, marginBottom: S[1] }}>
-            Oportunidades de descuento ({disc.totalReferences} refs, {disc.totalUnits} uds)
-          </div>
-
-          {/* Tier summary strip */}
-          <div style={{ display: "flex", gap: S[2], flexWrap: "wrap", marginBottom: S[2] }}>
-            {disc.tier70 > 0 && (
-              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.red, fontWeight: T.wt.semibold }}>
-                70%: {disc.tier70}
-              </span>
-            )}
-            {disc.tier50 > 0 && (
-              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.red }}>
-                50%: {disc.tier50}
-              </span>
-            )}
-            {disc.tier30 > 0 && (
-              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.amber }}>
-                30%: {disc.tier30}
-              </span>
-            )}
-            {disc.tier10 > 0 && (
-              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
-                10%: {disc.tier10}
-              </span>
-            )}
-            {disc.withoutDate > 0 && (
-              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
-                Sin fecha: {disc.withoutDate}
-              </span>
-            )}
-          </div>
-
-          {/* Top 8 discount items */}
-          {disc.topItems.length > 0 && (
-            <div className="ag-op-table">
-              {disc.topItems.map(item => (
-                <div key={item.referenceCode} className="ag-op-row" style={{
-                  display: "grid", gridTemplateColumns: "36px 1fr auto", gap: S[2], alignItems: "center",
-                  padding: `${S[2]}px 0`, borderBottom: `1px solid ${C.lineSubtle}`,
-                }}>
-                  <CommercialReferenceThumbnail
-                    imageUrl={item.imageUrl}
-                    referenceCode={item.referenceCode}
-                    description={item.description}
-                    size={32}
-                  />
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.ink }}>
-                      {item.referenceCode}
-                    </div>
-                    <div style={{
-                      fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint,
-                      display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical" as const,
-                      overflow: "hidden",
-                    }}>
-                      {item.description}
-                    </div>
-                  </div>
-                  <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                    <div style={{
-                      fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                      color: item.discountPercent >= 50 ? C.red : C.amber,
-                    }}>
-                      Dto: {item.discountPercent}%
-                    </div>
-                    <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint }}>
-                      {item.storeQty} uds
-                      {item.daysInStore != null && ` \u00b7 ${item.daysInStore}d`}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Row 7: Executive insights */}
-      {insights.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink }}>
-            Lectura ejecutiva
-          </div>
-          {insights.map((ins, i) => (
-            <div key={i} style={{
-              ...panel, padding: S[3],
-              background: SEVERITY_BG[ins.severity] ?? C.surface,
-              border: `1px solid ${(SEVERITY_COLOR[ins.severity] ?? C.line)}20`,
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[1] }}>
-                <span className="ag-op-status" style={{
-                  fontFamily: T.mono, fontSize: 10, fontWeight: T.wt.semibold,
-                  padding: `1px ${S[1]}px`, borderRadius: R.sm,
-                  background: (SEVERITY_COLOR[ins.severity] ?? C.inkFaint) + "18",
-                  color: SEVERITY_COLOR[ins.severity] ?? C.inkFaint,
-                }}>
-                  {ins.severity}
-                </span>
-                <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.ink }}>
-                  {ins.title}
-                </span>
-              </div>
-              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, lineHeight: 1.5 }}>
-                {ins.description}
-              </div>
-              <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint, marginTop: S[1] }}>
-                {ins.evidence}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Empty state — no sales at all */}
-      {k.netSales === 0 && monthly.length === 0 && (
-        <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkFaint, padding: `${S[4]}px 0`, textAlign: "center" }}>
-          No hay ventas certificadas para esta tienda en {CERTIFIED_YEAR}.
-        </div>
-      )}
-
-      {/* Source footer */}
-      <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint, lineHeight: 1.5 }}>
-        Fuente: SaleRecord (SAG FACTURAS k_n_clase_fuente=1). Codigo documental por tienda.
-        Periodo: Ene\u2013Dic {CERTIFIED_YEAR}.
-        {ci.snapshotAt && ` Snapshot: ${ci.snapshotAt.slice(0, 16).replace("T", " ")}`}
-      </div>
-    </div>
-  );
-}
 
 // ── Accessory Composition Accordion (AGENTIK-STORES-ACCESSORIES-COMPOSITION-UX-01/02) ──
 

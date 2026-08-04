@@ -102,6 +102,54 @@ export interface TopProductEntry {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// Aggregated collection + canonical ranking law
+// (AGENTIK-STORES-PRODUCT-INTELLIGENCE-UNIVERSE-RANKING-01)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * One entry per commercial reference for the PRIMARY window, BEFORE any
+ * Top-N slice. Net values are post-NC (invoice − credit note), verbatim from
+ * the engine's SQL aggregation — negatives/zeros included, no clamps.
+ * shareOfStoreRevenuePct is precomputed once by the engine against the
+ * certified store denominator; downstream layers never recompute it.
+ *
+ * This collection enables REAL rankings over any eligible sub-universe of
+ * references (e.g. commercial worlds derived from canonical taxonomy) via
+ * rankProducts — without new queries and without duplicating ranking law.
+ */
+export type AggregatedProductEntry = Omit<TopProductEntry, "rank">;
+
+/**
+ * CANONICAL ranking law — single implementation for engine and pure domain
+ * layers. Pure: no clock, no DB, no mutation of the input.
+ *
+ * Top units:   netUnits DESC, netRevenue DESC, referenceCode ASC
+ * Top revenue: netRevenue DESC, netUnits DESC, referenceCode ASC
+ *
+ * Entries with net <= 0 in the ranked dimension are excluded from the ranking
+ * (certified law — unchanged). Returns entries re-ranked 1..N.
+ */
+export function rankProducts(
+  entries: readonly AggregatedProductEntry[],
+  sortBy: "netUnits" | "netRevenue",
+  topN: number,
+): TopProductEntry[] {
+  const eligible = entries.filter(a => (sortBy === "netUnits" ? a.netUnits : a.netRevenue) > 0);
+  const sorted = [...eligible].sort((a, b) => {
+    const primary = sortBy === "netUnits"
+      ? b.netUnits - a.netUnits
+      : b.netRevenue - a.netRevenue;
+    if (primary !== 0) return primary;
+    const secondary = sortBy === "netUnits"
+      ? b.netRevenue - a.netRevenue
+      : b.netUnits - a.netUnits;
+    if (secondary !== 0) return secondary;
+    return a.referenceCode.localeCompare(b.referenceCode);
+  });
+  return sorted.slice(0, Math.max(0, topN)).map((a, idx) => ({ ...a, rank: idx + 1 }));
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Sales rate
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -259,9 +307,16 @@ export interface StoreProductIntelligence {
   coverage: DataCoverage;
   commercialUniverse: CommercialUniverseCoverage;
 
-  /** Top N by net units — COMMERCIAL_PRODUCT_UNIVERSE only */
+  /**
+   * FULL aggregated commercial collection for the primary window (pre-slice,
+   * sorted referenceCode ASC for payload determinism). Source of truth for
+   * per-universe rankings downstream via rankProducts.
+   */
+  aggregatedProducts: AggregatedProductEntry[];
+
+  /** Top N by net units — COMMERCIAL_PRODUCT_UNIVERSE only (= rankProducts(aggregatedProducts, "netUnits", topN)) */
   topByUnits: TopProductEntry[];
-  /** Top N by net revenue — COMMERCIAL_PRODUCT_UNIVERSE only */
+  /** Top N by net revenue — COMMERCIAL_PRODUCT_UNIVERSE only (= rankProducts(aggregatedProducts, "netRevenue", topN)) */
   topByRevenue: TopProductEntry[];
 
   /** Sales rate for commercial references with activity */

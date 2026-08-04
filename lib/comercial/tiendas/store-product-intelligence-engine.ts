@@ -31,10 +31,11 @@ import {
 import { resolveActiveStores } from "./store-governance-service";
 import {
   isCommercialProductEligible,
+  rankProducts,
 } from "./store-product-intelligence-types";
 import type {
   StoreProductIntelligence,
-  TopProductEntry,
+  AggregatedProductEntry,
   SalesRateEntry,
   MomentumEntry,
   MomentumConfig,
@@ -367,47 +368,39 @@ function filterCommercialAggregates(
 // Pure metric functions (no DB, no new Date())
 // ══════════════════════════════════════════════════════════════════════════════
 
-function buildTopProducts(
+/**
+ * Full aggregated commercial collection for the primary window — one entry per
+ * reference, PRE-slice, net values verbatim (negatives/zeros included, no
+ * clamps). Sorted referenceCode ASC for payload determinism (SQL GROUP BY has
+ * no stable order). Ranking itself is the canonical pure law rankProducts()
+ * in store-product-intelligence-types.ts — single implementation, reused by
+ * downstream domain layers for per-universe rankings (UNIVERSE-RANKING-01).
+ */
+function buildAggregatedProducts(
   aggregates: RefAggregate[],
   enrichment: Map<string, ProductReferenceEnrichment>,
-  sortBy: "netUnits" | "netRevenue",
-  topN: number,
   totalStoreNetRevenue: number,
-): TopProductEntry[] {
-  // Exclude net <= 0 from top ranking
-  const eligible = aggregates.filter(a => sortBy === "netUnits" ? a.netUnits > 0 : a.netRevenue > 0);
-
-  const sorted = [...eligible].sort((a, b) => {
-    const primary = sortBy === "netUnits"
-      ? b.netUnits - a.netUnits
-      : b.netRevenue - a.netRevenue;
-    if (primary !== 0) return primary;
-    const secondary = sortBy === "netUnits"
-      ? b.netRevenue - a.netRevenue
-      : b.netUnits - a.netUnits;
-    if (secondary !== 0) return secondary;
-    return a.referenceCode.localeCompare(b.referenceCode);
-  });
-
-  return sorted.slice(0, topN).map((a, idx) => {
-    const e = enrichment.get(a.referenceCode);
-    return {
-      referenceCode: a.referenceCode,
-      productName: e?.productName ?? a.articleName,
-      heroImageUrl: e?.heroImageUrl ?? null,
-      lineaSag: e?.lineaSag ?? null,
-      grupoSag: e?.grupoSag ?? null,
-      subgrupoSag: e?.subgrupoSag ?? null,
-      netUnits: a.netUnits,
-      netRevenue: a.netRevenue,
-      invoiceCount: a.invoiceCount,
-      lastSaleDate: a.lastFacturaDate,
-      rank: idx + 1,
-      shareOfStoreRevenuePct: totalStoreNetRevenue > 0
-        ? (a.netRevenue / totalStoreNetRevenue) * 100
-        : 0,
-    };
-  });
+): AggregatedProductEntry[] {
+  return aggregates
+    .map(a => {
+      const e = enrichment.get(a.referenceCode);
+      return {
+        referenceCode: a.referenceCode,
+        productName: e?.productName ?? a.articleName,
+        heroImageUrl: e?.heroImageUrl ?? null,
+        lineaSag: e?.lineaSag ?? null,
+        grupoSag: e?.grupoSag ?? null,
+        subgrupoSag: e?.subgrupoSag ?? null,
+        netUnits: a.netUnits,
+        netRevenue: a.netRevenue,
+        invoiceCount: a.invoiceCount,
+        lastSaleDate: a.lastFacturaDate,
+        shareOfStoreRevenuePct: totalStoreNetRevenue > 0
+          ? (a.netRevenue / totalStoreNetRevenue) * 100
+          : 0,
+      };
+    })
+    .sort((a, b) => a.referenceCode.localeCompare(b.referenceCode));
 }
 
 function buildSalesRates(
@@ -816,8 +809,9 @@ export async function buildStoreProductIntelligence(
     (sum, a) => sum + Math.max(0, a.netRevenue), 0,
   );
 
-  const topByUnits = buildTopProducts(commercialPrimary, enrichment, "netUnits", topN, totalCommercialNetRevenue);
-  const topByRevenue = buildTopProducts(commercialPrimary, enrichment, "netRevenue", topN, totalCommercialNetRevenue);
+  const aggregatedProducts = buildAggregatedProducts(commercialPrimary, enrichment, totalCommercialNetRevenue);
+  const topByUnits = rankProducts(aggregatedProducts, "netUnits", topN);
+  const topByRevenue = rankProducts(aggregatedProducts, "netRevenue", topN);
   const salesRates = buildSalesRates(comm30, comm60, comm90, enrichment);
   const momentum = buildMomentum(commRecent, commPrevious, enrichment, momentumConfig);
 
@@ -864,6 +858,7 @@ export async function buildStoreProductIntelligence(
 
     commercialUniverse,
 
+    aggregatedProducts,
     topByUnits,
     topByRevenue,
     salesRates,
@@ -917,6 +912,7 @@ function emptyIntelligence(
       excludedUnits: 0,
       exclusionReasons: {},
     },
+    aggregatedProducts: [],
     topByUnits: [],
     topByRevenue: [],
     salesRates: [],
