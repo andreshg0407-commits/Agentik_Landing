@@ -41,6 +41,8 @@
 import { consultaSagJson } from "@/lib/connectors/pya/client";
 import { BaseAdapter }     from "@/lib/connectors/core/base-adapter";
 import { sagDebug, sagInfo } from "@/lib/sag/logger";
+import { getSagConnection } from "@/lib/connectors/pya/sag-source-router";
+import type { SagSource } from "@/lib/connectors/pya/sag-source-router";
 import { mapSagCustomer, mapSagReceivable, mapSagMovement, mapSagOrder, mapSagCollection } from "./mappers";
 // Castillitos FUENTES registry — used as the default fuentesMap when
 // connector.config.fuentesMap is absent (backward-compat for existing connectors).
@@ -76,6 +78,18 @@ interface SagPyaSoapConfig extends AdapterConfig {
    * Keys are stored as strings in JSON; the adapter coerces them to numbers.
    */
   fuentesMap?: Record<string, string>;
+  /**
+   * AGENTIK-SAG-DUAL-DATABASE-ROUTER-01: explicit SAG source override.
+   * When set, the adapter resolves database + token from the central
+   * sag-source-router instead of from Connector.config or env fallback.
+   *
+   * This ensures CURRENT operational syncs use the CURRENT database
+   * regardless of what is stored in the Connector.config row.
+   *
+   * Callers pass this via the Connector.config or by augmenting the
+   * config object before adapter creation.
+   */
+  sagSource?: SagSource;
 }
 
 const DEFAULT_ENDPOINT =
@@ -350,6 +364,19 @@ export class SagPyaSoapAdapter extends BaseAdapter {
   }
 
   private get apiConfig() {
+    // AGENTIK-SAG-DUAL-DATABASE-ROUTER-01: when sagSource is set, resolve
+    // database + token from the central router. This overrides Connector.config
+    // and env fallback, ensuring the correct source is used for operational syncs.
+    if (this.cfg.sagSource) {
+      const routed = getSagConnection(this.cfg.sagSource);
+      return {
+        endpointUrl: routed.endpointUrl,
+        token: routed.token,
+        database: routed.database,
+      };
+    }
+
+    // Legacy resolution: Connector.config → env fallback
     return {
       endpointUrl: this.cfg.endpointUrl ?? DEFAULT_ENDPOINT,
       // Fallback to env vars when Connector.config.token is absent or null.

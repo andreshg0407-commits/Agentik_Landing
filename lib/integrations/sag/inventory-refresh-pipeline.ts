@@ -20,6 +20,7 @@
 import { prisma } from "@/lib/prisma";
 import type { PyaApiConfig } from "@/lib/connectors/pya/types";
 import { syncSagInventory } from "@/lib/connectors/adapters/sag-pya-soap/inventory/sag-inventory-sync";
+import { getSagConnection } from "@/lib/connectors/pya/sag-source-router";
 import { persistSagInventorySnapshot } from "./sag-inventory-storage";
 
 // ── Line mapping (from SAG LINEAS FK — Phase 7: shared map) ─────────────────
@@ -72,25 +73,24 @@ export async function refreshInventoryPipeline(
   const db = prisma as any;
 
   // ── Resolve SAG config ───────────────────────────────────────────────────
+  // AGENTIK-SAG-DUAL-DATABASE-ROUTER-01: inventory refresh is a current-state
+  // snapshot — always reads from the CURRENT SAG database.
 
-  const token = (process.env.PYA_SOAP_TOKEN ?? "").trim();
-  const database = (process.env.PYA_SAG_BD ?? "").trim() || undefined;
-  const endpointUrl =
-    process.env.PYA_SOAP_ENDPOINT?.trim() ??
-    "http://wssagpya.azurewebsites.net/ServiceSagWeb.svc/soap";
-
-  if (!token) {
+  let config: PyaApiConfig;
+  try {
+    config = getSagConnection("CURRENT");
+  } catch (e) {
     return {
       status: "error",
       pilSync: emptyPilResult(),
       pdRecon: emptyPdResult(),
       snapshot: emptySnapshotResult(),
       totalDurationMs: Date.now() - t0,
-      error: "PYA_SOAP_TOKEN not configured",
+      error: `SAG CURRENT config: ${(e as Error).message}`,
     };
   }
 
-  const config: PyaApiConfig = { token, endpointUrl, database };
+  console.log(`[inventory-refresh] source=CURRENT database=${config.database}`);
 
   // ── STEP 1: PIL Sync ─────────────────────────────────────────────────────
 

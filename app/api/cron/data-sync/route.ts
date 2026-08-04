@@ -26,6 +26,7 @@ import { prisma }                    from "@/lib/prisma";
 import { syncEngine }                from "@/lib/connectors/core/sync-engine";
 import type { SyncModule }           from "@/lib/connectors/core/types";
 import { syncOrderLines }            from "@/lib/connectors/adapters/sag-pya-soap/orders/sag-order-lines-sync";
+import { getSagConnection }          from "@/lib/connectors/pya/sag-source-router";
 
 // Register adapters (side-effect)
 import "@/lib/connectors/adapters";
@@ -128,8 +129,12 @@ export async function GET(req: NextRequest) {
 
         try {
           const isRxBatch = mod === "receivables";
+          // AGENTIK-SAG-DUAL-DATABASE-ROUTER-01: SAG operational syncs use
+          // CURRENT source explicitly, overriding the Connector.config database.
+          const sagOverrides = isSag ? { configOverrides: { sagSource: "CURRENT" as const } } : {};
           const runId = await syncEngine.syncModule(connector.id, mod as SyncModule, {
             ...(isRxBatch ? { maxPages: 20 } : {}),
+            ...sagOverrides,
           });
 
           const run = await prisma.connectorRun.findUnique({
@@ -151,20 +156,15 @@ export async function GET(req: NextRequest) {
             const remainingMs = 300_000 - (Date.now() - t0);
             if (remainingMs > 60_000) {
               try {
-                const cfg = (await prisma.connector.findUnique({
-                  where: { id: connector.id },
-                  select: { config: true },
-                }))?.config as Record<string, string> | null;
+                // AGENTIK-SAG-DUAL-DATABASE-ROUTER-01: use CURRENT source from
+                // the central router instead of reading Connector.config directly.
+                const currentConfig = getSagConnection("CURRENT");
 
-                if (cfg?.endpointUrl && cfg?.database) {
+                if (currentConfig.endpointUrl && currentConfig.database) {
                   const lineResult = await syncOrderLines({
                     organizationId: connector.organizationId,
-                    sagConfig: {
-                      endpointUrl: cfg.endpointUrl,
-                      token: cfg.token ?? "",
-                      database: cfg.database,
-                    },
-                    sagDatabase: cfg.database,
+                    sagConfig: currentConfig,
+                    sagDatabase: currentConfig.database,
                     onlyMissing: true, // only sync lines for orders without lines — fast incremental
                   });
                   results.push({

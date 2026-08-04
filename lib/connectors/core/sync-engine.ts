@@ -110,7 +110,13 @@ class SyncEngine {
         data:  { status: "SYNCING" },
       });
 
-      const adapter  = registry.create(source, orgId, adapterConf);
+      // AGENTIK-SAG-DUAL-DATABASE-ROUTER-01: merge configOverrides on top
+      // of persisted Connector.config, allowing callers to inject sagSource
+      // without modifying the DB row.
+      const mergedConf = options.configOverrides
+        ? { ...adapterConf, ...options.configOverrides }
+        : adapterConf;
+      const adapter  = registry.create(source, orgId, mergedConf);
       const handler  = storageHandlers.get(module);
       const maxPages = options.maxPages ?? Infinity;
 

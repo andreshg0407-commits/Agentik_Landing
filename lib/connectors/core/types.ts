@@ -488,4 +488,12 @@ export interface SyncOptions {
    * and do not advance the cursor. Default: false.
    */
   dryRun?:          boolean;
+  /**
+   * AGENTIK-SAG-DUAL-DATABASE-ROUTER-01: additional config fields merged
+   * on top of the Connector.config row before adapter creation.
+   *
+   * Use this to inject runtime overrides (e.g. sagSource: "CURRENT")
+   * without modifying the persisted Connector.config.
+   */
+  configOverrides?: Record<string, unknown>;
 }
