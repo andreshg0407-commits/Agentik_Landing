@@ -663,6 +663,12 @@ export class SagPyaSoapAdapter extends BaseAdapter {
       let latestDate: Date | null = null;
       const mapped: UnifiedMovement[] = [];
       const orders: UnifiedSagOrder[] = [];
+      // AGENTIK-SAG-CURSOR-RESET-01: exclude future-dated documents from the
+      // operational sync.  They cannot be persisted as current SaleRecords and
+      // cannot advance the cursor.  They will be ingested naturally once their
+      // documentDate becomes <= the sync date on a later run.
+      const cursorCeiling = new Date();
+      let futureSkipped = 0;
 
       for (const row of rawRows) {
         const r = row as Record<string, unknown>;
@@ -671,10 +677,19 @@ export class SagPyaSoapAdapter extends BaseAdapter {
         if (ord) { orders.push(ord); continue; }
         const rec = mapSagMovement(r, this.orgId, this.fuenteToCode);
         if (!rec) continue;
+        if (rec.saleDate > cursorCeiling) { futureSkipped++; continue; }
         mapped.push(rec);
         if (rec.saleDate.getTime() > 0 && (!latestDate || rec.saleDate > latestDate)) {
           latestDate = rec.saleDate;
         }
+      }
+
+      if (futureSkipped > 0) {
+        sagInfo("soap:cache:future-skipped", {
+          orgId:   this.orgId,
+          module:  "movements",
+          message: `Excluded ${futureSkipped} future-dated document(s) (date > ${cursorCeiling.toISOString().slice(0, 10)})`,
+        });
       }
 
       this._movCache           = mapped;

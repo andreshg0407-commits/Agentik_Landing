@@ -47,6 +47,7 @@ export type SagEventCode =
   | "soap:call:start"   // emitted before every consultaSagJson call (token never included)
   | "soap:call:done"   // emitted after SOAP response received (row count)
   | "soap:cache:ready" // emitted after adapter cache is populated (AR row count)
+  | "soap:cache:future-skipped" // emitted when future-dated documents are excluded
   | "soap:page"        // emitted per pullReceivables page (offset, slice, hasMore)
   | "soap:fault"
   | "soap:http:error"
