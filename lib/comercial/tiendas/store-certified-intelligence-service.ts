@@ -36,7 +36,14 @@ import type {
   ExecutiveInsight,
 } from "./store-certified-intelligence-types";
 
-import { MONTH_LABELS, INTELLIGENCE_YEAR } from "./store-certified-intelligence-types";
+import { MONTH_LABELS } from "./store-certified-intelligence-types";
+import { loadIntelligenceHistoryBundle } from "./store-intelligence-history-service";
+
+// AGENTIK-STORES-INTELLIGENCE-HISTORY-BENCHMARK-01:
+// el año se deriva SIEMPRE de asOfDate — cero años hardcodeados en el contrato.
+function todayISO(): string {
+  return new Date().toISOString().slice(0, 10);
+}
 
 // ── Cache ────────────────────────────────────────────────────────────────────
 
@@ -71,23 +78,17 @@ function pad2(n: number): string {
   return n.toString().padStart(2, "0");
 }
 
-// ── Current month ceiling ────────────────────────────────────────────────────
-
-function getCurrentMonthNumber(): number {
-  return new Date().getMonth() + 1; // 1-12
-}
-
 // ── Build period ─────────────────────────────────────────────────────────────
 
-function buildPeriod(sales: StoreSalesResponse | null): CertifiedPeriod {
-  const now = new Date();
-  const dateTo = now.toISOString().slice(0, 10);
-  const isPartialYear = now.getFullYear() === INTELLIGENCE_YEAR && now.getMonth() < 11;
+function buildPeriod(sales: StoreSalesResponse | null, asOfDate: string): CertifiedPeriod {
+  const asOfYear = Number(asOfDate.slice(0, 4));
+  const dateTo = asOfDate;
+  const isPartialYear = Number(asOfDate.slice(5, 7)) < 12;
 
   if (!sales || sales.monthly.length === 0) {
     return {
-      year: INTELLIGENCE_YEAR,
-      dateFrom: `${INTELLIGENCE_YEAR}-01-01`,
+      year: asOfYear,
+      dateFrom: `${asOfYear}-01-01`,
       dateTo,
       firstDataDate: null,
       lastDataDate: null,
@@ -97,12 +98,12 @@ function buildPeriod(sales: StoreSalesResponse | null): CertifiedPeriod {
   }
 
   const sorted = [...sales.monthly].sort((a, b) => a.month.localeCompare(b.month));
-  const firstMonth = sorted[0].month;  // "2026-01"
+  const firstMonth = sorted[0].month;
   const lastMonth = sorted[sorted.length - 1].month;
 
   return {
-    year: INTELLIGENCE_YEAR,
-    dateFrom: `${INTELLIGENCE_YEAR}-01-01`,
+    year: asOfYear,
+    dateFrom: `${asOfYear}-01-01`,
     dateTo,
     firstDataDate: `${firstMonth}-01`,
     lastDataDate: `${lastMonth}-01`,
@@ -164,8 +165,9 @@ function buildSalesKpis(sales: StoreSalesResponse | null): CertifiedSalesKpis {
 
 // ── Build monthly sales (fill missing months with zeros) ─────────────────────
 
-function buildMonthlySales(sales: StoreSalesResponse | null): CertifiedMonthlySales[] {
-  const currentMonth = getCurrentMonthNumber();
+function buildMonthlySales(sales: StoreSalesResponse | null, asOfDate: string): CertifiedMonthlySales[] {
+  const asOfYear = Number(asOfDate.slice(0, 4));
+  const currentMonth = Number(asOfDate.slice(5, 7));
   const salesMap = new Map<string, StoreSalesMonth>();
 
   if (sales) {
@@ -178,7 +180,7 @@ function buildMonthlySales(sales: StoreSalesResponse | null): CertifiedMonthlySa
 
   for (let i = 1; i <= currentMonth; i++) {
     const mm = pad2(i);
-    const monthKey = `${INTELLIGENCE_YEAR}-${mm}`;
+    const monthKey = `${asOfYear}-${mm}`;
     const monthLabel = MONTH_LABELS[mm] ?? mm;
     const data = salesMap.get(monthKey);
 
@@ -350,6 +352,7 @@ function buildExecutiveInsights(
   salesKpis: CertifiedSalesKpis,
   benchmark: StoreBenchmark,
   discountSummary: DiscountOpportunitySummary,
+  asOfYear: number,
 ): ExecutiveInsight[] {
   const insights: ExecutiveInsight[] = [];
 
@@ -357,7 +360,7 @@ function buildExecutiveInsights(
   insights.push({
     severity: "INFO",
     title: "Ventas netas acumuladas",
-    description: `${storeName} registra ventas netas por ${formatCurrency(salesKpis.netSales)} durante ${INTELLIGENCE_YEAR}.`,
+    description: `${storeName} registra ventas netas por ${formatCurrency(salesKpis.netSales)} durante ${asOfYear}.`,
     evidence: `Facturacion bruta: ${formatCurrency(salesKpis.grossSales)}, notas credito: ${formatCurrency(salesKpis.creditNotes)}, ${salesKpis.documentCount} documentos.`,
   });
 
@@ -408,42 +411,61 @@ function buildExecutiveInsights(
 
 // ── Main entry point ─────────────────────────────────────────────────────────
 
+const EMPTY_DISCOUNTS: StoreDiscountResponse = {
+  storeId: "", storeName: "", recommendations: [],
+  kpis: {
+    totalEvaluated: 0, none: 0, tenPercent: 0, thirtyPercent: 0,
+    fiftyPercent: 0, seventyPercent: 0, sinFecha: 0,
+    excludedSpecialCollection: 0, buckets: [],
+  },
+  computedAt: "",
+};
+
 export async function loadCertifiedStoreIntelligence(
   orgId: string,
   storeId: string,
 ): Promise<CertifiedStoreIntelligenceResponse> {
-  const cacheKey = `certifiedIntel:${orgId}:${storeId}:${INTELLIGENCE_YEAR}`;
+  const asOfDate = todayISO();
+  const asOfYear = Number(asOfDate.slice(0, 4));
+  const cacheKey = `certifiedIntel:${orgId}:${storeId}:${asOfDate}`;
   const cached = getCached(cacheKey);
   if (cached) return cached;
 
-  // Parallel data loading
-  const [storeSales, allStores, discounts] = await Promise.all([
+  // Parallel data loading.
+  // HISTORY-BENCHMARK-01: discounts es DEPRECADO en este contrato y su carga
+  // es no-fatal — un fallo de Descuentos jamás tumba la Inteligencia.
+  const [storeSales, allStores, discounts, historyBundle] = await Promise.all([
     loadStoreSales(orgId, storeId),
     loadAllStoresSales(orgId),
-    loadStoreDiscounts(orgId, storeId),
+    loadStoreDiscounts(orgId, storeId).catch((): StoreDiscountResponse => ({ ...EMPTY_DISCOUNTS, storeId, storeName: storeId })),
+    loadIntelligenceHistoryBundle(orgId, storeId, asOfDate),
   ]);
 
   const storeName = storeSales?.storeName ?? discounts.storeName ?? storeId;
 
   // Build each section
-  const period = buildPeriod(storeSales);
+  const period = buildPeriod(storeSales, asOfDate);
   const salesKpis = buildSalesKpis(storeSales);
-  const monthlySales = buildMonthlySales(storeSales);
+  const monthlySales = buildMonthlySales(storeSales, asOfDate);
   const sixMonthTrend = buildSixMonthTrend(monthlySales);
   const storeBenchmark = buildStoreBenchmark(storeId, allStores);
   const discountOpportunities = buildDiscountOpportunities(discounts);
-  const executiveInsights = buildExecutiveInsights(storeName, salesKpis, storeBenchmark, discountOpportunities);
+  const executiveInsights = buildExecutiveInsights(storeName, salesKpis, storeBenchmark, discountOpportunities, asOfYear);
 
   const result: CertifiedStoreIntelligenceResponse = {
     store: {
       storeId,
       storeName,
     },
+    asOfDate,
     period,
     salesKpis,
     monthlySales,
     sixMonthTrend,
     storeBenchmark,
+    networkBenchmark: historyBundle.networkBenchmark,
+    historicalSeries: historyBundle.historicalSeries,
+    freshness: historyBundle.freshness,
     discountOpportunities,
     executiveInsights,
     salesSourceStatus: "CERTIFIED",

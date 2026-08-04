@@ -48,11 +48,13 @@ export interface AllStoresSalesSummary {
   certified:  true;
 }
 
-// ── Constants ────────────────────────────────────────────────────────────────
+// ── Sales year (dinámico) ────────────────────────────────────────────────────
+// AGENTIK-STORES-INTELLIGENCE-HISTORY-BENCHMARK-01: año derivado del reloj,
+// jamás hardcodeado — el contrato sobrevive el cambio de año sin editar código.
 
-const SALES_YEAR = 2026;
-const YEAR_START = `${SALES_YEAR}-01-01`;
-const YEAR_END   = `${SALES_YEAR + 1}-01-01`;
+function currentSalesYear(): number {
+  return new Date().getFullYear();
+}
 
 // ── Cache ────────────────────────────────────────────────────────────────────
 
@@ -75,7 +77,10 @@ export async function loadStoreSales(
   orgId: string,
   storeId: string,
 ): Promise<StoreSalesResponse | null> {
-  const cacheKey = `storeSales:${orgId}:${storeId}:${SALES_YEAR}`;
+  const salesYear = currentSalesYear();
+  const yearStart = `${salesYear}-01-01`;
+  const yearEnd = `${salesYear + 1}-01-01`;
+  const cacheKey = `storeSales:${orgId}:${storeId}:${salesYear}`;
   const cached = getCached<StoreSalesResponse>(cacheKey);
   if (cached) return cached;
 
@@ -98,7 +103,7 @@ export async function loadStoreSales(
       AND s."rawJson"->>'code' = ANY($4)
     GROUP BY DATE_TRUNC('month', s."saleDate"), s."rawJson"->>'code'
     ORDER BY month ASC
-  `, orgId, YEAR_START, YEAR_END, codes);
+  `, orgId, yearStart, yearEnd, codes);
 
   const rows: StoreSalesRawRow[] = (raw as any[]).map(r => ({
     month:    r.month ? (r.month as Date).toISOString().slice(0, 7) : "????-??",
@@ -107,7 +112,7 @@ export async function loadStoreSales(
     amount:   r.amount ?? 0,
   }));
 
-  const result = assembleStoreSales(storeId, SALES_YEAR, rows);
+  const result = assembleStoreSales(storeId, salesYear, rows);
   if (!result) return null;
 
   setCache(cacheKey, result);
@@ -119,7 +124,8 @@ export async function loadStoreSales(
 export async function loadAllStoresSales(
   orgId: string,
 ): Promise<AllStoresSalesSummary> {
-  const cacheKey = `allStoreSales:${orgId}:${SALES_YEAR}`;
+  const salesYear = currentSalesYear();
+  const cacheKey = `allStoreSales:${orgId}:${salesYear}`;
   const cached = getCached<AllStoresSalesSummary>(cacheKey);
   if (cached) return cached;
 
@@ -142,7 +148,7 @@ export async function loadAllStoresSales(
     : 0;
 
   const result: AllStoresSalesSummary = {
-    year: SALES_YEAR,
+    year: salesYear,
     stores: valid,
     totals,
     certified: true,

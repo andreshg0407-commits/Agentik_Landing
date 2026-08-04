@@ -111,6 +111,26 @@ export interface ExecutiveInsight {
   evidence: string;
 }
 
+// ── History / benchmark / freshness (HISTORY-BENCHMARK-01) ──────────────────
+// Contratos definidos en la ley pura y re-exportados aquí para consumidores.
+
+export type {
+  CertifiedHistoricalSeries,
+  CertifiedHistoricalYear,
+  CertifiedYtdComparison,
+  HistoricalYearKind,
+  CertifiedNetworkBenchmark,
+  NetworkBenchmarkStoreRow,
+  CertifiedFreshness,
+  CertifiedDataStatus,
+} from "./store-intelligence-history-assembly";
+
+import type {
+  CertifiedHistoricalSeries as _HistSeries,
+  CertifiedNetworkBenchmark as _NetBench,
+  CertifiedFreshness as _Freshness,
+} from "./store-intelligence-history-assembly";
+
 // ── Full response ───────────────────────────────────────────────────────────
 
 export interface CertifiedStoreIntelligenceResponse {
@@ -118,11 +138,25 @@ export interface CertifiedStoreIntelligenceResponse {
     storeId: string;
     storeName: string;
   };
+  /** Fecha de referencia de TODOS los cálculos (dinámica — jamás un año fijo). */
+  asOfDate: string;
   period: CertifiedPeriod;
   salesKpis: CertifiedSalesKpis;
   monthlySales: CertifiedMonthlySales[];
   sixMonthTrend: SixMonthTrend;
+  /** @deprecated HISTORY-BENCHMARK-01: usar networkBenchmark (trae stores[] reales). */
   storeBenchmark: StoreBenchmark;
+  /** Benchmark de red con filas reales por tienda — mismo período exacto para todas. */
+  networkBenchmark: _NetBench;
+  /** Serie anual dinámica desde la primera fecha disponible; YTD same-cut. */
+  historicalSeries: _HistSeries;
+  /** Freshness derivada de los datos certificados (jamás del reloj del servidor). */
+  freshness: _Freshness;
+  /**
+   * @deprecated HISTORY-BENCHMARK-01: la nueva Inteligencia NO debe consumir
+   * este bloque (Descuentos vive en su propio tab). Se mantiene solo para el
+   * tab actual hasta INTELLIGENCE-UX-IMPLEMENTATION-01; su carga es no-fatal.
+   */
   discountOpportunities: DiscountOpportunitySummary;
   executiveInsights: ExecutiveInsight[];
   salesSourceStatus: "CERTIFIED";
@@ -145,6 +179,11 @@ export const TREND_LABEL: Record<TrendDirection, string> = {
   SIN_DATOS: "Sin datos",
 };
 
+/**
+ * @deprecated HISTORY-BENCHMARK-01: raw hex prohibido en la nueva Inteligencia
+ * (UX14). Los tonos visuales salen del PresentationAssembler con tokens del
+ * sistema. Se mantiene SOLO para el tab actual hasta su reemplazo.
+ */
 export const TREND_COLOR: Record<TrendDirection, string> = {
   CRECIENDO: "#22c55e",
   ESTABLE: "#f59e0b",
@@ -152,4 +191,10 @@ export const TREND_COLOR: Record<TrendDirection, string> = {
   SIN_DATOS: "#9ca3af",
 };
 
+/**
+ * @deprecated HISTORY-BENCHMARK-01: año hardcodeado retirado del contrato.
+ * El servicio deriva el año de asOfDate (response.asOfDate / period.year son
+ * dinámicos). Se mantiene SOLO para el render actual hasta
+ * INTELLIGENCE-UX-IMPLEMENTATION-01. Jamás usar en código nuevo.
+ */
 export const INTELLIGENCE_YEAR = 2026;
