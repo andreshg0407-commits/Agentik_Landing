@@ -82,7 +82,7 @@ export async function GET(req: NextRequest) {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: Record<string, any> = {
-      status: { not: "DISABLED" },
+      status: { not: "INACTIVE" },
       source: { in: ["sag_pya_soap", "castillitos_crm"] },
     };
     if (sourceFilter) {
