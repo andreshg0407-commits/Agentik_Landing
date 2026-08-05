@@ -100,6 +100,16 @@ export interface DiscountRecommendation {
   sizeClass:        string | null;
   variantCount:     number;
   reason:           string;
+  /**
+   * AGENTIK-STORES-DISCOUNTS-SAG-AWARE-ENGINE-01:
+   * Per-store SAG comparison. Present when SAG current discount data is available.
+   * Each entry shows the current SAG discount vs Agentik target for one store.
+   */
+  sagComparison?: import("./store-sag-discount-types").StoreDiscountComparison[];
+  /** Summary: how many stores still need action (APPLY or INCREASE). */
+  sagActionableStores?: number;
+  /** Summary: how many stores are already aligned with the Agentik target. */
+  sagAlignedStores?: number;
 }
 
 // ── KPIs ─────────────────────────────────────────────────────────────────────
@@ -134,6 +144,25 @@ export interface StoreDiscountResponse {
   policyStatus?: "VALID" | "POLICY_INVALID";
   /** Validation errors when policyStatus === "POLICY_INVALID" */
   policyErrors?: string[];
+  /**
+   * AGENTIK-STORES-DISCOUNTS-SAG-AWARE-CERTIFICATION-01:
+   * SAG availability state. AVAILABLE = comparison certified.
+   * UNAVAILABLE = SAG failed, no actionable comparison, targets preserved.
+   */
+  sagComparisonStatus?: import("./store-sag-discount-types").SagComparisonStatus;
+  /**
+   * AGENTIK-STORES-DISCOUNTS-SAG-AWARE-ENGINE-01:
+   * SAG discount fetch diagnostics. Present when SAG data was fetched.
+   */
+  sagFetchResult?: {
+    rowCount: number;
+    fetchDurationMs: number;
+    fetchedAt: string;
+  };
+  /** Count of recommendations already aligned with SAG (no action needed). */
+  sagAlignedTotal?: number;
+  /** Count of recommendations requiring action (APPLY or INCREASE). */
+  sagActionableTotal?: number;
 }
 
 // ── Aging discount evaluation (AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01) ──

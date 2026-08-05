@@ -67,6 +67,7 @@ import {
   DISCOUNT_TIER_LABEL,
   DISCOUNT_TIER_COLOR,
 } from "@/lib/comercial/tiendas/store-discount-types";
+import type { SagComparisonAction } from "@/lib/comercial/tiendas/store-sag-discount-types";
 import type {
   CertifiedStoreIntelligenceResponse,
 } from "@/lib/comercial/tiendas/store-certified-intelligence-types";
@@ -75,6 +76,19 @@ import type {
 // sobre el PresentationAssembler.
 import { StoreIntelligenceTab } from "@/components/comercial/store-intelligence-tab";
 import type { StoreProductIntelligence, WindowId } from "@/lib/comercial/tiendas/store-product-intelligence-types";
+
+// ── SAG action display map (AGENTIK-STORES-DISCOUNTS-SAG-AWARE-ENGINE-01) ───
+const SAG_ACTION_DISPLAY: Record<SagComparisonAction, {
+  icon: string; color: string; label: (target: number) => string;
+}> = {
+  APPLY:             { icon: "+",  color: DISCOUNT_TIER_COLOR.THIRTY_PERCENT, label: t => `Aplicar ${t}%` },
+  INCREASE:          { icon: "\u2191",  color: DISCOUNT_TIER_COLOR.FIFTY_PERCENT,  label: t => `Subir a ${t}%` },
+  ALIGNED:           { icon: "\u2713",  color: DISCOUNT_TIER_COLOR.NONE,           label: () => "Ya aplicado" },
+  KEEP_HIGHER_SAG:   { icon: "\u25B6",  color: C.inkMid,                           label: () => "SAG mayor" },
+  NO_AGENTIK_ACTION: { icon: "\u2014",  color: C.inkFaint,                         label: () => "Sin accion" },
+  AMBIGUOUS_SAG:     { icon: "?",  color: DISCOUNT_TIER_COLOR.SEVENTY_PERCENT, label: () => "SAG ambiguo" },
+  EXCLUDED:          { icon: "\u00D7",  color: C.inkFaint,                         label: () => "Excluida" },
+};
 
 // ── Rule provenance (AGENTIK-STORES-SUPPLY-RULES-CONSUMPTION-CERTIFICATION-01) ─
 
@@ -2457,6 +2471,7 @@ function DistributionStoreDrawer({
   const [discTierFilter, setDiscTierFilter] = useState<DiscountTier | "ALL">("ALL");
   const [discSearch, setDiscSearch] = useState("");
   const [discSearchDebounced, setDiscSearchDebounced] = useState("");
+  const [discSagExpanded, setDiscSagExpanded] = useState<Set<string>>(new Set());
 
   // Debounce discount search
   useEffect(() => {
@@ -3327,6 +3342,61 @@ function DistributionStoreDrawer({
                   <MiniStat label="Sin fecha" value={String(kpis.sinFecha)} color={kpis.sinFecha > 0 ? C.inkFaint : C.ink} />
                 </div>
 
+                {/* SAG comparison summary strip — AGENTIK-STORES-DISCOUNTS-SAG-AWARE-CERTIFICATION-01 */}
+                {discData.sagComparisonStatus === "AVAILABLE" && discData.sagFetchResult && (
+                  <div style={{
+                    ...panel, padding: `${S[2]}px ${S[3]}px`,
+                    background: C.surface, display: "flex", gap: S[4], flexWrap: "wrap", alignItems: "center",
+                  }}>
+                    <span style={{
+                      fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                      color: DISCOUNT_TIER_COLOR.NONE,
+                    }}>
+                      SAG conectado
+                    </span>
+                    {discData.sagActionableTotal != null && discData.sagActionableTotal > 0 && (
+                      <span style={{
+                        fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                        color: DISCOUNT_TIER_COLOR.FIFTY_PERCENT,
+                      }}>
+                        {discData.sagActionableTotal} ref. requieren acci\u00f3n
+                      </span>
+                    )}
+                    {discData.sagAlignedTotal != null && discData.sagAlignedTotal > 0 && (
+                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
+                        {discData.sagAlignedTotal} alineadas
+                      </span>
+                    )}
+                    {discData.sagActionableTotal === 0 && (discData.sagAlignedTotal ?? 0) > 0 && (
+                      <span style={{
+                        fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                        color: DISCOUNT_TIER_COLOR.NONE,
+                      }}>
+                        Todas alineadas
+                      </span>
+                    )}
+                    <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
+                      {discData.sagFetchResult.rowCount} desc. activos \u00B7 {discData.sagFetchResult.fetchDurationMs}ms
+                    </span>
+                  </div>
+                )}
+                {discData.sagComparisonStatus === "UNAVAILABLE" && (
+                  <div style={{
+                    ...panel, padding: `${S[2]}px ${S[3]}px`,
+                    background: C.surface, display: "flex", gap: S[3], alignItems: "center",
+                  }}>
+                    <span style={{
+                      fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                      color: DISCOUNT_TIER_COLOR.FIFTY_PERCENT,
+                    }}>
+                      SAG no disponible
+                    </span>
+                    <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
+                      No se pudo verificar el descuento actual en SAG
+                    </span>
+                  </div>
+                )}
+
                 {/* Tier filter strip */}
                 <div style={{ display: "flex", gap: S[1], flexWrap: "wrap" }}>
                   {TIER_FILTERS.map(tf => {
@@ -3381,56 +3451,145 @@ function DistributionStoreDrawer({
 
                   {filtered.map((rec) => {
                     const tierColor = DISCOUNT_TIER_COLOR[rec.discountTier];
+                    const sagAvailable = discData.sagComparisonStatus === "AVAILABLE";
+                    const hasSag = sagAvailable && rec.sagComparison && rec.sagComparison.length > 0;
+                    const sagOpen = discSagExpanded.has(rec.referenceCode);
+                    // Aggregation law: count ambiguous stores for mixed-state detection
+                    const ambiguousStoreCount = hasSag
+                      ? rec.sagComparison!.filter(sc => sc.action === "AMBIGUOUS_SAG").length
+                      : 0;
                     return (
-                      <div key={rec.referenceCode} className="ag-op-row" style={{
-                        display: "grid",
-                        gridTemplateColumns: "32px 1fr 80px 80px 80px 70px",
-                        gap: S[2], padding: `${S[2]}px ${S[3]}px`,
-                        borderBottom: `1px solid ${C.lineSubtle}`,
-                        alignItems: "center",
-                      }}>
-                        {/* Thumbnail */}
-                        <CommercialReferenceThumbnail imageUrl={rec.imageUrl} referenceCode={rec.referenceCode} description={rec.description} size={28} />
+                      <div key={rec.referenceCode}>
+                        <div className="ag-op-row" style={{
+                          display: "grid",
+                          gridTemplateColumns: "32px 1fr 80px 80px 80px 70px",
+                          gap: S[2], padding: `${S[2]}px ${S[3]}px`,
+                          borderBottom: `1px solid ${C.lineSubtle}`,
+                          alignItems: "center",
+                          cursor: hasSag ? "pointer" : undefined,
+                        }}
+                        onClick={hasSag ? () => setDiscSagExpanded(prev => {
+                          const next = new Set(prev);
+                          if (next.has(rec.referenceCode)) next.delete(rec.referenceCode);
+                          else next.add(rec.referenceCode);
+                          return next;
+                        }) : undefined}
+                        >
+                          {/* Thumbnail */}
+                          <CommercialReferenceThumbnail imageUrl={rec.imageUrl} referenceCode={rec.referenceCode} description={rec.description} size={28} />
 
-                        {/* Reference + description + reason */}
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {rec.referenceCode}
+                          {/* Reference + description + reason + SAG mini-indicator */}
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {rec.referenceCode}
+                              {/* Aggregation law: actionable > ambiguous > unavailable > aligned */}
+                              {hasSag && (rec.sagActionableStores ?? 0) > 0 && (
+                                <span style={{
+                                  fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.medium,
+                                  marginLeft: S[2], padding: "1px 6px", borderRadius: R.pill,
+                                  background: `${DISCOUNT_TIER_COLOR.FIFTY_PERCENT}18`,
+                                  color: DISCOUNT_TIER_COLOR.FIFTY_PERCENT,
+                                }}>
+                                  {rec.sagActionableStores} tienda{(rec.sagActionableStores ?? 0) > 1 ? "s" : ""} pendiente{(rec.sagActionableStores ?? 0) > 1 ? "s" : ""}
+                                </span>
+                              )}
+                              {hasSag && (rec.sagActionableStores ?? 0) === 0 && ambiguousStoreCount > 0 && (
+                                <span style={{
+                                  fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.medium,
+                                  marginLeft: S[2], padding: "1px 6px", borderRadius: R.pill,
+                                  background: `${DISCOUNT_TIER_COLOR.SEVENTY_PERCENT}18`,
+                                  color: DISCOUNT_TIER_COLOR.SEVENTY_PERCENT,
+                                }}>
+                                  Revisar SAG
+                                </span>
+                              )}
+                              {hasSag && (rec.sagActionableStores ?? 0) === 0 && ambiguousStoreCount === 0 && (rec.sagAlignedStores ?? 0) > 0 && (
+                                <span style={{
+                                  fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.medium,
+                                  marginLeft: S[2], padding: "1px 6px", borderRadius: R.pill,
+                                  background: `${DISCOUNT_TIER_COLOR.NONE}18`,
+                                  color: DISCOUNT_TIER_COLOR.NONE,
+                                }}>
+                                  SAG alineado
+                                </span>
+                              )}
+                              {!sagAvailable && discData.sagComparisonStatus === "UNAVAILABLE" && (
+                                <span style={{
+                                  fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.medium,
+                                  marginLeft: S[2], padding: "1px 6px", borderRadius: R.pill,
+                                  background: `${C.inkFaint}18`,
+                                  color: C.inkFaint,
+                                }}>
+                                  SAG no disponible
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {rec.description}
+                            </div>
+                            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight, marginTop: 1 }}>
+                              {rec.reason}
+                            </div>
                           </div>
-                          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {rec.description}
+
+                          {/* Days in store */}
+                          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, textAlign: "right", color: C.ink }}>
+                            {rec.daysInStore !== null ? `${rec.daysInStore}d` : "\u2014"}
                           </div>
-                          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight, marginTop: 1 }}>
-                            {rec.reason}
+
+                          {/* Store qty */}
+                          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, textAlign: "right", color: C.ink }}>
+                            {rec.storeQty}
+                          </div>
+
+                          {/* Discount badge */}
+                          <div style={{ textAlign: "center" }}>
+                            <span style={{
+                              fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                              padding: "2px 8px", borderRadius: R.pill,
+                              background: `${tierColor}18`, color: tierColor,
+                              border: `1px solid ${tierColor}40`,
+                            }}>
+                              {DISCOUNT_TIER_LABEL[rec.discountTier]}
+                            </span>
+                          </div>
+
+                          {/* Variant count */}
+                          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, textAlign: "right", color: C.inkMid }}>
+                            {rec.variantCount}
                           </div>
                         </div>
 
-                        {/* Days in store */}
-                        <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, textAlign: "right", color: C.ink }}>
-                          {rec.daysInStore !== null ? `${rec.daysInStore}d` : "\u2014"}
-                        </div>
-
-                        {/* Store qty */}
-                        <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, textAlign: "right", color: C.ink }}>
-                          {rec.storeQty}
-                        </div>
-
-                        {/* Discount badge */}
-                        <div style={{ textAlign: "center" }}>
-                          <span style={{
-                            fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                            padding: "2px 8px", borderRadius: R.pill,
-                            background: `${tierColor}18`, color: tierColor,
-                            border: `1px solid ${tierColor}40`,
+                        {/* SAG per-store sub-row — AGENTIK-STORES-DISCOUNTS-SAG-AWARE-ENGINE-01 */}
+                        {sagOpen && hasSag && (
+                          <div style={{
+                            padding: `${S[2]}px ${S[3]}px ${S[2]}px 44px`,
+                            background: C.surface,
+                            borderBottom: `1px solid ${C.lineSubtle}`,
+                            display: "flex", gap: S[4], flexWrap: "wrap",
                           }}>
-                            {DISCOUNT_TIER_LABEL[rec.discountTier]}
-                          </span>
-                        </div>
-
-                        {/* Variant count */}
-                        <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, textAlign: "right", color: C.inkMid }}>
-                          {rec.variantCount}
-                        </div>
+                            {rec.sagComparison!.map(sc => {
+                              const actionDisplay = SAG_ACTION_DISPLAY[sc.action];
+                              return (
+                                <div key={sc.storeId} style={{
+                                  display: "flex", alignItems: "center", gap: S[2],
+                                  fontFamily: T.mono, fontSize: T.sz["2xs"],
+                                }}>
+                                  <span style={{ color: C.inkMid, minWidth: 72 }}>{sc.storeName}</span>
+                                  <span style={{ color: C.ink, minWidth: 28, textAlign: "right" }}>
+                                    {sc.currentDiscountPercent != null ? `${sc.currentDiscountPercent}%` : "\u2014"}
+                                  </span>
+                                  <span style={{
+                                    color: actionDisplay.color,
+                                    fontWeight: T.wt.semibold,
+                                  }}>
+                                    {actionDisplay.icon} {actionDisplay.label(sc.targetDiscountPercent)}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     );
                   })}

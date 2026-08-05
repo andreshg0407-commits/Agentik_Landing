@@ -4,6 +4,7 @@
  * AGENTIK-STORES-DISCOUNTS-TAB-01 — Store Discount Recommendation Service
  * AGENTIK-STORES-DISCOUNTS-AGING-SOURCE-01 — Real aging from InventoryTransfer
  * AGENTIK-STORES-DISCOUNTS-DYNAMIC-RULES-01 — Dynamic aging discount policy
+ * AGENTIK-STORES-DISCOUNTS-SAG-AWARE-ENGINE-01 — SAG current discount comparison
  *
  * Identifies references eligible for automatic discount based on their
  * time-in-store (daysInStore = last transfer date into store).
@@ -36,6 +37,10 @@ import {
 } from "./store-effective-rule-registry";
 import { CASTILLITOS_DEFAULT_AGING_DISCOUNT_BANDS } from "./store-policy-pack-config";
 import { getStoreRules } from "./store-policy-service";
+import { fetchActiveSagDiscountsSimple, buildDiscountIndex, resolveSagDiscount } from "./store-sag-discount-adapter";
+import { DISCOUNT_ELIGIBLE_STORE_PKS } from "./store-sag-discount-types";
+import type { SagActiveDiscount, SagDiscountFetchResult } from "./store-sag-discount-types";
+import { compareSagVsAgentik } from "./store-sag-discount-comparison";
 
 // Re-export everything from client-safe types file
 export type {
@@ -211,6 +216,66 @@ export async function loadStoreDiscounts(
     });
   }
 
+  // ── AGENTIK-STORES-DISCOUNTS-SAG-AWARE-ENGINE-01: Enrich with SAG current ──
+  // AGENTIK-STORES-DISCOUNTS-SAG-AWARE-CERTIFICATION-01: fail-closed on SAG outage.
+  // If SAG is unavailable, targets are preserved but comparison is NOT certified.
+  let sagFetchResult: SagDiscountFetchResult | null = null;
+  let sagIndex: Map<string, SagActiveDiscount[]> | null = null;
+  let sagComparisonStatus: "AVAILABLE" | "UNAVAILABLE" = "UNAVAILABLE";
+
+  try {
+    sagFetchResult = await fetchActiveSagDiscountsSimple();
+    sagIndex = buildDiscountIndex(sagFetchResult.discounts);
+    sagComparisonStatus = "AVAILABLE";
+  } catch (err) {
+    console.warn(
+      `[store-discounts] SAG discount fetch failed for ${storeId}:`,
+      err instanceof Error ? err.message : err,
+    );
+    // sagComparisonStatus stays UNAVAILABLE — no actionable comparison
+  }
+
+  // Enrich each recommendation with per-store SAG comparison
+  let sagAlignedTotal = 0;
+  let sagActionableTotal = 0;
+
+  if (sagIndex) {
+    for (const rec of recommendations) {
+      const excluded = isExcludedFromAutomaticPricing(rec.referenceCode);
+      const storeComparisons: import("./store-sag-discount-types").StoreDiscountComparison[] = [];
+      let actionable = 0;
+      let aligned = 0;
+
+      for (const [slug, { pk, name }] of DISCOUNT_ELIGIBLE_STORE_PKS) {
+        const sagRes = resolveSagDiscount(sagIndex, rec.referenceCode, pk);
+        const action = compareSagVsAgentik(sagRes, rec.discountPercent, excluded);
+
+        const currentPercent = sagRes.status === "ACTIVE"
+          ? sagRes.discount.discountPercent
+          : null;
+
+        storeComparisons.push({
+          storeId: slug,
+          storeName: name,
+          warehousePk: pk,
+          currentDiscountPercent: currentPercent,
+          targetDiscountPercent: rec.discountPercent,
+          action,
+        });
+
+        if (action === "APPLY" || action === "INCREASE") actionable++;
+        if (action === "ALIGNED") aligned++;
+      }
+
+      rec.sagComparison = storeComparisons;
+      rec.sagActionableStores = actionable;
+      rec.sagAlignedStores = aligned;
+
+      if (actionable > 0) sagActionableTotal++;
+      if (aligned === storeComparisons.length && storeComparisons.length > 0) sagAlignedTotal++;
+    }
+  }
+
   // Sort: highest discount first, then most days, then most qty
   recommendations.sort((a, b) => {
     const tierDiff = DISCOUNT_TIER_SORT_ORDER[a.discountTier] - DISCOUNT_TIER_SORT_ORDER[b.discountTier];
@@ -249,5 +314,15 @@ export async function loadStoreDiscounts(
     kpis,
     computedAt: new Date().toISOString(),
     policyStatus: "VALID",
+    sagComparisonStatus,
+    ...(sagFetchResult ? {
+      sagFetchResult: {
+        rowCount: sagFetchResult.rowCount,
+        fetchDurationMs: sagFetchResult.fetchDurationMs,
+        fetchedAt: sagFetchResult.fetchedAt,
+      },
+      sagAlignedTotal,
+      sagActionableTotal,
+    } : {}),
   };
 }
