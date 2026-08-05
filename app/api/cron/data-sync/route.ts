@@ -9,10 +9,15 @@
  * Use ?source=sag_pya_soap or ?source=castillitos_crm to sync a specific
  * connector. Without ?source, syncs all connectors.
  *
+ * Use ?module=movements (or customers, receivables, orders, collections) to
+ * sync a single module. Without ?module, syncs all modules for the connector.
+ * n8n uses per-module calls to stay within Vercel's 300s function limit.
+ *
  * SAG SOAP returns 240k+ rows per query (~3 min per SOAP call).
  * To fit within Vercel's 300s limit, SAG is split into separate cron entries:
  *   /api/cron/data-sync?source=castillitos_crm    (fast: ~30s)
  *   /api/cron/data-sync?source=sag_pya_soap        (slow: ~5 min)
+ *   /api/cron/data-sync?source=sag_pya_soap&module=movements  (single module)
  *
  * Schedule: every 6 hours (vercel.json cron)
  *
@@ -72,6 +77,7 @@ export async function GET(req: NextRequest) {
   const t0 = Date.now();
   const url = new URL(req.url);
   const sourceFilter = url.searchParams.get("source"); // optional: filter by connector source
+  const moduleFilter = url.searchParams.get("module"); // optional: sync a single module
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -95,8 +101,23 @@ export async function GET(req: NextRequest) {
     const results: Array<{ connectorId: string; source: string; module: string; status: string; rows: number }> = [];
 
     for (const connector of connectors) {
-      const modules = (connector.modules as string[]) ?? [];
+      let modules = (connector.modules as string[]) ?? [];
       const isSag   = connector.source === "sag_pya_soap";
+
+      // Per-module filter: only sync the requested module
+      if (moduleFilter) {
+        if (!modules.includes(moduleFilter)) {
+          results.push({
+            connectorId: connector.id,
+            source: connector.source,
+            module: moduleFilter,
+            status: "SKIPPED_NOT_CONFIGURED",
+            rows: 0,
+          });
+          continue;
+        }
+        modules = [moduleFilter];
+      }
 
       for (const mod of modules) {
         // Time guard: skip if less than 30s remaining (Vercel kills at 300s)
@@ -207,6 +228,7 @@ export async function GET(req: NextRequest) {
       ok: true,
       connectors: connectors.length,
       sourceFilter: sourceFilter ?? "all",
+      moduleFilter: moduleFilter ?? "all",
       results,
       ms: Date.now() - t0,
     });
