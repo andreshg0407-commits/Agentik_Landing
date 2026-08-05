@@ -2,20 +2,18 @@
  * lib/comercial/tiendas/store-derrotero-coverage-engine.ts
  *
  * AGENTIK-STORES-DERROTERO-COVERAGE-FOUNDATION-01
+ * AGENTIK-STORES-DERROTERO-DELIVERY-01 — Gate 6: now properly wired
  *
- * @deprecated EXPERIMENTAL — DISCONNECTED FROM UI
- * This engine uses hardcoded thresholds from store-policy-pack-config.ts,
- * NOT the effective config from Prisma (StorePolicyRule). It is NOT the
- * source of truth for Inventario or Necesidades tabs.
+ * Pure coverage evaluation engine. Receives a StoreDerrotero with thresholds
+ * already resolved (pack defaults overlaid with effective store overrides by
+ * store-derrotero-service.ts → applyEffectiveOverrides).
+ *
+ * This engine does NOT read persisted rules directly — it evaluates whatever
+ * thresholds are present on the derrotero entries it receives.
  *
  * Inventario and Necesidades consume the canonical distribution service
  * (store-distribution-service.ts → resolveThresholds → findApplicableRule),
- * which reads persisted store overrides from Prisma.
- *
- * Do NOT reconnect this engine to any UI tab without first wiring it
- * to the effective config pipeline (getEffectiveStoreConfig).
- *
- * Candidate for cleanup in a future sprint.
+ * which reads persisted store overrides from Prisma via a different path.
  *
  * Measures how well a store's actual inventory matches the expected derrotero.
  *

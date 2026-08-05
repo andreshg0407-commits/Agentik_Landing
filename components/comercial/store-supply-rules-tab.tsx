@@ -182,10 +182,8 @@ export function StoreSupplyRulesTab({
   const [saving, setSaving] = useState(false);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
-  // Special rules state
-  const [specialRules, setSpecialRules] = useState<SpecialRuleEntry[]>(DEFAULT_SPECIAL_RULES);
-  const [editingSpecial, setEditingSpecial] = useState(false);
-  const [specialDraft, setSpecialDraft] = useState<SpecialRuleEntry[]>(DEFAULT_SPECIAL_RULES);
+  // Special rules — display-only from policy pack defaults (not yet persisted per-store)
+  const specialRules = DEFAULT_SPECIAL_RULES;
 
   const [prevStoreId, setPrevStoreId] = useState(storeId);
 
@@ -202,7 +200,6 @@ export function StoreSupplyRulesTab({
     setError(null);
     setSuccess(null);
     setValidationErrors({});
-    setEditingSpecial(false);
   }
 
   const tiendasApi = useCallback(async (body: Record<string, unknown>) => {
@@ -284,6 +281,42 @@ export function StoreSupplyRulesTab({
     setValidationErrors({});
   }
 
+  // AGENTIK-STORES-DERROTERO-DELIVERY-01 §3: DEACTIVATE (revert override → tenant default)
+  async function revertToDefault(sec: RulesSection) {
+    if (!config || !editable) return;
+    setSaving(true);
+    setError(null);
+    try {
+      let revertConfig: Partial<EffectiveStoreConfig>;
+      const sectionLabels: Record<string, string> = {
+        castillitos: "Castillitos", latin_kids: "Latin Kids", rule36: "Regla 36",
+      };
+      if (sec === "castillitos") {
+        revertConfig = { castillitos: { ...config.castillitos, source: "tenant_default" } };
+      } else if (sec === "latin_kids") {
+        revertConfig = { latinKids: { ...config.latinKids, source: "tenant_default" } };
+      } else if (sec === "rule36") {
+        revertConfig = { scarcity: { ...config.scarcity, source: "tenant_default" } };
+      } else return;
+
+      const data = await tiendasApi({
+        action: "distribution_save_config",
+        storeId, storeName,
+        config: revertConfig,
+        motivo: `Restablecimiento a valores predeterminados: ${sectionLabels[sec] ?? sec}`,
+      });
+      if (data.error) { setError(data.error); return; }
+      if (data.config) setConfig(data.config);
+      setEditing(null);
+      setDraft({});
+      setPreview(null);
+      setSuccess(`${sectionLabels[sec] ?? sec}: restablecido a predeterminado del tenant`);
+      setTimeout(() => setSuccess(null), 4000);
+      onSaved?.();
+    } catch { setError("Error al restablecer"); }
+    finally { setSaving(false); }
+  }
+
   async function requestPreview() {
     if (!draft || Object.keys(draft).length === 0) return;
     let errs: Record<string, string> = {};
@@ -314,11 +347,16 @@ export function StoreSupplyRulesTab({
       });
       if (data.error) { setError(data.error); return; }
       if (data.config) setConfig(data.config);
+      const savedSection = editing;
+      const sectionLabels: Record<string, string> = {
+        castillitos: "Castillitos", latin_kids: "Latin Kids",
+        accessories: "Accesorios", rule36: "Regla 36",
+      };
       setEditing(null);
       setDraft({});
       setPreview(null);
-      setSuccess("Reglas guardadas exitosamente");
-      setTimeout(() => setSuccess(null), 3000);
+      setSuccess(`${sectionLabels[savedSection ?? ""] ?? "Reglas"} guardado como override de tienda`);
+      setTimeout(() => setSuccess(null), 4000);
       onSaved?.();   // F3A.1: escritura exitosa → refetch del StoreSnapshot
     } catch { setError("Error al guardar configuracion"); }
     finally { setSaving(false); }
@@ -442,76 +480,115 @@ export function StoreSupplyRulesTab({
       {section === "special" && (
         <SpecialRulesSection
           rules={specialRules}
-          editing={editingSpecial}
-          draft={specialDraft}
-          editable={editable}
-          onStartEdit={() => { setEditingSpecial(true); setSpecialDraft([...specialRules.map(r => ({ ...r, stores: { ...r.stores } }))]); }}
-          onCancel={() => { setEditingSpecial(false); setSpecialDraft(specialRules); }}
-          onSave={() => { setSpecialRules(specialDraft); setEditingSpecial(false); setSuccess("Reglas especiales actualizadas"); setTimeout(() => setSuccess(null), 3000); }}
-          onDraftChange={setSpecialDraft}
         />
       )}
 
-      {/* ── Edit/Save controls ── */}
-      {section !== "special" && section !== "accessories" && editable && (
-        <div style={{ paddingTop: S[2], borderTop: `1px solid ${C.line}` }}>
-          {!isEditing ? (
-            <div style={{ display: "flex", gap: S[2] }}>
-              <button onClick={() => startEdit(section)} className="ag-action-secondary" style={{
-                ...monoXs, padding: `${S[1]}px ${S[2]}px`, borderRadius: R.sm, cursor: "pointer",
-                background: C.blueLight, color: C.blueDark, border: `1px solid ${C.blueBorder}`,
+      {/* ── Edit/Save controls (AGENTIK-STORES-DERROTERO-DELIVERY-01) ── */}
+      {section !== "special" && editable && (() => {
+        // Resolve source for current section
+        const sectionSource =
+          section === "castillitos" ? config.castillitos.source
+          : section === "latin_kids" ? config.latinKids.source
+          : section === "accessories" ? (
+            config.accessories.small.source === "store_override"
+            || config.accessories.medium.source === "store_override"
+            || config.accessories.large.source === "store_override"
+              ? "store_override" : "tenant_default"
+          )
+          : section === "rule36" ? config.scarcity.source
+          : "tenant_default";
+        const isOverride = sectionSource === "store_override";
+        const canRevert = isOverride && !isEditing && section !== "accessories";
+
+        return (
+          <div style={{ paddingTop: S[2], borderTop: `1px solid ${C.line}` }}>
+            {/* Source badge */}
+            <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[2] }}>
+              <span style={{
+                ...mono2xs, padding: "2px 8px", borderRadius: R.pill,
+                background: isOverride ? C.amberLight : C.surfaceAlt,
+                color: isOverride ? C.amber : C.inkFaint,
+                border: `1px solid ${isOverride ? C.amberBorder : C.line}`,
               }}>
-                Editar reglas
-              </button>
+                {isOverride ? "Personalizado para esta tienda" : "Predeterminado del tenant"}
+              </span>
             </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
-              {preview && (
-                <div style={{ ...panel, padding: S[3], background: C.surfaceAlt }}>
-                  <div style={{ ...monoXs, fontWeight: T.wt.semibold, color: C.ink, marginBottom: S[2] }}>
-                    Impacto del cambio
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
-                    <div style={{ ...mono2xs, color: C.inkMid }}>+{preview.additionalSurtir} ref. adicionales por surtir</div>
-                    <div style={{ ...mono2xs, color: C.inkMid }}>+{preview.additionalUnitsNeeded} unidades adicionales</div>
-                    <div style={{ ...mono2xs, color: preview.resolvedDeficits > 0 ? C.green : C.inkMid }}>{preview.resolvedDeficits} deficit resueltos</div>
-                    <div style={{ ...mono2xs, color: preview.newRetirar > 0 ? C.amber : C.inkMid }}>{preview.newRetirar} nuevos por retirar</div>
-                  </div>
-                </div>
-              )}
+
+            {!isEditing ? (
               <div style={{ display: "flex", gap: S[2] }}>
-                {!preview && (
-                  <button onClick={requestPreview} disabled={previewLoading} className="ag-action-secondary" style={{
-                    ...monoXs, padding: `${S[1]}px ${S[3]}px`, borderRadius: R.sm,
-                    cursor: previewLoading ? "wait" : "pointer",
+                {section !== "accessories" && (
+                  <button onClick={() => startEdit(section)} className="ag-action-secondary" style={{
+                    ...monoXs, padding: `${S[1]}px ${S[2]}px`, borderRadius: R.sm, cursor: "pointer",
                     background: C.blueLight, color: C.blueDark, border: `1px solid ${C.blueBorder}`,
-                    opacity: previewLoading ? 0.6 : 1,
                   }}>
-                    {previewLoading ? "Calculando..." : "Previsualizar impacto"}
+                    {isOverride ? "Editar override" : "Crear override"}
                   </button>
                 )}
-                {preview && (
-                  <button onClick={saveChanges} disabled={saving} className="ag-action-primary" style={{
-                    ...monoXs, fontWeight: T.wt.semibold,
-                    padding: `${S[1]}px ${S[3]}px`, borderRadius: R.sm,
-                    cursor: saving ? "wait" : "pointer",
-                    background: C.blueDark, color: C.white, border: "none",
-                    opacity: saving ? 0.6 : 1,
-                  }}>
-                    {saving ? "Guardando..." : "Guardar cambio"}
+                {canRevert && (
+                  <button
+                    onClick={() => revertToDefault(section)}
+                    disabled={saving}
+                    className="ag-action-ghost"
+                    style={{
+                      ...monoXs, padding: `${S[1]}px ${S[2]}px`, borderRadius: R.sm,
+                      cursor: saving ? "wait" : "pointer",
+                      background: C.surface, color: C.inkMid, border: `1px solid ${C.line}`,
+                      opacity: saving ? 0.6 : 1,
+                    }}
+                  >
+                    {saving ? "Restableciendo..." : "Restablecer al default"}
                   </button>
                 )}
-                <button onClick={cancelEdit} style={{
-                  ...monoXs, padding: `${S[1]}px ${S[3]}px`, borderRadius: R.sm,
-                  cursor: "pointer", background: C.surface, color: C.inkMid, border: `1px solid ${C.line}`,
-                }}>
-                  Cancelar
-                </button>
               </div>
-            </div>
-          )}
-        </div>
-      )}
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
+                {preview && (
+                  <div style={{ ...panel, padding: S[3], background: C.surfaceAlt }}>
+                    <div style={{ ...monoXs, fontWeight: T.wt.semibold, color: C.ink, marginBottom: S[2] }}>
+                      Impacto del cambio
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
+                      <div style={{ ...mono2xs, color: C.inkMid }}>+{preview.additionalSurtir} ref. adicionales por surtir</div>
+                      <div style={{ ...mono2xs, color: C.inkMid }}>+{preview.additionalUnitsNeeded} unidades adicionales</div>
+                      <div style={{ ...mono2xs, color: preview.resolvedDeficits > 0 ? C.green : C.inkMid }}>{preview.resolvedDeficits} deficit resueltos</div>
+                      <div style={{ ...mono2xs, color: preview.newRetirar > 0 ? C.amber : C.inkMid }}>{preview.newRetirar} nuevos por retirar</div>
+                    </div>
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: S[2] }}>
+                  {!preview && (
+                    <button onClick={requestPreview} disabled={previewLoading} className="ag-action-secondary" style={{
+                      ...monoXs, padding: `${S[1]}px ${S[3]}px`, borderRadius: R.sm,
+                      cursor: previewLoading ? "wait" : "pointer",
+                      background: C.blueLight, color: C.blueDark, border: `1px solid ${C.blueBorder}`,
+                      opacity: previewLoading ? 0.6 : 1,
+                    }}>
+                      {previewLoading ? "Calculando..." : "Previsualizar impacto"}
+                    </button>
+                  )}
+                  {preview && (
+                    <button onClick={saveChanges} disabled={saving} className="ag-action-primary" style={{
+                      ...monoXs, fontWeight: T.wt.semibold,
+                      padding: `${S[1]}px ${S[3]}px`, borderRadius: R.sm,
+                      cursor: saving ? "wait" : "pointer",
+                      background: C.blueDark, color: C.white, border: "none",
+                      opacity: saving ? 0.6 : 1,
+                    }}>
+                      {saving ? "Guardando..." : "Guardar como override"}
+                    </button>
+                  )}
+                  <button onClick={cancelEdit} style={{
+                    ...monoXs, padding: `${S[1]}px ${S[3]}px`, borderRadius: R.sm,
+                    cursor: "pointer", background: C.surface, color: C.inkMid, border: `1px solid ${C.line}`,
+                  }}>
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -593,10 +670,11 @@ function TextileSection({
             </div>
           </div>
         </div>
-        <div style={{ ...mono2xs, color: C.inkFaint, marginTop: S[2] }}>
-          Fuente: {config.source === "store_override" ? "Override de tienda" : "Politica del tenant"}
-          {config.notes && ` · ${config.notes}`}
-        </div>
+        {config.notes && (
+          <div style={{ ...mono2xs, color: C.inkFaint, marginTop: S[2] }}>
+            Nota: {config.notes}
+          </div>
+        )}
       </div>
 
       {/* Per-entry table — structure only, no coverage */}
@@ -822,9 +900,6 @@ function Rule36Section({
           {errors.allowedStores && <div style={{ ...mono2xs, color: C.red, marginTop: S[1] }}>{errors.allowedStores}</div>}
         </div>
 
-        <div style={{ ...mono2xs, color: C.inkFaint, marginTop: S[2] }}>
-          Fuente: {config.source === "store_override" ? "Override de tienda" : "Politica del tenant"}
-        </div>
       </div>
 
       {/* Semantics explanation */}
@@ -842,29 +917,11 @@ function Rule36Section({
 // ── Special Rules Section ────────────────────────────────────────────────────
 
 function SpecialRulesSection({
-  rules, editing, draft, editable, onStartEdit, onCancel, onSave, onDraftChange,
+  rules,
 }: {
   rules: SpecialRuleEntry[];
-  editing: boolean;
-  draft: SpecialRuleEntry[];
-  editable: boolean;
-  onStartEdit: () => void;
-  onCancel: () => void;
-  onSave: () => void;
-  onDraftChange: (rules: SpecialRuleEntry[]) => void;
 }) {
-  const displayRules = editing ? draft : rules;
   const storeKeys = ["san_diego", "caldas", "centro", "gran_plaza"];
-
-  function updateStore(prodIdx: number, storeSlug: string, value: number) {
-    const next = draft.map((r, i) => i === prodIdx ? { ...r, stores: { ...r.stores, [storeSlug]: value } } : r);
-    onDraftChange(next);
-  }
-
-  const fieldStyle = {
-    ...mono2xs, color: C.ink, padding: "2px", borderRadius: R.sm,
-    border: `1px solid ${C.line}`, width: 40, textAlign: "center" as const,
-  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
@@ -882,7 +939,7 @@ function SpecialRulesSection({
             <span key={s} style={{ ...headerCell, textAlign: "right" }}>{ACTIVE_STORE_NAMES[s]}</span>
           ))}
         </div>
-        {displayRules.map((rule, idx) => (
+        {rules.map(rule => (
           <div key={rule.product} className="ag-op-row" style={{
             display: "grid", gridTemplateColumns: "120px 70px 70px 70px 70px",
             borderBottom: `1px solid ${C.lineSubtle}`,
@@ -890,53 +947,25 @@ function SpecialRulesSection({
             <span style={{ ...cellStyle, fontWeight: T.wt.semibold }}>{rule.product}</span>
             {storeKeys.map(s => (
               <span key={s} style={{ ...cellStyle, textAlign: "right" }}>
-                {editing ? (
-                  <input
-                    type="number"
-                    value={rule.stores[s] ?? 0}
-                    min={0}
-                    onChange={e => updateStore(idx, s, parseInt(e.target.value) || 0)}
-                    style={fieldStyle}
-                  />
-                ) : (
-                  <span style={{ color: (rule.stores[s] ?? 0) > 0 ? C.ink : C.inkFaint }}>
-                    {rule.stores[s] ?? 0}
-                  </span>
-                )}
+                <span style={{ color: (rule.stores[s] ?? 0) > 0 ? C.ink : C.inkFaint }}>
+                  {rule.stores[s] ?? 0}
+                </span>
               </span>
             ))}
           </div>
         ))}
       </div>
 
-      {editable && (
-        <div style={{ display: "flex", gap: S[2] }}>
-          {!editing ? (
-            <button onClick={onStartEdit} className="ag-action-secondary" style={{
-              ...monoXs, padding: `${S[1]}px ${S[2]}px`, borderRadius: R.sm, cursor: "pointer",
-              background: C.blueLight, color: C.blueDark, border: `1px solid ${C.blueBorder}`,
-            }}>
-              Editar reglas especiales
-            </button>
-          ) : (
-            <>
-              <button onClick={onSave} className="ag-action-primary" style={{
-                ...monoXs, fontWeight: T.wt.semibold, padding: `${S[1]}px ${S[3]}px`,
-                borderRadius: R.sm, cursor: "pointer",
-                background: C.blueDark, color: C.white, border: "none",
-              }}>
-                Guardar
-              </button>
-              <button onClick={onCancel} style={{
-                ...monoXs, padding: `${S[1]}px ${S[3]}px`, borderRadius: R.sm,
-                cursor: "pointer", background: C.surface, color: C.inkMid, border: `1px solid ${C.line}`,
-              }}>
-                Cancelar
-              </button>
-            </>
-          )}
-        </div>
-      )}
+      {/* AGENTIK-STORES-DERROTERO-DELIVERY-01: special rules come from policy pack config.
+          Per-store persistence requires cross-store write (all 4 stores at once).
+          Current UI is display-only from CASTILLITOS_SPECIAL_PRODUCTS defaults. */}
+      <div style={{
+        ...mono2xs, color: C.inkFaint, padding: `${S[2]}px ${S[3]}px`,
+        background: C.surfaceAlt, borderRadius: R.sm, lineHeight: "1.5",
+      }}>
+        Valores definidos en la politica del tenant (CASTILLITOS_SPECIAL_PRODUCTS).
+        Para modificar, contactar administrador del sistema.
+      </div>
     </div>
   );
 }

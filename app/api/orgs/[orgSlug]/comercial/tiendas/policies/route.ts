@@ -19,6 +19,7 @@ import {
 } from "@/lib/comercial/tiendas/store-policy-service";
 import { getStoreRuleCatalog } from "@/lib/comercial/tiendas/store-replenishment-service";
 import { invalidateStoreSnapshot } from "@/lib/comercial/tiendas/store-snapshot-service";
+import { invalidateDerroteroCoverageCache } from "@/lib/comercial/tiendas/store-derrotero-service";
 import { validateRuleAgainstCatalog } from "@/lib/comercial/tiendas/store-rule-catalog";
 
 export async function POST(
@@ -52,6 +53,7 @@ export async function POST(
         active:    body.active,
       });
       invalidateStoreSnapshot(orgId);   // I3 — las políticas alimentan structureRules
+      invalidateDerroteroCoverageCache(orgId); // I3b — Cobertura must reflect new rules
       return NextResponse.json({ policy });
     }
 
@@ -78,18 +80,21 @@ export async function POST(
 
       const policy = await addRuleToStore(orgId, body.storeId, body.storeName, body.rule);
       invalidateStoreSnapshot(orgId);   // I3
+      invalidateDerroteroCoverageCache(orgId); // I3b
       return NextResponse.json({ policy });
     }
 
     case "remove_rule": {
       const policy = await removeRuleFromStore(orgId, body.storeId, body.ruleId);
       invalidateStoreSnapshot(orgId);   // I3
+      invalidateDerroteroCoverageCache(orgId); // I3b
       return NextResponse.json({ policy });
     }
 
     case "toggle_active": {
       const policy = await toggleStorePolicyActive(orgId, body.storeId);
       invalidateStoreSnapshot(orgId);   // I3
+      invalidateDerroteroCoverageCache(orgId); // I3b
       return NextResponse.json({ policy });
     }
 

@@ -284,22 +284,26 @@ describe("OCTAVO — Cache invalidation after save", () => {
   });
 });
 
-// ── NOVENO: Coverage engine disconnected ─────────────────────────────────────
+// ── NOVENO: Coverage engine wired to effective config ────────────────────────
 
-describe("NOVENO — Coverage engine is disconnected and deprecated", () => {
+describe("NOVENO — Coverage engine consumes effective config", () => {
   const coverageEngineSource = readLib("store-derrotero-coverage-engine.ts");
   const coverageServiceSource = readLib("store-derrotero-service.ts");
 
-  it("coverage engine has @deprecated annotation", () => {
-    assert.ok(coverageEngineSource.includes("@deprecated"));
+  it("coverage engine is NOT deprecated (now properly wired)", () => {
+    assert.ok(!coverageEngineSource.includes("@deprecated"),
+      "engine is wired via applyEffectiveOverrides — deprecated tag removed");
   });
 
-  it("coverage service has @deprecated annotation", () => {
-    assert.ok(coverageServiceSource.includes("@deprecated"));
+  it("coverage service is NOT deprecated (now properly wired)", () => {
+    assert.ok(!coverageServiceSource.includes("@deprecated"),
+      "service loads effective rules — deprecated tag removed");
   });
 
-  it("coverage engine deprecation warns against reconnecting to UI", () => {
-    assert.ok(coverageEngineSource.includes("Do NOT reconnect"));
+  it("coverage service imports effective rule building pipeline", () => {
+    assert.ok(coverageServiceSource.includes("buildEffectiveStoreRules"));
+    assert.ok(coverageServiceSource.includes("getStoreRules"));
+    assert.ok(coverageServiceSource.includes("applyEffectiveOverrides"));
   });
 
   it("coverage engine mentions real source of truth", () => {

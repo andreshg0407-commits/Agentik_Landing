@@ -2,14 +2,7 @@
  * lib/comercial/tiendas/store-derrotero-service.ts
  *
  * AGENTIK-STORES-DERROTERO-COVERAGE-FOUNDATION-01 — SEXTO
- *
- * @deprecated EXPERIMENTAL — DISCONNECTED FROM UI
- * This service uses the coverage engine which relies on hardcoded thresholds.
- * It is NOT consumed by Inventario or Necesidades tabs.
- * The Derrotero tab now uses StoreSupplyRulesTab (pure rules editor).
- *
- * Do NOT use as source of truth for inventory or needs evaluation.
- * See store-distribution-service.ts → resolveThresholds() for the real chain.
+ * AGENTIK-STORES-DERROTERO-DELIVERY-01 — Gate 6: effective config propagation
  *
  * Server-side service for derrotero coverage evaluation.
  * Provides:
@@ -18,10 +11,15 @@
  *   - getStoreCoverageGaps(orgId, storeId)          — coverage gaps
  *   - getEffectiveDerroteroConfig(storeSlug)        — effective config
  *
+ * Gate 6 fix: Coverage now consumes persisted store overrides via
+ * buildEffectiveStoreRules(). The derrotero entries are overlaid with
+ * effective thresholds before being passed to the coverage engine.
+ * SINGLE AUTHORITY: store-effective-rule-registry.ts.
+ *
  * Performance:
  *   - Reuses getCanonicalStoreDetail() shared cache (2min TTL)
  *   - All evaluation is pure computation (< 5ms hot path)
- *   - No additional DB queries
+ *   - One additional DB query per store (getStoreRules, cached by TTL)
  *
  * SERVER ONLY — never import from client components.
  */
@@ -33,6 +31,8 @@ import type {
   MainWarehouseCoverageMatrix,
   StoreDerroteroCoverageMatrix,
   StoreDerrotero,
+  StoreDerroteroEntry,
+  StoreDerroteroGroup,
   EffectiveDerroteroConfig,
   DerroteroCoverageGapSummary,
   StoreCoveragePriority,
@@ -54,7 +54,15 @@ import {
   CASTILLITOS_TEXTILE_COVERAGE,
   LATIN_KIDS_TEXTILE_COVERAGE,
   CASTILLITOS_ACCESSORY_COVERAGE,
+  CASTILLITOS_SPECIAL_PRODUCTS,
 } from "./store-policy-pack-config";
+import { getStoreRules } from "./store-policy-service";
+import {
+  buildEffectiveStoreRules,
+  buildPackCatalogEntries,
+  buildCoverageRuleTargetKey,
+  type EffectiveRule,
+} from "./store-effective-rule-registry";
 
 // ── Default store priority (SÉPTIMO) ────────────────────────────────────────
 
@@ -136,6 +144,126 @@ function collectMainWarehouseRefs(
   return refs;
 }
 
+// ── Effective rule overlay (AGENTIK-STORES-DERROTERO-DELIVERY-01 Gate 6) ──
+
+/**
+ * Map derrotero line names to effective-rule-registry line names.
+ * Derrotero uses uppercase enums; effective rules use lowercase catalog names.
+ */
+const DERROTERO_LINE_TO_CATALOG_LINE: Record<string, string> = {
+  CASTILLITOS: "castillitos",
+  LATIN_KIDS: "latin_kids",
+  ACCESSORIES: "accesorios_importacion",
+};
+
+/**
+ * Compute the effective rule target key for a derrotero entry.
+ * Uses the SAME key derivation as buildEffectiveStoreRules() so that
+ * pack defaults and store overrides match deterministically.
+ */
+function derroteroEntryToTargetKey(entry: StoreDerroteroEntry): string | null {
+  const catalogLine = DERROTERO_LINE_TO_CATALOG_LINE[entry.line];
+  if (!catalogLine) return null;
+
+  if (entry.line === "CASTILLITOS" || entry.line === "LATIN_KIDS") {
+    return buildCoverageRuleTargetKey("TEXTILE_STRUCTURE", {
+      line: catalogLine,
+      group: entry.sagGrupo ?? "",
+      subgroup: entry.entryName,
+    });
+  }
+
+  if (entry.line === "ACCESSORIES" && entry.sizeClass) {
+    return buildCoverageRuleTargetKey("ACCESSORY_SIZE", {
+      line: catalogLine,
+      sizeClass: entry.sizeClass,
+    });
+  }
+
+  return null;
+}
+
+/**
+ * Overlay effective rule thresholds onto derrotero entries.
+ * Returns a new StoreDerrotero with min/ideal/max replaced where
+ * a matching effective rule exists. Non-matching entries keep their
+ * pack-default thresholds (which are already baked into the derrotero).
+ *
+ * This is the SINGLE point where persisted store overrides propagate
+ * into the coverage evaluation — no second rule engine.
+ */
+function applyEffectiveOverrides(
+  derrotero: StoreDerrotero,
+  effectiveRules: readonly EffectiveRule[],
+): StoreDerrotero {
+  const ruleIndex = new Map<string, EffectiveRule>();
+  for (const rule of effectiveRules) {
+    ruleIndex.set(rule.targetKey, rule);
+  }
+
+  function overlayGroup(group: StoreDerroteroGroup): StoreDerroteroGroup {
+    const entries = group.entries.map((entry): StoreDerroteroEntry => {
+      const targetKey = derroteroEntryToTargetKey(entry);
+      if (!targetKey) return entry;
+
+      const rule = ruleIndex.get(targetKey);
+      if (!rule) return entry;
+
+      return {
+        ...entry,
+        minUnitsPerRef: rule.minimum,
+        idealUnitsPerRef: rule.ideal,
+        maxUnitsPerRef: rule.maximum ?? rule.ideal,
+      };
+    });
+
+    return { ...group, entries };
+  }
+
+  return {
+    ...derrotero,
+    lines: {
+      castillitos: derrotero.lines.castillitos.map(overlayGroup),
+      latinKids: derrotero.lines.latinKids.map(overlayGroup),
+      accessories: derrotero.lines.accessories.map(overlayGroup),
+    },
+  };
+}
+
+/**
+ * Load persisted rules for a store and build effective rules.
+ * Returns empty array on failure (fail-open for coverage: pack defaults apply).
+ */
+async function loadEffectiveRulesForStore(
+  orgId: string,
+  storeSlug: string,
+): Promise<readonly EffectiveRule[]> {
+  let persistedRules: import("./store-policy-types").StorePolicyRule[] = [];
+  try {
+    persistedRules = await getStoreRules(orgId, storeSlug);
+  } catch {
+    // No persisted rules — pack defaults only
+  }
+
+  if (persistedRules.length === 0) return [];
+
+  const catalogEntries = buildPackCatalogEntries();
+  const evaluationDate = new Date().toISOString().slice(0, 10);
+
+  return buildEffectiveStoreRules(
+    {
+      castillitosTextile: CASTILLITOS_TEXTILE_COVERAGE,
+      latinKidsTextile: LATIN_KIDS_TEXTILE_COVERAGE,
+      accessoryCoverage: CASTILLITOS_ACCESSORY_COVERAGE,
+      specialProducts: CASTILLITOS_SPECIAL_PRODUCTS,
+      storeId: storeSlug,
+    },
+    catalogEntries,
+    persistedRules,
+    evaluationDate,
+  );
+}
+
 // ── Public API: Single store coverage ───────────────────────────────────────
 
 export async function getStoreDerroteroCoverage(
@@ -165,9 +293,17 @@ async function getStoreDerroteroCoverageImpl(
   const detail = await getCanonicalStoreDetail(orgId, storeSlug);
   if (!detail) return null;
 
-  const derrotero = getDerrotero("castillitos");
+  const baseDerrotero = getDerrotero("castillitos");
   const storeName = STORE_NAME_BY_SLUG[storeSlug] ?? storeSlug;
   const mainWarehouseStockByRef = buildMainWarehouseStockByRef(detail.items);
+
+  // AGENTIK-STORES-DERROTERO-DELIVERY-01 Gate 6:
+  // Apply persisted store overrides to derrotero entry thresholds.
+  // If no overrides exist, pack defaults pass through unchanged.
+  const effectiveRules = await loadEffectiveRulesForStore(orgId, storeSlug);
+  const derrotero = effectiveRules.length > 0
+    ? applyEffectiveOverrides(baseDerrotero, effectiveRules)
+    : baseDerrotero;
 
   const coverage = evaluateStoreDerroteroCoverage(
     storeSlug,
@@ -220,10 +356,14 @@ async function getAllStoresDerroteroCoverageSummaryImpl(
   simulation: WarehouseAllocationSimulation;
   derrotero: StoreDerrotero;
 }> {
-  const derrotero = getDerrotero("castillitos");
+  const baseDerrotero = getDerrotero("castillitos");
 
+  // Load details + effective rules for all stores in parallel
   const detailResults = await Promise.all(
     ACTIVE_STORE_SLUGS.map(slug => getCanonicalStoreDetail(orgId, slug)),
+  );
+  const effectiveRulesResults = await Promise.all(
+    ACTIVE_STORE_SLUGS.map(slug => loadEffectiveRulesForStore(orgId, slug)),
   );
 
   const coverages: StoreDerroteroCoverageResult[] = [];
@@ -237,6 +377,12 @@ async function getAllStoresDerroteroCoverageSummaryImpl(
 
     const storeName = STORE_NAME_BY_SLUG[slug] ?? slug;
     const mainWarehouseStockByRef = buildMainWarehouseStockByRef(detail.items);
+
+    // Apply per-store effective overrides
+    const storeEffective = effectiveRulesResults[i];
+    const derrotero = storeEffective.length > 0
+      ? applyEffectiveOverrides(baseDerrotero, storeEffective)
+      : baseDerrotero;
 
     const coverage = evaluateStoreDerroteroCoverage(
       slug,
@@ -260,7 +406,7 @@ async function getAllStoresDerroteroCoverageSummaryImpl(
   const matrix: StoreDerroteroCoverageMatrix = {
     tenantId: "castillitos",
     stores: coverages,
-    derrotero,
+    derrotero: baseDerrotero,
     computedAt: new Date().toISOString(),
   };
 
@@ -281,7 +427,7 @@ async function getAllStoresDerroteroCoverageSummaryImpl(
     gapSummaries,
   );
 
-  const result = { coverages, matrix, warehouseMatrix, gapSummaries, priorities, simulation, derrotero };
+  const result = { coverages, matrix, warehouseMatrix, gapSummaries, priorities, simulation, derrotero: baseDerrotero };
   setCache(summaryKey, result, TTL_COVERAGE);
   return result;
 }

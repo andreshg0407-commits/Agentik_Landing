@@ -81,7 +81,7 @@ import {
 } from "@/lib/comercial/tiendas/store-replenishment-workflow-service";
 import { InvalidWorkflowTransitionError, allowedTransitions } from "@/lib/comercial/tiendas/store-replenishment-workflow-engine";
 import { loadStoreDiscounts } from "@/lib/comercial/tiendas/store-discount-service";
-import { getStoreDerroteroCoverage, getAllStoresDerroteroCoverageSummary } from "@/lib/comercial/tiendas/store-derrotero-service";
+import { getStoreDerroteroCoverage, getAllStoresDerroteroCoverageSummary, invalidateDerroteroCoverageCache } from "@/lib/comercial/tiendas/store-derrotero-service";
 import { buildStoreDerroteroFromSalesPortfolioDerrotero } from "@/lib/comercial/tiendas/store-derrotero-adapter";
 import { buildStoreProductIntelligence } from "@/lib/comercial/tiendas/store-product-intelligence-engine";
 import { loadCertifiedStoreIntelligence } from "@/lib/comercial/tiendas/store-certified-intelligence-service";
@@ -333,6 +333,7 @@ export async function POST(
         return NextResponse.json({ error: result.error, validationErrors: result.validationErrors }, { status });
       }
       invalidateStoreSnapshot(orgId);   // I2 — las políticas alimentan structureRules
+      invalidateDerroteroCoverageCache(orgId); // I2b — Cobertura must reflect new thresholds
       return NextResponse.json({ ok: true, config: result.config });
     }
 
