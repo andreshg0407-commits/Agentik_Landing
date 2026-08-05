@@ -2,8 +2,7 @@
  * lib/comercial/tiendas/__tests__/store-replenishment-workflow-engine.test.ts
  *
  * AGENTIK-STORES-REPLENISHMENT-FULFILLMENT-01 — certification tests (motor puro).
- * Los casos de servicio/BD (atomicidad, carrera, idempotencia, multi-tenant)
- * se certifican en el script de validación contra BD.
+ * AGENTIK-STORES-SUPPLY-PLAN-RESERVATION-01 — RESERVADO status added.
  *
  * Run: npx tsx --test lib/comercial/tiendas/__tests__/store-replenishment-workflow-engine.test.ts
  */
@@ -28,9 +27,10 @@ import type { ReplenishmentDocumentStatus } from "../store-replenishment-documen
 // ═════════════════════════════════════════════════════════════════════════════
 
 describe("cadena certificada", () => {
-  it("BORRADOR → APROBADO → PREPARACION → DESPACHADO → RECIBIDO → CERRADO", () => {
+  it("BORRADOR → RESERVADO → APROBADO → PREPARACION → DESPACHADO → RECIBIDO → CERRADO", () => {
     const chain: [ReplenishmentDocumentStatus, string, ReplenishmentDocumentStatus][] = [
-      ["BORRADOR", "APROBAR", "APROBADO"],
+      ["BORRADOR", "RESERVAR", "RESERVADO"],
+      ["RESERVADO", "APROBAR", "APROBADO"],
       ["APROBADO", "INICIAR_PREPARACION", "PREPARACION"],
       ["PREPARACION", "DESPACHAR", "DESPACHADO"],
       ["DESPACHADO", "RECIBIR", "RECIBIDO"],
@@ -54,18 +54,19 @@ describe("cadena certificada", () => {
       terminal: true,
       workflowVersion: 1,
     });
-    assert.equal(resolveTransition("BORRADOR", "APROBAR").terminal, false);
+    assert.equal(resolveTransition("BORRADOR", "RESERVAR").terminal, false);
     assert.equal(resolveTransition("PREPARACION", "CANCELAR").terminal, true);
   });
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-// 2. Matriz completa: 7 estados × 6 verbos — sin saltos ni retrocesos
+// 2. Matriz completa: 8 estados × 8 verbos — sin saltos ni retrocesos
 // ═════════════════════════════════════════════════════════════════════════════
 
 describe("matriz completa certificada", () => {
   const EXPECTED: Record<string, Record<string, string>> = {
-    BORRADOR:    { APROBAR: "APROBADO", CANCELAR: "CANCELADO" },
+    BORRADOR:    { RESERVAR: "RESERVADO", CANCELAR: "CANCELADO" },
+    RESERVADO:   { APROBAR: "APROBADO", LIBERAR_RESERVA: "BORRADOR", CANCELAR: "CANCELADO" },
     APROBADO:    { INICIAR_PREPARACION: "PREPARACION", CANCELAR: "CANCELADO" },
     PREPARACION: { DESPACHAR: "DESPACHADO", CANCELAR: "CANCELADO" },
     DESPACHADO:  { RECIBIR: "RECIBIDO" },
@@ -74,7 +75,7 @@ describe("matriz completa certificada", () => {
     CANCELADO:   {},
   };
 
-  it("cada celda de la matriz 7×6 se comporta exactamente como lo certificado", () => {
+  it("cada celda de la matriz 8×8 se comporta exactamente como lo certificado", () => {
     for (const status of REPLENISHMENT_DOCUMENT_STATUSES) {
       for (const verb of WORKFLOW_TRANSITION_VERBS) {
         const expected = EXPECTED[status][verb];
@@ -91,7 +92,8 @@ describe("matriz completa certificada", () => {
     }
   });
 
-  it("CANCELAR solo desde BORRADOR, APROBADO y PREPARACION (nunca tras despachar)", () => {
+  it("CANCELAR desde BORRADOR, RESERVADO, APROBADO y PREPARACION (nunca tras despachar)", () => {
+    assert.equal(resolveTransition("RESERVADO", "CANCELAR").toStatus, "CANCELADO");
     assert.equal(resolveTransition("PREPARACION", "CANCELAR").toStatus, "CANCELADO");
     for (const s of ["DESPACHADO", "RECIBIDO", "CERRADO", "CANCELADO"] as const) {
       assert.throws(() => resolveTransition(s, "CANCELAR"));
@@ -109,7 +111,7 @@ describe("matriz completa certificada", () => {
   });
 
   it("los no terminales no son terminales", () => {
-    for (const s of ["BORRADOR", "APROBADO", "PREPARACION", "DESPACHADO", "RECIBIDO"] as const) {
+    for (const s of ["BORRADOR", "RESERVADO", "APROBADO", "PREPARACION", "DESPACHADO", "RECIBIDO"] as const) {
       assert.equal(isTerminal(s), false);
     }
   });
@@ -146,7 +148,7 @@ describe("coherencia y API auxiliar", () => {
     } catch (e) {
       assert.ok(e instanceof InvalidWorkflowTransitionError);
       assert.equal((e as InvalidWorkflowTransitionError).code, "INVALID_WORKFLOW_TRANSITION");
-      assert.deepEqual([...(e as InvalidWorkflowTransitionError).allowed], ["APROBAR", "CANCELAR"]);
+      assert.deepEqual([...(e as InvalidWorkflowTransitionError).allowed], ["RESERVAR", "CANCELAR"]);
     }
   });
 
@@ -158,13 +160,16 @@ describe("coherencia y API auxiliar", () => {
     }
   });
 
-  it("no hay retrocesos: ningún destino aparece antes en la cadena que su origen", () => {
+  it("no hay retrocesos excepto LIBERAR_RESERVA (RESERVADO → BORRADOR)", () => {
     const orderIdx: Record<string, number> = {
-      BORRADOR: 0, APROBADO: 1, PREPARACION: 2, DESPACHADO: 3, RECIBIDO: 4, CERRADO: 5, CANCELADO: 99,
+      BORRADOR: 0, RESERVADO: 1, APROBADO: 2, PREPARACION: 3, DESPACHADO: 4, RECIBIDO: 5, CERRADO: 6, CANCELADO: 99,
     };
     for (const status of REPLENISHMENT_DOCUMENT_STATUSES) {
-      for (const to of Object.values(WORKFLOW_TRANSITIONS[status]) as ReplenishmentDocumentStatus[]) {
-        assert.ok(orderIdx[to] > orderIdx[status], `${status} → ${to} retrocede`);
+      const row = WORKFLOW_TRANSITIONS[status] as Record<string, string>;
+      for (const [verb, to] of Object.entries(row)) {
+        // LIBERAR_RESERVA is the only authorized retroceso
+        if (verb === "LIBERAR_RESERVA") continue;
+        assert.ok(orderIdx[to] > orderIdx[status], `${status} → ${to} retrocede (via ${verb})`);
       }
     }
   });

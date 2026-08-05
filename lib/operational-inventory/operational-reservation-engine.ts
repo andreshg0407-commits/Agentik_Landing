@@ -379,7 +379,7 @@ export function computeReservationSummary(
     if (availAfter === 0) refsUnderPressure++;
   }
 
-  const bySourceType = { order: 0, portfolio: 0, manual: 0, transfer: 0 };
+  const bySourceType = { order: 0, portfolio: 0, manual: 0, transfer: 0, store_plan: 0 };
   for (const r of active) bySourceType[r.sourceType]++;
 
   return {

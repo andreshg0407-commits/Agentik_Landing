@@ -44,6 +44,8 @@ import {
 } from "./store-replenishment-document-types";
 import { buildReplenishmentDocumentSheets } from "./store-replenishment-document-excel";
 import { renderReplenishmentDocumentHtml } from "./store-replenishment-document-renderer";
+import { renderReplenishmentDocumentPdf } from "./store-replenishment-document-pdf";
+import { renderReplenishmentDocumentXml } from "./store-replenishment-document-xml";
 import { getCanonicalStore } from "../sales-canonical-source";
 
 const db = prisma as any;
@@ -73,7 +75,7 @@ export interface CreateDocumentsResult {
   documents: ReplenishmentDocumentRecord[];
 }
 
-export type DocumentExportFormat = "html" | "xlsx";
+export type DocumentExportFormat = "html" | "xlsx" | "pdf" | "xml";
 
 function toRecord(r: any): ReplenishmentDocumentRecord {
   return {
@@ -254,6 +256,24 @@ export async function exportReplenishmentDocument(
   // Única fuente: el snapshot en BD. Este módulo jamás toca el plan vivo.
   const doc = await getReplenishmentDocument(orgId, documentId);
   if (!doc) return null;
+
+  if (format === "pdf") {
+    const pdfBuffer = await renderReplenishmentDocumentPdf(doc.snapshot, doc.record.status);
+    return {
+      fileName: `${doc.record.documentNumber}-${doc.record.storeId}.pdf`,
+      contentBase64: pdfBuffer.toString("base64"),
+      mimeType: "application/pdf",
+    };
+  }
+
+  if (format === "xml") {
+    const xml = renderReplenishmentDocumentXml(doc.snapshot, doc.record.status);
+    return {
+      fileName: `${doc.record.documentNumber}-${doc.record.storeId}.xml`,
+      contentBase64: Buffer.from(xml, "utf8").toString("base64"),
+      mimeType: "application/xml",
+    };
+  }
 
   if (format === "xlsx") {
     const wb = XLSX.utils.book_new();

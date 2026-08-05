@@ -81,6 +81,12 @@ import {
 } from "@/lib/comercial/tiendas/store-replenishment-workflow-service";
 import { InvalidWorkflowTransitionError, allowedTransitions } from "@/lib/comercial/tiendas/store-replenishment-workflow-engine";
 import { loadStoreDiscounts } from "@/lib/comercial/tiendas/store-discount-service";
+import {
+  reserveStorePlan,
+  releaseStorePlanReservations,
+  releaseReservationsOnCancel,
+  getDocumentReservationSummary,
+} from "@/lib/comercial/tiendas/store-plan-reservation-service";
 import { getStoreDerroteroCoverage, getAllStoresDerroteroCoverageSummary, invalidateDerroteroCoverageCache } from "@/lib/comercial/tiendas/store-derrotero-service";
 import { buildStoreDerroteroFromSalesPortfolioDerrotero } from "@/lib/comercial/tiendas/store-derrotero-adapter";
 import { buildStoreProductIntelligence } from "@/lib/comercial/tiendas/store-product-intelligence-engine";
@@ -632,10 +638,9 @@ export async function POST(
       const documentId = body.documentId as string;
       const format = body.format as string;
       if (!documentId) return NextResponse.json({ error: "Missing documentId" }, { status: 400 });
-      // Decisión certificada #3: `pdf` NO se expone hasta producir PDF binario real.
-      if (format !== "html" && format !== "xlsx") {
+      if (format !== "html" && format !== "xlsx" && format !== "pdf" && format !== "xml") {
         return NextResponse.json(
-          { error: "Formato inválido. Soportados: html, xlsx. (pdf se habilitará cuando exista PDF binario real.)" },
+          { error: "Formato invalido. Soportados: html, xlsx, pdf, xml." },
           { status: 400 },
         );
       }
@@ -651,6 +656,62 @@ export async function POST(
 
     // ── REPLENISHMENT WORKFLOW (AGENTIK-STORES-REPLENISHMENT-FULFILLMENT-01) ───
 
+    // ── STORE PLAN RESERVATION (AGENTIK-STORES-SUPPLY-PLAN-RESERVATION-01) ─────
+
+    case "replenishment_document_reserve": {
+      const documentId = body.documentId as string;
+      const actorId = body.actorId as string;
+      if (!documentId || !actorId) {
+        return NextResponse.json({ error: "Missing documentId o actorId" }, { status: 400 });
+      }
+      try {
+        const result = await reserveStorePlan(
+          orgId, documentId, actorId, body.actorDisplayName as string | undefined,
+        );
+        invalidateStoreSnapshot(orgId);
+        return NextResponse.json({ result, allowedNext: allowedTransitions("RESERVADO") });
+      } catch (err) {
+        if (err instanceof InvalidWorkflowTransitionError) {
+          return NextResponse.json({ error: err.message, code: err.code, allowed: err.allowed }, { status: 409 });
+        }
+        console.error("[STORE-PLAN-RESERVE] error", err instanceof Error ? err.message : err);
+        return NextResponse.json({ error: err instanceof Error ? err.message : "Error al reservar inventario" }, { status: 500 });
+      }
+    }
+
+    case "replenishment_document_release": {
+      const documentId = body.documentId as string;
+      const actorId = body.actorId as string;
+      if (!documentId || !actorId) {
+        return NextResponse.json({ error: "Missing documentId o actorId" }, { status: 400 });
+      }
+      try {
+        const result = await releaseStorePlanReservations(
+          orgId, documentId, actorId, body.actorDisplayName as string | undefined,
+        );
+        invalidateStoreSnapshot(orgId);
+        return NextResponse.json({ result, allowedNext: allowedTransitions("BORRADOR") });
+      } catch (err) {
+        if (err instanceof InvalidWorkflowTransitionError) {
+          return NextResponse.json({ error: err.message, code: err.code, allowed: err.allowed }, { status: 409 });
+        }
+        console.error("[STORE-PLAN-RELEASE] error", err instanceof Error ? err.message : err);
+        return NextResponse.json({ error: err instanceof Error ? err.message : "Error al liberar reserva" }, { status: 500 });
+      }
+    }
+
+    case "replenishment_document_reservation_summary": {
+      const documentId = body.documentId as string;
+      if (!documentId) return NextResponse.json({ error: "Missing documentId" }, { status: 400 });
+      try {
+        const summary = await getDocumentReservationSummary(orgId, documentId);
+        return NextResponse.json({ summary });
+      } catch (err) {
+        console.error("[STORE-PLAN-RESERVATION-SUMMARY] error", err instanceof Error ? err.message : err);
+        return NextResponse.json({ error: "Error al consultar resumen de reserva" }, { status: 500 });
+      }
+    }
+
     case "replenishment_document_transition": {
       const documentId = body.documentId as string;
       const transition = body.transition as string;
@@ -659,6 +720,26 @@ export async function POST(
         return NextResponse.json({ error: "Missing documentId, transition o actorId" }, { status: 400 });
       }
       try {
+        // Intercept RESERVAR and LIBERAR_RESERVA — redirect to dedicated handlers
+        if (transition === "RESERVAR") {
+          const result = await reserveStorePlan(orgId, documentId, actorId, body.actorDisplayName as string | undefined);
+          invalidateStoreSnapshot(orgId);
+          return NextResponse.json({ result, allowedNext: allowedTransitions("RESERVADO") });
+        }
+        if (transition === "LIBERAR_RESERVA") {
+          const result = await releaseStorePlanReservations(orgId, documentId, actorId, body.actorDisplayName as string | undefined);
+          invalidateStoreSnapshot(orgId);
+          return NextResponse.json({ result, allowedNext: allowedTransitions("BORRADOR") });
+        }
+
+        // CANCELAR from RESERVADO: release reservations first, then transition
+        if (transition === "CANCELAR") {
+          const doc = await getReplenishmentDocument(orgId, documentId);
+          if (doc && doc.record.status === "RESERVADO") {
+            await releaseReservationsOnCancel(orgId, documentId, actorId);
+          }
+        }
+
         // occurredAt jamás se acepta del cliente — lo genera el servidor.
         const result = await transitionReplenishmentDocument(
           orgId,

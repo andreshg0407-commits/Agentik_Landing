@@ -122,7 +122,7 @@ describe("consecutivo y estados", () => {
 
   it("el enum de estados del Sprint 8 queda declarado completo", () => {
     assert.deepEqual([...REPLENISHMENT_DOCUMENT_STATUSES], [
-      "BORRADOR", "APROBADO", "PREPARACION", "DESPACHADO", "RECIBIDO", "CERRADO", "CANCELADO",
+      "BORRADOR", "RESERVADO", "APROBADO", "PREPARACION", "DESPACHADO", "RECIBIDO", "CERRADO", "CANCELADO",
     ]);
   });
 });

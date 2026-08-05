@@ -2,14 +2,12 @@
  * lib/comercial/tiendas/store-replenishment-workflow-engine.ts
  *
  * AGENTIK-STORES-REPLENISHMENT-FULFILLMENT-01 — Workflow state machine.
- * (Diseño aprobado con ajustes — bloqueadores y mejoras incorporados.)
+ * AGENTIK-STORES-SUPPLY-PLAN-RESERVATION-01 — RESERVADO status added.
  *
  * Cadena certificada:
- *   BORRADOR → APROBADO → PREPARACION → DESPACHADO → RECIBIDO → CERRADO
- *   CANCELAR permitido desde BORRADOR | APROBADO | PREPARACION
- *   (decisión certificada: en PREPARACION aún no hay mercancía en tránsito;
- *    desde DESPACHADO ya no es cancelación, es logística → se RECIBE y las
- *    diferencias se anotan en el evento).
+ *   BORRADOR → RESERVADO → APROBADO → PREPARACION → DESPACHADO → RECIBIDO → CERRADO
+ *   LIBERAR_RESERVA desde RESERVADO → BORRADOR (releases inventory hold)
+ *   CANCELAR permitido desde BORRADOR | RESERVADO | APROBADO | PREPARACION
  *   CERRADO y CANCELADO son terminales absolutos.
  *
  * PURO y agnóstico de BD. Las transiciones válidas se exportan como DATO
@@ -26,6 +24,8 @@ export const WORKFLOW_VERSION = 1 as const;
 // ── Transitions (enum TS alineado 1:1 con el enum Prisma) ────────────────────
 
 export const WORKFLOW_TRANSITION_VERBS = [
+  "RESERVAR",
+  "LIBERAR_RESERVA",
   "APROBAR",
   "INICIAR_PREPARACION",
   "DESPACHAR",
@@ -39,7 +39,8 @@ export type WorkflowTransition = (typeof WORKFLOW_TRANSITION_VERBS)[number];
 // ── The transition matrix — DATO exportado, as const ─────────────────────────
 
 export const WORKFLOW_TRANSITIONS = {
-  BORRADOR:    { APROBAR: "APROBADO", CANCELAR: "CANCELADO" },
+  BORRADOR:    { RESERVAR: "RESERVADO", CANCELAR: "CANCELADO" },
+  RESERVADO:   { APROBAR: "APROBADO", LIBERAR_RESERVA: "BORRADOR", CANCELAR: "CANCELADO" },
   APROBADO:    { INICIAR_PREPARACION: "PREPARACION", CANCELAR: "CANCELADO" },
   PREPARACION: { DESPACHAR: "DESPACHADO", CANCELAR: "CANCELADO" },
   DESPACHADO:  { RECIBIR: "RECIBIDO" },

@@ -9801,6 +9801,7 @@ model AssortmentIdealOverride {
 /// (workflow Sprint 8).
 enum ReplenishmentDocumentStatus {
   BORRADOR
+  RESERVADO
   APROBADO
   PREPARACION
   DESPACHADO
@@ -9862,6 +9863,8 @@ model StoreReplenishmentDocument {
 /// AGENTIK-STORES-REPLENISHMENT-FULFILLMENT-01
 /// Verbo de transición del workflow — enum cerrado, nunca String libre.
 enum StoreReplenishmentTransition {
+  RESERVAR
+  LIBERAR_RESERVA
   APROBAR
   INICIAR_PREPARACION
   DESPACHAR

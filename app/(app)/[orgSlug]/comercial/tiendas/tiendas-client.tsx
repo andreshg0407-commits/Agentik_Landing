@@ -1669,10 +1669,15 @@ function NeedsStructureAccordion({ group: g }: { group: { structureKey: string; 
 }
 
 /** Needs tab with line filter + two outer accordions closed by default (AGENTIK-STORES-NEEDS-UX-02.3) */
-function NeedsTabContent({ opNeeds, needsPres }: { opNeeds: OperativeNeedsPresentation; needsPres: NeedsTabPresentation }) {
+function NeedsTabContent({ opNeeds, needsPres, orgSlug }: { opNeeds: OperativeNeedsPresentation; needsPres: NeedsTabPresentation; orgSlug: string }) {
   const [needsLine, setNeedsLine] = useState<string>("ALL");
   const [surtidoOpen, setSurtidoOpen] = useState(false);
   const [pendientesOpen, setPendientesOpen] = useState(false);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planResult, setPlanResult] = useState<{ batchId: string; documents: any[]; reusedExistingBatch: boolean } | null>(null);
+  const [reserveLoading, setReserveLoading] = useState(false);
+  const [reserveResult, setReserveResult] = useState<any | null>(null);
+  const [exportLoading, setExportLoading] = useState<string | null>(null);
 
   const surtidoId = "needs-surtido-body";
   const pendientesId = "needs-pendientes-body";
@@ -1882,16 +1887,157 @@ function NeedsTabContent({ opNeeds, needsPres }: { opNeeds: OperativeNeedsPresen
         )}
       </div>
 
-      {/* CTA — Picking Draft integration point (TODO: AGENTIK-PICKING-DRAFT-01) */}
-      {opNeeds.hasSuggestions && (
+      {/* CTA — Plan de surtido + Reserva (AGENTIK-STORES-SUPPLY-PLAN-RESERVATION-01) */}
+      {opNeeds.hasSuggestions && !planResult && (
         <button
           type="button"
           className="ag-action-primary"
-          style={{ alignSelf: "flex-start", fontFamily: T.mono, fontSize: T.sz.sm, opacity: 0.6, cursor: "default" }}
-          disabled
+          style={{ alignSelf: "flex-start", fontFamily: T.mono, fontSize: T.sz.sm }}
+          disabled={planLoading}
+          onClick={async () => {
+            setPlanLoading(true);
+            try {
+              const res = await tiendaApi(orgSlug, { action: "replenishment_document_create", generatedBy: "usuario" });
+              if (res.batchId) setPlanResult(res);
+            } catch (err) {
+              console.error("[PLAN-SURTIDO] error", err);
+            } finally {
+              setPlanLoading(false);
+            }
+          }}
         >
-          Generar propuesta de surtido · Próximamente disponible
+          {planLoading ? "Generando plan de surtido..." : "Generar plan de surtido"}
         </button>
+      )}
+
+      {/* Plan result: review + reserve + export */}
+      {planResult && (
+        <div style={{ display: "flex", flexDirection: "column", gap: S[2], padding: S[3], background: C.surfaceAlt, borderRadius: R.md, border: `1px solid ${C.line}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
+            <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: 600 }}>
+              Plan de surtido generado
+            </span>
+            {planResult.reusedExistingBatch && (
+              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.amber }}>
+                (reutilizado — mismo contenido)
+              </span>
+            )}
+          </div>
+          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight }}>
+            {planResult.documents.length} documentos · Corrida: {planResult.batchId.slice(0, 8)}
+          </div>
+
+          {/* Document list */}
+          {planResult.documents.map((doc: any) => (
+            <div key={doc.id} style={{ display: "flex", alignItems: "center", gap: S[2], fontFamily: T.mono, fontSize: T.sz.xs }}>
+              <span style={{ fontWeight: 600 }}>{doc.documentNumber}</span>
+              <span>{doc.storeName}</span>
+              <span style={{ color: C.inkLight }}>{doc.suggestionCount} sugerencias · {doc.allocatedUnits} unds</span>
+              <span className="ag-op-status ag-op-status--info" style={{ fontSize: T.sz.xs }}>{doc.status}</span>
+            </div>
+          ))}
+
+          {/* Actions */}
+          <div style={{ display: "flex", gap: S[2], marginTop: S[1] }}>
+            {!reserveResult && (
+              <button
+                type="button"
+                className="ag-action-primary"
+                style={{ fontFamily: T.mono, fontSize: T.sz.sm }}
+                disabled={reserveLoading}
+                onClick={async () => {
+                  setReserveLoading(true);
+                  try {
+                    const results = [];
+                    for (const doc of planResult.documents) {
+                      const res = await tiendaApi(orgSlug, {
+                        action: "replenishment_document_reserve",
+                        documentId: doc.id,
+                        actorId: "usuario",
+                      });
+                      results.push(res.result);
+                    }
+                    setReserveResult(results);
+                  } catch (err) {
+                    console.error("[RESERVAR] error", err);
+                  } finally {
+                    setReserveLoading(false);
+                  }
+                }}
+              >
+                {reserveLoading ? "Reservando inventario..." : "Reservar inventario"}
+              </button>
+            )}
+
+            {reserveResult && (
+              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.green, fontWeight: 600 }}>
+                Inventario reservado en Agentik
+              </span>
+            )}
+
+            {/* Export buttons — prominent after reservation */}
+            {planResult.documents.map((doc: any) => (
+              <div key={`export-${doc.id}`} style={{ display: "flex", gap: S[1] }}>
+                {(["pdf", "xml", "xlsx"] as const).map(fmt => (
+                  <button
+                    key={fmt}
+                    type="button"
+                    className="ag-action-ghost"
+                    style={{ fontFamily: T.mono, fontSize: T.sz.xs, textTransform: "uppercase" }}
+                    disabled={exportLoading === `${doc.id}-${fmt}`}
+                    onClick={async () => {
+                      setExportLoading(`${doc.id}-${fmt}`);
+                      try {
+                        const res = await tiendaApi(orgSlug, {
+                          action: "replenishment_document_export",
+                          documentId: doc.id,
+                          format: fmt,
+                        });
+                        if (res.contentBase64 && res.fileName) {
+                          const byteChars = atob(res.contentBase64);
+                          const byteNums = new Array(byteChars.length);
+                          for (let i = 0; i < byteChars.length; i++) byteNums[i] = byteChars.charCodeAt(i);
+                          const blob = new Blob([new Uint8Array(byteNums)], { type: res.mimeType });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement("a");
+                          a.href = url; a.download = res.fileName; a.click();
+                          URL.revokeObjectURL(url);
+                        }
+                      } catch (err) {
+                        console.error(`[EXPORT-${fmt}] error`, err);
+                      } finally {
+                        setExportLoading(null);
+                      }
+                    }}
+                  >
+                    {exportLoading === `${doc.id}-${fmt}` ? "..." : fmt}
+                  </button>
+                ))}
+              </div>
+            ))}
+
+            {/* Release reservation button */}
+            {reserveResult && (
+              <button
+                type="button"
+                className="ag-action-ghost"
+                style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.amber }}
+                onClick={async () => {
+                  for (const doc of planResult.documents) {
+                    await tiendaApi(orgSlug, {
+                      action: "replenishment_document_release",
+                      documentId: doc.id,
+                      actorId: "usuario",
+                    });
+                  }
+                  setReserveResult(null);
+                }}
+              >
+                Liberar reserva
+              </button>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -3114,7 +3260,7 @@ function DistributionStoreDrawer({
 
       {/* TAB: Necesidades — UX operativa (AGENTIK-STORES-NEEDS-UX-02.1) */}
       {tab === "necesidades" && (
-        <NeedsTabContent opNeeds={opNeeds} needsPres={needsPres} />
+        <NeedsTabContent opNeeds={opNeeds} needsPres={needsPres} orgSlug={orgSlug} />
       )}
 
       {tab === "cobertura" && (

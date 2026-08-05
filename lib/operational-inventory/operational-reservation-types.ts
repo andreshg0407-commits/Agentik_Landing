@@ -35,12 +35,15 @@
  *   portfolio  — a Sales Portfolio assignment locked units for a vendor season
  *   manual     — coordinator manually reserved units (e.g. exhibition, show)
  *   transfer   — inter-vendor or inter-warehouse transfer in progress
+ *   store_plan — a store replenishment plan (Plan de Surtido) holding inventory
+ *                for dispatch to stores. sourceId = replenishment document ID.
  */
 export type OperationalReservationSourceType =
   | "order"
   | "portfolio"
   | "manual"
-  | "transfer";
+  | "transfer"
+  | "store_plan";
 
 // ─── Status ───────────────────────────────────────────────────────────────────
 

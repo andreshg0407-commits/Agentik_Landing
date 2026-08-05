@@ -29,6 +29,7 @@ export const SNAPSHOT_SCHEMA_VERSION = 1 as const;
 
 export const REPLENISHMENT_DOCUMENT_STATUSES = [
   "BORRADOR",
+  "RESERVADO",
   "APROBADO",
   "PREPARACION",
   "DESPACHADO",
@@ -41,6 +42,7 @@ export type ReplenishmentDocumentStatus = (typeof REPLENISHMENT_DOCUMENT_STATUSE
 
 export const REPLENISHMENT_DOCUMENT_STATUS_LABEL: Record<ReplenishmentDocumentStatus, string> = {
   BORRADOR: "Borrador",
+  RESERVADO: "Reservado",
   APROBADO: "Aprobado",
   PREPARACION: "En preparación",
   DESPACHADO: "Despachado",
