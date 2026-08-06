@@ -162,7 +162,7 @@ interface InvConsolidatedRef {
 }
 
 type InvSortBy = "QUANTITY_ASC" | "QUANTITY_DESC" | "REFERENCE_ASC" | "REFERENCE_DESC";
-type InvKpiFilter = "ALL" | "BELOW_MINIMUM" | "HEALTHY";
+
 
 interface InvVariant {
   referenceCode: string;
@@ -2315,44 +2315,6 @@ const TONE_BADGE: Record<PresentationTone, { bg: string; text: string }> = {
 
 // ── Inventory-by-line constants (AGENTIK-STORES-INVENTORY-BY-LINE-01) ────────
 
-const INV_STATE_LABEL: Record<string, string> = {
-  BAJO_MINIMO:             "Bajo minimo",
-  EN_RANGO:                "En rango",
-  EXCESO:                  "Exceso",
-  SIN_REGLA:               "Sin regla",
-  AGOTADO:                 "Agotado",
-  CLASIFICACION_PENDIENTE: "Clasificacion pendiente",
-};
-
-const INV_STATE_COLOR: Record<string, { bg: string; text: string }> = {
-  BAJO_MINIMO:             { bg: C.redLight,    text: C.red },
-  EN_RANGO:                { bg: C.greenLight,  text: C.green },
-  EXCESO:                  { bg: C.amberLight,  text: C.amber },
-  SIN_REGLA:               { bg: C.surface,     text: C.inkFaint },
-  AGOTADO:                 { bg: C.redLight,    text: C.red },
-  CLASIFICACION_PENDIENTE: { bg: C.amberLight,  text: C.amber },
-};
-
-// ── Rule provenance labels (CERTIFICATION-01) ─────────────────────────────
-const RULE_SOURCE_LABEL: Record<string, string> = {
-  TENANT_DEFAULT:  "Heredada",
-  STORE_OVERRIDE:  "Personalizada",
-  SPECIAL_PRODUCT: "Regla especial",
-  RULE_36:         "Regla 36",
-  FALLBACK:        "Sin regla",
-};
-
-function formatRuleChip(rule: EffectiveRuleClient | undefined): string {
-  if (!rule) return "";
-  if (rule.source === "RULE_36") return `R36 (${rule.minUnits ?? 0})`;
-  if (rule.source === "SPECIAL_PRODUCT") return `Especial (${rule.targetUnits ?? 0})`;
-  if (rule.source === "FALLBACK") return "Sin regla";
-  if (rule.minUnits != null && rule.maxUnits != null) {
-    return `${rule.minUnits} / ${rule.idealUnits ?? rule.targetUnits ?? "—"} / ${rule.maxUnits}`;
-  }
-  if (rule.targetUnits != null) return `Obj: ${rule.targetUnits}`;
-  return "";
-}
 
 const INV_SIZE_LABEL: Record<string, string> = {
   small:  "Pequeno",
@@ -2370,123 +2332,76 @@ const INV_UNCLASSIFIED_LABEL: Record<string, string> = {
   dato_canonico_incompleto: "Dato canonico incompleto",
 };
 
-function InvLineSummaryStrip({ summary, activeKpi, onKpiClick, sortBy, onSortChange }: {
+function InvLineSummaryStrip({ summary, sortBy, onSortChange }: {
   summary: { type: string; data: Record<string, unknown> };
-  activeKpi: InvKpiFilter;
-  onKpiClick: (kpi: InvKpiFilter) => void;
   sortBy: InvSortBy;
   onSortChange: (s: InvSortBy) => void;
 }) {
   const d = summary.data;
 
-  // Build KPI items based on summary type
-  type KpiItem = { key: InvKpiFilter; label: string; value: number; color: string };
+  // §4: Factual inventory KPIs only — no policy evaluation
+  type KpiItem = { label: string; value: number; color: string };
   let kpis: KpiItem[] = [];
 
-  if (summary.type === "textile") {
+  if (summary.type === "textile" || summary.type === "accessory") {
     kpis = [
-      { key: "ALL",             label: "Referencias",       value: Number(d.referenciasActivas ?? 0), color: C.ink },
-      { key: "ALL",             label: "Unidades",           value: Number(d.unidades ?? 0),           color: C.ink },
-      { key: "BELOW_MINIMUM",   label: "Requieren surtido", value: Number(d.bajoMinimo ?? 0),         color: C.red },
-      { key: "HEALTHY",         label: "Objetivo cumplido",  value: Number(d.saludables ?? 0),         color: C.green },
-    ];
-  } else if (summary.type === "accessory") {
-    kpis = [
-      { key: "ALL",             label: "Referencias",       value: Number(d.referenciasActivas ?? 0), color: C.ink },
-      { key: "ALL",             label: "Unidades",           value: Number(d.unidades ?? 0),           color: C.ink },
-      { key: "BELOW_MINIMUM",   label: "Requieren surtido", value: Number(d.bajoObjetivo ?? 0),       color: C.red },
-      { key: "HEALTHY",         label: "Objetivo cumplido",  value: Number(d.saludables ?? 0),         color: C.green },
+      { label: "Referencias", value: Number(d.referenciasActivas ?? 0), color: C.ink },
+      { label: "Unidades",    value: Number(d.unidades ?? 0),           color: C.ink },
+      { label: "Variantes",   value: Number(d.variantes ?? d.totalVariantes ?? 0), color: C.ink },
     ];
   } else if (summary.type === "unclassified") {
     kpis = [
-      { key: "ALL", label: "Total",        value: Number(d.total ?? 0),       color: C.amber },
-      { key: "ALL", label: "Unidades",     value: Number(d.unidades ?? 0),    color: C.ink },
-      { key: "ALL", label: "Sin linea",    value: Number(d.sinLinea ?? 0),    color: C.red },
-      { key: "ALL", label: "Sin grupo",    value: Number(d.sinGrupo ?? 0),    color: C.amber },
-      { key: "ALL", label: "Ambiguas",     value: Number(d.ambiguas ?? 0),    color: C.inkFaint },
+      { label: "Referencias", value: Number(d.total ?? 0),    color: C.ink },
+      { label: "Unidades",    value: Number(d.unidades ?? 0), color: C.ink },
     ];
   } else if (summary.type === "out_of_stock") {
     kpis = [
-      { key: "ALL", label: "Total agotados", value: Number(d.total ?? 0),       color: C.red },
-      { key: "ALL", label: "Castillitos",    value: Number(d.castillitos ?? 0), color: C.ink },
-      { key: "ALL", label: "Latin Kids",     value: Number(d.latinKids ?? 0),   color: C.ink },
-      { key: "ALL", label: "Accesorios",     value: Number(d.accesorios ?? 0),  color: C.ink },
+      { label: "Agotados",    value: Number(d.total ?? 0),       color: C.ink },
+      { label: "Castillitos", value: Number(d.castillitos ?? 0), color: C.ink },
+      { label: "Latin Kids",  value: Number(d.latinKids ?? 0),   color: C.ink },
+      { label: "Accesorios",  value: Number(d.accesorios ?? 0),  color: C.ink },
     ];
   }
-
-  const isActionable = summary.type === "textile" || summary.type === "accessory";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
       <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
-        {kpis.map((kpi, idx) => {
-          // "Referencias" clears filter; "Unidades" toggles sort; others are state filters
-          const isRefsKpi = idx === 0;
-          const isUnitsKpi = idx === 1;
-          const isFilterKpi = !isRefsKpi && !isUnitsKpi;
-          const isActive = isFilterKpi && activeKpi === kpi.key && activeKpi !== "ALL";
-          // For Unidades, show sort indicator
-          const unitsSortActive = isUnitsKpi && (sortBy === "QUANTITY_ASC" || sortBy === "QUANTITY_DESC");
-          const showActive = isActive || (isRefsKpi && activeKpi === "ALL" && isActionable);
-
-          return (
-            <button
-              key={idx}
-              onClick={() => {
-                if (!isActionable) return;
-                if (isRefsKpi) {
-                  // Clear all filters
-                  onKpiClick("ALL");
-                } else if (isUnitsKpi) {
-                  // Toggle sort direction
-                  onSortChange(sortBy === "QUANTITY_ASC" ? "QUANTITY_DESC" : "QUANTITY_ASC");
-                } else {
-                  // Toggle filter: second click deactivates
-                  onKpiClick(activeKpi === kpi.key ? "ALL" : kpi.key);
-                }
-              }}
-              style={{
-                ...panel, padding: `${S[2]}px ${S[3]}px`, display: "flex", flexDirection: "column", gap: 2,
-                flex: 1, minWidth: 80, textAlign: "left" as const,
-                cursor: isActionable ? "pointer" : "default",
-                border: isActive ? `2px solid ${C.blueDark}` : `1px solid ${C.line}`,
-                background: isActive ? C.blueLight : C.white,
-              }}
-            >
-              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase" as const }}>
-                {kpi.label}
-                {isUnitsKpi && unitsSortActive && (
-                  <span style={{ marginLeft: 4 }}>{sortBy === "QUANTITY_ASC" ? "↑" : "↓"}</span>
-                )}
-              </span>
-              <span style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: kpi.color }}>
-                {kpi.value}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Sort selector — only for textile/accessory */}
-      {isActionable && (
-        <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
-          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Ordenar por</span>
-          <select
-            value={sortBy}
-            onChange={e => onSortChange(e.target.value as InvSortBy)}
+        {kpis.map((kpi, idx) => (
+          <div
+            key={idx}
             style={{
-              fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "2px 6px",
-              borderRadius: R.sm, border: `1px solid ${C.line}`,
-              background: C.white, color: C.ink,
+              ...panel, padding: `${S[2]}px ${S[3]}px`, display: "flex", flexDirection: "column", gap: 2,
+              flex: 1, minWidth: 80, textAlign: "left" as const,
             }}
           >
-            <option value="QUANTITY_ASC">Menor inventario</option>
-            <option value="QUANTITY_DESC">Mayor inventario</option>
-            <option value="REFERENCE_ASC">Referencia A–Z</option>
-            <option value="REFERENCE_DESC">Referencia Z–A</option>
-          </select>
-        </div>
-      )}
+            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase" as const }}>
+              {kpi.label}
+            </span>
+            <span style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: kpi.color }}>
+              {kpi.value}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Sort selector */}
+      <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Ordenar por</span>
+        <select
+          value={sortBy}
+          onChange={e => onSortChange(e.target.value as InvSortBy)}
+          style={{
+            fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "2px 6px",
+            borderRadius: R.sm, border: `1px solid ${C.line}`,
+            background: C.white, color: C.ink,
+          }}
+        >
+          <option value="QUANTITY_ASC">Menor inventario</option>
+          <option value="QUANTITY_DESC">Mayor inventario</option>
+          <option value="REFERENCE_ASC">Referencia A–Z</option>
+          <option value="REFERENCE_DESC">Referencia Z–A</option>
+        </select>
+      </div>
     </div>
   );
 }
@@ -2754,7 +2669,7 @@ function DistributionStoreDrawer({
 
   // ── Inventory-by-line state (AGENTIK-STORES-INVENTORY-BY-LINE-01) ──────
   type InvLine = "CASTILLITOS" | "LATIN_KIDS" | "ACCESSORIES" | "UNCLASSIFIED" | "OUT_OF_STOCK" | "ESPECIALES";
-  type InvState = "BAJO_MINIMO" | "EN_RANGO" | "EXCESO" | "SIN_REGLA" | "AGOTADO" | "CLASIFICACION_PENDIENTE";
+
 
   const [invLine, setInvLine] = useState<InvLine>("CASTILLITOS");
   const [invLineCounts, setInvLineCounts] = useState<{ line: InvLine; count: number }[]>([]);
@@ -2767,14 +2682,14 @@ function DistributionStoreDrawer({
   const [invGroup, setInvGroup] = useState<string | undefined>();
   const [invSubgroup, setInvSubgroup] = useState<string | undefined>();
   const [invSizeClass, setInvSizeClass] = useState<string | undefined>();
-  const [invInvState, setInvInvState] = useState<InvState | undefined>();
+
   const [invExpandedRefs, setInvExpandedRefs] = useState<Set<string>>(new Set());
   const [invVariants, setInvVariants] = useState<Record<string, InvVariant[]>>({});
   const [invVariantsLoading, setInvVariantsLoading] = useState<Set<string>>(new Set());
   const [invError, setInvError] = useState<string | null>(null);
   const [invRetry, setInvRetry] = useState(0);
   const [invSortBy, setInvSortBy] = useState<InvSortBy>("QUANTITY_ASC");
-  const [invKpiFilter, setInvKpiFilter] = useState<InvKpiFilter>("ALL");
+
 
   // ── F3A: Necesidades y Cobertura proyectan el MISMO snapshot (T8: cache
   // compartida — cero fetch de estado adicional; T2: cero acciones legacy).
@@ -2870,11 +2785,9 @@ function DistributionStoreDrawer({
     setInvGroup(undefined);
     setInvSubgroup(undefined);
     setInvSizeClass(undefined);
-    setInvInvState(undefined);
     setInvExpandedRefs(new Set());
     setInvVariants({});
     setInvSortBy("QUANTITY_ASC");
-    setInvKpiFilter("ALL");
     // Reset visual filters (F3A — Necesidades/Cobertura proyectan el snapshot)
     setCovLine("ALL");
     setCovOpenGroups(new Set());
@@ -2924,8 +2837,8 @@ function DistributionStoreDrawer({
       action: "store_inventory_by_line", sub: "load",
       storeId: storeCard.store.id, line: invLine,
       group: invGroup, subgroup: invSubgroup, sizeClass: invSizeClass,
-      inventoryState: invInvState,
-      kpiFilter: invKpiFilter !== "ALL" ? invKpiFilter : undefined,
+
+
       sortBy: invSortBy,
       search: invSearchDebounced || undefined,
       page: invPage, pageSize: 25,
@@ -2945,7 +2858,7 @@ function DistributionStoreDrawer({
       })
       .finally(() => { if (!cancelled) setInvLoading(false); });
     return () => { cancelled = true; };
-  }, [tab, storeCard.store.id, orgSlug, invLine, invGroup, invSubgroup, invSizeClass, invInvState, invKpiFilter, invSortBy, invSearchDebounced, invPage, invRetry]);
+  }, [tab, storeCard.store.id, orgSlug, invLine, invGroup, invSubgroup, invSizeClass, invSortBy, invSearchDebounced, invPage, invRetry]);
 
   // ── Debounce search ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -3064,7 +2977,7 @@ function DistributionStoreDrawer({
                 return (
                   <button
                     key={ln.key}
-                    onClick={() => { setInvLine(ln.key); setInvPage(1); setInvGroup(undefined); setInvSubgroup(undefined); setInvSizeClass(undefined); setInvInvState(undefined); setInvKpiFilter("ALL"); setInvSortBy("QUANTITY_ASC"); setInvExpandedRefs(new Set()); }}
+                    onClick={() => { setInvLine(ln.key); setInvPage(1); setInvGroup(undefined); setInvSubgroup(undefined); setInvSizeClass(undefined); setInvSortBy("QUANTITY_ASC"); setInvExpandedRefs(new Set()); }}
                     style={{
                       fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
                       padding: "6px 14px", borderRadius: R.sm, cursor: "pointer",
@@ -3102,12 +3015,10 @@ function DistributionStoreDrawer({
             </div>
           )}
 
-          {/* LINE SUMMARY — 5 clickable KPIs (KPI-ACTIONS-AND-SORTING-01). Hidden for ESPECIALES */}
+          {/* LINE SUMMARY — factual KPIs + sort (INVENTORY-FACTUAL-VIEW-01). Hidden for ESPECIALES */}
           {invLine !== "ESPECIALES" && invData?.summary && (
             <InvLineSummaryStrip
               summary={invData.summary}
-              activeKpi={invKpiFilter}
-              onKpiClick={(kpi) => { setInvKpiFilter(kpi); setInvPage(1); }}
               sortBy={invSortBy}
               onSortChange={(s) => { setInvSortBy(s); setInvPage(1); }}
             />
@@ -3141,15 +3052,8 @@ function DistributionStoreDrawer({
                   flex: 1, minWidth: 120, padding: S[2], borderRadius: R.sm,
                   border: `1px solid ${C.line}`, background: C.white,
                 }}>
-                  <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase" as const }}>Requieren surtido</div>
-                  <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: specialProductsPres.rules.filter(r => r.statusKey === "FALTANTE").length > 0 ? C.red : C.ink }}>{specialProductsPres.rules.filter(r => r.statusKey === "FALTANTE").length}</div>
-                </div>
-                <div style={{
-                  flex: 1, minWidth: 120, padding: S[2], borderRadius: R.sm,
-                  border: `1px solid ${C.line}`, background: C.white,
-                }}>
-                  <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase" as const }}>Requieren retiro</div>
-                  <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: specialProductsPres.rules.filter(r => r.statusKey === "EXCEDENTE").length > 0 ? C.amber : C.ink }}>{specialProductsPres.rules.filter(r => r.statusKey === "EXCEDENTE").length}</div>
+                  <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase" as const }}>Variantes</div>
+                  <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: C.ink }}>{specialProductsPres.rules.length}</div>
                 </div>
               </div>
 
@@ -3165,31 +3069,12 @@ function DistributionStoreDrawer({
                     borderBottom: rule.matchedReferences.length > 0 ? `1px solid ${C.lineSubtle}` : "none",
                     background: C.surface,
                   }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
-                      <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
-                        {rule.label}
-                      </span>
-                      <span style={{
-                        fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                        padding: "2px 8px", borderRadius: R.pill,
-                        background: TONE_BADGE[rule.tone].bg, color: TONE_BADGE[rule.tone].text,
-                      }}>
-                        {rule.statusKey}
-                      </span>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: S[3] }}>
-                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
-                        Actual {rule.totalUnits} · Objetivo {rule.idealUnits}
-                      </span>
-                      {rule.gapText !== "—" && (
-                        <span style={{
-                          fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                          color: rule.tone === "critical" ? C.red : rule.tone === "warning" ? C.amber : C.inkMid,
-                        }}>
-                          {rule.gapText}
-                        </span>
-                      )}
-                    </div>
+                    <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
+                      {rule.label}
+                    </span>
+                    <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
+                      {rule.totalUnits} uds · {rule.matchedReferences.length} refs
+                    </span>
                   </div>
 
                   {/* Matched references table */}
@@ -3286,18 +3171,8 @@ function DistributionStoreDrawer({
                   {invData.availableFilters.sizeClasses.map(s => <option key={s} value={s}>{INV_SIZE_LABEL[s] || s}</option>)}
                 </select>
               )}
-              {invData.availableFilters.inventoryStates.length > 1 && (
-                <select
-                  value={invInvState || ""}
-                  onChange={e => { setInvInvState((e.target.value || undefined) as InvState | undefined); setInvPage(1); }}
-                  style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "2px 6px", borderRadius: R.sm, border: `1px solid ${C.line}`, background: C.white, color: C.ink }}
-                >
-                  <option value="">Todos los estados</option>
-                  {invData.availableFilters.inventoryStates.map(s => <option key={s} value={s}>{INV_STATE_LABEL[s] || s}</option>)}
-                </select>
-              )}
-              {(invGroup || invSubgroup || invSizeClass || invInvState) && (
-                <button onClick={() => { setInvGroup(undefined); setInvSubgroup(undefined); setInvSizeClass(undefined); setInvInvState(undefined); setInvPage(1); }} style={{
+              {(invGroup || invSubgroup || invSizeClass) && (
+                <button onClick={() => { setInvGroup(undefined); setInvSubgroup(undefined); setInvSizeClass(undefined); setInvPage(1); }} style={{
                   fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "2px 6px",
                   borderRadius: R.sm, border: `1px solid ${C.line}`,
                   background: C.surface, color: C.inkMid, cursor: "pointer",
@@ -3326,7 +3201,6 @@ function DistributionStoreDrawer({
                 <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
                   {invData.items.map(item => {
                     const isExpanded = invExpandedRefs.has(item.referenceCode);
-                    const stateColor = INV_STATE_COLOR[item.inventoryState] || { bg: C.surface, text: C.inkMid };
                     return (
                       <div key={item.referenceCode} style={{ borderBottom: `1px solid ${C.line}`, background: isExpanded ? C.surfaceAlt : "transparent" }}>
                         <div
@@ -3356,29 +3230,12 @@ function DistributionStoreDrawer({
                             <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Tienda</div>
                             <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.ink }}>{item.currentStoreQty}</div>
                           </div>
-                          <span style={{
-                            fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                            padding: "2px 6px", borderRadius: R.pill, flexShrink: 0,
-                            background: stateColor.bg, color: stateColor.text,
-                          }}>
-                            {INV_STATE_LABEL[item.inventoryState] || item.inventoryState}
-                          </span>
                           {item.variantCount > 1 && (
                             <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, flexShrink: 0 }}>
                               {item.variantCount} var {isExpanded ? "▼" : "▶"}
                             </span>
                           )}
                         </div>
-
-                        {/* Rule provenance (CERTIFICATION-01) */}
-                        {item.effectiveRule && item.effectiveRule.source !== "FALLBACK" && (
-                          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, padding: `0 ${S[2]}px 0 ${S[2] + 32 + S[2]}px`, display: "flex", gap: S[2], alignItems: "center" }}>
-                            <span style={{ color: item.effectiveRule.inherited ? C.inkFaint : C.blueDark }}>
-                              {RULE_SOURCE_LABEL[item.effectiveRule.source] || item.effectiveRule.source}
-                            </span>
-                            <span>{formatRuleChip(item.effectiveRule)}</span>
-                          </div>
-                        )}
 
                         {/* Unclassified reason */}
                         {item.unclassifiedReason && (
@@ -3400,14 +3257,12 @@ function DistributionStoreDrawer({
                                   <span style={{ width: 80 }}>Talla</span>
                                   <span style={{ width: 80 }}>Color</span>
                                   <span style={{ width: 50, textAlign: "right" }}>Tienda</span>
-                                  <span style={{ flex: 1 }}>Estado</span>
                                 </div>
                                 {(invVariants[item.referenceCode] || []).map((v, vi) => (
                                   <div key={vi} style={{ display: "flex", gap: S[2], padding: `2px 0`, fontFamily: T.mono, fontSize: T.sz["2xs"], borderTop: `1px solid ${C.lineSubtle}` }}>
                                     <span style={{ width: 80, color: C.ink }}>{v.size || "\u2014"}</span>
                                     <span style={{ width: 80, color: C.ink }}>{v.color || "\u2014"}</span>
                                     <span style={{ width: 50, textAlign: "right", fontWeight: T.wt.semibold, color: C.ink }}>{v.storeQty}</span>
-                                    <span style={{ flex: 1, color: C.inkMid }}>{INV_STATE_LABEL[v.inventoryState] || v.inventoryState}</span>
                                   </div>
                                 ))}
                               </div>

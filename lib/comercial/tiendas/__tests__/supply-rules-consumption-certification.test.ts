@@ -145,32 +145,38 @@ describe("TERCERO — Rule provenance in read models", () => {
   });
 });
 
-// ── CUARTO: Inventario visual evidence ────────────────────────────────────────
+// ── CUARTO: Inventario factual view (INVENTORY-FACTUAL-VIEW-01) ──────────────
 
-describe("CUARTO — Inventario rule provenance display", () => {
+describe("CUARTO — Inventario factual view (no policy provenance)", () => {
   const clientSource = readClient();
 
-  it("client has EffectiveRuleClient type mirror", () => {
+  it("client has EffectiveRuleClient type mirror (backend response shape)", () => {
     assert.ok(clientSource.includes("interface EffectiveRuleClient"));
   });
 
-  it("InvConsolidatedRef includes effectiveRule", () => {
+  it("InvConsolidatedRef includes effectiveRule (backend response shape)", () => {
     assert.ok(clientSource.includes("effectiveRule: EffectiveRuleClient;"));
   });
 
-  it("RULE_SOURCE_LABEL maps all 5 source values", () => {
-    for (const val of ["TENANT_DEFAULT", "STORE_OVERRIDE", "SPECIAL_PRODUCT", "RULE_36", "FALLBACK"]) {
-      assert.ok(clientSource.includes(val), `Missing RULE_SOURCE_LABEL key: ${val}`);
-    }
+  it("Inventario tab does NOT render rule provenance (factual-only)", () => {
+    assert.ok(!clientSource.includes("RULE_SOURCE_LABEL[item.effectiveRule.source]"));
+    assert.ok(!clientSource.includes("formatRuleChip(item.effectiveRule)"));
   });
 
-  it("formatRuleChip function exists", () => {
-    assert.ok(clientSource.includes("function formatRuleChip("));
+  it("Inventario tab does NOT render inventoryState badge on rows", () => {
+    assert.ok(!clientSource.includes("INV_STATE_LABEL[item.inventoryState]"));
   });
 
-  it("Inventario tab renders rule provenance", () => {
-    assert.ok(clientSource.includes("RULE_SOURCE_LABEL[item.effectiveRule.source]"));
-    assert.ok(clientSource.includes("formatRuleChip(item.effectiveRule)"));
+  it("InvLineSummaryStrip shows factual KPIs only", () => {
+    const stripBlock = clientSource.slice(
+      clientSource.indexOf("function InvLineSummaryStrip"),
+      clientSource.indexOf("function InvLineSummaryStrip") + 1500,
+    );
+    assert.ok(stripBlock.includes('"Referencias"'));
+    assert.ok(stripBlock.includes('"Unidades"'));
+    assert.ok(stripBlock.includes('"Variantes"'));
+    assert.ok(!stripBlock.includes("BELOW_MINIMUM"));
+    assert.ok(!stripBlock.includes("HEALTHY"));
   });
 });
 
@@ -187,9 +193,9 @@ describe("QUINTO — Necesidades rule provenance display", () => {
     assert.ok(ndNeedItemBlock.includes("effectiveRule: EffectiveRuleClient"));
   });
 
-  it("Necesidades tab shows Regla column with formatRuleChip", () => {
-    // The needs render section includes rule display
-    assert.ok(clientSource.includes("formatRuleChip(item.effectiveRule)"));
+  it("Necesidades tab rule display removed (policy provenance moved to Cobertura)", () => {
+    // formatRuleChip was removed as part of INVENTORY-FACTUAL-VIEW-01
+    assert.ok(!clientSource.includes("formatRuleChip(item.effectiveRule)"));
   });
 
   it("Necesidades tab shows rule source label", () => {
