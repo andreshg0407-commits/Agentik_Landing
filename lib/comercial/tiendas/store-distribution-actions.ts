@@ -27,6 +27,8 @@ import type {
   EffectiveTextileConfig,
   EffectiveAccessoryConfig,
   EffectiveScarcityConfig,
+  EffectiveSpecialProductConfig,
+  EffectiveSpecialProductEntry,
   RuleImpactPreview,
   ConfigValidationResult,
   ConfigFieldError,
@@ -49,6 +51,7 @@ import {
   LATIN_KIDS_TEXTILE_COVERAGE,
   CASTILLITOS_GLOBAL_LOW_STOCK,
   CASTILLITOS_ACCESSORY_COVERAGE,
+  CASTILLITOS_SPECIAL_PRODUCTS,
 } from "./store-policy-pack-config";
 
 import type { ScarcityParams } from "./store-distribution-service";
@@ -154,11 +157,15 @@ export async function getEffectiveStoreConfig(
   // ── Scarcity config (tenant-level — shared by all stores) ────────────
   const scarcity = resolveScarcityConfig(tenantRules);
 
+  // ── Special products (tenant-level — per-pattern-per-store ideals) ───
+  const specialProducts = resolveSpecialProductsForStore(storeId, tenantRules);
+
   return {
     castillitos: castillitosTextile,
     latinKids:   latinKidsTextile,
     accessories: { small: smallAcc, medium: mediumAcc, large: largeAcc },
     scarcity,
+    specialProducts,
   };
 }
 
@@ -178,6 +185,130 @@ export function resolveScarcityFromPolicies(
     allowedIds:   effective.allowedStoresWhenScarce,
     allowedNames: effective.allowedStoreNames,
   };
+}
+
+// ── Special products resolution ──────────────────────────────────────────────
+
+/**
+ * Resolve effective special product rules for a specific store.
+ * Merges pack defaults (CASTILLITOS_SPECIAL_PRODUCTS) with persisted overrides.
+ *
+ * A persisted SPECIAL_PRODUCT rule with active=true OVERRIDES the pack ideal
+ * for its pattern+store. A rule with active=false (DISABLE) suppresses the
+ * pattern entirely (idealUnits → 0).
+ */
+function resolveSpecialProductsForStore(
+  storeId: string,
+  tenantRules: StorePolicyRule[],
+): EffectiveSpecialProductConfig {
+  const now = new Date().toISOString();
+  const entries: EffectiveSpecialProductEntry[] = [];
+
+  for (const pattern of CASTILLITOS_SPECIAL_PRODUCTS.referencePatterns) {
+    const packIdeal = CASTILLITOS_SPECIAL_PRODUCTS.idealByStore[storeId]
+      ?? CASTILLITOS_SPECIAL_PRODUCTS.defaultIdeal;
+
+    // Look for a persisted override for this exact pattern+store
+    const override = tenantRules.find(r => {
+      if (r.ruleKind !== "SPECIAL_PRODUCT") return false;
+      if (!r.specialPattern) return false;
+      if (normalizePattern(r.specialPattern) !== normalizePattern(pattern)) return false;
+      // Match: either store-specific (storeId matches) or tenant-wide
+      if (r.storeId !== TENANT_SPECIAL_STORE_ID && r.storeId !== storeId) return false;
+      return true;
+    });
+
+    if (override) {
+      // Vigencia check
+      if (override.validFrom && override.validFrom > now) {
+        // Future — fall through to pack default
+      } else if (override.validTo && override.validTo < now) {
+        // Expired — fall through to pack default
+      } else if (!override.active || override.effect === "DISABLE") {
+        entries.push({
+          pattern,
+          idealUnits: 0,
+          source: "store_override",
+          validFrom: override.validFrom ?? null,
+          validTo:   override.validTo ?? null,
+          season:    override.season ?? null,
+          notes:     override.notes ?? null,
+        });
+        continue;
+      } else {
+        entries.push({
+          pattern,
+          idealUnits: override.idealQty ?? packIdeal,
+          source: "store_override",
+          validFrom: override.validFrom ?? null,
+          validTo:   override.validTo ?? null,
+          season:    override.season ?? null,
+          notes:     override.notes ?? null,
+        });
+        continue;
+      }
+    }
+
+    entries.push({
+      pattern,
+      idealUnits: packIdeal,
+      source: "tenant_default",
+      validFrom: null,
+      validTo:   null,
+      season:    null,
+      notes:     null,
+    });
+  }
+
+  // Also include any ADD rules for patterns NOT in the pack
+  for (const rule of tenantRules) {
+    if (rule.ruleKind !== "SPECIAL_PRODUCT") continue;
+    if (!rule.specialPattern) continue;
+    if (!rule.active) continue;
+    if (rule.validFrom && rule.validFrom > now) continue;
+    if (rule.validTo && rule.validTo < now) continue;
+    const normalized = normalizePattern(rule.specialPattern);
+    const alreadyHandled = CASTILLITOS_SPECIAL_PRODUCTS.referencePatterns.some(
+      p => normalizePattern(p) === normalized,
+    );
+    if (alreadyHandled) continue;
+    // New pattern added via policy
+    if (rule.storeId !== TENANT_SPECIAL_STORE_ID && rule.storeId !== storeId) continue;
+    entries.push({
+      pattern:    rule.specialPattern,
+      idealUnits: rule.idealQty ?? 0,
+      source:     "store_override",
+      validFrom:  rule.validFrom ?? null,
+      validTo:    rule.validTo ?? null,
+      season:     rule.season ?? null,
+      notes:      rule.notes ?? null,
+    });
+  }
+
+  return { entries };
+}
+
+function normalizePattern(p: string): string {
+  return p.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/_/g, " ").trim();
+}
+
+/**
+ * Sentinel storeId for the tenant-level special product policy.
+ * Uses the same row as scarcity: __tenant_scarcity__ (both are tenant-wide).
+ */
+const TENANT_SPECIAL_STORE_ID = TENANT_SCARCITY_STORE_ID;
+
+/**
+ * Resolve effective special products from a pre-loaded list of store policies.
+ * Used by operational pipelines that already have all policies loaded.
+ */
+export function resolveSpecialProductsFromPolicies(
+  storeId: string,
+  policies: Array<{ storeId: string; rules: StorePolicyRule[] }>,
+): EffectiveSpecialProductConfig {
+  const tenantPolicy = policies.find(p => p.storeId === TENANT_SCARCITY_STORE_ID);
+  const tenantRules = tenantPolicy?.rules ?? [];
+  return resolveSpecialProductsForStore(storeId, tenantRules);
 }
 
 function resolveTextileConfig(
@@ -326,10 +457,11 @@ export async function previewRuleImpact(
 
   // Merge proposed changes into current config
   const merged: EffectiveStoreConfig = {
-    castillitos: proposedConfig.castillitos ?? currentConfig.castillitos,
-    latinKids:   proposedConfig.latinKids ?? currentConfig.latinKids,
-    accessories: proposedConfig.accessories ?? currentConfig.accessories,
-    scarcity:    proposedConfig.scarcity ?? currentConfig.scarcity,
+    castillitos:     proposedConfig.castillitos ?? currentConfig.castillitos,
+    latinKids:       proposedConfig.latinKids ?? currentConfig.latinKids,
+    accessories:     proposedConfig.accessories ?? currentConfig.accessories,
+    scarcity:        proposedConfig.scarcity ?? currentConfig.scarcity,
+    specialProducts: proposedConfig.specialProducts ?? currentConfig.specialProducts,
   };
 
   // Simulate impact on each item
@@ -438,6 +570,12 @@ export async function saveDistributionConfig(
     if (config.scarcity.season) config.scarcity.season = sanitizeText(config.scarcity.season, MAX_SEASON_LENGTH);
     if (config.scarcity.notes) config.scarcity.notes = sanitizeText(config.scarcity.notes, MAX_NOTES_LENGTH);
   }
+  if (config.specialProducts) {
+    for (const entry of config.specialProducts.entries) {
+      if (entry.season) entry.season = sanitizeText(entry.season, MAX_SEASON_LENGTH);
+      if (entry.notes) entry.notes = sanitizeText(entry.notes, MAX_NOTES_LENGTH);
+    }
+  }
 
   try {
     // Get current config for audit diff
@@ -463,6 +601,11 @@ export async function saveDistributionConfig(
     // ── Scarcity (Rule 36) — tenant-level, separate persistence ────────
     if (config.scarcity) {
       await saveTenantScarcityRule(orgId, config.scarcity);
+    }
+
+    // ── Special products — tenant-level, per-store-per-pattern ────────
+    if (config.specialProducts) {
+      await saveTenantSpecialProductRules(orgId, storeId, config.specialProducts);
     }
 
     // Record audit entries for each changed field
@@ -536,6 +679,68 @@ async function saveTenantScarcityRule(
     storeId:   TENANT_SCARCITY_STORE_ID,
     storeName: "Regla 36 (Tenant)",
     rules:     [...otherRules, scarcityRule],
+    active:    true,
+  });
+}
+
+// ── Tenant-level special product persistence ────────────────────────────────
+
+/**
+ * Persist special product rules as tenant-level StorePolicyRules.
+ * Each entry becomes one SPECIAL_PRODUCT rule keyed by pattern+storeId.
+ * If source is "tenant_default", removes the override for that pattern.
+ */
+async function saveTenantSpecialProductRules(
+  orgId: string,
+  storeId: string,
+  specialProducts: EffectiveSpecialProductConfig,
+): Promise<void> {
+  const existing = await getStorePolicyByStoreId(orgId, TENANT_SCARCITY_STORE_ID);
+  const existingRules = existing?.rules ?? [];
+
+  // Remove all SPECIAL_PRODUCT rules for this storeId
+  const otherRules = existingRules.filter(r => {
+    if (r.ruleKind !== "SPECIAL_PRODUCT") return true;
+    if (r.storeId !== storeId) return true;
+    return false;
+  });
+
+  // Add back only entries with source === "store_override"
+  const newRules: StorePolicyRule[] = [];
+  for (const entry of specialProducts.entries) {
+    if (entry.source === "tenant_default") continue;
+    // Find previous rule for stable identity
+    const prev = existingRules.find(
+      r => r.ruleKind === "SPECIAL_PRODUCT"
+        && r.storeId === storeId
+        && r.specialPattern
+        && normalizePattern(r.specialPattern) === normalizePattern(entry.pattern),
+    );
+    newRules.push({
+      id:                          prev?.id ?? `rule_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      storeId,
+      scope:                       "tenant",
+      productClass:                "bulky",
+      ruleKind:                    "SPECIAL_PRODUCT",
+      specialPattern:              entry.pattern,
+      effect:                      entry.idealUnits === 0 ? "DISABLE" : "OVERRIDE",
+      idealQty:                    entry.idealUnits,
+      allowReplacement:            false,
+      allowProductionSignal:       false,
+      allowMainWarehouseTransfer:  true,
+      priority:                    60,
+      active:                      true,
+      validFrom:                   entry.validFrom,
+      validTo:                     entry.validTo,
+      season:                      entry.season,
+      notes:                       entry.notes,
+    });
+  }
+
+  await saveStorePolicy(orgId, {
+    storeId:   TENANT_SCARCITY_STORE_ID,
+    storeName: "Regla 36 (Tenant)",
+    rules:     [...otherRules, ...newRules],
     active:    true,
   });
 }
@@ -695,6 +900,10 @@ function buildAuditEntries(
   if (proposed.scarcity) {
     const v = extractVigencia(proposed.scarcity);
     entries.push({ ...base, regla: "scarcity_rule36", valorAnterior: current.scarcity, valorNuevo: proposed.scarcity, ...v });
+  }
+
+  if (proposed.specialProducts) {
+    entries.push({ ...base, regla: "special_products", valorAnterior: current.specialProducts, valorNuevo: proposed.specialProducts, vigencia: null, validFrom: null, validTo: null, season: null, notes: null });
   }
 
   return entries;

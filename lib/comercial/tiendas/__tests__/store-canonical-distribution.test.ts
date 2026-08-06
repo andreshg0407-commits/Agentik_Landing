@@ -1090,7 +1090,7 @@ describe("SEPTIMO — Textile Rule 0-7 SURTIR / 8-12 MANTENER / >12 RETIRAR", ()
 // ── Section 24: Effective Config Resolution ─────────────────────────────
 
 describe("OCTAVO — Effective Config Structure", () => {
-  it("EffectiveStoreConfig has castillitos, latinKids, accessories, scarcity", () => {
+  it("EffectiveStoreConfig has castillitos, latinKids, accessories, scarcity, specialProducts", () => {
     const config: EffectiveStoreConfig = {
       castillitos: { enabled: true, minUnits: 8, maxUnits: 12, targetUnits: 10, validFrom: null, validTo: null, season: null, notes: null, source: "tenant_default" },
       latinKids:   { enabled: true, minUnits: 8, maxUnits: 12, targetUnits: 10, validFrom: null, validTo: null, season: null, notes: null, source: "tenant_default" },
@@ -1107,6 +1107,13 @@ describe("OCTAVO — Effective Config Structure", () => {
         validFrom: null, validTo: null, season: null, notes: null,
         source: "tenant_default",
       },
+      specialProducts: {
+        entries: [
+          { pattern: "BAÑERA", idealUnits: 3, source: "tenant_default", validFrom: null, validTo: null, season: null, notes: null },
+          { pattern: "CUNA_COLECHO", idealUnits: 3, source: "tenant_default", validFrom: null, validTo: null, season: null, notes: null },
+          { pattern: "CORRAL", idealUnits: 3, source: "tenant_default", validFrom: null, validTo: null, season: null, notes: null },
+        ],
+      },
     };
     assert.ok(config.castillitos);
     assert.ok(config.latinKids);
@@ -1114,6 +1121,8 @@ describe("OCTAVO — Effective Config Structure", () => {
     assert.ok(config.accessories.medium);
     assert.ok(config.accessories.large);
     assert.ok(config.scarcity);
+    assert.ok(config.specialProducts);
+    assert.equal(config.specialProducts.entries.length, 3);
   });
 
   it("tenant_default source when no store override exists", () => {

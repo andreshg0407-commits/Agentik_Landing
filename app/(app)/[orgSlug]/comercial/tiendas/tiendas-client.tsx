@@ -22,6 +22,8 @@ import type {
   EffectiveTextileConfig,
   EffectiveAccessoryConfig,
   EffectiveScarcityConfig,
+  EffectiveSpecialProductConfig,
+  EffectiveSpecialProductEntry,
   RuleImpactPreview,
   ReplacementResult,
 } from "@/lib/comercial/tiendas/store-distribution-types";
@@ -908,6 +910,16 @@ function DerroteroTab({ orgSlug, storeId, storeName }: { orgSlug: string; storeI
     return errs;
   }
 
+  function validateSpecialProducts(sp: EffectiveSpecialProductConfig): Record<string, string> {
+    const errs: Record<string, string> = {};
+    for (let i = 0; i < sp.entries.length; i++) {
+      const e = sp.entries[i];
+      if (!e.pattern || e.pattern.trim().length === 0) errs[`sp_${i}_pattern`] = "Patron requerido";
+      if (!Number.isInteger(e.idealUnits) || e.idealUnits < 0) errs[`sp_${i}_ideal`] = "Entero >= 0";
+    }
+    return errs;
+  }
+
   // ── Edit mode handlers ──────────────────────────────────────────────────
   function startEdit(block: DerroteroBlock) {
     if (!editable || !config) return;
@@ -924,6 +936,7 @@ function DerroteroTab({ orgSlug, storeId, storeName }: { orgSlug: string; storeI
     else if (block === "acc_medium") setDraft({ accessories: { ...config.accessories, medium: { ...config.accessories.medium, source: "store_override" } } });
     else if (block === "acc_large") setDraft({ accessories: { ...config.accessories, large: { ...config.accessories.large, source: "store_override" } } });
     else if (block === "scarcity") setDraft({ scarcity: { ...config.scarcity } });
+    else if (block === "special") setDraft({ specialProducts: { entries: config.specialProducts.entries.map(e => ({ ...e })) } });
   }
 
   function cancelEdit() {
@@ -946,6 +959,7 @@ function DerroteroTab({ orgSlug, storeId, storeName }: { orgSlug: string; storeI
       else if (block === "acc_medium") resetConfig = { accessories: { ...config.accessories, medium: { ...config.accessories.medium, source: "tenant_default" } } };
       else if (block === "acc_large") resetConfig = { accessories: { ...config.accessories, large: { ...config.accessories.large, source: "tenant_default" } } };
       else if (block === "scarcity") resetConfig = { scarcity: { ...config.scarcity, source: "tenant_default" } };
+      else if (block === "special") resetConfig = { specialProducts: { entries: config.specialProducts.entries.map(e => ({ ...e, source: "tenant_default" as const })) } };
 
       const data = await tiendasApi({
         action: "distribution_save_config",
@@ -976,6 +990,7 @@ function DerroteroTab({ orgSlug, storeId, storeName }: { orgSlug: string; storeI
     if (draft.accessories?.medium) errs = { ...errs, ...validateAccessory(draft.accessories.medium.targetUnits) };
     if (draft.accessories?.large) errs = { ...errs, ...validateAccessory(draft.accessories.large.targetUnits) };
     if (draft.scarcity) errs = { ...errs, ...validateScarcity(draft.scarcity) };
+    if (draft.specialProducts) errs = { ...errs, ...validateSpecialProducts(draft.specialProducts) };
 
     if (Object.keys(errs).length > 0) {
       setValidationErrors(errs);
@@ -1113,10 +1128,10 @@ function DerroteroTab({ orgSlug, storeId, storeName }: { orgSlug: string; storeI
                 {block.key === "acc_medium" && renderAccessoryBlock("medium", "Medianos", config.accessories.medium, isEditing, draft.accessories?.medium, editable, (ac) => setDraft(prev => ({ accessories: { ...(config?.accessories ?? { small: config.accessories.small, medium: ac, large: config.accessories.large }), medium: ac } })), validationErrors)}
                 {block.key === "acc_large" && renderAccessoryBlock("large", "Grandes", config.accessories.large, isEditing, draft.accessories?.large, editable, (ac) => setDraft(prev => ({ accessories: { ...(config?.accessories ?? { small: config.accessories.small, medium: config.accessories.medium, large: ac }), large: ac } })), validationErrors)}
                 {block.key === "scarcity" && renderScarcityBlock(config.scarcity, isEditing, draft.scarcity, editable, (sc) => setDraft({ scarcity: sc }), validationErrors)}
-                {block.key === "special" && renderSpecialBlock()}
+                {block.key === "special" && renderSpecialBlock(config.specialProducts, isEditing, draft.specialProducts, editable, (sp) => setDraft({ specialProducts: sp }), validationErrors, storeId)}
 
                 {/* Edit/Reset actions */}
-                {editable && !isEditing && block.key !== "special" && (
+                {editable && !isEditing && (
                   <div style={{ display: "flex", gap: S[2], marginTop: S[3], paddingTop: S[2], borderTop: `1px solid ${C.line}` }}>
                     <button onClick={() => startEdit(block.key)} className="ag-action-secondary" style={{
                       fontFamily: T.mono, fontSize: T.sz.xs, padding: `${S[1]}px ${S[2]}px`,
@@ -1215,6 +1230,7 @@ function getSourceForBlock(block: DerroteroBlock, config: EffectiveStoreConfig):
     case "acc_medium": return config.accessories.medium.source;
     case "acc_large": return config.accessories.large.source;
     case "scarcity": return config.scarcity.source;
+    case "special": return config.specialProducts?.entries.some(e => e.source === "store_override") ? "store_override" : "tenant_default";
     default: return "tenant_default";
   }
 }
@@ -1514,29 +1530,179 @@ function renderScarcityBlock(
   );
 }
 
-function renderSpecialBlock() {
+function renderSpecialBlock(
+  effective: EffectiveSpecialProductConfig,
+  isEditing: boolean,
+  draftValue: EffectiveSpecialProductConfig | undefined,
+  _editable: boolean,
+  onChange: (sp: EffectiveSpecialProductConfig) => void,
+  errors: Record<string, string>,
+  storeId: string,
+) {
+  const entries = isEditing && draftValue ? draftValue.entries : effective.entries;
+  const fieldStyle = { fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink, padding: `${S[1]}px`, borderRadius: R.sm, border: `1px solid ${C.line}`, width: 60, textAlign: "center" as const };
+
+  function updateEntry(idx: number, patch: Partial<EffectiveSpecialProductEntry>) {
+    const updated = entries.map((e, i) => i === idx ? { ...e, ...patch, source: "store_override" as const } : e);
+    onChange({ entries: updated });
+  }
+
+  function removeEntry(idx: number) {
+    onChange({ entries: entries.filter((_, i) => i !== idx) });
+  }
+
+  function addEntry() {
+    onChange({ entries: [...entries, { pattern: "", idealUnits: 1, source: "store_override", validFrom: null, validTo: null, season: null, notes: null }] });
+  }
+
+  function revertEntry(idx: number) {
+    const original = effective.entries.find(o => o.pattern === entries[idx].pattern);
+    const idealUnits = original?.idealUnits ?? entries[idx].idealUnits;
+    const updated = entries.map((e, i) => i === idx ? { ...e, idealUnits, source: "tenant_default" as const, notes: null, validFrom: null, validTo: null, season: null } : e);
+    onChange({ entries: updated });
+  }
+
+  const PATTERN_LABEL: Record<string, string> = {
+    "BAÑERA": "Banera",
+    "CUNA_COLECHO": "Cuna Colecho",
+    "CORRAL": "Corral",
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
       <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, lineHeight: "1.4" }}>
-        Los productos especiales (Banera, Cuna Colecho, Corral) se identifican por coincidencia textual. Solo se aplican automaticamente cuando la identidad este certificada mediante referencia, subgrupo o clasificacion canonica.
+        Cada regla especial define un patron de coincidencia textual y la cantidad objetivo de unidades para esta tienda. Ideal=0 indica que el producto no esta autorizado.
       </div>
 
-      <div style={{ ...panel, padding: S[2], background: C.surfaceAlt }}>
-        <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink, marginBottom: S[1] }}>Politica prevista</div>
-        <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
-          Productos: Banera, Cuna Colecho, Corral
-        </div>
-        <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
-          Objetivo: 3 unidades · Tiendas: San Diego, Caldas
-        </div>
-        <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.amber, marginTop: S[1] }}>
-          Estado: Requiere configuracion — coincidencias textuales no generan surtido automatico
-        </div>
-      </div>
+      {entries.map((entry, idx) => {
+        const label = PATTERN_LABEL[entry.pattern] || entry.pattern.replace(/_/g, " ");
+        const isOverride = entry.source === "store_override";
+        const isDefault = !isOverride;
+        const isDisabled = isEditing && entry.idealUnits === 0 && isOverride;
 
-      <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
-        Fuente: Politica del tenant · Confianza: Baja (texto)
-      </div>
+        return (
+          <div key={idx} style={{
+            ...panel, padding: S[2],
+            background: isDisabled ? C.surface : C.surfaceAlt,
+            opacity: isDisabled ? 0.6 : 1,
+            border: `1px solid ${isOverride ? C.amberBorder : C.line}`,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: S[1] }}>
+              <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
+                <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
+                  {isEditing && !PATTERN_LABEL[entry.pattern] ? (
+                    <input
+                      type="text"
+                      value={entry.pattern}
+                      placeholder="PATRON_PRODUCTO"
+                      onChange={e => updateEntry(idx, { pattern: e.target.value.toUpperCase() })}
+                      style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.ink, padding: `${S[1]}px`, borderRadius: R.sm, border: `1px solid ${C.line}`, width: 160 }}
+                    />
+                  ) : (
+                    label
+                  )}
+                </span>
+                <span style={{
+                  fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "1px 5px", borderRadius: R.pill,
+                  background: isOverride ? C.amberLight : C.surface,
+                  color: isOverride ? C.amber : C.inkFaint,
+                  border: `1px solid ${isOverride ? C.amberBorder : C.line}`,
+                }}>
+                  {isOverride ? "Personalizado" : "Predeterminado"}
+                </span>
+              </div>
+
+              {isEditing && (
+                <div style={{ display: "flex", gap: S[1] }}>
+                  {isOverride && isDefault === false && PATTERN_LABEL[entry.pattern] && (
+                    <button onClick={() => revertEntry(idx)} style={{
+                      fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "2px 6px", borderRadius: R.sm,
+                      background: C.surface, color: C.inkMid, border: `1px solid ${C.line}`, cursor: "pointer",
+                    }}>
+                      Restablecer
+                    </button>
+                  )}
+                  {!PATTERN_LABEL[entry.pattern] && (
+                    <button onClick={() => removeEntry(idx)} style={{
+                      fontFamily: T.mono, fontSize: T.sz["2xs"], padding: "2px 6px", borderRadius: R.sm,
+                      background: C.surface, color: C.red, border: `1px solid ${C.redBorder}`, cursor: "pointer",
+                    }}>
+                      Eliminar
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: "flex", gap: S[4], alignItems: "flex-start" }}>
+              <div>
+                <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight }}>Patron</div>
+                <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>{entry.pattern || "\u2014"}</div>
+              </div>
+              <div>
+                <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight }}>Cantidad objetivo</div>
+                {isEditing ? (
+                  <input
+                    type="number"
+                    value={entry.idealUnits}
+                    min={0}
+                    onChange={e => updateEntry(idx, { idealUnits: parseInt(e.target.value) || 0 })}
+                    style={fieldStyle}
+                  />
+                ) : (
+                  <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: entry.idealUnits === 0 ? C.red : C.blueDark }}>
+                    {entry.idealUnits}
+                  </div>
+                )}
+                <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginTop: 1 }}>
+                  {entry.idealUnits === 0 ? "No autorizado en esta tienda" : `${entry.idealUnits} uds objetivo`}
+                </div>
+                {errors[`sp_${idx}_ideal`] && <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.red }}>{errors[`sp_${idx}_ideal`]}</div>}
+                {errors[`sp_${idx}_pattern`] && <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.red }}>{errors[`sp_${idx}_pattern`]}</div>}
+              </div>
+            </div>
+
+            {/* Vigencia & notes for overrides */}
+            {isEditing && isOverride && (
+              <div style={{ marginTop: S[2], display: "flex", flexDirection: "column", gap: S[1] }}>
+                <div>
+                  <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight }}>Notas</div>
+                  <input type="text" value={entry.notes || ""} placeholder="Observaciones" maxLength={500}
+                    onChange={e => updateEntry(idx, { notes: e.target.value || null })}
+                    style={{ fontFamily: T.mono, fontSize: T.sz.xs, padding: `${S[1]}px`, borderRadius: R.sm, border: `1px solid ${C.line}`, width: "100%" }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Display notes/vigencia for non-editing */}
+            {!isEditing && entry.notes && (
+              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, fontStyle: "italic", marginTop: S[1] }}>
+                {entry.notes}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {/* Add new rule button */}
+      {isEditing && (
+        <button onClick={addEntry} className="ag-action-secondary" style={{
+          fontFamily: T.mono, fontSize: T.sz.xs, padding: `${S[1]}px ${S[2]}px`,
+          borderRadius: R.sm, cursor: "pointer", background: C.blueLight,
+          color: C.blueDark, border: `1px solid ${C.blueBorder}`,
+          alignSelf: "flex-start",
+        }}>
+          + Agregar regla especial
+        </button>
+      )}
+
+      {!isEditing && (
+        <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
+          Fuente: {effective.entries.some(e => e.source === "store_override") ? "Con personalizaciones" : "Politica del tenant"}
+          {" · "}Tienda: {ACTIVE_STORE_NAMES[storeId] || storeId}
+        </div>
+      )}
     </div>
   );
 }
@@ -1550,6 +1716,31 @@ function MiniStat({ label, value, color }: { label: string; value: string; color
       <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color }}>{value}</div>
     </div>
   );
+}
+
+/** VISUAL-HARMONIZATION-01 — KPI card compacta (misma gramática que Cobertura/Inventario). */
+function KpiCard({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <div style={{ ...panel, padding: `${S[2]}px ${S[3]}px`, display: "flex", flexDirection: "column", gap: 2, flex: 1, minWidth: 80 }}>
+      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, textTransform: "uppercase" as const }}>
+        {label}
+      </span>
+      <span style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color }}>{value}</span>
+    </div>
+  );
+}
+
+/** VISUAL-HARMONIZATION-01 — hint de viewport SOLO presentación (patrón Inteligencia). */
+function useIsNarrow(): boolean {
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 559px)");
+    const update = () => setNarrow(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+  return narrow;
 }
 
 /** COVERAGE-UX-01 — fila de regla del tab Cobertura: render puro del DTO
@@ -2514,6 +2705,9 @@ function DistributionStoreDrawer({
   const [certifiedIntelLoading, setCertifiedIntelLoading] = useState(false);
   const [certifiedIntelLoaded, setCertifiedIntelLoaded] = useState(false);
   const [certifiedIntelError, setCertifiedIntelError] = useState(false);
+  // VISUAL-HARMONIZATION-01: hint de viewport para el tab Descuentos (solo presentación)
+  const isNarrow = useIsNarrow();
+
   // AGENTIK-STORES-INTELLIGENCE-UX-IMPLEMENTATION-01: product intelligence
   // (segunda carga certificada — 2 llamadas totales, cero N+1 por sección).
   const [productIntel, setProductIntel] = useState<StoreProductIntelligence | null>(null);
@@ -3457,54 +3651,66 @@ function DistributionStoreDrawer({
 
             return (
               <>
-                {/* Rule summary strip */}
-                <div style={{
-                  ...panel, padding: `${S[2]}px ${S[3]}px`,
-                  background: C.surface, display: "flex", gap: S[4], flexWrap: "wrap", alignItems: "center",
-                }}>
-                  <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
-                    Reglas de descuento por antiguedad:
-                  </span>
-                  {[
-                    { label: "0-89d", pct: "0%" },
-                    { label: "90-179d", pct: "10%" },
-                    { label: "180-269d", pct: "30%" },
-                    { label: "270-364d", pct: "50%" },
-                    { label: "365d+", pct: "70%" },
-                  ].map(r => (
-                    <span key={r.label} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.ink }}>
-                      {r.label} = <strong>{r.pct}</strong>
+                {/* VISUAL-HARMONIZATION-01 — resumen de política como section card
+                    (LAW 1/4): panelHeader + escalera como badges del sistema. */}
+                <div style={{ ...panel }}>
+                  <div style={{ ...panelHeader, justifyContent: "space-between" }}>
+                    <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
+                      Política de descuento por antigüedad
                     </span>
-                  ))}
+                    <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
+                      Fecha de ingreso a tienda
+                    </span>
+                  </div>
+                  <div style={{ padding: `${S[2]}px ${S[4]}px`, display: "flex", gap: S[2], flexWrap: "wrap", alignItems: "center" }}>
+                    {[
+                      { label: "0-89d", pct: "0%" },
+                      { label: "90-179d", pct: "10%" },
+                      { label: "180-269d", pct: "30%" },
+                      { label: "270-364d", pct: "50%" },
+                      { label: "365d+", pct: "70%" },
+                    ].map(r => (
+                      <span key={r.label} style={{
+                        fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                        padding: "2px 8px", borderRadius: R.pill,
+                        background: C.surfaceAlt, color: C.inkMid, border: `1px solid ${C.line}`,
+                      }}>
+                        {r.label} · <strong style={{ color: C.ink }}>{r.pct}</strong>
+                      </span>
+                    ))}
+                  </div>
                 </div>
 
-                {/* KPIs */}
-                <div style={{ display: "flex", gap: S[4], flexWrap: "wrap" }}>
-                  <MiniStat label="Evaluadas" value={String(kpis.totalEvaluated)} color={C.ink} />
-                  <MiniStat label="70%" value={String(kpis.seventyPercent)} color={kpis.seventyPercent > 0 ? DISCOUNT_TIER_COLOR.SEVENTY_PERCENT : C.ink} />
-                  <MiniStat label="50%" value={String(kpis.fiftyPercent)} color={kpis.fiftyPercent > 0 ? DISCOUNT_TIER_COLOR.FIFTY_PERCENT : C.ink} />
-                  <MiniStat label="30%" value={String(kpis.thirtyPercent)} color={kpis.thirtyPercent > 0 ? DISCOUNT_TIER_COLOR.THIRTY_PERCENT : C.ink} />
-                  <MiniStat label="10%" value={String(kpis.tenPercent)} color={kpis.tenPercent > 0 ? DISCOUNT_TIER_COLOR.TEN_PERCENT : C.ink} />
-                  <MiniStat label="Sin descuento" value={String(kpis.none)} color={C.ink} />
-                  <MiniStat label="Sin fecha" value={String(kpis.sinFecha)} color={kpis.sinFecha > 0 ? C.inkFaint : C.ink} />
+                {/* KPIs — misma familia de KPI cards que Cobertura/Inventario (LAW 2) */}
+                <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
+                  <KpiCard label="Evaluadas" value={String(kpis.totalEvaluated)} color={C.ink} />
+                  <KpiCard label="70%" value={String(kpis.seventyPercent)} color={kpis.seventyPercent > 0 ? DISCOUNT_TIER_COLOR.SEVENTY_PERCENT : C.ink} />
+                  <KpiCard label="50%" value={String(kpis.fiftyPercent)} color={kpis.fiftyPercent > 0 ? DISCOUNT_TIER_COLOR.FIFTY_PERCENT : C.ink} />
+                  <KpiCard label="30%" value={String(kpis.thirtyPercent)} color={kpis.thirtyPercent > 0 ? DISCOUNT_TIER_COLOR.THIRTY_PERCENT : C.ink} />
+                  <KpiCard label="10%" value={String(kpis.tenPercent)} color={kpis.tenPercent > 0 ? DISCOUNT_TIER_COLOR.TEN_PERCENT : C.ink} />
+                  <KpiCard label="Sin descuento" value={String(kpis.none)} color={C.ink} />
+                  <KpiCard label="Sin fecha" value={String(kpis.sinFecha)} color={kpis.sinFecha > 0 ? C.inkFaint : C.ink} />
                 </div>
 
-                {/* SAG comparison summary strip — AGENTIK-STORES-DISCOUNTS-SAG-AWARE-CERTIFICATION-01 */}
+                {/* SAG comparison summary — AGENTIK-STORES-DISCOUNTS-SAG-AWARE-CERTIFICATION-01
+                    (VISUAL-HARMONIZATION-01: chips de estado del sistema — LAW 6) */}
                 {discData.sagComparisonStatus === "AVAILABLE" && discData.sagFetchResult && (
                   <div style={{
                     ...panel, padding: `${S[2]}px ${S[3]}px`,
-                    background: C.surface, display: "flex", gap: S[4], flexWrap: "wrap", alignItems: "center",
+                    display: "flex", gap: S[2], flexWrap: "wrap", alignItems: "center",
                   }}>
                     <span style={{
                       fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                      color: DISCOUNT_TIER_COLOR.NONE,
+                      padding: "2px 8px", borderRadius: R.pill,
+                      background: `${DISCOUNT_TIER_COLOR.NONE}18`, color: DISCOUNT_TIER_COLOR.NONE,
                     }}>
                       SAG conectado
                     </span>
                     {discData.sagActionableTotal != null && discData.sagActionableTotal > 0 && (
                       <span style={{
                         fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                        color: DISCOUNT_TIER_COLOR.FIFTY_PERCENT,
+                        padding: "2px 8px", borderRadius: R.pill,
+                        background: `${DISCOUNT_TIER_COLOR.FIFTY_PERCENT}18`, color: DISCOUNT_TIER_COLOR.FIFTY_PERCENT,
                       }}>
                         {discData.sagActionableTotal} ref. requieren acci\u00f3n
                       </span>
@@ -3517,7 +3723,8 @@ function DistributionStoreDrawer({
                     {discData.sagActionableTotal === 0 && (discData.sagAlignedTotal ?? 0) > 0 && (
                       <span style={{
                         fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                        color: DISCOUNT_TIER_COLOR.NONE,
+                        padding: "2px 8px", borderRadius: R.pill,
+                        background: `${DISCOUNT_TIER_COLOR.NONE}18`, color: DISCOUNT_TIER_COLOR.NONE,
                       }}>
                         Todas alineadas
                       </span>
@@ -3530,11 +3737,12 @@ function DistributionStoreDrawer({
                 {discData.sagComparisonStatus === "UNAVAILABLE" && (
                   <div style={{
                     ...panel, padding: `${S[2]}px ${S[3]}px`,
-                    background: C.surface, display: "flex", gap: S[3], alignItems: "center",
+                    display: "flex", gap: S[2], flexWrap: "wrap", alignItems: "center",
                   }}>
                     <span style={{
                       fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                      color: DISCOUNT_TIER_COLOR.FIFTY_PERCENT,
+                      padding: "2px 8px", borderRadius: R.pill,
+                      background: C.surfaceAlt, color: C.inkFaint, border: `1px solid ${C.line}`,
                     }}>
                       SAG no disponible
                     </span>
@@ -3544,43 +3752,60 @@ function DistributionStoreDrawer({
                   </div>
                 )}
 
-                {/* Tier filter strip */}
-                <div style={{ display: "flex", gap: S[1], flexWrap: "wrap" }}>
-                  {TIER_FILTERS.map(tf => {
-                    const isActive = discTierFilter === tf.key;
-                    return (
-                      <button
-                        key={tf.key}
-                        onClick={() => setDiscTierFilter(tf.key)}
-                        style={{
-                          fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                          padding: "3px 10px", borderRadius: R.pill, cursor: "pointer",
-                          background: isActive ? C.blueDark : C.surface,
-                          color: isActive ? C.white : C.inkMid,
-                          border: `1px solid ${isActive ? C.blueDark : C.line}`,
-                        }}
-                      >
-                        {tf.label}
-                      </button>
-                    );
-                  })}
+                {/* VISUAL-HARMONIZATION-01 — zona de filtros con la identidad de
+                    Cobertura/Inventario (LAW 3): label superior + activo azul. */}
+                <div style={{ display: "flex", flexDirection: "column", gap: S[1] }}>
+                  <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkFaint, textTransform: "uppercase" as const, letterSpacing: "0.05em" }}>
+                    Filtrar por descuento
+                  </div>
+                  <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
+                    {TIER_FILTERS.map(tf => {
+                      const isActive = discTierFilter === tf.key;
+                      return (
+                        <button
+                          key={tf.key}
+                          onClick={() => setDiscTierFilter(tf.key)}
+                          style={{
+                            fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
+                            padding: "6px 14px", minHeight: 32, borderRadius: R.sm, cursor: "pointer",
+                            background: isActive ? C.blueDark : C.white,
+                            color: isActive ? C.white : C.ink,
+                            border: `1.5px solid ${isActive ? C.blueDark : C.line}`,
+                          }}
+                        >
+                          {tf.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <input
+                    value={discSearch}
+                    onChange={e => setDiscSearch(e.target.value)}
+                    aria-label="Buscar referencia o descripcion"
+                    placeholder="Buscar referencia o descripcion..."
+                    style={{
+                      fontFamily: T.mono, fontSize: T.sz.xs, padding: `${S[2]}px ${S[3]}px`,
+                      border: `1px solid ${C.line}`, borderRadius: R.sm, background: C.white,
+                      color: C.ink, width: "100%", marginTop: S[1],
+                    }}
+                  />
                 </div>
 
-                {/* Search */}
-                <input
-                  value={discSearch}
-                  onChange={e => setDiscSearch(e.target.value)}
-                  placeholder="Buscar referencia o descripcion..."
-                  style={{
-                    fontFamily: T.mono, fontSize: T.sz.xs, padding: `${S[2]}px ${S[3]}px`,
-                    border: `1px solid ${C.line}`, borderRadius: R.sm, background: C.white,
-                    color: C.ink, width: "100%",
-                  }}
-                />
-
-                {/* Table */}
-                <div className="ag-op-table" style={{ fontSize: T.sz.xs }}>
-                  {/* Header */}
+                {/* VISUAL-HARMONIZATION-01 — lista de recomendaciones como section
+                    card (LAW 4): panelHeader + rows del sistema; en móvil las
+                    métricas bajan a una línea meta (LAW 7 — sin tabla comprimida). */}
+                <div style={{ ...panel }}>
+                  <div style={{ ...panelHeader, justifyContent: "space-between" }}>
+                    <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
+                      Recomendaciones
+                    </span>
+                    <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
+                      {filtered.length} referencia{filtered.length === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                  <div className="ag-op-table" style={{ fontSize: T.sz.xs }}>
+                  {/* Header (solo desktop — en móvil las rows son autoexplicativas) */}
+                  {!isNarrow && (
                   <div className="ag-op-row" style={{
                     display: "grid",
                     gridTemplateColumns: "32px 1fr 80px 80px 80px 70px",
@@ -3595,6 +3820,7 @@ function DistributionStoreDrawer({
                     <span style={{ fontFamily: T.mono, textAlign: "center" }}>Descuento</span>
                     <span style={{ fontFamily: T.mono, textAlign: "right" }}>Variantes</span>
                   </div>
+                  )}
 
                   {filtered.map((rec) => {
                     const tierColor = DISCOUNT_TIER_COLOR[rec.discountTier];
@@ -3609,7 +3835,7 @@ function DistributionStoreDrawer({
                       <div key={rec.referenceCode}>
                         <div className="ag-op-row" style={{
                           display: "grid",
-                          gridTemplateColumns: "32px 1fr 80px 80px 80px 70px",
+                          gridTemplateColumns: isNarrow ? "32px minmax(0, 1fr) 84px" : "32px 1fr 80px 80px 80px 70px",
                           gap: S[2], padding: `${S[2]}px ${S[3]}px`,
                           borderBottom: `1px solid ${C.lineSubtle}`,
                           alignItems: "center",
@@ -3677,17 +3903,27 @@ function DistributionStoreDrawer({
                             <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight, marginTop: 1 }}>
                               {rec.reason}
                             </div>
+                            {/* Meta line móvil (LAW 7): días · uds · variantes sin columnas comprimidas */}
+                            {isNarrow && (
+                              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, marginTop: 1 }}>
+                                {rec.daysInStore !== null ? `${rec.daysInStore}d` : "\u2014"} · {rec.storeQty} uds · {rec.variantCount} var.
+                              </div>
+                            )}
                           </div>
 
                           {/* Days in store */}
+                          {!isNarrow && (
                           <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, textAlign: "right", color: C.ink }}>
                             {rec.daysInStore !== null ? `${rec.daysInStore}d` : "\u2014"}
                           </div>
+                          )}
 
                           {/* Store qty */}
+                          {!isNarrow && (
                           <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, textAlign: "right", color: C.ink }}>
                             {rec.storeQty}
                           </div>
+                          )}
 
                           {/* Discount badge */}
                           <div style={{ textAlign: "center" }}>
@@ -3702,18 +3938,21 @@ function DistributionStoreDrawer({
                           </div>
 
                           {/* Variant count */}
+                          {!isNarrow && (
                           <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, textAlign: "right", color: C.inkMid }}>
                             {rec.variantCount}
                           </div>
+                          )}
                         </div>
 
                         {/* SAG per-store sub-row — AGENTIK-STORES-DISCOUNTS-SAG-AWARE-ENGINE-01 */}
                         {sagOpen && hasSag && (
                           <div style={{
-                            padding: `${S[2]}px ${S[3]}px ${S[2]}px 44px`,
+                            padding: isNarrow ? `${S[2]}px ${S[3]}px` : `${S[2]}px ${S[3]}px ${S[2]}px 44px`,
                             background: C.surface,
                             borderBottom: `1px solid ${C.lineSubtle}`,
-                            display: "flex", gap: S[4], flexWrap: "wrap",
+                            display: "flex", gap: isNarrow ? S[2] : S[4], flexWrap: "wrap",
+                            flexDirection: isNarrow ? "column" : "row",
                           }}>
                             {rec.sagComparison!.map(sc => {
                               const actionDisplay = SAG_ACTION_DISPLAY[sc.action];
@@ -3746,6 +3985,7 @@ function DistributionStoreDrawer({
                       {discSearchDebounced ? "Sin resultados para esta busqueda" : "No hay referencias en este filtro"}
                     </div>
                   )}
+                  </div>
                 </div>
 
                 <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>

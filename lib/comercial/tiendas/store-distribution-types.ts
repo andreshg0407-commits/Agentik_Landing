@@ -351,11 +351,28 @@ export interface EffectiveScarcityConfig {
   source:                          "tenant_default" | "store_override";
 }
 
+// ── Special products ─────────────────────────────────────────────────────────
+
+export interface EffectiveSpecialProductEntry {
+  pattern:    string;       // e.g. "BAÑERA", "CUNA_COLECHO", "CORRAL"
+  idealUnits: number;       // per-pattern ideal for this store (0 = not authorized)
+  source:     "tenant_default" | "store_override";
+  validFrom:  string | null;
+  validTo:    string | null;
+  season:     string | null;
+  notes:      string | null;
+}
+
+export interface EffectiveSpecialProductConfig {
+  entries: EffectiveSpecialProductEntry[];
+}
+
 export interface EffectiveStoreConfig {
-  castillitos:   EffectiveTextileConfig;
-  latinKids:     EffectiveTextileConfig;
-  accessories:   { small: EffectiveAccessoryConfig; medium: EffectiveAccessoryConfig; large: EffectiveAccessoryConfig };
-  scarcity:      EffectiveScarcityConfig;
+  castillitos:     EffectiveTextileConfig;
+  latinKids:       EffectiveTextileConfig;
+  accessories:     { small: EffectiveAccessoryConfig; medium: EffectiveAccessoryConfig; large: EffectiveAccessoryConfig };
+  scarcity:        EffectiveScarcityConfig;
+  specialProducts: EffectiveSpecialProductConfig;
 }
 
 // ── Impact preview (CUARTO) ─────────────────────────────────────────────────

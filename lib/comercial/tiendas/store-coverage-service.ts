@@ -39,7 +39,7 @@ import type {
   SubstitutionIndex,
   ScarcityParams,
 } from "./store-distribution-service";
-import { resolveScarcityFromPolicies } from "./store-distribution-actions";
+import { resolveScarcityFromPolicies, resolveSpecialProductsFromPolicies } from "./store-distribution-actions";
 import { listStorePolicies } from "./store-policy-service";
 import type { StoreDistributionItem } from "./store-distribution-types";
 import {
@@ -51,11 +51,11 @@ import {
   CASTILLITOS_TEXTILE_COVERAGE,
   LATIN_KIDS_TEXTILE_COVERAGE,
   CASTILLITOS_ACCESSORY_COVERAGE,
-  CASTILLITOS_SPECIAL_PRODUCTS,
 } from "./store-policy-pack-config";
 import {
   evaluateUnitStructureCoverage,
   evaluateSpecialRules,
+  type ResolvedSpecialRule,
   type UnitsRuleEvaluation,
   type SpecialRuleEvaluation,
 } from "./store-unit-coverage-engine";
@@ -490,6 +490,13 @@ export async function loadStoreCoverage(
   const structures = buildExpectedStructures(csRefIndex, lkRefIndex, accRefIndex);
 
   // ── Reglas especiales por tienda (UNIT-BASED-COVERAGE-ENGINE-01) ──
+  // Resolve effective special products from persisted policies + pack defaults
+  const allPolicies = await listStorePolicies(orgId);
+  const effectiveSpecial = resolveSpecialProductsFromPolicies(storeId, allPolicies);
+  const resolvedSpecialRules: ResolvedSpecialRule[] = effectiveSpecial.entries.map(e => ({
+    pattern: e.pattern,
+    idealUnits: e.idealUnits,
+  }));
   const specialRules = evaluateSpecialRules(
     storeId,
     items.map(i => ({
@@ -497,7 +504,7 @@ export async function loadStoreCoverage(
       productName: i.productName ?? "",
       currentUnits: i.currentUnits,
     })),
-    CASTILLITOS_SPECIAL_PRODUCTS,
+    resolvedSpecialRules,
   );
 
   // Per-line summaries

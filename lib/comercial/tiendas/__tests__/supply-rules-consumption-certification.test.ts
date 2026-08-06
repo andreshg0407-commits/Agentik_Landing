@@ -241,16 +241,16 @@ describe("SEPTIMO — Special rules consume policy pack", () => {
     assert.ok(policyPackSource.includes("CORRAL"));
   });
 
-  it("distribution-service checks isSpecialProduct", () => {
-    assert.ok(distributionServiceSource.includes("isSpecialProduct("));
+  it("distribution-service matches special products via findMatchingSpecialRule", () => {
+    assert.ok(distributionServiceSource.includes("findMatchingSpecialRule("));
   });
 
   it("special products get resolvedBy=special_product", () => {
     assert.ok(distributionServiceSource.includes('"special_product"'));
   });
 
-  it("special products use idealByStore from policy pack", () => {
-    assert.ok(distributionServiceSource.includes("CASTILLITOS_SPECIAL_PRODUCTS.idealByStore"));
+  it("special products resolve from policies via resolveSpecialProductsFromPolicies", () => {
+    assert.ok(distributionServiceSource.includes("resolveSpecialProductsFromPolicies("));
   });
 });
 

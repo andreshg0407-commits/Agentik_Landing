@@ -109,11 +109,11 @@ export async function saveStorePolicy(
 ): Promise<StorePolicy> {
   const now = new Date().toISOString();
 
-  // Ensure all rules have IDs
+  // Ensure all rules have IDs; preserve per-rule storeId when already set
   const rules = data.rules.map(r => ({
     ...r,
     id: r.id || generateRuleId(),
-    storeId: data.storeId,
+    storeId: r.storeId || data.storeId,
   }));
 
   const metadataJson = {

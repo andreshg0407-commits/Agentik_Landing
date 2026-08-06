@@ -141,17 +141,42 @@ export function matchesSpecialPattern(text: string, pattern: string): boolean {
 }
 
 /**
+ * Resolved special product rule — per-pattern ideal for a specific store.
+ * Built by resolveSpecialProductsForStore() from pack defaults + persisted overrides.
+ */
+export interface ResolvedSpecialRule {
+  pattern:    string;
+  idealUnits: number;
+}
+
+/**
  * Aggregate special-rule coverage for one store: per pattern, total units
- * across all matching references vs the store's ideal.
+ * across all matching references vs the effective ideal.
+ *
+ * Accepts either:
+ *   - ResolvedSpecialRule[] (preferred — per-pattern ideals from effective resolution)
+ *   - SpecialRuleConfig (legacy — same ideal for all patterns per store)
  */
 export function evaluateSpecialRules(
   storeId: string,
   items: readonly SpecialRuleItem[],
-  config: SpecialRuleConfig,
+  rulesOrConfig: readonly ResolvedSpecialRule[] | SpecialRuleConfig,
 ): SpecialRuleEvaluation[] {
+  // Normalize input to resolved rules
+  function isLegacyConfig(x: unknown): x is SpecialRuleConfig {
+    return typeof x === "object" && x !== null && "referencePatterns" in x;
+  }
+  const resolved: readonly ResolvedSpecialRule[] = isLegacyConfig(rulesOrConfig)
+    ? rulesOrConfig.referencePatterns.map(pattern => ({
+        pattern,
+        idealUnits: rulesOrConfig.idealByStore[storeId] ?? rulesOrConfig.defaultIdeal,
+      }))
+    : rulesOrConfig;
+
   const results: SpecialRuleEvaluation[] = [];
 
-  for (const pattern of config.referencePatterns) {
+  for (const rule of resolved) {
+    const { pattern, idealUnits } = rule;
     const matched = items.filter(i =>
       i.currentUnits > 0 && (
         matchesSpecialPattern(i.referenceCode, pattern) ||
@@ -159,7 +184,6 @@ export function evaluateSpecialRules(
       ),
     );
     const totalUnits = matched.reduce((s, i) => s + i.currentUnits, 0);
-    const idealUnits = config.idealByStore[storeId] ?? config.defaultIdeal;
 
     let status: SpecialRuleStatus;
     let gapUnits: number;

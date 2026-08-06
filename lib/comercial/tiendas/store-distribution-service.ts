@@ -67,7 +67,8 @@ import {
   LATIN_KIDS_TEXTILE_COVERAGE,
   CASTILLITOS_REPLACEMENT_CONFIG,
 } from "./store-policy-pack-config";
-import { resolveScarcityFromPolicies } from "./store-distribution-actions";
+import { resolveScarcityFromPolicies, resolveSpecialProductsFromPolicies } from "./store-distribution-actions";
+import type { ResolvedSpecialRule } from "./store-unit-coverage-engine";
 import type { ReplacementMatchMode as ReplacementMatchModeConfig } from "./store-policy-pack-config";
 import { BUSINESS_LINE_MAP, resolveBusinessLineId } from "./store-business-lines";
 import { resolveVariantSizeColor } from "./variant-attribute-resolver";
@@ -236,15 +237,29 @@ function resolveClassificationQuality(lineId: string): ClassificationQuality {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
- * Check if a variant is a special product.
+ * Find the first matching special rule for a variant.
+ * Returns the resolved rule (with effective idealUnits) or null.
+ * When no resolved rules are passed, falls back to pack defaults.
  */
-function isSpecialProduct(referenceCode: string, productName: string): boolean {
+function findMatchingSpecialRule(
+  referenceCode: string,
+  productName: string,
+  resolvedRules?: readonly ResolvedSpecialRule[],
+): ResolvedSpecialRule | null {
+  const rules = resolvedRules ?? CASTILLITOS_SPECIAL_PRODUCTS.referencePatterns.map(p => ({
+    pattern: p,
+    idealUnits: CASTILLITOS_SPECIAL_PRODUCTS.defaultIdeal,
+  }));
   const upper = (referenceCode + " " + productName).toUpperCase()
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  return CASTILLITOS_SPECIAL_PRODUCTS.referencePatterns.some(p => {
+  for (const rule of rules) {
+    const p = rule.pattern.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     const normalizedPattern = p.replace(/_/g, " ");
-    return upper.includes(normalizedPattern) || upper.includes(p);
-  });
+    if (upper.includes(normalizedPattern) || upper.includes(p)) {
+      return rule;
+    }
+  }
+  return null;
 }
 
 export interface ScarcityParams {
@@ -784,6 +799,7 @@ function buildStoreItems(
   heroImageMap?: Map<string, string>,
   refToProductId?: Map<string, string>,
   subIndex?: SubstitutionIndex,
+  specialRules?: readonly ResolvedSpecialRule[],
 ): StoreDistributionItem[] {
   const items: StoreDistributionItem[] = [];
 
@@ -847,9 +863,9 @@ function buildStoreItems(
     };
 
     // ── Special product override ────────────────────────────────────────
-    if (isSpecialProduct(v.referenceCode, v.productName)) {
-      const specialIdeal = CASTILLITOS_SPECIAL_PRODUCTS.idealByStore[storeSlug]
-        ?? CASTILLITOS_SPECIAL_PRODUCTS.defaultIdeal;
+    const matchedSpecial = findMatchingSpecialRule(v.referenceCode, v.productName, specialRules);
+    if (matchedSpecial) {
+      const specialIdeal = matchedSpecial.idealUnits;
 
       if (specialIdeal > 0) {
         items.push({
@@ -1445,10 +1461,16 @@ export async function buildCanonicalStoreDistribution(orgId: string): Promise<Ca
     const hasPolicyRules = policyRules.some(r => r.active && r.storeId === store.id);
     const storeInv = data.storeInventory.filter(v => v.storeId === store.id);
 
+    const effectiveSpecial = resolveSpecialProductsFromPolicies(storeSlug, rawPolicies);
+    const storeSpecialRules: ResolvedSpecialRule[] = effectiveSpecial.entries.map(e => ({
+      pattern: e.pattern, idealUnits: e.idealUnits,
+    }));
+
     const items = buildStoreItems(
       storeSlug, storeInv, policyRules, mainStockIndex,
       data.sizeClassByRef, data.grupoByRef, scarcity,
       heroImageMap, data.refToProductId, subIndex,
+      storeSpecialRules,
     );
     const card = buildCard(store, items, hasPolicyRules);
 
@@ -1530,10 +1552,16 @@ async function getCanonicalStoreDetailImpl(orgId: string, storeId: string, detai
     heroImageMap, data.refToProductId, data.sizeClassByRef,
   );
 
+  const effectiveSpecial = resolveSpecialProductsFromPolicies(storeSlug, rawPolicies);
+  const storeSpecialRules: ResolvedSpecialRule[] = effectiveSpecial.entries.map(e => ({
+    pattern: e.pattern, idealUnits: e.idealUnits,
+  }));
+
   const items = buildStoreItems(
     storeSlug, storeInv, policyRules, mainStockIndex,
     data.sizeClassByRef, data.grupoByRef, scarcity,
     heroImageMap, data.refToProductId, subIndex,
+    storeSpecialRules,
   );
   const kpis = computeDetailKpis(items);
 
