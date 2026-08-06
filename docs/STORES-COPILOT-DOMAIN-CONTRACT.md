@@ -145,8 +145,8 @@
 | Requirement | Authority | Status |
 |---|---|---|
 | Per-reference sales by date range | `loadStoreProductSaleFacts(orgId, storeId, dateFrom, dateTo)` | READY |
-| Cross-store aggregation | Call per active store, aggregate in tool | SMALL_ADAPTER_REQUIRED |
-| Monthly time series | `loadStoreProductSales()` returns facts; aggregation to monthly buckets needed | SMALL_ADAPTER_REQUIRED |
+| Cross-store aggregation | `aggregateProductSalesAcrossStores()` in `store-copilot-domain-tools.ts` | READY |
+| Monthly time series | `buildProductTimeSeries()` in `store-copilot-domain-tools.ts` | READY |
 
 ### "Which products lost momentum in Gran Plaza?"
 
@@ -159,8 +159,8 @@
 
 | Requirement | Authority | Status |
 |---|---|---|
-| Per-store sales rate for a reference | `buildStoreProductIntelligence()` per store → find reference in `salesRates[]` | SMALL_ADAPTER_REQUIRED |
-| Cross-store comparison | Run `buildStoreProductIntelligence()` for all stores, compare rates for target ref | SMALL_ADAPTER_REQUIRED |
+| Per-store sales rate for a reference | `buildStoreProductIntelligence()` per store → find reference in `salesRates[]` | READY |
+| Cross-store comparison | `rankStoresByProductRate()` in `store-copilot-domain-tools.ts` | READY |
 
 ### "What changed in Gran Plaza during the last 30 days?"
 
@@ -181,9 +181,9 @@
 
 | Gap | Type | Description |
 |---|---|---|
-| Cross-store product sales aggregator | SMALL_ADAPTER_REQUIRED | Wrapper that calls `loadStoreProductSales` for multiple stores and merges |
-| Monthly time series builder | SMALL_ADAPTER_REQUIRED | Bucket `StoreProductSaleFact[]` into monthly aggregates |
-| Cross-store product rate ranker | SMALL_ADAPTER_REQUIRED | Run product intelligence per store, extract rate for target ref, rank |
+| Cross-store product sales aggregator | READY | `aggregateProductSalesAcrossStores()` in `store-copilot-domain-tools.ts` |
+| Monthly time series builder | READY | `buildProductTimeSeries()` in `store-copilot-domain-tools.ts` |
+| Cross-store product rate ranker | READY | `rankStoresByProductRate()` in `store-copilot-domain-tools.ts` |
 | New arrivals detector | SEMANTIC_LAYER_REQUIRED | Compare current PIL refs vs prior snapshot (no historical PIL today) |
 | Historical inventory snapshots | DATA_SOURCE_MISSING | PIL is current-state only — no time-travel for stock levels |
 
@@ -287,7 +287,7 @@ aggregateStoreSales(orgId: string, months: number): AllStoresSalesResult
 | `DISCOUNT_ADJUSTMENT_REQUIRED` | `loadStoreDiscounts()` → classify by current store | READY |
 | `SAG_DISCOUNT_REVIEW_REQUIRED` | `buildBatchComparisons()` → filter AMBIGUOUS_SAG | READY |
 | `SUPPLY_PLAN_READY` | `listReplenishmentDocuments()` → filter status BORRADOR | READY |
-| `RESERVATION_EXPIRING` | `getDocumentReservationSummary()` → check reservedAt age | SMALL_ADAPTER_REQUIRED |
+| `RESERVATION_EXPIRING` | `detectExpiringReservations()` in `store-copilot-domain-tools.ts` | READY |
 | `SUPPLY_PLAN_PENDING_DISPATCH` | `listReplenishmentDocuments()` → filter RESERVADO + no export | READY |
 | `PRODUCT_MOMENTUM_LOST` | `buildStoreProductIntelligence()` → momentum[].status | READY |
 | `STORE_NO_SALES_ALERT` | `buildStoreProductIntelligence()` → noSales result | READY |
@@ -381,18 +381,18 @@ Every Copilot tool MUST enforce:
 | 10 | Product intelligence (per store) | READY | `buildStoreProductIntelligence()` |
 | 11 | Supply plan lifecycle | READY | Create/reserve/release/export |
 | 12 | Store metadata | READY | Governance + snapshot |
-| 13 | Cross-store product sales aggregator | SMALL_ADAPTER_REQUIRED | Wrapper over per-store calls |
-| 14 | Monthly time series builder | SMALL_ADAPTER_REQUIRED | Bucket facts into months |
-| 15 | Cross-store product rate ranker | SMALL_ADAPTER_REQUIRED | Run intelligence per store, compare |
-| 16 | Reservation expiry detector | SMALL_ADAPTER_REQUIRED | Compare reservedAt vs now |
-| 17 | Attention signal emitter | SMALL_ADAPTER_REQUIRED | Wire existing data into signal format |
+| 13 | Cross-store product sales aggregator | READY | `aggregateProductSalesAcrossStores()` in `store-copilot-domain-tools.ts` |
+| 14 | Monthly time series builder | READY | `buildProductTimeSeries()` in `store-copilot-domain-tools.ts` |
+| 15 | Cross-store product rate ranker | READY | `rankStoresByProductRate()` in `store-copilot-domain-tools.ts` |
+| 16 | Reservation expiry detector | READY | `detectExpiringReservations()` in `store-copilot-domain-tools.ts` |
+| 17 | Attention signal emitter | READY | `emitStoreAttentionSignals()` in `store-copilot-domain-tools.ts` |
 | 18 | New arrivals detector | SEMANTIC_LAYER_REQUIRED | No historical PIL snapshots |
 | 19 | Historical inventory time-travel | DATA_SOURCE_MISSING | PIL is current-state only |
 
 ### Summary
 
-- **READY:** 12 of 19 capabilities
-- **SMALL_ADAPTER_REQUIRED:** 5 (wrappers over existing certified functions)
+- **READY:** 17 of 19 capabilities
+- **SMALL_ADAPTER_REQUIRED:** 0 (all 5 closed in AGENTIK-COPILOT-STORES-TOOLS-01)
 - **SEMANTIC_LAYER_REQUIRED:** 1 (new arrivals — needs historical comparison)
 - **DATA_SOURCE_MISSING:** 1 (historical PIL snapshots)
 - **ACTION_NOT_CERTIFIED:** 0
@@ -405,10 +405,10 @@ Every Copilot tool MUST enforce:
 Inventory, Product/Reference, Variants, Price, Needs, Coverage, Effective Rules, Discounts, Sales History (document + product level), Product Intelligence, Supply Plans, Reservations, Store Metadata.
 
 ### Analytic Capabilities
-Rankings (revenue, rate, momentum), period comparison, no-sales detection, cross-store comparison (with small adapter). Time series aggregation (with small adapter).
+Rankings (revenue, rate, momentum), period comparison, no-sales detection, cross-store comparison, time series aggregation. All READY.
 
 ### Attention Signals
-10 deterministic signals defined. 8 have data sources READY. 2 need small adapters (reservation expiry, signal emission format).
+10 deterministic signals defined. All data sources READY. Unified emitter: `emitStoreAttentionSignals()` in `store-copilot-domain-tools.ts`.
 
 ### Actions
 13 certified actions across READ/ANALYZE/PREPARE/WRITE/APPROVAL_REQUIRED classifications. All server authorities exist and are tested.
@@ -423,12 +423,15 @@ Rankings (revenue, rate, momentum), period comparison, no-sales detection, cross
 orgId (session-derived), role-based access, module availability, store governance, no cross-tenant.
 
 ### Known Gaps
-5 small adapters (cross-store wrappers, time series bucketing, reservation expiry). 1 semantic layer (new arrivals). 1 missing data source (historical PIL).
+1 semantic layer (new arrivals — no historical PIL snapshots). 1 missing data source (historical PIL — current-state only). Neither blocks Copilot launch.
+
+### Tool Registry
+28 tools registered in `STORES_DOMAIN_TOOL_REGISTRY` (`store-copilot-domain-tools.ts`). 13 READ, 6 ANALYZE, 3 PREPARE, 4 WRITE, 2 APPROVAL_REQUIRED.
 
 ---
 
 ## FINAL VERDICT
 
-**B. SMALL_TOOL_ADAPTERS_REQUIRED**
+**A. STORES_COPILOT_READY**
 
-12 of 19 capabilities are READY with zero implementation needed. 5 require thin wrapper functions over existing certified services. No action layer gaps. No permission gaps. The blocking data source gap (historical PIL) is outside Tiendas scope and does not block Copilot launch — it limits one analytic question type ("what changed in stock levels over time").
+17 of 19 capabilities READY. 5 adapter gaps closed in AGENTIK-COPILOT-STORES-TOOLS-01. 28 domain tools registered with structured input/output, provenance, approval metadata, and tenant isolation. 2 remaining gaps (new arrivals, historical PIL) are outside Tiendas scope and do not block Copilot launch.
