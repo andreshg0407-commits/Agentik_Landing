@@ -24,7 +24,7 @@
  *   - derrotero_catalog (new API — entry structure only)
  */
 
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, type ReactNode } from "react";
 import { C, T, S, R, panel, panelHeader } from "@/lib/ui/tokens";
 
 // ── Client-side types (mirror server types — no server imports) ─────────────
@@ -63,11 +63,26 @@ interface EffectiveScarcityConfig {
   source: "tenant_default" | "store_override";
 }
 
+interface EffectiveSpecialProductEntry {
+  pattern: string;
+  idealUnits: number;
+  source: "tenant_default" | "store_override";
+  validFrom: string | null;
+  validTo: string | null;
+  season: string | null;
+  notes: string | null;
+}
+
+interface EffectiveSpecialProductConfig {
+  entries: EffectiveSpecialProductEntry[];
+}
+
 interface EffectiveStoreConfig {
   castillitos: EffectiveTextileConfig;
   latinKids: EffectiveTextileConfig;
   accessories: { small: EffectiveAccessoryConfig; medium: EffectiveAccessoryConfig; large: EffectiveAccessoryConfig };
   scarcity: EffectiveScarcityConfig;
+  specialProducts: EffectiveSpecialProductConfig;
 }
 
 interface RuleImpactPreview {
@@ -141,18 +156,11 @@ function useIsNarrow(): boolean {
 }
 const ACTIVE_STORE_SLUGS = ["san_diego", "centro", "gran_plaza", "caldas"];
 
-// ── Special rules data ────────────────────────────────────────────────────────
-
-interface SpecialRuleEntry {
-  product: string;
-  stores: Record<string, number>;
-}
-
-const DEFAULT_SPECIAL_RULES: SpecialRuleEntry[] = [
-  { product: "Banera", stores: { san_diego: 3, caldas: 3, centro: 0, gran_plaza: 0 } },
-  { product: "Cuna colecho", stores: { san_diego: 3, caldas: 3, centro: 0, gran_plaza: 0 } },
-  { product: "Corral", stores: { san_diego: 3, caldas: 3, centro: 0, gran_plaza: 0 } },
-];
+const PATTERN_LABEL: Record<string, string> = {
+  "BAÑERA": "Bañera",
+  "CUNA_COLECHO": "Cuna Colecho",
+  "CORRAL": "Corral",
+};
 
 // ── Section type ──────────────────────────────────────────────────────────────
 
@@ -194,9 +202,6 @@ export function StoreSupplyRulesTab({
   const [previewLoading, setPreviewLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
-
-  // Special rules — display-only from policy pack defaults (not yet persisted per-store)
-  const specialRules = DEFAULT_SPECIAL_RULES;
 
   const [prevStoreId, setPrevStoreId] = useState(storeId);
 
@@ -266,6 +271,19 @@ export function StoreSupplyRulesTab({
     return errs;
   }
 
+  function validateSpecialProducts(sp: EffectiveSpecialProductConfig): Record<string, string> {
+    const errs: Record<string, string> = {};
+    sp.entries.forEach((e, i) => {
+      if (!e.pattern || e.pattern.trim() === "") errs[`sp_${i}_pattern`] = "Patrón requerido";
+      if (!Number.isFinite(e.idealUnits) || e.idealUnits < 0) errs[`sp_${i}_ideal`] = "Entero >= 0";
+    });
+    const patterns = sp.entries.map(e => e.pattern.trim().toUpperCase());
+    patterns.forEach((p, i) => {
+      if (p && patterns.indexOf(p) !== i) errs[`sp_${i}_pattern`] = "Patrón duplicado";
+    });
+    return errs;
+  }
+
   // ── Edit handlers ──────────────────────────────────────────────────────
   function startEdit(sec: RulesSection) {
     if (!editable || !config) return;
@@ -285,6 +303,7 @@ export function StoreSupplyRulesTab({
       },
     });
     else if (sec === "rule36") setDraft({ scarcity: { ...config.scarcity, source: "store_override" } });
+    else if (sec === "special") setDraft({ specialProducts: { entries: config.specialProducts.entries.map(e => ({ ...e })) } });
   }
 
   function cancelEdit() {
@@ -302,7 +321,7 @@ export function StoreSupplyRulesTab({
     try {
       let revertConfig: Partial<EffectiveStoreConfig>;
       const sectionLabels: Record<string, string> = {
-        castillitos: "Castillitos", latin_kids: "Latin Kids", rule36: "Regla 36",
+        castillitos: "Castillitos", latin_kids: "Latin Kids", rule36: "Regla 36", special: "Productos Especiales",
       };
       if (sec === "castillitos") {
         revertConfig = { castillitos: { ...config.castillitos, source: "tenant_default" } };
@@ -310,6 +329,8 @@ export function StoreSupplyRulesTab({
         revertConfig = { latinKids: { ...config.latinKids, source: "tenant_default" } };
       } else if (sec === "rule36") {
         revertConfig = { scarcity: { ...config.scarcity, source: "tenant_default" } };
+      } else if (sec === "special") {
+        revertConfig = { specialProducts: { entries: config.specialProducts.entries.map(e => ({ ...e, source: "tenant_default" as const, notes: null, validFrom: null, validTo: null, season: null })) } };
       } else return;
 
       const data = await tiendasApi({
@@ -323,7 +344,7 @@ export function StoreSupplyRulesTab({
       setEditing(null);
       setDraft({});
       setPreview(null);
-      setSuccess(`${sectionLabels[sec] ?? sec}: restablecido a predeterminado del tenant`);
+      setSuccess(`${sectionLabels[sec] ?? sec}: configuración predeterminada restablecida`);
       setTimeout(() => setSuccess(null), 4000);
       onSaved?.();
     } catch { setError("Error al restablecer"); }
@@ -336,6 +357,7 @@ export function StoreSupplyRulesTab({
     if (draft.castillitos) errs = validateTextile(draft.castillitos);
     if (draft.latinKids) errs = { ...errs, ...validateTextile(draft.latinKids) };
     if (draft.scarcity) errs = { ...errs, ...validateScarcity(draft.scarcity) };
+    if (draft.specialProducts) errs = { ...errs, ...validateSpecialProducts(draft.specialProducts) };
     if (Object.keys(errs).length > 0) { setValidationErrors(errs); return; }
     setValidationErrors({});
     setPreviewLoading(true);
@@ -363,12 +385,12 @@ export function StoreSupplyRulesTab({
       const savedSection = editing;
       const sectionLabels: Record<string, string> = {
         castillitos: "Castillitos", latin_kids: "Latin Kids",
-        accessories: "Accesorios", rule36: "Regla 36",
+        accessories: "Accesorios", rule36: "Regla 36", special: "Productos Especiales",
       };
       setEditing(null);
       setDraft({});
       setPreview(null);
-      setSuccess(`${sectionLabels[savedSection ?? ""] ?? "Reglas"} guardado como override de tienda`);
+      setSuccess(`${sectionLabels[savedSection ?? ""] ?? "Reglas"}: cambios guardados para esta tienda`);
       setTimeout(() => setSuccess(null), 4000);
       onSaved?.();   // F3A.1: escritura exitosa → refetch del StoreSnapshot
     } catch { setError("Error al guardar configuracion"); }
@@ -401,6 +423,81 @@ export function StoreSupplyRulesTab({
   }
 
   const isEditing = editing === section;
+
+  // ── EDIT-FLOW-UX-01: los controles viven JUNTO a la configuración que editan
+  //    (§1/§3), en lenguaje de negocio (§2). La semántica interna
+  //    OVERRIDE/tenant_default NO cambia (§12) — solo presentación/interacción.
+  const sectionSource =
+    section === "castillitos" ? config.castillitos.source
+    : section === "latin_kids" ? config.latinKids.source
+    : section === "accessories" ? (
+      config.accessories.small.source === "store_override"
+      || config.accessories.medium.source === "store_override"
+      || config.accessories.large.source === "store_override"
+        ? "store_override" : "tenant_default"
+    )
+    : section === "rule36" ? config.scarcity.source
+    : section === "special" ? (config.specialProducts?.entries.some(e => e.source === "store_override") ? "store_override" : "tenant_default")
+    : "tenant_default";
+  const isOverride = sectionSource === "store_override";
+  const canRevert = isOverride && !isEditing;
+
+  const btnPrimary = { ...monoXs, fontWeight: T.wt.semibold, padding: `${S[2]}px ${S[3]}px`, minHeight: 36, borderRadius: R.sm, background: C.blueDark, color: C.white, border: "none" } as const;
+  const btnSecondary = { ...monoXs, fontWeight: T.wt.semibold, padding: `${S[2]}px ${S[3]}px`, minHeight: 36, borderRadius: R.sm, background: C.blueLight, color: C.blueDark, border: `1px solid ${C.blueBorder}` } as const;
+  const btnGhost = { ...monoXs, padding: `${S[2]}px ${S[3]}px`, minHeight: 36, borderRadius: R.sm, background: C.surface, color: C.inkMid, border: `1px solid ${C.line}` } as const;
+
+  const editControls: ReactNode = editable && section !== "accessories" ? (
+    !isEditing ? (
+      <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
+        <button onClick={() => startEdit(section)} className="ag-action-secondary" style={{ ...btnSecondary, cursor: "pointer" }}>
+          Editar cantidades
+        </button>
+        {canRevert && (
+          <button
+            onClick={() => revertToDefault(section)}
+            disabled={saving}
+            className="ag-action-ghost"
+            style={{ ...btnGhost, cursor: saving ? "wait" : "pointer", opacity: saving ? 0.6 : 1 }}
+          >
+            {saving ? "Restableciendo..." : "Restablecer configuración predeterminada"}
+          </button>
+        )}
+      </div>
+    ) : (
+      <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
+        {!preview && (
+          <button onClick={requestPreview} disabled={previewLoading} className="ag-action-secondary"
+            style={{ ...btnSecondary, cursor: previewLoading ? "wait" : "pointer", opacity: previewLoading ? 0.6 : 1 }}>
+            {previewLoading ? "Calculando..." : "Previsualizar impacto"}
+          </button>
+        )}
+        {preview && (
+          <button onClick={saveChanges} disabled={saving} className="ag-action-primary"
+            style={{ ...btnPrimary, cursor: saving ? "wait" : "pointer", opacity: saving ? 0.6 : 1 }}>
+            {saving ? "Guardando..." : "Guardar cambios"}
+          </button>
+        )}
+        <button onClick={cancelEdit} style={{ ...btnGhost, cursor: "pointer" }}>
+          Cancelar
+        </button>
+      </div>
+    )
+  ) : null;
+
+  // §4: el impacto se muestra INMEDIATAMENTE debajo de la card de configuración.
+  const previewPanel: ReactNode = isEditing && preview ? (
+    <div style={{ ...panel, padding: S[3], background: C.surfaceAlt }}>
+      <div style={{ ...monoXs, fontWeight: T.wt.semibold, color: C.ink, marginBottom: S[2] }}>
+        Impacto del cambio
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
+        <div style={{ ...mono2xs, color: C.inkMid }}>+{preview.additionalSurtir} ref. adicionales por surtir</div>
+        <div style={{ ...mono2xs, color: C.inkMid }}>+{preview.additionalUnitsNeeded} unidades adicionales</div>
+        <div style={{ ...mono2xs, color: preview.resolvedDeficits > 0 ? C.green : C.inkMid }}>{preview.resolvedDeficits} deficit resueltos</div>
+        <div style={{ ...mono2xs, color: preview.newRetirar > 0 ? C.amber : C.inkMid }}>{preview.newRetirar} nuevos por retirar</div>
+      </div>
+    </div>
+  ) : null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
@@ -464,6 +561,9 @@ export function StoreSupplyRulesTab({
           editable={editable}
           onChange={(tc) => setDraft({ castillitos: tc })}
           errors={validationErrors}
+          isOverride={isOverride}
+          controls={editControls}
+          previewPanel={previewPanel}
         />
       )}
 
@@ -478,6 +578,9 @@ export function StoreSupplyRulesTab({
           editable={editable}
           onChange={(tc) => setDraft({ latinKids: tc })}
           errors={validationErrors}
+          isOverride={isOverride}
+          controls={editControls}
+          previewPanel={previewPanel}
         />
       )}
 
@@ -493,121 +596,27 @@ export function StoreSupplyRulesTab({
           editable={editable}
           onChange={(sc) => setDraft({ scarcity: sc })}
           errors={validationErrors}
+          isOverride={isOverride}
+          controls={editControls}
+          previewPanel={previewPanel}
         />
       )}
 
       {section === "special" && (
         <SpecialRulesSection
-          rules={specialRules}
+          config={config.specialProducts}
+          isEditing={isEditing}
+          draft={draft.specialProducts}
+          editable={editable}
+          onChange={(sp) => setDraft({ specialProducts: sp })}
+          errors={validationErrors}
+          isOverride={isOverride}
+          controls={editControls}
+          previewPanel={previewPanel}
+          storeId={storeId}
         />
       )}
 
-      {/* ── Edit/Save controls (AGENTIK-STORES-DERROTERO-DELIVERY-01) ── */}
-      {section !== "special" && editable && (() => {
-        // Resolve source for current section
-        const sectionSource =
-          section === "castillitos" ? config.castillitos.source
-          : section === "latin_kids" ? config.latinKids.source
-          : section === "accessories" ? (
-            config.accessories.small.source === "store_override"
-            || config.accessories.medium.source === "store_override"
-            || config.accessories.large.source === "store_override"
-              ? "store_override" : "tenant_default"
-          )
-          : section === "rule36" ? config.scarcity.source
-          : "tenant_default";
-        const isOverride = sectionSource === "store_override";
-        const canRevert = isOverride && !isEditing && section !== "accessories";
-
-        return (
-          <div style={{ paddingTop: S[2], borderTop: `1px solid ${C.line}` }}>
-            {/* Source badge */}
-            <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[2] }}>
-              <span style={{
-                ...mono2xs, padding: "2px 8px", borderRadius: R.pill,
-                background: isOverride ? C.amberLight : C.surfaceAlt,
-                color: isOverride ? C.amber : C.inkFaint,
-                border: `1px solid ${isOverride ? C.amberBorder : C.line}`,
-              }}>
-                {isOverride ? "Personalizado para esta tienda" : "Predeterminado del tenant"}
-              </span>
-            </div>
-
-            {!isEditing ? (
-              <div style={{ display: "flex", gap: S[2] }}>
-                {section !== "accessories" && (
-                  <button onClick={() => startEdit(section)} className="ag-action-secondary" style={{
-                    ...monoXs, padding: `${S[1]}px ${S[2]}px`, borderRadius: R.sm, cursor: "pointer",
-                    background: C.blueLight, color: C.blueDark, border: `1px solid ${C.blueBorder}`,
-                  }}>
-                    {isOverride ? "Editar override" : "Crear override"}
-                  </button>
-                )}
-                {canRevert && (
-                  <button
-                    onClick={() => revertToDefault(section)}
-                    disabled={saving}
-                    className="ag-action-ghost"
-                    style={{
-                      ...monoXs, padding: `${S[1]}px ${S[2]}px`, borderRadius: R.sm,
-                      cursor: saving ? "wait" : "pointer",
-                      background: C.surface, color: C.inkMid, border: `1px solid ${C.line}`,
-                      opacity: saving ? 0.6 : 1,
-                    }}
-                  >
-                    {saving ? "Restableciendo..." : "Restablecer al default"}
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
-                {preview && (
-                  <div style={{ ...panel, padding: S[3], background: C.surfaceAlt }}>
-                    <div style={{ ...monoXs, fontWeight: T.wt.semibold, color: C.ink, marginBottom: S[2] }}>
-                      Impacto del cambio
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
-                      <div style={{ ...mono2xs, color: C.inkMid }}>+{preview.additionalSurtir} ref. adicionales por surtir</div>
-                      <div style={{ ...mono2xs, color: C.inkMid }}>+{preview.additionalUnitsNeeded} unidades adicionales</div>
-                      <div style={{ ...mono2xs, color: preview.resolvedDeficits > 0 ? C.green : C.inkMid }}>{preview.resolvedDeficits} deficit resueltos</div>
-                      <div style={{ ...mono2xs, color: preview.newRetirar > 0 ? C.amber : C.inkMid }}>{preview.newRetirar} nuevos por retirar</div>
-                    </div>
-                  </div>
-                )}
-                <div style={{ display: "flex", gap: S[2] }}>
-                  {!preview && (
-                    <button onClick={requestPreview} disabled={previewLoading} className="ag-action-secondary" style={{
-                      ...monoXs, padding: `${S[1]}px ${S[3]}px`, borderRadius: R.sm,
-                      cursor: previewLoading ? "wait" : "pointer",
-                      background: C.blueLight, color: C.blueDark, border: `1px solid ${C.blueBorder}`,
-                      opacity: previewLoading ? 0.6 : 1,
-                    }}>
-                      {previewLoading ? "Calculando..." : "Previsualizar impacto"}
-                    </button>
-                  )}
-                  {preview && (
-                    <button onClick={saveChanges} disabled={saving} className="ag-action-primary" style={{
-                      ...monoXs, fontWeight: T.wt.semibold,
-                      padding: `${S[1]}px ${S[3]}px`, borderRadius: R.sm,
-                      cursor: saving ? "wait" : "pointer",
-                      background: C.blueDark, color: C.white, border: "none",
-                      opacity: saving ? 0.6 : 1,
-                    }}>
-                      {saving ? "Guardando..." : "Guardar como override"}
-                    </button>
-                  )}
-                  <button onClick={cancelEdit} style={{
-                    ...monoXs, padding: `${S[1]}px ${S[3]}px`, borderRadius: R.sm,
-                    cursor: "pointer", background: C.surface, color: C.inkMid, border: `1px solid ${C.line}`,
-                  }}>
-                    Cancelar
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      })()}
     </div>
   );
 }
@@ -616,6 +625,7 @@ export function StoreSupplyRulesTab({
 
 function TextileSection({
   label, config, groups, showGrupo, isEditing, draft, editable, onChange, errors,
+  isOverride, controls, previewPanel,
 }: {
   label: string;
   config: EffectiveTextileConfig;
@@ -626,32 +636,62 @@ function TextileSection({
   editable: boolean;
   onChange: (tc: EffectiveTextileConfig) => void;
   errors: Record<string, string>;
+  isOverride: boolean;
+  controls: ReactNode;
+  previewPanel: ReactNode;
 }) {
   const isNarrow = useIsNarrow();
   const val = isEditing && draft ? draft : config;
+  // EDIT-FLOW-UX-01 §3: en modo edición los inputs son inequívocamente editables
   const fieldStyle = {
-    ...monoXs, color: C.ink, padding: `${S[1]}px`, borderRadius: R.sm,
-    border: `1px solid ${C.line}`, width: 60, textAlign: "center" as const,
+    fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold,
+    color: C.ink, padding: `${S[2]}px`, borderRadius: R.sm,
+    border: `1.5px solid ${C.blueBorder}`, background: C.white,
+    width: 72, minHeight: 34, textAlign: "center" as const,
   };
+  // §7: Puntos del derrotero colapsable; al entrar en edición se auto-colapsa
+  // (el usuario edita la configuración, no inspecciona las filas derivadas).
+  const [pointsOpen, setPointsOpen] = useState(true);
+  useEffect(() => {
+    if (isEditing) setPointsOpen(false);
+  }, [isEditing]);
   const entryGridCols = isNarrow
     ? "minmax(0, 1fr) 40px 40px 40px 44px"
     : showGrupo ? "120px 1fr 50px 50px 50px 50px" : "1fr 50px 50px 50px 50px";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-      {/* Global rule for this line — VISUAL-HARMONIZATION-01: section card con
-          panelHeader del sistema; estado como chip en el header (LAW 1/4/6). */}
-      <div style={{ ...panel }}>
-        <div style={{ ...panelHeader, justifyContent: "space-between" }}>
+      {/* Global rule for this line — EDIT-FLOW-UX-01: la card de configuración
+          concentra valores + origen + controles de edición (§1/§8). */}
+      <div style={{ ...panel, ...(isEditing ? { border: `1.5px solid ${C.blueDark}` } : null) }}>
+        <div style={{ ...panelHeader, justifyContent: "space-between", flexWrap: "wrap", gap: S[2] }}>
           <span style={{ ...monoSm, fontWeight: T.wt.semibold, color: C.ink }}>
             Meta de cobertura por subgrupo — {label}
           </span>
-          <span style={{
-            ...mono2xs, fontWeight: T.wt.semibold, padding: "2px 8px", borderRadius: R.pill,
-            background: val.enabled ? C.greenLight : C.surfaceAlt,
-            color: val.enabled ? C.green : C.inkFaint,
-          }}>
-            {val.enabled ? "Activo" : "Inactivo"}
+          <span style={{ display: "flex", gap: S[1], alignItems: "center", flexWrap: "wrap" }}>
+            {isEditing && (
+              <span style={{
+                ...mono2xs, fontWeight: T.wt.bold, padding: "2px 8px", borderRadius: R.pill,
+                background: C.blueDark, color: C.white,
+              }}>
+                Editando
+              </span>
+            )}
+            <span style={{
+              ...mono2xs, fontWeight: T.wt.semibold, padding: "2px 8px", borderRadius: R.pill,
+              background: isOverride ? C.amberLight : C.surfaceAlt,
+              color: isOverride ? C.amber : C.inkFaint,
+              border: `1px solid ${isOverride ? C.amberBorder : C.line}`,
+            }}>
+              {isOverride ? "Configuración personalizada" : "Configuración predeterminada"}
+            </span>
+            <span style={{
+              ...mono2xs, fontWeight: T.wt.semibold, padding: "2px 8px", borderRadius: R.pill,
+              background: val.enabled ? C.greenLight : C.surfaceAlt,
+              color: val.enabled ? C.green : C.inkFaint,
+            }}>
+              {val.enabled ? "Activo" : "Inactivo"}
+            </span>
           </span>
         </div>
         <div style={{ padding: S[3] }}>
@@ -699,22 +739,40 @@ function TextileSection({
             Nota: {config.notes}
           </div>
         )}
+        {/* §1/§3: controles DIRECTAMENTE junto a los campos que editan */}
+        {controls && (
+          <div style={{ marginTop: S[3], paddingTop: S[3], borderTop: `1px solid ${C.lineSubtle}` }}>
+            {controls}
+          </div>
+        )}
         </div>
       </div>
+
+      {/* §4: impacto inmediatamente debajo de la configuración */}
+      {previewPanel}
 
       {/* Per-entry table — structure only, no coverage.
           VISUAL-HARMONIZATION-01: section card con panelHeader + conteo (LAW 4);
           en móvil el grupo baja como prefijo del subgrupo (LAW 7). */}
       {groups.length > 0 && (
         <div style={{ ...panel }}>
-          <div style={{ ...panelHeader, justifyContent: "space-between" }}>
+          <button
+            onClick={() => setPointsOpen(o => !o)}
+            aria-expanded={pointsOpen}
+            style={{
+              ...panelHeader, justifyContent: "space-between", width: "100%",
+              border: "none", borderBottom: pointsOpen ? `1px solid ${C.line}` : "none",
+              cursor: "pointer", textAlign: "left", minHeight: 40,
+            }}
+          >
             <span style={{ ...monoSm, fontWeight: T.wt.semibold, color: C.ink }}>
-              Puntos del derrotero
+              <span aria-hidden>{pointsOpen ? "\u25BE" : "\u25B8"}</span> Puntos del derrotero ({groups.reduce((s, g) => s + g.entries.length, 0)})
             </span>
             <span style={{ ...mono2xs, color: C.inkFaint }}>
-              {groups.reduce((s, g) => s + g.entries.length, 0)} puntos
+              Detalle efectivo derivado
             </span>
-          </div>
+          </button>
+          {pointsOpen && (
           <div className="ag-op-table" style={{ fontSize: T.sz["2xs"] }}>
             {/* Header */}
             <div className="ag-op-row" style={{
@@ -776,10 +834,13 @@ function TextileSection({
               }),
             )}
           </div>
+          )}
+          {pointsOpen && (
           <div style={{ ...mono2xs, color: C.inkFaint, padding: `${S[2]}px ${S[4]}px` }}>
             Cada punto (grupo + subgrupo) se evalúa por el TOTAL de unidades de sus referencias elegibles,
             heredando la regla global de {label}: {config.minUnits}/{config.targetUnits}/{config.maxUnits}.
           </div>
+          )}
         </div>
       )}
     </div>
@@ -835,7 +896,7 @@ function AccessoriesSection({
                 background: s.cfg.source === "store_override" ? C.amberLight : C.surface,
                 color: s.cfg.source === "store_override" ? C.amber : C.inkFaint,
               }}>
-                {s.cfg.source === "store_override" ? "Override" : "Heredado"}
+                {s.cfg.source === "store_override" ? "Personalizado" : "Heredado"}
               </span>
             </span>
           </div>
@@ -850,6 +911,7 @@ function AccessoriesSection({
 
 function Rule36Section({
   config, isEditing, draft, editable, onChange, errors,
+  isOverride, controls, previewPanel,
 }: {
   config: EffectiveScarcityConfig;
   isEditing: boolean;
@@ -857,11 +919,16 @@ function Rule36Section({
   editable: boolean;
   onChange: (sc: EffectiveScarcityConfig) => void;
   errors: Record<string, string>;
+  isOverride: boolean;
+  controls: ReactNode;
+  previewPanel: ReactNode;
 }) {
   const val = isEditing && draft ? draft : config;
   const fieldStyle = {
-    ...monoXs, color: C.ink, padding: `${S[1]}px`, borderRadius: R.sm,
-    border: `1px solid ${C.line}`, width: 60, textAlign: "center" as const,
+    fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold,
+    color: C.ink, padding: `${S[2]}px`, borderRadius: R.sm,
+    border: `1.5px solid ${C.blueBorder}`, background: C.white,
+    width: 72, minHeight: 34, textAlign: "center" as const,
   };
 
   function toggleStore(slug: string) {
@@ -875,18 +942,36 @@ function Rule36Section({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-      {/* VISUAL-HARMONIZATION-01: section card con panelHeader + estado chip (LAW 4/6) */}
-      <div style={{ ...panel }}>
-        <div style={{ ...panelHeader, justifyContent: "space-between" }}>
+      {/* EDIT-FLOW-UX-01: card de configuración con origen + estado + controles (§1/§8/§10) */}
+      <div style={{ ...panel, ...(isEditing ? { border: `1.5px solid ${C.blueDark}` } : null) }}>
+        <div style={{ ...panelHeader, justifyContent: "space-between", flexWrap: "wrap", gap: S[2] }}>
           <span style={{ ...monoSm, fontWeight: T.wt.semibold, color: C.ink }}>
             Regla 36 — Concentracion por escasez
           </span>
-          <span style={{
-            ...mono2xs, fontWeight: T.wt.semibold, padding: "2px 8px", borderRadius: R.pill,
-            background: val.enabled ? C.greenLight : C.surfaceAlt,
-            color: val.enabled ? C.green : C.inkFaint,
-          }}>
-            {val.enabled ? "Activada" : "Inactiva"}
+          <span style={{ display: "flex", gap: S[1], alignItems: "center", flexWrap: "wrap" }}>
+            {isEditing && (
+              <span style={{
+                ...mono2xs, fontWeight: T.wt.bold, padding: "2px 8px", borderRadius: R.pill,
+                background: C.blueDark, color: C.white,
+              }}>
+                Editando
+              </span>
+            )}
+            <span style={{
+              ...mono2xs, fontWeight: T.wt.semibold, padding: "2px 8px", borderRadius: R.pill,
+              background: isOverride ? C.amberLight : C.surfaceAlt,
+              color: isOverride ? C.amber : C.inkFaint,
+              border: `1px solid ${isOverride ? C.amberBorder : C.line}`,
+            }}>
+              {isOverride ? "Configuración personalizada" : "Configuración predeterminada"}
+            </span>
+            <span style={{
+              ...mono2xs, fontWeight: T.wt.semibold, padding: "2px 8px", borderRadius: R.pill,
+              background: val.enabled ? C.greenLight : C.surfaceAlt,
+              color: val.enabled ? C.green : C.inkFaint,
+            }}>
+              {val.enabled ? "Activada" : "Inactiva"}
+            </span>
           </span>
         </div>
         <div style={{ padding: S[3] }}>
@@ -945,9 +1030,19 @@ function Rule36Section({
           )}
           {errors.allowedStores && <div style={{ ...mono2xs, color: C.red, marginTop: S[1] }}>{errors.allowedStores}</div>}
         </div>
+
+        {/* §1/§3/§10: controles junto a la configuración que editan */}
+        {controls && (
+          <div style={{ marginTop: S[3], paddingTop: S[3], borderTop: `1px solid ${C.lineSubtle}` }}>
+            {controls}
+          </div>
+        )}
         </div>
 
       </div>
+
+      {/* §4: impacto inmediatamente debajo de la configuración */}
+      {previewPanel}
 
       {/* Semantics explanation */}
       <div style={{ ...panel, padding: S[2], background: C.surfaceAlt }}>
@@ -961,68 +1056,220 @@ function Rule36Section({
   );
 }
 
-// ── Special Rules Section ────────────────────────────────────────────────────
+// ── Special Rules Section (CRUD — restored from ea51178) ─────────────────────
 
 function SpecialRulesSection({
-  rules,
+  config, isEditing, draft, editable, onChange, errors,
+  isOverride, controls, previewPanel, storeId,
 }: {
-  rules: SpecialRuleEntry[];
+  config: EffectiveSpecialProductConfig;
+  isEditing: boolean;
+  draft: EffectiveSpecialProductConfig | undefined;
+  editable: boolean;
+  onChange: (sp: EffectiveSpecialProductConfig) => void;
+  errors: Record<string, string>;
+  isOverride: boolean;
+  controls: ReactNode;
+  previewPanel: ReactNode;
+  storeId: string;
 }) {
-  const storeKeys = ["san_diego", "caldas", "centro", "gran_plaza"];
-  const isNarrow = useIsNarrow();
-  const specialGridCols = isNarrow ? "minmax(0, 1fr) 44px 44px 44px 44px" : "120px 70px 70px 70px 70px";
+  const entries = isEditing && draft ? draft.entries : config.entries;
+  const fieldStyle = {
+    fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold,
+    color: C.ink, padding: `${S[2]}px`, borderRadius: R.sm,
+    border: `1.5px solid ${C.blueBorder}`, background: C.white,
+    width: 72, minHeight: 34, textAlign: "center" as const,
+  };
+
+  function updateEntry(idx: number, patch: Partial<EffectiveSpecialProductEntry>) {
+    const updated = entries.map((e, i) => i === idx ? { ...e, ...patch, source: "store_override" as const } : e);
+    onChange({ entries: updated });
+  }
+
+  function removeEntry(idx: number) {
+    onChange({ entries: entries.filter((_, i) => i !== idx) });
+  }
+
+  function addEntry() {
+    onChange({ entries: [...entries, { pattern: "", idealUnits: 1, source: "store_override", validFrom: null, validTo: null, season: null, notes: null }] });
+  }
+
+  function revertEntry(idx: number) {
+    const original = config.entries.find(o => o.pattern === entries[idx].pattern);
+    const idealUnits = original?.idealUnits ?? entries[idx].idealUnits;
+    const updated = entries.map((e, i) => i === idx ? { ...e, idealUnits, source: "tenant_default" as const, notes: null, validFrom: null, validTo: null, season: null } : e);
+    onChange({ entries: updated });
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-      {/* VISUAL-HARMONIZATION-01: section card con panelHeader (LAW 4) */}
-      <div style={{ ...panel }}>
-      <div style={{ ...panelHeader, justifyContent: "space-between" }}>
-        <span style={{ ...monoSm, fontWeight: T.wt.semibold, color: C.ink }}>
-          Reglas especiales por producto
-        </span>
-        <span style={{ ...mono2xs, color: C.inkFaint }}>
-          Politica del tenant
-        </span>
-      </div>
-
-      <div className="ag-op-table" style={{ fontSize: T.sz["2xs"] }}>
-        <div className="ag-op-row" style={{
-          display: "grid", gridTemplateColumns: specialGridCols,
-          borderBottom: `1px solid ${C.line}`, background: C.surface,
-        }}>
-          <span style={headerCell}>Producto</span>
-          {storeKeys.map(s => (
-            <span key={s} style={{ ...headerCell, textAlign: "right" }}>{ACTIVE_STORE_NAMES[s]}</span>
-          ))}
-        </div>
-        {rules.map(rule => (
-          <div key={rule.product} className="ag-op-row" style={{
-            display: "grid", gridTemplateColumns: specialGridCols,
-            borderBottom: `1px solid ${C.lineSubtle}`,
-          }}>
-            <span style={{ ...cellStyle, fontWeight: T.wt.semibold }}>{rule.product}</span>
-            {storeKeys.map(s => (
-              <span key={s} style={{ ...cellStyle, textAlign: "right" }}>
-                <span style={{ color: (rule.stores[s] ?? 0) > 0 ? C.ink : C.inkFaint }}>
-                  {rule.stores[s] ?? 0}
-                </span>
+      {/* Configuration card — same Fable pattern as Castillitos/LatinKids/Rule36 */}
+      <div style={{ ...panel, ...(isEditing ? { border: `1.5px solid ${C.blueDark}` } : null) }}>
+        <div style={{ ...panelHeader, justifyContent: "space-between", flexWrap: "wrap", gap: S[2] }}>
+          <span style={{ ...monoSm, fontWeight: T.wt.semibold, color: C.ink }}>
+            Productos especiales — {ACTIVE_STORE_NAMES[storeId] || storeId}
+          </span>
+          <span style={{ display: "flex", gap: S[1], alignItems: "center", flexWrap: "wrap" }}>
+            {isEditing && (
+              <span style={{
+                ...mono2xs, fontWeight: T.wt.bold, padding: "2px 8px", borderRadius: R.pill,
+                background: C.blueDark, color: C.white,
+              }}>
+                Editando
               </span>
-            ))}
+            )}
+            <span style={{
+              ...mono2xs, fontWeight: T.wt.semibold, padding: "2px 8px", borderRadius: R.pill,
+              background: isOverride ? C.amberLight : C.surface,
+              color: isOverride ? C.amber : C.inkFaint,
+              border: `1px solid ${isOverride ? C.amberBorder : C.line}`,
+            }}>
+              {isOverride ? "Personalizado" : "Predeterminado"}
+            </span>
+          </span>
+        </div>
+
+        <div style={{ padding: `${S[2]}px ${S[3]}px`, display: "flex", flexDirection: "column", gap: S[2] }}>
+          <div style={{ ...mono2xs, color: C.inkMid, lineHeight: "1.4" }}>
+            Cada regla define un patrón de coincidencia y la cantidad objetivo para esta tienda. Ideal=0 indica producto no autorizado.
           </div>
-        ))}
-      </div>
+
+          {entries.map((entry, idx) => {
+            const label = PATTERN_LABEL[entry.pattern] || entry.pattern.replace(/_/g, " ") || "—";
+            const entryIsOverride = entry.source === "store_override";
+            const isDisabled = isEditing && entry.idealUnits === 0 && entryIsOverride;
+            const isKnownPattern = !!PATTERN_LABEL[entry.pattern];
+
+            return (
+              <div key={idx} style={{
+                padding: S[2], borderRadius: R.sm,
+                background: isDisabled ? C.surface : C.surfaceAlt,
+                opacity: isDisabled ? 0.6 : 1,
+                border: `1px solid ${entryIsOverride ? C.amberBorder : C.lineSubtle}`,
+              }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: S[1], flexWrap: "wrap", gap: S[1] }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
+                    <span style={{ ...monoSm, fontWeight: T.wt.semibold, color: C.ink }}>
+                      {isEditing && !isKnownPattern ? (
+                        <input
+                          type="text"
+                          value={entry.pattern}
+                          placeholder="PATRON_PRODUCTO"
+                          onChange={e => updateEntry(idx, { pattern: e.target.value.toUpperCase() })}
+                          style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.ink, padding: `${S[1]}px`, borderRadius: R.sm, border: `1.5px solid ${C.blueBorder}`, width: 160 }}
+                        />
+                      ) : (
+                        label
+                      )}
+                    </span>
+                    <span style={{
+                      ...mono2xs, padding: "1px 5px", borderRadius: R.pill,
+                      background: entryIsOverride ? C.amberLight : C.surface,
+                      color: entryIsOverride ? C.amber : C.inkFaint,
+                      border: `1px solid ${entryIsOverride ? C.amberBorder : C.line}`,
+                    }}>
+                      {entryIsOverride ? "Personalizado" : "Predeterminado"}
+                    </span>
+                  </div>
+
+                  {isEditing && (
+                    <div style={{ display: "flex", gap: S[1] }}>
+                      {entryIsOverride && isKnownPattern && (
+                        <button onClick={() => revertEntry(idx)} style={{
+                          ...mono2xs, padding: "2px 6px", borderRadius: R.sm,
+                          background: C.surface, color: C.inkMid, border: `1px solid ${C.line}`, cursor: "pointer",
+                        }}>
+                          Restablecer
+                        </button>
+                      )}
+                      {!isKnownPattern && (
+                        <button onClick={() => removeEntry(idx)} style={{
+                          ...mono2xs, padding: "2px 6px", borderRadius: R.sm,
+                          background: C.surface, color: C.red, border: `1px solid ${C.redBorder}`, cursor: "pointer",
+                        }}>
+                          Eliminar
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ display: "flex", gap: S[4], alignItems: "flex-start", flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ ...mono2xs, color: C.inkLight }}>Patrón</div>
+                    <div style={{ ...monoXs, color: C.inkMid }}>{entry.pattern || "—"}</div>
+                  </div>
+                  <div>
+                    <div style={{ ...mono2xs, color: C.inkLight }}>Cantidad objetivo</div>
+                    {isEditing ? (
+                      <input
+                        type="number"
+                        value={entry.idealUnits}
+                        min={0}
+                        onChange={e => updateEntry(idx, { idealUnits: parseInt(e.target.value) || 0 })}
+                        style={fieldStyle}
+                      />
+                    ) : (
+                      <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: entry.idealUnits === 0 ? C.red : C.blueDark }}>
+                        {entry.idealUnits}
+                      </div>
+                    )}
+                    <div style={{ ...mono2xs, color: C.inkFaint, marginTop: 1 }}>
+                      {entry.idealUnits === 0 ? "No autorizado en esta tienda" : `${entry.idealUnits} uds objetivo`}
+                    </div>
+                    {errors[`sp_${idx}_ideal`] && <div style={{ ...mono2xs, color: C.red }}>{errors[`sp_${idx}_ideal`]}</div>}
+                    {errors[`sp_${idx}_pattern`] && <div style={{ ...mono2xs, color: C.red }}>{errors[`sp_${idx}_pattern`]}</div>}
+                  </div>
+                </div>
+
+                {isEditing && entryIsOverride && (
+                  <div style={{ marginTop: S[2] }}>
+                    <div style={{ ...mono2xs, color: C.inkLight }}>Notas</div>
+                    <input type="text" value={entry.notes || ""} placeholder="Observaciones" maxLength={500}
+                      onChange={e => updateEntry(idx, { notes: e.target.value || null })}
+                      style={{ fontFamily: T.mono, fontSize: T.sz.xs, padding: `${S[1]}px`, borderRadius: R.sm, border: `1px solid ${C.line}`, width: "100%" }}
+                    />
+                  </div>
+                )}
+
+                {!isEditing && entry.notes && (
+                  <div style={{ ...mono2xs, color: C.inkFaint, fontStyle: "italic", marginTop: S[1] }}>
+                    {entry.notes}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {isEditing && (
+            <button onClick={addEntry} className="ag-action-secondary" style={{
+              fontFamily: T.mono, fontSize: T.sz.xs, padding: `${S[1]}px ${S[2]}px`,
+              borderRadius: R.sm, cursor: "pointer", background: C.blueLight,
+              color: C.blueDark, border: `1px solid ${C.blueBorder}`,
+              alignSelf: "flex-start",
+            }}>
+              + Agregar regla especial
+            </button>
+          )}
+
+          {!isEditing && (
+            <div style={{ ...mono2xs, color: C.inkFaint }}>
+              Fuente: {entries.some(e => e.source === "store_override") ? "Con personalizaciones" : "Politica predeterminada"}
+              {" · "}Tienda: {ACTIVE_STORE_NAMES[storeId] || storeId}
+            </div>
+          )}
+        </div>
+
+        {/* Edit controls inside the panel — same Fable pattern */}
+        {controls && (
+          <div style={{ padding: `${S[2]}px ${S[3]}px`, borderTop: `1px solid ${C.lineSubtle}` }}>
+            {controls}
+          </div>
+        )}
       </div>
 
-      {/* AGENTIK-STORES-DERROTERO-DELIVERY-01: special rules come from policy pack config.
-          Per-store persistence requires cross-store write (all 4 stores at once).
-          Current UI is display-only from CASTILLITOS_SPECIAL_PRODUCTS defaults. */}
-      <div style={{
-        ...mono2xs, color: C.inkFaint, padding: `${S[2]}px ${S[3]}px`,
-        background: C.surfaceAlt, borderRadius: R.sm, lineHeight: "1.5",
-      }}>
-        Valores definidos en la politica del tenant (CASTILLITOS_SPECIAL_PRODUCTS).
-        Para modificar, contactar administrador del sistema.
-      </div>
+      {/* Impact preview below card */}
+      {previewPanel}
     </div>
   );
 }

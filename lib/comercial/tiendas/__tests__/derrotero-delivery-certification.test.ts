@@ -375,40 +375,61 @@ describe("GATE 8 — UI delivery experience", () => {
     assert.ok(src.includes("revertToDefault"), "UI must have revertToDefault function");
   });
 
-  it("supply rules tab shows source badge", () => {
+  // EDIT-FLOW-UX-01 §2: el copy visible usa lenguaje de negocio — la semántica
+  // interna OVERRIDE/tenant_default queda intacta (verificada en GATE 1-3).
+  it("supply rules tab shows source badge (business language)", () => {
     const src = readComponent("store-supply-rules-tab.tsx");
-    assert.ok(src.includes("Personalizado para esta tienda"), "must show customized badge");
-    assert.ok(src.includes("Predeterminado del tenant"), "must show default badge");
+    assert.ok(src.includes("Configuración personalizada"), "must show customized badge");
+    assert.ok(src.includes("Configuración predeterminada"), "must show default badge");
   });
 
-  it("supply rules tab has 'Restablecer al default' button", () => {
+  it("supply rules tab has revert button in business language", () => {
     const src = readComponent("store-supply-rules-tab.tsx");
-    assert.ok(src.includes("Restablecer al default"), "must have revert button");
+    assert.ok(src.includes("Restablecer configuración predeterminada"), "must have revert button");
   });
 
-  it("supply rules tab shows 'Crear override' for default sections", () => {
+  it("supply rules tab edit CTA is 'Editar cantidades' (no technical override copy)", () => {
     const src = readComponent("store-supply-rules-tab.tsx");
-    assert.ok(src.includes("Crear override"), "must show create override for defaults");
-    assert.ok(src.includes("Editar override"), "must show edit override for overridden");
+    assert.ok(src.includes("Editar cantidades"), "must show business edit CTA");
+    for (const banned of ["Crear override", "Editar override", "Guardar como override", "Restablecer al default", "Predeterminado del tenant", "Personalizado para esta tienda"]) {
+      assert.ok(!src.includes(banned), `technical copy must not be user-facing: ${banned}`);
+    }
   });
 
-  it("supply rules tab save button says 'Guardar como override'", () => {
+  it("supply rules tab save button says 'Guardar cambios'", () => {
     const src = readComponent("store-supply-rules-tab.tsx");
-    assert.ok(src.includes("Guardar como override"), "save button must be explicit");
+    assert.ok(src.includes("Guardar cambios"), "save button must be business language");
   });
 
-  it("special rules section is display-only with policy pack note", () => {
+  it("EDIT-FLOW-UX-01: controls live INSIDE the config card, not below the table", () => {
     const src = readComponent("store-supply-rules-tab.tsx");
-    assert.ok(src.includes("Valores definidos en la politica del tenant"),
-      "special rules must show policy pack source note");
-    // Should NOT have editable special rules
-    assert.ok(!src.includes("Editar reglas especiales"),
-      "broken special rules edit button must be removed");
+    // El bloque de controles se inyecta como prop en las cards de configuración
+    assert.ok(src.includes("controls: ReactNode"), "sections must receive controls");
+    assert.ok(src.includes("{controls && ("), "controls rendered inside the card");
+    // El impacto va inmediatamente debajo de la card de configuración
+    assert.ok(src.includes("{previewPanel}"), "preview panel rendered right below config card");
+    // Puntos del derrotero colapsable + auto-colapso al editar
+    assert.ok(src.includes("setPointsOpen(false)"), "points auto-collapse on edit");
+    assert.ok(src.includes("aria-expanded={pointsOpen}"), "points header is collapsible");
+  });
+
+  it("special rules section has full CRUD (ea51178 restoration)", () => {
+    const src = readComponent("store-supply-rules-tab.tsx");
+    assert.ok(src.includes("Agregar regla especial"),
+      "special rules must have add button");
+    assert.ok(src.includes("Eliminar"),
+      "special rules must have remove button for custom entries");
+    assert.ok(src.includes("Restablecer"),
+      "special rules must have revert button for overridden defaults");
+    assert.ok(src.includes("Cantidad objetivo"),
+      "special rules must show ideal units field");
+    assert.ok(src.includes("validateSpecialProducts"),
+      "special rules must have validation");
   });
 
   it("success message identifies the section that was saved", () => {
     const src = readComponent("store-supply-rules-tab.tsx");
-    assert.ok(src.includes("guardado como override de tienda"),
+    assert.ok(src.includes("cambios guardados para esta tienda"),
       "success message must identify section");
   });
 });
