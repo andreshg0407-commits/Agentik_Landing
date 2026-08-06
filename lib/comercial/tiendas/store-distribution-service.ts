@@ -1264,6 +1264,7 @@ export interface DistributionData {
   grupoByRef:       Map<string, string | null>;
   refToProductId:   Map<string, string>;
   refToProductName: Map<string, string>;
+  priceByRef:       Map<string, number | null>;
   lastSyncAt:       string | null;
 }
 
@@ -1318,6 +1319,7 @@ async function loadDistributionDataImpl(orgId: string, dataCacheKey: string): Pr
       productLine: string | null;
       handlingUnit: string | null;
       createdAtSag: Date | null;
+      price: number | null;
     } | null;
     variant?: {
       sku: string | null;
@@ -1327,7 +1329,7 @@ async function loadDistributionDataImpl(orgId: string, dataCacheKey: string): Pr
   }> = await db.productInventoryLevel.findMany({
     where: { organizationId: orgId, warehouseId: { in: allPks } },
     include: {
-      product: { select: { id: true, name: true, sku: true, grupoSag: true, subgrupoSag: true, productLine: true, handlingUnit: true, createdAtSag: true } },
+      product: { select: { id: true, name: true, sku: true, grupoSag: true, subgrupoSag: true, productLine: true, handlingUnit: true, createdAtSag: true, price: true } },
       variant: { select: { sku: true, name: true, attributes: true } },
     },
   });
@@ -1341,6 +1343,7 @@ async function loadDistributionDataImpl(orgId: string, dataCacheKey: string): Pr
   const grupoByRef = new Map<string, string | null>();
   const refToProductId = new Map<string, string>();
   const refToProductName = new Map<string, string>();
+  const priceByRef = new Map<string, number | null>();
   let lastSyncAt: string | null = null;
 
   for (const lv of levels) {
@@ -1370,6 +1373,11 @@ async function loadDistributionDataImpl(orgId: string, dataCacheKey: string): Pr
     // Build ref→productName map
     if (!refToProductName.has(refUpper)) {
       refToProductName.set(refUpper, name);
+    }
+
+    // Build ref→price map (PE.price = n_valor_venta_normal, detal excl. IVA)
+    if (!priceByRef.has(refUpper)) {
+      priceByRef.set(refUpper, lv.product?.price ?? null);
     }
 
     // Track lastSyncAt
@@ -1417,7 +1425,7 @@ async function loadDistributionDataImpl(orgId: string, dataCacheKey: string): Pr
     store.lastSyncAt = lastSyncAt;
   }
 
-  const result = { stores, storeInventory, mainStock, sizeClassByRef, grupoByRef, refToProductId, refToProductName, lastSyncAt };
+  const result = { stores, storeInventory, mainStock, sizeClassByRef, grupoByRef, refToProductId, refToProductName, priceByRef, lastSyncAt };
   setCache(dataCacheKey, result, TTL_DATA);
   return result;
 }
@@ -1566,7 +1574,7 @@ async function getCanonicalStoreDetailImpl(orgId: string, storeId: string, detai
   const kpis = computeDetailKpis(items);
 
   console.timeEnd("[DISTRIBUTION] getCanonicalStoreDetail");
-  const result = { store, items, kpis };
+  const result = { store, items, kpis, priceByRef: data.priceByRef };
   setCache(detailCacheKey, result, TTL_DISTRIBUTION);
   return result;
 }

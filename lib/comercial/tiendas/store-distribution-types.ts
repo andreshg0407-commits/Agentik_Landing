@@ -246,6 +246,7 @@ export interface CanonicalStoreDetail {
   store:  StoreLocation;
   items:  StoreDistributionItem[];
   kpis:   StoreDetailKpis;
+  priceByRef: Map<string, number | null>;
 }
 
 // ── Store card (workspace view) ─────────────────────────────────────────────

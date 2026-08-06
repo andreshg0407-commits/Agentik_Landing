@@ -151,6 +151,7 @@ interface InvConsolidatedRef {
   subgroup: string;
   sizeClass: string | null;
   currentStoreQty: number;
+  price: number | null;
   minUnits: number;
   idealUnits: number;
   maxUnits: number;
@@ -3229,6 +3230,12 @@ function DistributionStoreDrawer({
                           <div style={{ textAlign: "center", minWidth: 36, flexShrink: 0 }}>
                             <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Tienda</div>
                             <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.ink }}>{item.currentStoreQty}</div>
+                          </div>
+                          <div style={{ textAlign: "right", minWidth: 64, flexShrink: 0 }} title="Antes de IVA y descuentos">
+                            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>Precio detal</div>
+                            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink }}>
+                              {item.price != null ? `$${Math.round(item.price).toLocaleString("es-CO")}` : "—"}
+                            </div>
                           </div>
                           {item.variantCount > 1 && (
                             <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, flexShrink: 0 }}>

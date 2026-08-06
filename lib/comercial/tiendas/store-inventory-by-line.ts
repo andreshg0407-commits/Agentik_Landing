@@ -117,6 +117,8 @@ export interface ConsolidatedInventoryRef {
   sizeClass:          string | null;
   currentStoreQty:    number;
   mainWarehouseQty:   number;
+  /** n_valor_venta_normal from SAG — detal price excl. IVA (COP). Null if unavailable. */
+  price:              number | null;
   minUnits:           number;
   idealUnits:         number;
   maxUnits:           number;
@@ -342,6 +344,7 @@ interface ItemsByRef {
 
 function consolidateByReference(
   items: StoreDistributionItem[],
+  priceByRef?: Map<string, number | null>,
 ): ConsolidatedInventoryRef[] {
   const refMap = new Map<string, ItemsByRef>();
 
@@ -424,6 +427,7 @@ function consolidateByReference(
       sizeClass: first.sizeClass,
       currentStoreQty,
       mainWarehouseQty,
+      price: priceByRef?.get(ref) ?? null,
       minUnits,
       idealUnits,
       maxUnits,
@@ -649,7 +653,7 @@ export async function diagnoseInventoryByLine(
   }
 
   // Consolidation
-  const consolidated = consolidateByReference(detail.items);
+  const consolidated = consolidateByReference(detail.items, detail.priceByRef);
   const byConsolidatedLine: Record<string, number> = {};
   for (const r of consolidated) byConsolidatedLine[r.line] = (byConsolidatedLine[r.line] || 0) + 1;
 
@@ -702,7 +706,7 @@ export async function loadStoreInventoryByLine(
   }
 
   // Consolidate all items by reference
-  const allConsolidated = consolidateByReference(detail.items);
+  const allConsolidated = consolidateByReference(detail.items, detail.priceByRef);
 
   // Filter to the requested line
   const lineRefs = allConsolidated.filter(r => r.line === req.line);
