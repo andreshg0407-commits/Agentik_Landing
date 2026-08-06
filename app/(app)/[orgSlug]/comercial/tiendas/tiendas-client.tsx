@@ -85,12 +85,12 @@ const SAG_ACTION_DISPLAY: Record<SagComparisonAction, {
   icon: string; color: string; label: (target: number) => string;
 }> = {
   APPLY:             { icon: "+",  color: DISCOUNT_TIER_COLOR.THIRTY_PERCENT, label: t => `Aplicar ${t}%` },
-  INCREASE:          { icon: "\u2191",  color: DISCOUNT_TIER_COLOR.FIFTY_PERCENT,  label: t => `Subir a ${t}%` },
-  ALIGNED:           { icon: "\u2713",  color: DISCOUNT_TIER_COLOR.NONE,           label: () => "Ya aplicado" },
-  KEEP_HIGHER_SAG:   { icon: "\u25B6",  color: C.inkMid,                           label: () => "SAG mayor — mantener" },
-  NO_AGENTIK_ACTION: { icon: "\u2014",  color: C.inkFaint,                         label: () => "Sin acci\u00f3n recomendada" },
+  INCREASE:          { icon: "↑",  color: DISCOUNT_TIER_COLOR.FIFTY_PERCENT,  label: t => `Subir a ${t}%` },
+  ALIGNED:           { icon: "✓",  color: DISCOUNT_TIER_COLOR.NONE,           label: () => "Ya aplicado" },
+  KEEP_HIGHER_SAG:   { icon: "▶",  color: C.inkMid,                           label: () => "SAG mayor — mantener" },
+  NO_AGENTIK_ACTION: { icon: "—",  color: C.inkFaint,                         label: () => "Sin acción recomendada" },
   AMBIGUOUS_SAG:     { icon: "?",  color: DISCOUNT_TIER_COLOR.SEVENTY_PERCENT, label: () => "Revisar config. SAG" },
-  EXCLUDED:          { icon: "\u00D7",  color: C.inkFaint,                         label: () => "Excluida" },
+  EXCLUDED:          { icon: "×",  color: C.inkFaint,                         label: () => "Excluida" },
 };
 
 // ── Rule provenance (AGENTIK-STORES-SUPPLY-RULES-CONSUMPTION-CERTIFICATION-01) ─
@@ -3706,11 +3706,23 @@ function DistributionStoreDrawer({
               const currentSc = getCurrentStoreComparison(rec);
               const networkPending = getNetworkActionCount(rec);
 
+              // §2: derive explicit SAG actual / Objetivo / Acción
+              const sagActualText = currentSc
+                ? (currentSc.currentDiscountPercent != null ? `${currentSc.currentDiscountPercent}%` : "—")
+                : (sagAvailable ? "—" : "—");
+              const sagObjetivoText = currentSc ? `${currentSc.targetDiscountPercent}%` : DISCOUNT_TIER_LABEL[rec.discountTier];
+              const sagActionText = currentSc
+                ? SAG_ACTION_DISPLAY[currentSc.action].label(currentSc.targetDiscountPercent)
+                : (!sagAvailable ? "SAG no disponible" : "—");
+              const sagActionColor = currentSc
+                ? SAG_ACTION_DISPLAY[currentSc.action].color
+                : C.inkFaint;
+
               return (
                 <div key={rec.referenceCode}>
                   <div className="ag-op-row" style={{
                     display: "grid",
-                    gridTemplateColumns: isNarrow ? "32px minmax(0, 1fr) 84px" : "32px 1fr 80px 80px 80px 70px",
+                    gridTemplateColumns: isNarrow ? "32px minmax(0, 1fr) 84px" : "32px 1fr 60px 60px 60px 60px 60px 130px",
                     gap: S[2], padding: `${S[2]}px ${S[3]}px`,
                     borderBottom: `1px solid ${C.lineSubtle}`,
                     alignItems: "center",
@@ -3728,54 +3740,38 @@ function DistributionStoreDrawer({
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {rec.referenceCode}
-                        {/* Current store action chip (§5: current store FIRST) */}
-                        {currentSc && (
-                          <span style={{
-                            fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.medium,
-                            marginLeft: S[2], padding: "1px 6px", borderRadius: R.pill,
-                            background: `${SAG_ACTION_DISPLAY[currentSc.action].color}18`,
-                            color: SAG_ACTION_DISPLAY[currentSc.action].color,
-                          }}>
-                            {currentSc.currentDiscountPercent != null ? `SAG ${currentSc.currentDiscountPercent}%` : "SAG \u2014"} \u2192 {SAG_ACTION_DISPLAY[currentSc.action].label(currentSc.targetDiscountPercent)}
-                          </span>
-                        )}
-                        {!sagAvailable && dd.sagComparisonStatus === "UNAVAILABLE" && (
-                          <span style={{
-                            fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.medium,
-                            marginLeft: S[2], padding: "1px 6px", borderRadius: R.pill,
-                            background: `${C.inkFaint}18`, color: C.inkFaint,
-                          }}>
-                            SAG no disponible
-                          </span>
-                        )}
                       </div>
                       <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {rec.description}
                       </div>
                       <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight, marginTop: 1 }}>
                         {rec.reason}
-                        {/* §6: network context as secondary */}
                         {networkPending > 0 && (
                           <span style={{ marginLeft: S[2], color: DISCOUNT_TIER_COLOR.FIFTY_PERCENT }}>
-                            · {networkPending} otra{networkPending > 1 ? "s" : ""} tienda{networkPending > 1 ? "s" : ""} pendiente{networkPending > 1 ? "s" : ""}
+                            · {networkPending} otra{networkPending > 1 ? "s" : ""} tienda{networkPending > 1 ? "s" : ""} requiere{networkPending > 1 ? "n" : ""} ajuste
                           </span>
                         )}
                       </div>
                       {isNarrow && (
                         <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, marginTop: 1 }}>
-                          {rec.daysInStore !== null ? `${rec.daysInStore}d` : "\u2014"} \u00B7 {rec.storeQty} uds \u00B7 {rec.variantCount} var.
+                          {rec.daysInStore !== null ? `${rec.daysInStore}d` : "—"} · {rec.storeQty} uds · SAG {sagActualText} → {sagObjetivoText}
                         </div>
                       )}
                     </div>
 
                     {!isNarrow && (
                     <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, textAlign: "right", color: C.ink }}>
-                      {rec.daysInStore !== null ? `${rec.daysInStore}d` : "\u2014"}
+                      {rec.daysInStore !== null ? `${rec.daysInStore}d` : "—"}
                     </div>
                     )}
                     {!isNarrow && (
                     <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, textAlign: "right", color: C.ink }}>
                       {rec.storeQty}
+                    </div>
+                    )}
+                    {!isNarrow && (
+                    <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, textAlign: "right", color: C.ink }}>
+                      {sagActualText}
                     </div>
                     )}
                     <div style={{ textAlign: "center" }}>
@@ -3791,6 +3787,11 @@ function DistributionStoreDrawer({
                     {!isNarrow && (
                     <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, textAlign: "right", color: C.inkMid }}>
                       {rec.variantCount}
+                    </div>
+                    )}
+                    {!isNarrow && (
+                    <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: sagActionColor, fontWeight: T.wt.semibold }}>
+                      {sagActionText}
                     </div>
                     )}
                   </div>
@@ -3813,10 +3814,10 @@ function DistributionStoreDrawer({
                             fontFamily: T.mono, fontSize: T.sz["2xs"],
                           }}>
                             <span style={{ color: isCurrent ? C.ink : C.inkMid, fontWeight: isCurrent ? T.wt.semibold : T.wt.normal, minWidth: 72 }}>
-                              {sc.storeName}{isCurrent ? " \u25C0" : ""}
+                              {sc.storeName}{isCurrent ? " ◀" : ""}
                             </span>
                             <span style={{ color: C.ink, minWidth: 28, textAlign: "right" }}>
-                              {sc.currentDiscountPercent != null ? `${sc.currentDiscountPercent}%` : "\u2014"}
+                              {sc.currentDiscountPercent != null ? `${sc.currentDiscountPercent}%` : "—"}
                             </span>
                             <span style={{ color: actionDisplay.color, fontWeight: T.wt.semibold }}>
                               {actionDisplay.icon} {actionDisplay.label(sc.targetDiscountPercent)}
@@ -3849,7 +3850,7 @@ function DistributionStoreDrawer({
                   >
                     <span style={{ display: "flex", alignItems: "center", gap: S[2] }}>
                       <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, width: 14 }}>
-                        {open ? "\u25BC" : "\u25B6"}
+                        {open ? "▼" : "▶"}
                       </span>
                       <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
                         {label}
@@ -3868,17 +3869,19 @@ function DistributionStoreDrawer({
                       {!isNarrow && (
                       <div className="ag-op-row" style={{
                         display: "grid",
-                        gridTemplateColumns: "32px 1fr 80px 80px 80px 70px",
+                        gridTemplateColumns: "32px 1fr 60px 60px 60px 60px 60px 130px",
                         gap: S[2], padding: `${S[2]}px ${S[3]}px`,
                         fontWeight: T.wt.semibold, color: C.inkMid,
                         borderBottom: `1px solid ${C.line}`, background: C.surface,
                       }}>
                         <span />
                         <span style={{ fontFamily: T.mono }}>Referencia</span>
-                        <span style={{ fontFamily: T.mono, textAlign: "right" }}>Dias</span>
+                        <span style={{ fontFamily: T.mono, textAlign: "right" }}>Días</span>
                         <span style={{ fontFamily: T.mono, textAlign: "right" }}>Uds</span>
-                        <span style={{ fontFamily: T.mono, textAlign: "center" }}>Descuento</span>
-                        <span style={{ fontFamily: T.mono, textAlign: "right" }}>Variantes</span>
+                        <span style={{ fontFamily: T.mono, textAlign: "right" }}>SAG actual</span>
+                        <span style={{ fontFamily: T.mono, textAlign: "center" }}>Objetivo</span>
+                        <span style={{ fontFamily: T.mono, textAlign: "right" }}>Var.</span>
+                        <span style={{ fontFamily: T.mono }}>Acción</span>
                       </div>
                       )}
                       {recs.map(renderDiscountRow)}
@@ -3899,7 +3902,7 @@ function DistributionStoreDrawer({
                 <div style={{ ...panel }}>
                   <div style={{ ...panelHeader, justifyContent: "space-between" }}>
                     <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
-                      Pol\u00edtica de descuento por antig\u00fcedad
+                      Política de descuento por antigüedad
                     </span>
                     <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
                       Fecha de ingreso a tienda
@@ -3918,7 +3921,7 @@ function DistributionStoreDrawer({
                         padding: "2px 8px", borderRadius: R.pill,
                         background: C.surfaceAlt, color: C.inkMid, border: `1px solid ${C.line}`,
                       }}>
-                        {r.label} \u00B7 <strong style={{ color: C.ink }}>{r.pct}</strong>
+                        {r.label} · <strong style={{ color: C.ink }}>{r.pct}</strong>
                       </span>
                     ))}
                   </div>
@@ -3954,7 +3957,7 @@ function DistributionStoreDrawer({
                       SAG conectado
                     </span>
                     <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
-                      {dd.sagFetchResult.rowCount} desc. activos \u00B7 {dd.sagFetchResult.fetchDurationMs}ms
+                      {dd.sagFetchResult.rowCount.toLocaleString()} descuentos activos en SAG
                     </span>
                   </div>
                 )}
@@ -4026,7 +4029,7 @@ function DistributionStoreDrawer({
                 )}
 
                 <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
-                  Clasificaci\u00f3n basada en el estado de {storeCard.store.name} en SAG. Otras tiendas se muestran como contexto secundario.
+                  Clasificación basada en el estado de {storeCard.store.name} en SAG. Otras tiendas se muestran como contexto secundario.
                 </div>
               </>
             );
