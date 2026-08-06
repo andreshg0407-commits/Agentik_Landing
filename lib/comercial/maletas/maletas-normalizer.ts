@@ -15,19 +15,24 @@ import type {
   RawAvailabilityRecord,
   CommercialCaseLine,
 } from "./maletas-types";
+import { VENDOR_BODEGA_CONFIGS } from "./vendor-sample-presence-engine";
 
 // ─── Vendor registry (multi-tenant configurable) ───────────────────────────────
 
 /**
- * Vendor registry placeholder.
+ * Vendor registry bridged from VENDOR_BODEGA_CONFIGS.
  *
- * COMMERCIAL-STABILIZATION-01 Phase 3: The previous hardcoded 4-vendor registry
- * was removed because it represented only 50% of real sellers (8 in CRM).
- * Until a CommercialSalesRep Prisma model is created and populated from CRM sync,
- * this returns an empty array — callers must handle the empty case gracefully.
+ * AGENTIK-SALES-PORTFOLIO-SUPPLY-PLAN-02: Replaces the empty placeholder.
+ * VENDOR_BODEGA_CONFIGS is the authoritative source (6 vendors with bodega mapping).
+ * sagName is null — SAG invoice name matching not yet available.
  */
 export function getVendorRegistry(_orgId: string): SalesRep[] {
-  return [];
+  return VENDOR_BODEGA_CONFIGS.map((v) => ({
+    id: v.id,
+    name: v.name,
+    sagName: null,
+    active: v.active,
+  }));
 }
 
 /**

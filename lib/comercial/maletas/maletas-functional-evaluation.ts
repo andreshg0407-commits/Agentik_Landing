@@ -906,6 +906,7 @@ export function findBusinessCoverageOpportunities(
 
       for (const group of catalog.groups) {
         for (const entry of group.entries) {
+          // Inactive entries already excluded by evaluateCatalog; active guard not needed here.
           if (entry.complete) continue;
           const needed = entry.targetUnits - entry.currentUnits;
           if (needed <= 0) continue;

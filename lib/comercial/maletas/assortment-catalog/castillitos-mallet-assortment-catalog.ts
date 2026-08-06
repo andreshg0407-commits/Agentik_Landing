@@ -169,7 +169,9 @@ const IMPORT_ACCESORIOS: MalletAssortmentGroup = {
   entries: [
     entry("PEQUENO", "Pequeño", 10, 1, IMPORT_EVIDENCE, null), // Matched by sizeClass, not sagSubgrupo
     entry("MEDIANO", "Mediano", 10, 2, IMPORT_EVIDENCE, null),
-    entry("GRANDE", "Grande", 3, 3, IMPORT_EVIDENCE, null),
+    // GRANDE excluded from maletas per business decision (AGENTIK-SALES-PORTFOLIO-SUPPLY-PLAN-02).
+    // Historical target preserved; active: false prevents evaluation, coverage, and candidate selection.
+    { subgroupCode: "GRANDE", subgroupName: "Grande", targetUnits: 3, minUnits: null, maxUnits: null, priority: 3, active: false, evidence: IMPORT_EVIDENCE, sagSubgrupo: null },
   ],
 };
 

@@ -164,8 +164,15 @@ export interface VendorOpReplacementOption {
   line: string;
   opNumber: string;
   orderedQty: number;
-  producedQty: number;
+  /**
+   * Produced quantity from ET reconciliation.
+   * null = ET line data unavailable (fail-closed).
+   * When null, pendingQty = orderedQty (upper bound estimate).
+   */
+  producedQty: number | null;
   pendingQty: number;
+  /** "CONFIRMED" when ET lines exist, "ESTIMATED" when producedQty is null */
+  pendingQtyQuality: "CONFIRMED" | "ESTIMATED";
   createdAt: string;
   /** Last ProductionEvent date for this OP, ISO string or null */
   lastEventDate: string | null;
