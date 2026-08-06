@@ -25,7 +25,7 @@
  */
 
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { C, T, S, R, panel } from "@/lib/ui/tokens";
+import { C, T, S, R, panel, panelHeader } from "@/lib/ui/tokens";
 
 // ── Client-side types (mirror server types — no server imports) ─────────────
 
@@ -126,6 +126,19 @@ const ACTIVE_STORE_NAMES: Record<string, string> = {
   gran_plaza: "Gran Plaza",
   caldas: "Caldas",
 };
+
+/** VISUAL-HARMONIZATION-01 — hint de viewport SOLO presentación (patrón Inteligencia). */
+function useIsNarrow(): boolean {
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 559px)");
+    const update = () => setNarrow(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+  return narrow;
+}
 const ACTIVE_STORE_SLUGS = ["san_diego", "centro", "gran_plaza", "caldas"];
 
 // ── Special rules data ────────────────────────────────────────────────────────
@@ -391,10 +404,10 @@ export function StoreSupplyRulesTab({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-      {/* ── Header ── */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      {/* ── Header — misma jerarquía título/apoyo que Inteligencia (LAW 1) ── */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: S[2], flexWrap: "wrap" }}>
         <div>
-          <span style={{ ...monoSm, fontWeight: T.wt.semibold, color: C.ink }}>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.md, fontWeight: T.wt.bold, color: C.ink }}>
             Reglas de Surtido
           </span>
           <div style={{ ...mono2xs, color: C.inkFaint, marginTop: 2 }}>
@@ -402,35 +415,41 @@ export function StoreSupplyRulesTab({
           </div>
         </div>
         {!editable && (
-          <span style={{ ...mono2xs, color: C.inkFaint, padding: "2px 6px", background: C.surface, borderRadius: R.pill, border: `1px solid ${C.line}` }}>
+          <span style={{ ...mono2xs, fontWeight: T.wt.semibold, color: C.inkFaint, padding: "2px 8px", background: C.surfaceAlt, borderRadius: R.pill, border: `1px solid ${C.line}` }}>
             Solo lectura
           </span>
         )}
       </div>
 
-      {error && <div style={{ ...monoXs, color: C.red, padding: S[2], background: C.redLight, borderRadius: R.sm }}>{error}</div>}
-      {success && <div style={{ ...monoXs, color: C.green, padding: S[2], background: C.greenLight, borderRadius: R.sm }}>{success}</div>}
+      {error && <div style={{ ...monoXs, color: C.red, padding: `${S[2]}px ${S[3]}px`, background: C.redLight, border: `1px solid ${C.redBorder}`, borderRadius: R.sm }}>{error}</div>}
+      {success && <div style={{ ...monoXs, color: C.green, padding: `${S[2]}px ${S[3]}px`, background: C.greenLight, border: `1px solid ${C.greenBorder}`, borderRadius: R.sm }}>{success}</div>}
 
-      {/* ── Section navigation ── */}
-      <div style={{ display: "flex", gap: S[1], flexWrap: "wrap" }}>
-        {SECTION_NAV.map(s => {
-          const active = section === s.key;
-          return (
-            <button
-              key={s.key}
-              onClick={() => { setSection(s.key); if (editing && editing !== s.key) cancelEdit(); }}
-              style={{
-                ...monoXs, fontWeight: T.wt.semibold,
-                padding: "3px 10px", borderRadius: R.pill, cursor: "pointer",
-                background: active ? C.blueDark : C.surface,
-                color: active ? C.white : C.inkMid,
-                border: `1px solid ${active ? C.blueDark : C.line}`,
-              }}
-            >
-              {s.label}
-            </button>
-          );
-        })}
+      {/* ── Section navigation — zona de filtros del sistema (LAW 3):
+          label superior + chips con activo azul, touch target 32px ── */}
+      <div style={{ display: "flex", flexDirection: "column", gap: S[1] }}>
+        <div style={{ ...mono2xs, fontWeight: T.wt.semibold, color: C.inkFaint, textTransform: "uppercase" as const, letterSpacing: "0.05em" }}>
+          Seccion de reglas
+        </div>
+        <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
+          {SECTION_NAV.map(s => {
+            const active = section === s.key;
+            return (
+              <button
+                key={s.key}
+                onClick={() => { setSection(s.key); if (editing && editing !== s.key) cancelEdit(); }}
+                style={{
+                  ...monoXs, fontWeight: T.wt.semibold,
+                  padding: "6px 14px", minHeight: 32, borderRadius: R.sm, cursor: "pointer",
+                  background: active ? C.blueDark : C.white,
+                  color: active ? C.white : C.ink,
+                  border: `1.5px solid ${active ? C.blueDark : C.line}`,
+                }}
+              >
+                {s.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* ── Section content ── */}
@@ -608,19 +627,34 @@ function TextileSection({
   onChange: (tc: EffectiveTextileConfig) => void;
   errors: Record<string, string>;
 }) {
+  const isNarrow = useIsNarrow();
   const val = isEditing && draft ? draft : config;
   const fieldStyle = {
     ...monoXs, color: C.ink, padding: `${S[1]}px`, borderRadius: R.sm,
     border: `1px solid ${C.line}`, width: 60, textAlign: "center" as const,
   };
+  const entryGridCols = isNarrow
+    ? "minmax(0, 1fr) 40px 40px 40px 44px"
+    : showGrupo ? "120px 1fr 50px 50px 50px 50px" : "1fr 50px 50px 50px 50px";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-      {/* Global rule for this line */}
-      <div style={{ ...panel, padding: S[3] }}>
-        <div style={{ ...monoXs, fontWeight: T.wt.semibold, color: C.ink, marginBottom: S[2] }}>
-          Meta de cobertura por subgrupo — {label}
+      {/* Global rule for this line — VISUAL-HARMONIZATION-01: section card con
+          panelHeader del sistema; estado como chip en el header (LAW 1/4/6). */}
+      <div style={{ ...panel }}>
+        <div style={{ ...panelHeader, justifyContent: "space-between" }}>
+          <span style={{ ...monoSm, fontWeight: T.wt.semibold, color: C.ink }}>
+            Meta de cobertura por subgrupo — {label}
+          </span>
+          <span style={{
+            ...mono2xs, fontWeight: T.wt.semibold, padding: "2px 8px", borderRadius: R.pill,
+            background: val.enabled ? C.greenLight : C.surfaceAlt,
+            color: val.enabled ? C.green : C.inkFaint,
+          }}>
+            {val.enabled ? "Activo" : "Inactivo"}
+          </span>
         </div>
+        <div style={{ padding: S[3] }}>
         {/* Ley certificada (DERROTERO-MEASUREMENT-SEMANTICS-01): la regla se
             cumple con la SUMA de unidades de todas las referencias elegibles
             del subgrupo — ninguna referencia individual define el cumplimiento. */}
@@ -628,46 +662,36 @@ function TextileSection({
           Se evalúa el TOTAL agregado del subgrupo: la suma de unidades de todas sus referencias elegibles.
           Varias referencias distintas pueden completar juntas el mínimo, ideal o máximo.
         </div>
-        <div style={{ display: "flex", gap: S[4], alignItems: "flex-start" }}>
+        <div style={{ display: "flex", gap: S[4], alignItems: "flex-start", flexWrap: "wrap" }}>
           <div>
-            <div style={{ ...mono2xs, color: C.inkLight }}>Minimo</div>
+            <div style={{ ...mono2xs, color: C.inkLight, textTransform: "uppercase" as const }}>Minimo</div>
             {isEditing ? (
               <input type="number" value={val.minUnits} min={0} onChange={e => onChange({ ...val, minUnits: parseInt(e.target.value) || 0 })} style={fieldStyle} />
             ) : (
-              <div style={{ ...monoSm, fontWeight: T.wt.bold, color: C.ink }}>{val.minUnits}</div>
+              <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: C.ink }}>{val.minUnits}</div>
             )}
             <div style={{ ...mono2xs, color: C.inkFaint }}>Total del subgrupo debajo: surtir</div>
             {errors.minUnits && <div style={{ ...mono2xs, color: C.red }}>{errors.minUnits}</div>}
           </div>
           <div>
-            <div style={{ ...mono2xs, color: C.inkLight }}>Ideal</div>
+            <div style={{ ...mono2xs, color: C.inkLight, textTransform: "uppercase" as const }}>Ideal</div>
             {isEditing ? (
               <input type="number" value={val.targetUnits} min={0} onChange={e => onChange({ ...val, targetUnits: parseInt(e.target.value) || 0 })} style={fieldStyle} />
             ) : (
-              <div style={{ ...monoSm, fontWeight: T.wt.bold, color: C.blueDark }}>{val.targetUnits}</div>
+              <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: C.blueDark }}>{val.targetUnits}</div>
             )}
             <div style={{ ...mono2xs, color: C.inkFaint }}>Meta agregada del subgrupo</div>
             {errors.targetUnits && <div style={{ ...mono2xs, color: C.red }}>{errors.targetUnits}</div>}
           </div>
           <div>
-            <div style={{ ...mono2xs, color: C.inkLight }}>Maximo</div>
+            <div style={{ ...mono2xs, color: C.inkLight, textTransform: "uppercase" as const }}>Maximo</div>
             {isEditing ? (
               <input type="number" value={val.maxUnits} min={0} onChange={e => onChange({ ...val, maxUnits: parseInt(e.target.value) || 0 })} style={fieldStyle} />
             ) : (
-              <div style={{ ...monoSm, fontWeight: T.wt.bold, color: C.ink }}>{val.maxUnits}</div>
+              <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: C.ink }}>{val.maxUnits}</div>
             )}
             <div style={{ ...mono2xs, color: C.inkFaint }}>Total del subgrupo encima: retirar excedente</div>
             {errors.maxUnits && <div style={{ ...mono2xs, color: C.red }}>{errors.maxUnits}</div>}
-          </div>
-          <div>
-            <div style={{ ...mono2xs, color: C.inkLight }}>Estado</div>
-            <div style={{
-              ...mono2xs, padding: "2px 6px", borderRadius: R.pill, marginTop: S[1],
-              background: val.enabled ? C.greenLight : C.surface,
-              color: val.enabled ? C.green : C.inkFaint,
-            }}>
-              {val.enabled ? "Activo" : "Inactivo"}
-            </div>
           </div>
         </div>
         {config.notes && (
@@ -675,22 +699,30 @@ function TextileSection({
             Nota: {config.notes}
           </div>
         )}
+        </div>
       </div>
 
-      {/* Per-entry table — structure only, no coverage */}
+      {/* Per-entry table — structure only, no coverage.
+          VISUAL-HARMONIZATION-01: section card con panelHeader + conteo (LAW 4);
+          en móvil el grupo baja como prefijo del subgrupo (LAW 7). */}
       {groups.length > 0 && (
-        <div>
-          <div style={{ ...monoXs, fontWeight: T.wt.semibold, color: C.ink, marginBottom: S[1] }}>
-            Puntos del derrotero ({groups.reduce((s, g) => s + g.entries.length, 0)})
+        <div style={{ ...panel }}>
+          <div style={{ ...panelHeader, justifyContent: "space-between" }}>
+            <span style={{ ...monoSm, fontWeight: T.wt.semibold, color: C.ink }}>
+              Puntos del derrotero
+            </span>
+            <span style={{ ...mono2xs, color: C.inkFaint }}>
+              {groups.reduce((s, g) => s + g.entries.length, 0)} puntos
+            </span>
           </div>
           <div className="ag-op-table" style={{ fontSize: T.sz["2xs"] }}>
             {/* Header */}
             <div className="ag-op-row" style={{
               display: "grid",
-              gridTemplateColumns: showGrupo ? "120px 1fr 50px 50px 50px 50px" : "1fr 50px 50px 50px 50px",
-              borderBottom: `1px solid ${C.line}`,
+              gridTemplateColumns: entryGridCols,
+              borderBottom: `1px solid ${C.line}`, background: C.surface,
             }}>
-              {showGrupo && <span style={headerCell}>Grupo</span>}
+              {showGrupo && !isNarrow && <span style={headerCell}>Grupo</span>}
               <span style={headerCell}>Subgrupo</span>
               <span style={{ ...headerCell, textAlign: "right" }}>Min</span>
               <span style={{ ...headerCell, textAlign: "right" }}>Ideal</span>
@@ -710,15 +742,23 @@ function TextileSection({
                 return (
                   <div key={entry.entryCode} className="ag-op-row" style={{
                     display: "grid",
-                    gridTemplateColumns: showGrupo ? "120px 1fr 50px 50px 50px 50px" : "1fr 50px 50px 50px 50px",
+                    gridTemplateColumns: entryGridCols,
                     borderBottom: `1px solid ${C.lineSubtle}`,
+                    alignItems: "center",
                   }}>
-                    {showGrupo && (
+                    {showGrupo && !isNarrow && (
                       <span style={{ ...cellStyle, fontWeight: T.wt.semibold }} title={group.sagGrupo ?? ""}>
                         {group.sagGrupo ?? "\u2014"}
                       </span>
                     )}
-                    <span style={cellStyle} title={subgrupo}>{subgrupo}</span>
+                    <span style={{ ...cellStyle, whiteSpace: "normal" as const }} title={subgrupo}>
+                      {showGrupo && isNarrow && (
+                        <span style={{ display: "block", fontWeight: T.wt.semibold, color: C.inkLight }}>
+                          {group.sagGrupo ?? "\u2014"}
+                        </span>
+                      )}
+                      {subgrupo}
+                    </span>
                     <span style={{ ...cellStyle, textAlign: "right" }}>{entry.minUnitsPerRef}</span>
                     <span style={{ ...cellStyle, textAlign: "right", color: C.blueDark }}>{entry.idealUnitsPerRef}</span>
                     <span style={{ ...cellStyle, textAlign: "right" }}>{entry.maxUnitsPerRef}</span>
@@ -736,7 +776,7 @@ function TextileSection({
               }),
             )}
           </div>
-          <div style={{ ...mono2xs, color: C.inkFaint, marginTop: S[1] }}>
+          <div style={{ ...mono2xs, color: C.inkFaint, padding: `${S[2]}px ${S[4]}px` }}>
             Cada punto (grupo + subgrupo) se evalúa por el TOTAL de unidades de sus referencias elegibles,
             heredando la regla global de {label}: {config.minUnits}/{config.targetUnits}/{config.maxUnits}.
           </div>
@@ -763,14 +803,18 @@ function AccessoriesSection({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-      <div style={{ ...monoXs, fontWeight: T.wt.semibold, color: C.ink }}>
-        Reglas por tamano de accesorio
+      {/* VISUAL-HARMONIZATION-01: section card con panelHeader (LAW 4) */}
+      <div style={{ ...panel }}>
+      <div style={{ ...panelHeader }}>
+        <span style={{ ...monoSm, fontWeight: T.wt.semibold, color: C.ink }}>
+          Reglas por tamano de accesorio
+        </span>
       </div>
 
       <div className="ag-op-table" style={{ fontSize: T.sz["2xs"] }}>
         <div className="ag-op-row" style={{
           display: "grid", gridTemplateColumns: "120px 80px 80px",
-          borderBottom: `1px solid ${C.line}`,
+          borderBottom: `1px solid ${C.line}`, background: C.surface,
         }}>
           <span style={headerCell}>Tamano</span>
           <span style={{ ...headerCell, textAlign: "right" }}>Objetivo</span>
@@ -796,6 +840,7 @@ function AccessoriesSection({
             </span>
           </div>
         ))}
+      </div>
       </div>
     </div>
   );
@@ -830,10 +875,21 @@ function Rule36Section({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-      <div style={{ ...panel, padding: S[3] }}>
-        <div style={{ ...monoXs, fontWeight: T.wt.semibold, color: C.ink, marginBottom: S[2] }}>
-          Regla 36 — Concentracion por escasez
+      {/* VISUAL-HARMONIZATION-01: section card con panelHeader + estado chip (LAW 4/6) */}
+      <div style={{ ...panel }}>
+        <div style={{ ...panelHeader, justifyContent: "space-between" }}>
+          <span style={{ ...monoSm, fontWeight: T.wt.semibold, color: C.ink }}>
+            Regla 36 — Concentracion por escasez
+          </span>
+          <span style={{
+            ...mono2xs, fontWeight: T.wt.semibold, padding: "2px 8px", borderRadius: R.pill,
+            background: val.enabled ? C.greenLight : C.surfaceAlt,
+            color: val.enabled ? C.green : C.inkFaint,
+          }}>
+            {val.enabled ? "Activada" : "Inactiva"}
+          </span>
         </div>
+        <div style={{ padding: S[3] }}>
         <div style={{ ...mono2xs, color: C.inkMid, lineHeight: "1.4", marginBottom: S[2] }}>
           Si una referencia tiene {val.lowStockConcentrationThreshold} unidades o menos en bodega principal,
           solo puede distribuirse a las tiendas autorizadas. Si tiene mas de {val.lowStockConcentrationThreshold},
@@ -843,25 +899,15 @@ function Rule36Section({
         {/* Threshold */}
         <div style={{ display: "flex", gap: S[4], alignItems: "flex-start", marginBottom: S[3] }}>
           <div>
-            <div style={{ ...mono2xs, color: C.inkLight }}>Umbral</div>
+            <div style={{ ...mono2xs, color: C.inkLight, textTransform: "uppercase" as const }}>Umbral</div>
             {isEditing ? (
               <input type="number" value={val.lowStockConcentrationThreshold} min={0}
                 onChange={e => onChange({ ...val, lowStockConcentrationThreshold: parseInt(e.target.value) || 0 })}
                 style={fieldStyle} />
             ) : (
-              <div style={{ ...monoSm, fontWeight: T.wt.bold, color: C.ink }}>{val.lowStockConcentrationThreshold}</div>
+              <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: C.ink }}>{val.lowStockConcentrationThreshold}</div>
             )}
             {errors.threshold && <div style={{ ...mono2xs, color: C.red }}>{errors.threshold}</div>}
-          </div>
-          <div>
-            <div style={{ ...mono2xs, color: C.inkLight }}>Activada</div>
-            <div style={{
-              ...mono2xs, padding: "2px 6px", borderRadius: R.pill, marginTop: S[1],
-              background: val.enabled ? C.greenLight : C.surface,
-              color: val.enabled ? C.green : C.inkFaint,
-            }}>
-              {val.enabled ? "Si" : "No"}
-            </div>
           </div>
         </div>
 
@@ -899,6 +945,7 @@ function Rule36Section({
           )}
           {errors.allowedStores && <div style={{ ...mono2xs, color: C.red, marginTop: S[1] }}>{errors.allowedStores}</div>}
         </div>
+        </div>
 
       </div>
 
@@ -922,17 +969,26 @@ function SpecialRulesSection({
   rules: SpecialRuleEntry[];
 }) {
   const storeKeys = ["san_diego", "caldas", "centro", "gran_plaza"];
+  const isNarrow = useIsNarrow();
+  const specialGridCols = isNarrow ? "minmax(0, 1fr) 44px 44px 44px 44px" : "120px 70px 70px 70px 70px";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-      <div style={{ ...monoXs, fontWeight: T.wt.semibold, color: C.ink }}>
-        Reglas especiales por producto
+      {/* VISUAL-HARMONIZATION-01: section card con panelHeader (LAW 4) */}
+      <div style={{ ...panel }}>
+      <div style={{ ...panelHeader, justifyContent: "space-between" }}>
+        <span style={{ ...monoSm, fontWeight: T.wt.semibold, color: C.ink }}>
+          Reglas especiales por producto
+        </span>
+        <span style={{ ...mono2xs, color: C.inkFaint }}>
+          Politica del tenant
+        </span>
       </div>
 
       <div className="ag-op-table" style={{ fontSize: T.sz["2xs"] }}>
         <div className="ag-op-row" style={{
-          display: "grid", gridTemplateColumns: "120px 70px 70px 70px 70px",
-          borderBottom: `1px solid ${C.line}`,
+          display: "grid", gridTemplateColumns: specialGridCols,
+          borderBottom: `1px solid ${C.line}`, background: C.surface,
         }}>
           <span style={headerCell}>Producto</span>
           {storeKeys.map(s => (
@@ -941,7 +997,7 @@ function SpecialRulesSection({
         </div>
         {rules.map(rule => (
           <div key={rule.product} className="ag-op-row" style={{
-            display: "grid", gridTemplateColumns: "120px 70px 70px 70px 70px",
+            display: "grid", gridTemplateColumns: specialGridCols,
             borderBottom: `1px solid ${C.lineSubtle}`,
           }}>
             <span style={{ ...cellStyle, fontWeight: T.wt.semibold }}>{rule.product}</span>
@@ -954,6 +1010,7 @@ function SpecialRulesSection({
             ))}
           </div>
         ))}
+      </div>
       </div>
 
       {/* AGENTIK-STORES-DERROTERO-DELIVERY-01: special rules come from policy pack config.
