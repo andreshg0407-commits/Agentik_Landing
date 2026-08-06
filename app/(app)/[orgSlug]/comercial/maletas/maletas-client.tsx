@@ -50,6 +50,12 @@ import type {
 } from "@/lib/comercial/maletas/maletas-functional-evaluation";
 import { getVendorMalletBaseMetrics } from "@/lib/comercial/maletas/maletas-functional-evaluation";
 import { CommercialReferenceThumbnail } from "@/components/comercial/commercial-reference-thumbnail";
+import type {
+  SalesPortfolioSupplyPlan,
+  VendorSupplyPlan,
+  SupplyPosition,
+  SupplyAction,
+} from "@/lib/comercial/maletas/supply-plan-engine";
 
 // ── Props ────────────────────────────────────────────────────────────────────
 
@@ -67,6 +73,7 @@ interface MaletasClientProps {
   assortmentEvaluations: VendorAssortmentResult[];
   productionThresholds: SubgroupProductionEval[];
   coverageResult: BusinessCoverageResult;
+  supplyPlan: SalesPortfolioSupplyPlan;
 }
 
 // ── Design tokens ────────────────────────────────────────────────────────────
@@ -163,6 +170,7 @@ export function MaletasClient({
   assortmentEvaluations,
   productionThresholds,
   coverageResult,
+  supplyPlan,
 }: MaletasClientProps) {
   const [selectedVendor, setSelectedVendor] = useState<VendorSampleSnapshot | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -175,7 +183,7 @@ export function MaletasClient({
   // Mutable copy of assortmentEvaluations for optimistic ideal updates
   const [liveAssortmentEvals, setLiveAssortmentEvals] = useState(assortmentEvaluations);
   useEffect(() => { setLiveAssortmentEvals(assortmentEvaluations); }, [assortmentEvaluations]);
-  const [drawerTab, setDrawerTab] = useState<"referencias" | "retiro" | "inteligencia" | "derrotero">("referencias");
+  const [drawerTab, setDrawerTab] = useState<"referencias" | "retiro" | "inteligencia" | "derrotero" | "surtido">("referencias");
   const [lineExpanded, setLineExpanded] = useState<Record<string, boolean>>({});
   const tableContainerRef = useRef<HTMLDivElement>(null);
 
@@ -1187,11 +1195,13 @@ export function MaletasClient({
 
               {/* Row 2: Tab switcher (COMERCIAL-MALETAS-DRAWER-OPERATIONAL-UX-02 — Phase 5) */}
               <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${C.line}` }}>
-                {(["referencias", "retiro", "inteligencia", "derrotero"] as const).map((tab) => {
+                {(["referencias", "retiro", "inteligencia", "derrotero", "surtido"] as const).map((tab) => {
                   const isActive = drawerTab === tab;
                   const label = tab === "referencias" ? "Referencias"
                     : tab === "retiro" ? `Retiro${retiroRefs.length > 0 ? ` (${retiroRefs.length})` : ""}`
-                    : tab === "inteligencia" ? "Inteligencia" : "Derrotero";
+                    : tab === "inteligencia" ? "Inteligencia"
+                    : tab === "surtido" ? "Plan surtido"
+                    : "Derrotero";
                   return (
                     <button
                       key={tab}
@@ -1757,6 +1767,144 @@ export function MaletasClient({
                 <DerroteroIdealPanel orgSlug={orgSlug} vendor={selectedVendor} externalRules={derroteroRules} onRulesChange={setDerroteroRules} assortmentEval={liveAssortmentEvals.find((e) => e.vendorId === selectedVendor.vendorId)} onEvalChange={(updated) => { setLiveAssortmentEvals((prev) => prev.map((e) => e.vendorId === updated.vendorId ? updated : e)); }} />
               </div>
             )}
+
+            {/* ═══ TAB: PLAN DE SURTIDO (AGENTIK-SALES-PORTFOLIO-SUPPLY-PLAN-CERT-01) ═══ */}
+            {drawerTab === "surtido" && selectedVendor && (() => {
+              const vendorPlan = supplyPlan.vendorPlans.find((p) => p.vendorId === selectedVendor.vendorId);
+              if (!vendorPlan) {
+                return (
+                  <div style={{ padding: S[4], fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint }}>
+                    Sin plan de surtido disponible para este vendedor.
+                  </div>
+                );
+              }
+
+              // Section-grouped positions (no counting in React — values from engine)
+              const bodegaPositions = vendorPlan.positions.filter((p) => p.bestAction === "REEMPLAZAR_BODEGA");
+              const opPositions = vendorPlan.positions.filter((p) => p.bestAction === "COMPLETAR_DESDE_OP");
+              const sinCoberturaPositions = vendorPlan.positions.filter(
+                (p) => p.bestAction === "SIN_COBERTURA" || p.bestAction === "PRODUCCION_SUGERIDA" || p.bestAction === "RECOMPRA_SUGERIDA",
+              );
+
+              return (
+                <div style={{ flex: 1, overflowY: "auto" as const, minHeight: 0, paddingTop: S[2] }}>
+                  {/* ── Primary operational KPI strip ────────────────────────── */}
+                  <div style={{
+                    display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: S[2],
+                    padding: `${S[2]}px ${S[3]}px`, marginBottom: S[3],
+                  }}>
+                    {[
+                      { label: "Por completar", value: vendorPlan.missingEntries, color: vendorPlan.missingEntries > 0 ? C.red : C.green },
+                      { label: "Listas para surtir", value: vendorPlan.bodegaCandidates, color: C.green },
+                      { label: "Proximas por OP", value: vendorPlan.opCandidates, color: C.amber },
+                      { label: "Sin cobertura", value: vendorPlan.sinCobertura + vendorPlan.produccionSugerida + vendorPlan.recompraSugerida, color: C.red },
+                    ].map((kpi) => (
+                      <div key={kpi.label} style={{
+                        background: C.surfaceAlt, borderRadius: R.sm, padding: `${S[2]}px ${S[3]}px`,
+                        border: `1px solid ${C.line}`, textAlign: "center" as const,
+                      }}>
+                        <div style={{ fontFamily: T.mono, fontSize: 18, fontWeight: 800, color: kpi.color }}>
+                          {kpi.value}
+                        </div>
+                        <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint, marginTop: 2 }}>
+                          {kpi.label}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Completitud secondary context */}
+                  <div style={{
+                    display: "flex", gap: S[3], padding: `${S[1]}px ${S[3]}px`, marginBottom: S[3],
+                    fontFamily: T.mono, fontSize: 10, color: C.inkFaint,
+                  }}>
+                    <span>Completitud: <strong style={{ color: C.blueDark }}>{vendorPlan.completionPct}%</strong></span>
+                    <span>{vendorPlan.completeEntries}/{vendorPlan.totalDerroteroEntries} posiciones cubiertas</span>
+                  </div>
+
+                  {/* ── SECTION: LISTAS PARA SURTIR (bodega) — open by default ── */}
+                  <SupplySection
+                    title="Listas para surtir"
+                    count={bodegaPositions.length}
+                    color={C.green}
+                    defaultOpen
+                    positions={bodegaPositions}
+                    emptyMessage="Sin posiciones con candidatos disponibles en bodega"
+                  />
+
+                  {/* ── SECTION: PROXIMAS POR OP — open if non-empty ── */}
+                  <SupplySection
+                    title="Proximas por OP"
+                    count={opPositions.length}
+                    color={C.amber}
+                    defaultOpen={opPositions.length > 0}
+                    positions={opPositions}
+                    emptyMessage="Sin posiciones con OP activa"
+                  />
+
+                  {/* ── SECTION: SIN COBERTURA — open if non-empty ── */}
+                  <SupplySection
+                    title="Sin cobertura"
+                    count={sinCoberturaPositions.length}
+                    color={C.red}
+                    defaultOpen={sinCoberturaPositions.length > 0}
+                    positions={sinCoberturaPositions}
+                    emptyMessage="Todas las posiciones tienen cobertura"
+                  />
+
+                  {/* ── SECTION: CUBIERTAS — collapsed by default ── */}
+                  <SupplyCollapsedSection
+                    title="Cubiertas"
+                    count={vendorPlan.completeEntries}
+                    color={C.green}
+                    defaultOpen={false}
+                  >
+                    <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint, padding: `${S[2]}px 0` }}>
+                      {vendorPlan.completeEntries} posiciones del derrotero completamente cubiertas. Sin accion requerida.
+                    </div>
+                  </SupplyCollapsedSection>
+
+                  {/* ── SECTION: REQUIEREN RETIRO — secondary/collapsed ── */}
+                  {vendorPlan.excessPositions.length > 0 && (
+                    <SupplyCollapsedSection
+                      title="Requieren retiro"
+                      count={vendorPlan.excessPositions.length}
+                      color={C.amber}
+                      defaultOpen={false}
+                    >
+                      <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint, padding: `${S[1]}px 0 ${S[2]}px` }}>
+                        {vendorPlan.excessPositions.length} posiciones con exceso de referencias.
+                      </div>
+                      {vendorPlan.excessPositions.slice(0, 5).map((ex, i) => (
+                        <div key={i} style={{
+                          display: "flex", justifyContent: "space-between", alignItems: "center",
+                          padding: `${S[1]}px 0`,
+                          borderBottom: i < Math.min(vendorPlan.excessPositions.length, 5) - 1 ? `1px solid ${C.line}` : "none",
+                        }}>
+                          <div style={{ fontFamily: T.mono, fontSize: 10, color: C.ink }}>
+                            {ex.subgroupName}
+                            <span style={{ fontSize: 9, color: C.inkFaint, marginLeft: S[2] }}>{ex.brand ?? ex.commercialWorld}</span>
+                          </div>
+                          <div style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.amber }}>
+                            +{ex.excessReferences} exceso
+                          </div>
+                        </div>
+                      ))}
+                      <button
+                        onClick={() => setDrawerTab("retiro")}
+                        style={{
+                          fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.blueDark,
+                          background: "none", border: "none", cursor: "pointer",
+                          padding: `${S[2]}px 0`, textDecoration: "underline",
+                        }}
+                      >
+                        Ver en Retiro
+                      </button>
+                    </SupplyCollapsedSection>
+                  )}
+                </div>
+              );
+            })()}
           </div>
           );
         })()}
@@ -4253,6 +4401,237 @@ function UnresolvedRefsPanel({
         </div>
       )}
 
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Supply Plan Components (AGENTIK-SALES-PORTFOLIO-SUPPLY-PLAN-CERT-01)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const SUPPLY_ACTION_LABEL: Record<SupplyAction, string> = {
+  REEMPLAZAR_BODEGA: "Disponible en bodega",
+  COMPLETAR_DESDE_OP: "OP activa",
+  PRODUCCION_SUGERIDA: "Produccion sugerida",
+  RECOMPRA_SUGERIDA: "Recompra sugerida",
+  SIN_COBERTURA: "Sin cobertura",
+};
+
+const SUPPLY_ACTION_COLOR: Record<SupplyAction, string> = {
+  REEMPLAZAR_BODEGA: C.green,
+  COMPLETAR_DESDE_OP: C.amber,
+  PRODUCCION_SUGERIDA: C.blueDark,
+  RECOMPRA_SUGERIDA: C.brand,
+  SIN_COBERTURA: C.red,
+};
+
+/** Collapsible section with position table */
+function SupplySection({ title, count, color, defaultOpen, positions, emptyMessage }: {
+  title: string;
+  count: number;
+  color: string;
+  defaultOpen: boolean;
+  positions: SupplyPosition[];
+  emptyMessage: string;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={{ marginBottom: S[3], border: `1px solid ${C.line}`, borderRadius: R.sm, overflow: "hidden" }}>
+      <button
+        onClick={() => setOpen(!open)}
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
+          padding: `${S[2]}px ${S[3]}px`, background: C.surfaceAlt,
+          border: "none", cursor: "pointer", borderBottom: open ? `1px solid ${C.line}` : "none",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
+          <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: color }} />
+          <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 800, color: C.titleDeep }}>
+            {title}
+          </span>
+          {count > 0 && (
+            <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color }}>
+              {count}
+            </span>
+          )}
+        </div>
+        <span style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint }}>
+          {open ? "\u25B2" : "\u25BC"}
+        </span>
+      </button>
+      {open && (
+        <div>
+          {positions.length === 0 ? (
+            <div style={{ padding: `${S[2]}px ${S[3]}px`, fontFamily: T.mono, fontSize: 10, color: C.inkFaint }}>
+              {emptyMessage}
+            </div>
+          ) : (
+            <div className="ag-op-table">
+              {/* Header */}
+              <div className="ag-op-row" style={{
+                display: "grid", gridTemplateColumns: "1fr 50px 50px 110px",
+                padding: `${S[1]}px ${S[3]}px`, background: C.surfaceAlt,
+                borderBottom: `1px solid ${C.line}`,
+              }}>
+                {["Posicion", "Ideal", "Tiene", "Accion"].map((h) => (
+                  <div key={h} style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: C.inkFaint, textTransform: "uppercase" as const }}>
+                    {h}
+                  </div>
+                ))}
+              </div>
+              {positions.map((pos, i) => (
+                <SupplyPositionRow key={`${pos.catalogId}-${pos.subgroupCode}-${i}`} pos={pos} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Generic collapsible section for non-table content */
+function SupplyCollapsedSection({ title, count, color, defaultOpen, children }: {
+  title: string;
+  count: number;
+  color: string;
+  defaultOpen: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={{ marginBottom: S[3], border: `1px solid ${C.line}`, borderRadius: R.sm, overflow: "hidden" }}>
+      <button
+        onClick={() => setOpen(!open)}
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
+          padding: `${S[2]}px ${S[3]}px`, background: C.surfaceAlt,
+          border: "none", cursor: "pointer", borderBottom: open ? `1px solid ${C.line}` : "none",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
+          <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: color }} />
+          <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 800, color: C.titleDeep }}>{title}</span>
+          {count > 0 && <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color }}>{count}</span>}
+        </div>
+        <span style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint }}>{open ? "\u25B2" : "\u25BC"}</span>
+      </button>
+      {open && <div style={{ padding: `${S[1]}px ${S[3]}px ${S[2]}px` }}>{children}</div>}
+    </div>
+  );
+}
+
+/** Single supply position row with expand/collapse */
+function SupplyPositionRow({ pos }: { pos: SupplyPosition }) {
+  const [expanded, setExpanded] = useState(false);
+  const actionColor = SUPPLY_ACTION_COLOR[pos.bestAction];
+  const actionLabel = SUPPLY_ACTION_LABEL[pos.bestAction];
+
+  // Row hierarchy: CS = group + subgroup, LT = subgroup, Import = sizeClass
+  const primaryLabel = pos.subgroupName;
+  const secondaryLabel = pos.commercialWorld === "IMPORTACION"
+    ? "Importacion"
+    : pos.brand
+      ? `${pos.brand} · ${pos.groupName}`
+      : pos.groupName;
+
+  return (
+    <div style={{ borderBottom: `1px solid ${C.line}` }}>
+      <div
+        className="ag-op-row"
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          display: "grid", gridTemplateColumns: "1fr 50px 50px 110px",
+          padding: `${S[2]}px ${S[3]}px`, cursor: "pointer", alignItems: "center",
+          background: expanded ? C.blueLight : "transparent", transition: "background 0.1s",
+        }}
+      >
+        <div>
+          <div style={{ fontFamily: T.mono, fontSize: 11, color: C.ink, fontWeight: 600 }}>
+            {primaryLabel}
+          </div>
+          <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint }}>
+            {secondaryLabel}
+          </div>
+        </div>
+        <div style={{ fontFamily: T.mono, fontSize: 11, color: C.inkFaint, textAlign: "center" as const }}>
+          {pos.targetReferences}
+        </div>
+        <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: C.red, textAlign: "center" as const }}>
+          {pos.currentReferences}
+        </div>
+        <div style={{
+          fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: actionColor,
+          textAlign: "center" as const, display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
+        }}>
+          <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: actionColor, flexShrink: 0 }} />
+          {actionLabel}
+        </div>
+      </div>
+
+      {expanded && (
+        <div style={{ padding: `${S[2]}px ${S[3]}px ${S[3]}px`, background: C.surfaceAlt, borderTop: `1px solid ${C.line}` }}>
+          {/* Best action explanation */}
+          <div style={{ fontFamily: T.mono, fontSize: 10, color: C.ink, marginBottom: S[2], lineHeight: "1.5" }}>
+            {pos.bestActionExplanation}
+          </div>
+
+          {/* Candidates */}
+          {pos.candidates.length > 0 && (
+            <div style={{ marginTop: S[2] }}>
+              <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: C.inkFaint, marginBottom: S[1], textTransform: "uppercase" as const }}>
+                Candidatos ({pos.candidates.length})
+              </div>
+              {pos.candidates.map((cand, ci) => {
+                const candColor = SUPPLY_ACTION_COLOR[cand.action];
+                // Manager-facing quality labels
+                const qtyLabel = cand.availableQty != null
+                  ? `Disponible ${cand.availableQty}`
+                  : cand.pendingQty != null
+                    ? `Pendiente ${cand.pendingQty}`
+                    : "\u2014";
+                const confidenceLabel = cand.confidence === "ALTA" ? "Confianza alta"
+                  : cand.confidence === "MEDIA" ? "Confianza media" : "Confianza baja";
+
+                return (
+                  <div key={ci} style={{
+                    padding: `${S[1]}px 0`, borderBottom: ci < pos.candidates.length - 1 ? `1px solid ${C.line}` : "none",
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: candColor }}>
+                        {cand.reference || SUPPLY_ACTION_LABEL[cand.action]}
+                      </div>
+                      <div style={{ fontFamily: T.mono, fontSize: 10, color: C.ink }}>
+                        {qtyLabel}
+                      </div>
+                    </div>
+                    <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint, marginTop: 2, display: "flex", gap: S[2] }}>
+                      <span>{cand.description}</span>
+                      {cand.opNumber && <span>OP {cand.opNumber}</span>}
+                      <span style={{ color: cand.confidence === "ALTA" ? C.green : cand.confidence === "MEDIA" ? C.amber : C.red }}>
+                        {confidenceLabel}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Current refs in position */}
+          {pos.matchedReferences.length > 0 && (
+            <div style={{ marginTop: S[2] }}>
+              <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: C.inkFaint, marginBottom: S[1], textTransform: "uppercase" as const }}>
+                Refs actuales ({pos.matchedReferences.length}/{pos.targetReferences})
+              </div>
+              <div style={{ fontFamily: T.mono, fontSize: 9, color: C.ink }}>
+                {pos.matchedReferences.join(", ")}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

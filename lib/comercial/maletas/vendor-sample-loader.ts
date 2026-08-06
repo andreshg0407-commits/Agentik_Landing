@@ -101,6 +101,10 @@ import type {
   IdealOverrideMap,
   BusinessCoverageResult,
 } from "./maletas-functional-evaluation";
+import {
+  buildSalesPortfolioSupplyPlan,
+  type SalesPortfolioSupplyPlan,
+} from "./supply-plan-engine";
 
 // ── Canonical diff report (Phase 6 — progressive integration) ────────────────
 
@@ -246,6 +250,8 @@ export interface VendorSampleLoadResult {
   canonicalDiffReport: CanonicalDiffReport | null;
   /** ACTIVATION-01: commercial scope filter audit */
   commercialScopeAudit: CommercialScopeAudit | null;
+  /** AGENTIK-SALES-PORTFOLIO-SUPPLY-PLAN-02: Derrotero-driven supply plan */
+  supplyPlan: SalesPortfolioSupplyPlan;
 }
 
 // ── Main loader ──────────────────────────────────────────────────────────────
@@ -295,6 +301,7 @@ export async function loadVendorSampleData(
       coverageResult: { textileCoverage: [], importCoverage: [], urgentProductionNeeds: [] },
       canonicalDiffReport: null,
       commercialScopeAudit: null,
+      supplyPlan: { vendorPlans: [], totalMissingPositions: 0, totalExcessPositions: 0, globalCompletionPct: 0, coverageSummary: { bodega: 0, op: 0, produccion: 0, recompra: 0, sinCobertura: 0 } },
     };
   }
 
@@ -1126,6 +1133,15 @@ export async function loadVendorSampleData(
     }
   }
 
+  // ── Supply plan (AGENTIK-SALES-PORTFOLIO-SUPPLY-PLAN-02) ──────────────
+  const vendorNameMap = new Map<string, string>();
+  for (const v of vendors) vendorNameMap.set(v.vendorId, v.vendorName);
+  const supplyPlan = buildSalesPortfolioSupplyPlan(
+    assortmentEvaluations,
+    coverageResult,
+    vendorNameMap,
+  );
+
   return {
     vendors,
     summary,
@@ -1142,6 +1158,7 @@ export async function loadVendorSampleData(
     coverageResult,
     canonicalDiffReport,
     commercialScopeAudit,
+    supplyPlan,
   };
 }
 
@@ -1337,8 +1354,9 @@ async function loadOpBySubgrupo(
         line: pe.line,
         opNumber: line.documentNumber,
         orderedQty: Math.round(line.quantityOrdered),
-        producedQty: 0, // no ET reconciliation yet
+        producedQty: null, // ET lines unavailable — fail closed
         pendingQty: Math.round(line.quantityOrdered),
+        pendingQtyQuality: "ESTIMATED",
         createdAt: line.documentDate?.toISOString?.() ?? new Date().toISOString(),
         lastEventDate: lastEvent?.toISOString?.() ?? null,
         source: "op_activa",
