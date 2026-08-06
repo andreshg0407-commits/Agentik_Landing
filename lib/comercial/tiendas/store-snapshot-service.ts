@@ -27,6 +27,8 @@ import {
   type StoreSnapshot,
   type SnapshotDocumentRefs,
 } from "./store-snapshot-pipeline";
+import { resolveScarcityFromPolicies } from "./store-distribution-actions";
+import { listStorePolicies } from "./store-policy-service";
 
 // ── Observabilidad (ajuste 3) ────────────────────────────────────────────────
 
@@ -97,9 +99,21 @@ export async function getStoreSnapshotWithMeta(orgId: string): Promise<StoreSnap
   }
 
   const t0 = Date.now();
-  const source = await loadSnapshotSource(orgId);
+  const [source, rawPolicies] = await Promise.all([
+    loadSnapshotSource(orgId),
+    listStorePolicies(orgId),
+  ]);
   const t1 = Date.now();
-  const assembled = assembleSnapshotSource(source);
+  const rawAssembled = assembleSnapshotSource(source);
+  // Override scarcity with effective persisted Rule 36 config
+  const effectiveScarcity = resolveScarcityFromPolicies(rawPolicies);
+  const assembled = {
+    ...rawAssembled,
+    scarcity: {
+      threshold:       effectiveScarcity.threshold,
+      allowedStoreIds: [...effectiveScarcity.allowedIds],
+    },
+  };
   const t2 = Date.now();
   const computed = runStoreSnapshotPipeline(assembled);
   const t3 = Date.now();

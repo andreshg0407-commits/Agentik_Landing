@@ -28,6 +28,8 @@ import {
 import type { StoreUnitNeedsResult } from "./store-unit-needs-engine";
 import { CASTILLITOS_GLOBAL_LOW_STOCK } from "./store-policy-pack-config";
 import { CANONICAL_SALES_STORES } from "../sales-canonical-source";
+import { resolveScarcityFromPolicies } from "./store-distribution-actions";
+import { listStorePolicies } from "./store-policy-service";
 
 // ── Cache ────────────────────────────────────────────────────────────────────
 
@@ -36,11 +38,31 @@ const cache = new Map<string, { data: StoreReplenishmentPlan; ts: number }>();
 
 // ── Canonical store priority order ───────────────────────────────────────────
 
+/**
+ * Build store priority order using tenant default.
+ * @deprecated Use buildEffectiveStorePriorityOrder() for persistence-aware resolution.
+ */
 export function buildCanonicalStorePriorityOrder(): {
   order: string[];
   materialPriorityStoreIds: string[];
 } {
   const material = [...CASTILLITOS_GLOBAL_LOW_STOCK.allowedStoreIds];
+  const rest = CANONICAL_SALES_STORES
+    .map(s => s.storeId)
+    .filter(id => !material.includes(id));
+  return { order: [...material, ...rest], materialPriorityStoreIds: material };
+}
+
+/**
+ * Build store priority order from effective (persisted) Rule 36 config.
+ */
+export async function buildEffectiveStorePriorityOrder(orgId: string): Promise<{
+  order: string[];
+  materialPriorityStoreIds: string[];
+}> {
+  const rawPolicies = await listStorePolicies(orgId);
+  const scarcity = resolveScarcityFromPolicies(rawPolicies);
+  const material = [...scarcity.allowedIds];
   const rest = CANONICAL_SALES_STORES
     .map(s => s.storeId)
     .filter(id => !material.includes(id));
@@ -69,7 +91,7 @@ export async function loadStoreReplenishmentPlanWithMeta(
     return { plan: cached.data, planGeneratedAt: new Date(cached.ts).toISOString() };
   }
 
-  const { order, materialPriorityStoreIds } = buildCanonicalStorePriorityOrder();
+  const { order, materialPriorityStoreIds } = await buildEffectiveStorePriorityOrder(orgId);
 
   // Necesidades del Sprint 5, verbatim, por tienda.
   const needsByStore = new Map<string, StoreUnitNeedsResult>();

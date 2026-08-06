@@ -25,7 +25,6 @@ import "server-only";
 import {
   loadDistributionData,
   buildMainStockIndex,
-  getScarcityParams,
   buildSubstitutionIndex,
   buildCandidateVariants,
   loadHeroImageMap,
@@ -36,6 +35,8 @@ import type {
   ScarcityParams,
   SubstitutionIndex,
 } from "./store-distribution-service";
+import { resolveScarcityFromPolicies } from "./store-distribution-actions";
+import { listStorePolicies } from "./store-policy-service";
 import type {
   StoreDistributionItem,
   ReplacementVariant,
@@ -396,10 +397,11 @@ export async function loadWarehouseFirstNeeds(
   const { storeId, line: requestedLine } = req;
 
   // ── Load data (both cached) ─────────────────────────────────────────────
-  const [distData, storeDetail, heroImageMap] = await Promise.all([
+  const [distData, storeDetail, heroImageMap, rawPolicies] = await Promise.all([
     loadDistributionData(orgId),
     getCanonicalStoreDetail(orgId, storeId),
     loadHeroImageMap(orgId),
+    listStorePolicies(orgId),
   ]);
 
   if (!storeDetail) {
@@ -407,7 +409,7 @@ export async function loadWarehouseFirstNeeds(
   }
 
   const mainStockIndex = buildMainStockIndex(distData.mainStock);
-  const scarcity = getScarcityParams();
+  const scarcity = resolveScarcityFromPolicies(rawPolicies);
   const subIndex = buildSubstitutionIndex(
     distData.storeInventory, mainStockIndex, distData.grupoByRef,
     heroImageMap, distData.refToProductId, distData.sizeClassByRef,

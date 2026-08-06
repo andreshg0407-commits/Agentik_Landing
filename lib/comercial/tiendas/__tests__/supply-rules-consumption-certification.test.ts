@@ -59,7 +59,7 @@ describe("PRIMERO — Chain certification", () => {
     assert.ok(distributionActionsSource.includes("getStorePolicyByStoreId(orgId, storeId)"));
     assert.ok(distributionActionsSource.includes("resolveTextileConfig(rules,"));
     assert.ok(distributionActionsSource.includes("resolveAccessoryConfig(rules,"));
-    assert.ok(distributionActionsSource.includes("resolveScarcityConfig(rules)"));
+    assert.ok(distributionActionsSource.includes("resolveScarcityConfig(tenantRules)"));
   });
 
   it("distribution-actions saveDistributionConfig invalidates distribution cache", () => {

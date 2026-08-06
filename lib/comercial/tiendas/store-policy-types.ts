@@ -67,7 +67,8 @@ export type StorePolicyScope =
   | "line"
   | "class_size"
   | "productClass"
-  | "store";
+  | "store"
+  | "tenant";
 
 // ── Thresholds ──────────────────────────────────────────────────────────────
 
@@ -108,7 +109,8 @@ export type StorePolicyRuleKind =
   | "TEXTILE_STRUCTURE"
   | "ACCESSORY_SIZE"
   | "SPECIAL_PRODUCT"
-  | "AGING_DISCOUNT";
+  | "AGING_DISCOUNT"
+  | "SCARCITY_RULE36";
 
 // ── Rule effect (Sprint DYNAMIC-DERROTERO-RULES-01) ──────────────────────
 
@@ -187,6 +189,11 @@ export interface StorePolicyRule {
   validTo?:   string | null;
   season?:    string | null;
   notes?:     string | null;
+
+  /** SCARCITY_RULE36: store IDs allowed to receive stock when scarce */
+  allowedStoreIds?:   string[];
+  /** SCARCITY_RULE36: human-readable names (presentation only, not identity) */
+  allowedStoreNames?: string[];
 
   /** Audit metadata for disable operations */
   disabledAt?:     string | null;

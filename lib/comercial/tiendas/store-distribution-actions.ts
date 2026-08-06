@@ -51,6 +51,7 @@ import {
   CASTILLITOS_ACCESSORY_COVERAGE,
 } from "./store-policy-pack-config";
 
+import type { ScarcityParams } from "./store-distribution-service";
 import {
   getCanonicalStoreDetail,
   invalidateDistributionCacheForOrg,
@@ -120,15 +121,26 @@ function sanitizeText(s: string, maxLen: number): string {
 // ── Effective config resolution ───────────────────────────────────────────────
 
 /**
+ * Sentinel storeId for the tenant-level scarcity policy.
+ * Rule 36 is tenant-wide — NOT per-store. One persisted truth.
+ */
+export const TENANT_SCARCITY_STORE_ID = "__tenant_scarcity__";
+
+/**
  * Resolves the effective configuration for a store.
  * Merges tenant defaults with store-specific overrides from store-policy-service.
+ * Scarcity (Rule 36) is resolved from the tenant-level policy — shared by all stores.
  */
 export async function getEffectiveStoreConfig(
   orgId: string,
   storeId: string,
 ): Promise<EffectiveStoreConfig> {
-  const policy = await getStorePolicyByStoreId(orgId, storeId);
-  const rules = policy?.rules ?? [];
+  const [storePolicy, tenantScarcityPolicy] = await Promise.all([
+    getStorePolicyByStoreId(orgId, storeId),
+    getStorePolicyByStoreId(orgId, TENANT_SCARCITY_STORE_ID),
+  ]);
+  const rules = storePolicy?.rules ?? [];
+  const tenantRules = tenantScarcityPolicy?.rules ?? [];
 
   // ── Textile configs ──────────────────────────────────────────────────
   const castillitosTextile = resolveTextileConfig(rules, "castillitos", CASTILLITOS_TEXTILE_COVERAGE);
@@ -139,14 +151,32 @@ export async function getEffectiveStoreConfig(
   const mediumAcc = resolveAccessoryConfig(rules, "medium", CASTILLITOS_ACCESSORY_COVERAGE.idealBySize.medium);
   const largeAcc = resolveAccessoryConfig(rules, "large", CASTILLITOS_ACCESSORY_COVERAGE.idealBySize.large);
 
-  // ── Scarcity config ──────────────────────────────────────────────────
-  const scarcity = resolveScarcityConfig(rules);
+  // ── Scarcity config (tenant-level — shared by all stores) ────────────
+  const scarcity = resolveScarcityConfig(tenantRules);
 
   return {
     castillitos: castillitosTextile,
     latinKids:   latinKidsTextile,
     accessories: { small: smallAcc, medium: mediumAcc, large: largeAcc },
     scarcity,
+  };
+}
+
+/**
+ * Resolve effective scarcity (Rule 36) from a pre-loaded list of store policies.
+ * Used by operational pipelines that already have all policies loaded via listStorePolicies().
+ */
+export function resolveScarcityFromPolicies(
+  policies: Array<{ storeId: string; rules: StorePolicyRule[] }>,
+): ScarcityParams {
+  const tenantPolicy = policies.find(p => p.storeId === TENANT_SCARCITY_STORE_ID);
+  const tenantRules = tenantPolicy?.rules ?? [];
+  const effective = resolveScarcityConfig(tenantRules);
+  return {
+    enabled:      effective.enabled,
+    threshold:    effective.lowStockConcentrationThreshold,
+    allowedIds:   effective.allowedStoresWhenScarce,
+    allowedNames: effective.allowedStoreNames,
   };
 }
 
@@ -233,10 +263,34 @@ function resolveAccessoryConfig(
 }
 
 function resolveScarcityConfig(
-  rules: Array<{ scope: string; active: boolean; line?: string; minQty?: number; maxQty?: number | null }>,
+  rules: Array<{ scope?: string; active: boolean; ruleKind?: string; minQty?: number; allowedStoreIds?: string[]; allowedStoreNames?: string[]; validFrom?: string | null; validTo?: string | null; season?: string | null; notes?: string | null }>,
 ): EffectiveScarcityConfig {
-  // Scarcity config comes from tenant defaults (CASTILLITOS_GLOBAL_LOW_STOCK)
-  // Store overrides could add/remove this store from allowed list, but that's tenant-level
+  const now = new Date().toISOString();
+  const override = rules.find(
+    r => r.active && r.ruleKind === "SCARCITY_RULE36",
+  );
+
+  if (override) {
+    // Vigencia check: future rule doesn't apply yet, expired rule falls back
+    if (override.validFrom && override.validFrom > now) {
+      // Future rule — fall through to defaults
+    } else if (override.validTo && override.validTo < now) {
+      // Expired rule — fall through to defaults
+    } else {
+      return {
+        enabled:                        true,
+        lowStockConcentrationThreshold: override.minQty ?? CASTILLITOS_GLOBAL_LOW_STOCK.threshold,
+        allowedStoresWhenScarce:        override.allowedStoreIds ?? CASTILLITOS_GLOBAL_LOW_STOCK.allowedStoreIds,
+        allowedStoreNames:              override.allowedStoreNames ?? CASTILLITOS_GLOBAL_LOW_STOCK.allowedStoreNames,
+        validFrom:                      override.validFrom ?? null,
+        validTo:                        override.validTo ?? null,
+        season:                         override.season ?? null,
+        notes:                          override.notes ?? null,
+        source:                         "store_override",
+      };
+    }
+  }
+
   return {
     enabled:                        true,
     lowStockConcentrationThreshold: CASTILLITOS_GLOBAL_LOW_STOCK.threshold,
@@ -394,10 +448,10 @@ export async function saveDistributionConfig(
     const existingPolicy = await getStorePolicyByStoreId(orgId, storeId);
     const existingRules = existingPolicy?.rules ?? [];
 
-    // Build updated rules from proposed config
+    // Build updated rules from proposed config (textile + accessory only)
     const updatedRules = buildRulesFromConfig(storeId, config, existingRules);
 
-    // Persist via store-policy-service (single motor)
+    // Persist per-store rules via store-policy-service
     await saveStorePolicy(orgId, {
       storeId,
       storeName,
@@ -405,6 +459,11 @@ export async function saveDistributionConfig(
       capacity: existingPolicy?.capacity,
       active:   existingPolicy?.active ?? true,
     });
+
+    // ── Scarcity (Rule 36) — tenant-level, separate persistence ────────
+    if (config.scarcity) {
+      await saveTenantScarcityRule(orgId, config.scarcity);
+    }
 
     // Record audit entries for each changed field
     const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -422,6 +481,63 @@ export async function saveDistributionConfig(
     console.error("[DISTRIBUTION_SAVE] Failed to save config:", err);
     return { ok: false, error: "Error al guardar configuracion" };
   }
+}
+
+// ── Tenant-level scarcity persistence ──────────────────────────────────────────
+
+/**
+ * Persist Rule 36 scarcity config as a tenant-level StorePolicyRule.
+ * If source is "tenant_default", removes the override (revert to default).
+ */
+async function saveTenantScarcityRule(
+  orgId: string,
+  scarcity: EffectiveScarcityConfig,
+): Promise<void> {
+  const existing = await getStorePolicyByStoreId(orgId, TENANT_SCARCITY_STORE_ID);
+  const existingRules = existing?.rules ?? [];
+
+  if (scarcity.source === "tenant_default") {
+    // Revert: remove the scarcity rule, keep any other tenant rules
+    const filtered = existingRules.filter(r => r.ruleKind !== "SCARCITY_RULE36");
+    await saveStorePolicy(orgId, {
+      storeId:   TENANT_SCARCITY_STORE_ID,
+      storeName: "Regla 36 (Tenant)",
+      rules:     filtered,
+      active:    true,
+    });
+    return;
+  }
+
+  // Upsert: replace existing scarcity rule or add new one
+  const prev = existingRules.find(r => r.ruleKind === "SCARCITY_RULE36");
+  const scarcityRule: StorePolicyRule = {
+    id:                          prev?.id ?? `rule_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    storeId:                     TENANT_SCARCITY_STORE_ID,
+    scope:                       "tenant",
+    productClass:                "textile",
+    ruleKind:                    "SCARCITY_RULE36",
+    effect:                      "OVERRIDE",
+    minQty:                      scarcity.lowStockConcentrationThreshold,
+    allowedStoreIds:             [...scarcity.allowedStoresWhenScarce],
+    allowedStoreNames:           [...scarcity.allowedStoreNames],
+    allowReplacement:            false,
+    allowProductionSignal:       false,
+    allowMainWarehouseTransfer:  true,
+    priority:                    100,
+    active:                      scarcity.enabled,
+    validFrom:                   scarcity.validFrom,
+    validTo:                     scarcity.validTo,
+    season:                      scarcity.season,
+    notes:                       scarcity.notes,
+  };
+
+  const otherRules = existingRules.filter(r => r.ruleKind !== "SCARCITY_RULE36");
+  await saveStorePolicy(orgId, {
+    storeId:   TENANT_SCARCITY_STORE_ID,
+    storeName: "Regla 36 (Tenant)",
+    rules:     [...otherRules, scarcityRule],
+    active:    true,
+  });
 }
 
 // ── Build rules from effective config ─────────────────────────────────────────

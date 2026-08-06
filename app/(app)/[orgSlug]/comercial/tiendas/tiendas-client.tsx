@@ -945,6 +945,7 @@ function DerroteroTab({ orgSlug, storeId, storeName }: { orgSlug: string; storeI
       else if (block === "acc_small") resetConfig = { accessories: { ...config.accessories, small: { ...config.accessories.small, source: "tenant_default" } } };
       else if (block === "acc_medium") resetConfig = { accessories: { ...config.accessories, medium: { ...config.accessories.medium, source: "tenant_default" } } };
       else if (block === "acc_large") resetConfig = { accessories: { ...config.accessories, large: { ...config.accessories.large, source: "tenant_default" } } };
+      else if (block === "scarcity") resetConfig = { scarcity: { ...config.scarcity, source: "tenant_default" } };
 
       const data = await tiendasApi({
         action: "distribution_save_config",

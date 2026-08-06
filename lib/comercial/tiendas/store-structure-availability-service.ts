@@ -31,9 +31,10 @@ import {
   buildMainStockIndex,
   buildSubstitutionIndex,
   loadHeroImageMap,
-  getScarcityParams,
   getCanonicalStoreDetail,
 } from "./store-distribution-service";
+import { resolveScarcityFromPolicies } from "./store-distribution-actions";
+import { listStorePolicies } from "./store-policy-service";
 import type { StructureAvailability } from "./store-unit-needs-engine";
 import { isRule36Eligible } from "./store-rule36-eligibility";
 
@@ -58,9 +59,10 @@ export async function resolveStructureAvailability(
   storeId: string,
   structureKeys: string[],
 ): Promise<Map<string, StructureAvailability>> {
-  const [distData, detail] = await Promise.all([
+  const [distData, detail, rawPolicies] = await Promise.all([
     loadDistributionData(orgId),
     getCanonicalStoreDetail(orgId, storeId),
+    listStorePolicies(orgId),
   ]);
 
   const result = new Map<string, StructureAvailability>();
@@ -79,7 +81,7 @@ export async function resolveStructureAvailability(
     distData.refToProductId,
     distData.sizeClassByRef,
   );
-  const scarcity = getScarcityParams();
+  const scarcity = resolveScarcityFromPolicies(rawPolicies);
 
   const storeRefsWithStock = new Set<string>();
   for (const item of detail.items) {
@@ -154,7 +156,10 @@ export async function resolveStructureCandidates(
   /** structureKeys SIN cobertura por tienda (para tipar NUEVA vs COMPLEMENTO). */
   uncoveredStructuresByStore: ReadonlyMap<string, ReadonlySet<string>>,
 ): Promise<StructureCandidatesResolution> {
-  const distData = await loadDistributionData(orgId);
+  const [distData, rawPolicies] = await Promise.all([
+    loadDistributionData(orgId),
+    listStorePolicies(orgId),
+  ]);
   const details = await Promise.all(
     storeIds.map(id => getCanonicalStoreDetail(orgId, id).then(d => [id, d] as const)),
   );
@@ -169,7 +174,7 @@ export async function resolveStructureCandidates(
     distData.refToProductId,
     distData.sizeClassByRef,
   );
-  const scarcity = getScarcityParams();
+  const scarcity = resolveScarcityFromPolicies(rawPolicies);
 
   // Presencia con stock por tienda
   const refsWithStockByStore = new Map<string, Set<string>>();

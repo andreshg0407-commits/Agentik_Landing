@@ -67,6 +67,7 @@ import {
   LATIN_KIDS_TEXTILE_COVERAGE,
   CASTILLITOS_REPLACEMENT_CONFIG,
 } from "./store-policy-pack-config";
+import { resolveScarcityFromPolicies } from "./store-distribution-actions";
 import type { ReplacementMatchMode as ReplacementMatchModeConfig } from "./store-policy-pack-config";
 import { BUSINESS_LINE_MAP, resolveBusinessLineId } from "./store-business-lines";
 import { resolveVariantSizeColor } from "./variant-attribute-resolver";
@@ -253,7 +254,12 @@ export interface ScarcityParams {
   allowedNames: string[];
 }
 
-export function getScarcityParams(): ScarcityParams {
+/**
+ * Default scarcity params from tenant constant.
+ * Used ONLY as fallback when no persisted override exists.
+ * Operational consumers should use resolveScarcityFromPolicies() instead.
+ */
+export function getDefaultScarcityParams(): ScarcityParams {
   return {
     enabled:      true,
     threshold:    CASTILLITOS_GLOBAL_LOW_STOCK.threshold,
@@ -261,6 +267,9 @@ export function getScarcityParams(): ScarcityParams {
     allowedNames: CASTILLITOS_GLOBAL_LOW_STOCK.allowedStoreNames,
   };
 }
+
+/** @deprecated Use resolveScarcityFromPolicies() with pre-loaded policies. */
+export const getScarcityParams = getDefaultScarcityParams;
 
 // ── Main warehouse availability index ───────────────────────────────────────
 
@@ -1418,6 +1427,7 @@ export async function buildCanonicalStoreDistribution(orgId: string): Promise<Ca
 
   const policyRules = rawPolicies.flatMap(p => p.rules);
   const mainStockIndex = buildMainStockIndex(data.mainStock);
+  const scarcity = resolveScarcityFromPolicies(rawPolicies);
 
   // Build substitution index once for all stores (DECIMOSEXTO + CASCADE-FIX-01)
   const subIndex = buildSubstitutionIndex(
@@ -1437,7 +1447,7 @@ export async function buildCanonicalStoreDistribution(orgId: string): Promise<Ca
 
     const items = buildStoreItems(
       storeSlug, storeInv, policyRules, mainStockIndex,
-      data.sizeClassByRef, data.grupoByRef, getScarcityParams(),
+      data.sizeClassByRef, data.grupoByRef, scarcity,
       heroImageMap, data.refToProductId, subIndex,
     );
     const card = buildCard(store, items, hasPolicyRules);
@@ -1504,6 +1514,7 @@ async function getCanonicalStoreDetailImpl(orgId: string, storeId: string, detai
 
   const policyRules = rawPolicies.flatMap(p => p.rules);
   const mainStockIndex = buildMainStockIndex(data.mainStock);
+  const scarcity = resolveScarcityFromPolicies(rawPolicies);
 
   const store = data.stores.find(s => s.id === storeId);
   if (!store) {
@@ -1521,7 +1532,7 @@ async function getCanonicalStoreDetailImpl(orgId: string, storeId: string, detai
 
   const items = buildStoreItems(
     storeSlug, storeInv, policyRules, mainStockIndex,
-    data.sizeClassByRef, data.grupoByRef, getScarcityParams(),
+    data.sizeClassByRef, data.grupoByRef, scarcity,
     heroImageMap, data.refToProductId, subIndex,
   );
   const kpis = computeDetailKpis(items);

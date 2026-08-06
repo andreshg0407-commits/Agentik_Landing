@@ -46,6 +46,7 @@ import { evaluateStoreDerroteroCoverage, extractCoverageGaps } from "./store-der
 import {
   buildMainWarehouseCoverageMatrix,
   type MainWarehouseRefMeta,
+  type WarehouseMatrixConfig,
 } from "./store-derrotero-warehouse-matrix";
 import { prioritizeWarehouseCoverageCandidates } from "./store-derrotero-priority-engine";
 import { simulateWarehouseAllocation } from "./store-derrotero-allocation-simulator";
@@ -56,7 +57,8 @@ import {
   CASTILLITOS_ACCESSORY_COVERAGE,
   CASTILLITOS_SPECIAL_PRODUCTS,
 } from "./store-policy-pack-config";
-import { getStoreRules } from "./store-policy-service";
+import { getStoreRules, listStorePolicies } from "./store-policy-service";
+import { resolveScarcityFromPolicies } from "./store-distribution-actions";
 import {
   buildEffectiveStoreRules,
   buildPackCatalogEntries,
@@ -358,13 +360,12 @@ async function getAllStoresDerroteroCoverageSummaryImpl(
 }> {
   const baseDerrotero = getDerrotero("castillitos");
 
-  // Load details + effective rules for all stores in parallel
-  const detailResults = await Promise.all(
-    ACTIVE_STORE_SLUGS.map(slug => getCanonicalStoreDetail(orgId, slug)),
-  );
-  const effectiveRulesResults = await Promise.all(
-    ACTIVE_STORE_SLUGS.map(slug => loadEffectiveRulesForStore(orgId, slug)),
-  );
+  // Load details + effective rules + policies for all stores in parallel
+  const [detailResults, effectiveRulesResults, rawPolicies] = await Promise.all([
+    Promise.all(ACTIVE_STORE_SLUGS.map(slug => getCanonicalStoreDetail(orgId, slug))),
+    Promise.all(ACTIVE_STORE_SLUGS.map(slug => loadEffectiveRulesForStore(orgId, slug))),
+    listStorePolicies(orgId),
+  ]);
 
   const coverages: StoreDerroteroCoverageResult[] = [];
   const allMainWarehouseRefs: MainWarehouseRefMeta[] = [];
@@ -397,10 +398,19 @@ async function getAllStoresDerroteroCoverageSummaryImpl(
     allMainWarehouseRefs.push(...newRefs);
   }
 
+  const effectiveScarcity = resolveScarcityFromPolicies(rawPolicies);
+  const matrixConfig: WarehouseMatrixConfig = {
+    rule36: {
+      threshold:         effectiveScarcity.threshold,
+      allowedStoreIds:   effectiveScarcity.allowedIds,
+      allowedStoreNames: effectiveScarcity.allowedNames,
+    },
+  };
   const warehouseMatrix = buildMainWarehouseCoverageMatrix(
     "castillitos",
     coverages,
     allMainWarehouseRefs,
+    matrixConfig,
   );
 
   const matrix: StoreDerroteroCoverageMatrix = {
@@ -418,6 +428,7 @@ async function getAllStoresDerroteroCoverageSummaryImpl(
     coverages,
     gapSummaries,
     warehouseMatrix.candidates,
+    { storePriority: { storePriorityOrder: ["centro", "caldas", "san_diego", "gran_plaza"] }, rule36: matrixConfig.rule36 },
   );
 
   // Simulate allocation (QUINTO)

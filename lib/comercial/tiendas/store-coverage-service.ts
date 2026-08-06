@@ -33,13 +33,14 @@ import {
   buildMainStockIndex,
   buildSubstitutionIndex,
   loadHeroImageMap,
-  getScarcityParams,
 } from "./store-distribution-service";
 import type {
   MainStockIndex,
   SubstitutionIndex,
   ScarcityParams,
 } from "./store-distribution-service";
+import { resolveScarcityFromPolicies } from "./store-distribution-actions";
+import { listStorePolicies } from "./store-policy-service";
 import type { StoreDistributionItem } from "./store-distribution-types";
 import {
   buildCastillitosTextilCatalog,
@@ -806,9 +807,10 @@ export async function loadStoreCoverageCandidates(
   structureKeys: string[],
   coverageStatuses?: Record<string, StructuralCoverageStatus>,
 ): Promise<CoverageCandidatesResponse[]> {
-  const [distData, detail] = await Promise.all([
+  const [distData, detail, rawPolicies] = await Promise.all([
     loadDistributionData(orgId),
     getCanonicalStoreDetail(orgId, storeId),
+    listStorePolicies(orgId),
   ]);
 
   if (!detail) return [];
@@ -823,7 +825,7 @@ export async function loadStoreCoverageCandidates(
     distData.refToProductId,
     distData.sizeClassByRef,
   );
-  const scarcity = getScarcityParams();
+  const scarcity = resolveScarcityFromPolicies(rawPolicies);
 
   // Build store refs with stock
   const storeRefsWithStock = new Set<string>();
