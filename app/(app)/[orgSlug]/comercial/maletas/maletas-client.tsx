@@ -1729,7 +1729,7 @@ export function MaletasClient({
                   commercialRefs={commercialRefs}
                   retiroRefs={retiroRefs}
                   coverageByLine={coverageByLine}
-                  derroteroRules={derroteroRules}
+                  supplyPlan={supplyPlan}
                   onNavigate={(target) => {
                     setDrawerTab(target.tab);
                     if (target.tab === "referencias" && target.line) {
@@ -1790,7 +1790,7 @@ export function MaletasClient({
                 <div style={{ flex: 1, overflowY: "auto" as const, minHeight: 0, paddingTop: S[2] }}>
                   {/* ── Primary operational KPI strip ────────────────────────── */}
                   <div style={{
-                    display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: S[2],
+                    display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: S[2],
                     padding: `${S[2]}px ${S[3]}px`, marginBottom: S[3],
                   }}>
                     {[
@@ -2982,7 +2982,8 @@ function ScoreMetric({ label, value, detail, color }: { label: string; value: st
 type NavigateTarget =
   | { tab: "referencias"; line?: string; filter?: DrawerFilter }
   | { tab: "retiro"; line?: string }
-  | { tab: "derrotero"; line?: string };
+  | { tab: "derrotero"; line?: string }
+  | { tab: "surtido"; line?: string };
 
 type CoverageByLineEntry = { complete: number; total: number; pct: number; missing: number; excess: number; catalogName: string };
 
@@ -2995,27 +2996,15 @@ const RISK_MARGIN: Record<string, { min: number; max: number }> = {
 
 // ── IntelligencePanel ────────────────────────────────────────────────────────
 
-function IntelligencePanel({ vendor, commercialRefs, retiroRefs, coverageByLine, derroteroRules, onNavigate }: {
+function IntelligencePanel({ vendor, commercialRefs, retiroRefs, coverageByLine, supplyPlan, onNavigate }: {
   vendor: VendorSampleSnapshot;
   commercialRefs: VendorSampleRef[];
   retiroRefs: VendorSampleRef[];
   coverageByLine: Map<string, CoverageByLineEntry>;
-  derroteroRules: IdealRouteRule[];
+  supplyPlan: SalesPortfolioSupplyPlan;
   onNavigate?: (target: NavigateTarget) => void;
 }) {
-  const sectionTitle = (title: string) => (
-    <div style={{
-      fontFamily: T.mono, fontSize: 10, fontWeight: 700,
-      color: C.inkFaint, textTransform: "uppercase" as const,
-      letterSpacing: "0.08em", marginBottom: S[2],
-      paddingBottom: S[2],
-      borderBottom: `1px solid ${C.line}`,
-    }}>
-      {title}
-    </div>
-  );
-
-  // ── 1. Salud del derrotero ──────────────────────────────────────────
+  // ── A. Salud del derrotero ──────────────────────────────────────────
   const coverageCards = useMemo(() => {
     const lineOrder = ["CS", "LT", "IMPORT"];
     return lineOrder
@@ -3023,7 +3012,44 @@ function IntelligencePanel({ vendor, commercialRefs, retiroRefs, coverageByLine,
       .filter((x): x is { line: string; cov: CoverageByLineEntry } => x.cov != null);
   }, [coverageByLine]);
 
-  // ── 2. Referencias en riesgo ────────────────────────────────────────
+  // ── B. Riesgo de perder cobertura (DERROTERO-driven) ────────────────
+  const coverageRisk = useMemo(() => {
+    const vp = supplyPlan.vendorPlans.find((p) => p.vendorId === vendor.vendorId);
+    if (!vp) return [];
+    // Group missing positions by line key derived from commercialWorld + brand
+    const byLine = new Map<string, { positions: string[]; sinCobertura: number }>();
+    for (const pos of vp.positions) {
+      const lineKey = pos.commercialWorld === "IMPORTACION" ? "IMPORT"
+        : pos.brand === "Castillitos" ? "CS"
+        : pos.brand === "Latin Kids" ? "LT"
+        : pos.commercialWorld;
+      if (!byLine.has(lineKey)) byLine.set(lineKey, { positions: [], sinCobertura: 0 });
+      const entry = byLine.get(lineKey)!;
+      entry.positions.push(pos.subgroupName);
+      if (pos.bestAction === "SIN_COBERTURA" || pos.bestAction === "PRODUCCION_SUGERIDA" || pos.bestAction === "RECOMPRA_SUGERIDA") {
+        entry.sinCobertura++;
+      }
+    }
+    const result: { line: string; label: string; positionCount: number; sinCobertura: number; dimensionLabel: string }[] = [];
+    for (const [lineKey, data] of byLine) {
+      if (data.positions.length === 0) continue;
+      // Use correct taxonomy per world
+      const dim = lineKey === "IMPORT" ? (data.positions.length === 1 ? "tamano" : "tamanos")
+        : lineKey === "LT" ? (data.positions.length === 1 ? "subgrupo" : "subgrupos")
+        : (data.positions.length === 1 ? "posicion" : "posiciones");
+      const riskLevel = data.sinCobertura > 0 ? "ALTO" : "MEDIO";
+      result.push({
+        line: lineKey,
+        label: DERROTERO_LINE_LABEL[lineKey] ?? lineKey,
+        positionCount: data.positions.length,
+        sinCobertura: data.sinCobertura,
+        dimensionLabel: `${data.positions.length} ${dim} por completar`,
+      });
+    }
+    return result;
+  }, [supplyPlan, vendor.vendorId]);
+
+  // ── C. Referencias cerca del umbral de retiro ───────────────────────
   const riskByLine = useMemo(() => {
     const result: { line: string; label: string; count: number; rangeLabel: string }[] = [];
     for (const [lineKey, range] of Object.entries(RISK_MARGIN)) {
@@ -3038,75 +3064,19 @@ function IntelligencePanel({ vendor, commercialRefs, retiroRefs, coverageByLine,
           line: lineKey,
           label: DERROTERO_LINE_LABEL[lineKey] ?? lineKey,
           count,
-          rangeLabel: `entre ${range.min} y ${range.max} unidades`,
+          rangeLabel: `${range.min}\u2013${range.max} unidades`,
         });
       }
     }
     return result;
   }, [commercialRefs]);
 
-  // ── 3. Riesgo de perder cobertura ───────────────────────────────────
-  const coverageRisk = useMemo(() => {
-    const result: { line: string; label: string; groups: number; subgroups: number; horizon: string }[] = [];
-    const activeRules = derroteroRules.filter((r) => r.isActive);
-
-    for (const lineKey of ["CS", "LT", "IMPORT"]) {
-      const range = RISK_MARGIN[lineKey];
-      if (!range) continue;
-      const atRiskRefs = commercialRefs.filter((r) =>
-        r.line === lineKey &&
-        r.stockDataState === "CERTIFIED" &&
-        r.centralAvailable >= range.min &&
-        r.centralAvailable <= range.max,
-      );
-      if (atRiskRefs.length === 0) continue;
-
-      // Count groups/subgroups that would be impacted
-      const atRiskSubgroups = new Set(atRiskRefs.map((r) => r.subgrupoSag));
-      const atRiskGroups = new Set(atRiskRefs.map((r) => r.grupoSag).filter(Boolean));
-
-      // Check how many subgroups would lose coverage
-      const rulesByKey = new Map<string, IdealRouteRule>();
-      for (const rule of activeRules) {
-        if (rule.line === lineKey) rulesByKey.set(rule.subgrupoSag, rule);
-      }
-
-      let subgroupsAtRisk = 0;
-      for (const sg of atRiskSubgroups) {
-        const rule = rulesByKey.get(sg);
-        if (rule) {
-          const currentCount = commercialRefs.filter((r) => r.line === lineKey && r.subgrupoSag === sg).length;
-          if (currentCount <= rule.minimumRefs) subgroupsAtRisk++;
-        } else {
-          subgroupsAtRisk++;
-        }
-      }
-
-      if (subgroupsAtRisk > 0 || atRiskGroups.size > 0) {
-        // Estimate horizon based on avg stock position
-        const avgStock = atRiskRefs.reduce((s, r) => s + r.centralAvailable, 0) / atRiskRefs.length;
-        const daysEstimate = avgStock <= range.min + 3 ? 7 : avgStock <= range.min + 5 ? 15 : 30;
-        result.push({
-          line: lineKey,
-          label: DERROTERO_LINE_LABEL[lineKey] ?? lineKey,
-          groups: atRiskGroups.size,
-          subgroups: subgroupsAtRisk,
-          horizon: daysEstimate <= 7 ? "esta semana" : `en ~${daysEstimate} dias`,
-        });
-      }
-    }
-    return result;
-  }, [commercialRefs, derroteroRules]);
-
-  // ── 4. Calidad del mostrario ────────────────────────────────────────
+  // ── D. Calidad del muestrario (analytical only) ─────────────────────
   const quality = useMemo(() => {
-    const total = vendor.refs.length;
-    const vigentes = commercialRefs.length;
-    const retiro = retiroRefs.length;
     const retiroUrgente = retiroRefs.filter((r) =>
       r.stockDataState === "CERTIFIED" && r.centralAvailable <= 0,
     ).length;
-    const rotacionBaja = commercialRefs.filter((r) => {
+    const nearRetiro = commercialRefs.filter((r) => {
       if (r.stockDataState !== "CERTIFIED") return false;
       const range = RISK_MARGIN[r.line];
       return range != null && r.centralAvailable >= range.min && r.centralAvailable <= range.max;
@@ -3115,129 +3085,162 @@ function IntelligencePanel({ vendor, commercialRefs, retiroRefs, coverageByLine,
       r.line === "OTRO" || r.subgrupoSag === "OTRO" || r.subgrupoSag === "SIN_SUBGRUPO" ||
       r.subgrupoSag === "SIN CLASIFICAR" || r.subgrupoSag === "",
     ).length;
-    return { total, vigentes, retiro, retiroUrgente, rotacionBaja, sinClasificar };
+    return { retiroUrgente, nearRetiro, sinClasificar };
   }, [vendor, commercialRefs, retiroRefs]);
 
-  // ── 5. Acciones por linea ───────────────────────────────────────────
-  const lineActions = useMemo(() => {
-    const result: { line: string; label: string; agregar: number; retirar: number }[] = [];
-    for (const lineKey of ["CS", "LT", "IMPORT"]) {
-      const lineRetiro = retiroRefs.filter((r) => r.line === lineKey).length;
-      // "Agregar" = missing from derrotero for this line
-      const cov = coverageByLine.get(lineKey);
-      const agregar = cov ? cov.missing : 0;
-      if (agregar > 0 || lineRetiro > 0) {
-        result.push({
-          line: lineKey,
-          label: DERROTERO_LINE_LABEL[lineKey] ?? lineKey,
-          agregar,
-          retirar: lineRetiro,
-        });
-      }
-    }
-    return result;
-  }, [retiroRefs, coverageByLine]);
-
-  // ── 6. Impacto esperado ─────────────────────────────────────────────
-  const projectedImpact = useMemo(() => {
+  // ── E. Potencial de cobertura (supply-plan grounded) ────────────────
+  const potential = useMemo(() => {
+    const vp = supplyPlan.vendorPlans.find((p) => p.vendorId === vendor.vendorId);
+    if (!vp) return [];
     const result: { line: string; label: string; current: number; projected: number }[] = [];
     for (const lineKey of ["CS", "LT", "IMPORT"]) {
       const cov = coverageByLine.get(lineKey);
       if (!cov || cov.total === 0) continue;
-      // If all missing refs are added and excess retiro removed
-      const projectedComplete = Math.min(cov.total, cov.complete + cov.missing);
+      // Count only positions with actionable candidates (BODEGA or OP)
+      const actionable = vp.positions.filter((pos) => {
+        const posLine = pos.commercialWorld === "IMPORTACION" ? "IMPORT"
+          : pos.brand === "Castillitos" ? "CS"
+          : pos.brand === "Latin Kids" ? "LT"
+          : pos.commercialWorld;
+        return posLine === lineKey && (pos.bestAction === "REEMPLAZAR_BODEGA" || pos.bestAction === "COMPLETAR_DESDE_OP");
+      }).length;
+      const projectedComplete = Math.min(cov.total, cov.complete + actionable);
       const projectedPct = Math.round((projectedComplete / cov.total) * 100);
-      result.push({
-        line: lineKey,
-        label: DERROTERO_LINE_LABEL[lineKey] ?? lineKey,
-        current: cov.pct,
-        projected: projectedPct,
-      });
+      if (projectedPct !== cov.pct) {
+        result.push({ line: lineKey, label: DERROTERO_LINE_LABEL[lineKey] ?? lineKey, current: cov.pct, projected: projectedPct });
+      }
     }
     return result;
-  }, [coverageByLine]);
+  }, [supplyPlan, vendor.vendorId, coverageByLine]);
+
+  // ── E2. Movements summary ──────────────────────────────────────────
+  const movements = useMemo(() => {
+    const vp = supplyPlan.vendorPlans.find((p) => p.vendorId === vendor.vendorId);
+    const porSurtir = vp?.missingEntries ?? 0;
+    const paraRetiro = retiroRefs.length;
+    return { porSurtir, paraRetiro };
+  }, [supplyPlan, vendor.vendorId, retiroRefs]);
+
+  // ── Collapsible state ──────────────────────────────────────────────
+  const [qualityOpen, setQualityOpen] = useState(false);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: S[5], padding: `${S[2]}px 0` }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: S[4], padding: `${S[2]}px 0` }}>
 
-      {/* ── 1. Salud del derrotero (tarjetas grandes) ── */}
+      {/* ── A. Salud del derrotero (compact) ── */}
       <div>
-        {sectionTitle("Salud del derrotero")}
-        <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-          {coverageCards.length === 0 ? (
-            <div style={{
-              padding: S[4], fontFamily: T.mono, fontSize: 10, color: C.inkFaint,
-              background: C.surfaceAlt, borderRadius: R.md, border: `1px solid ${C.line}`,
-              textAlign: "center",
-            }}>
-              Sin derrotero configurado para esta maleta
-            </div>
-          ) : coverageCards.map(({ line, cov }) => {
-            const label = DERROTERO_LINE_LABEL[line] ?? line;
-            const pct = cov.total > 0 ? cov.pct : 0;
-            const color = cov.total > 0 ? (pct >= 80 ? C.green : pct >= 50 ? C.amber : C.red) : C.inkFaint;
-            return (
-              <button
-                key={line}
-                onClick={() => onNavigate?.({ tab: "derrotero", line })}
-                style={{
-                  display: "flex", flexDirection: "column", gap: S[2],
-                  padding: S[4],
-                  background: C.white,
-                  border: `1px solid ${color}30`,
-                  borderRadius: R.lg,
-                  cursor: "pointer",
-                  transition: "all 0.15s",
-                  textAlign: "left" as const,
-                  boxShadow: `0 1px 4px ${color}10`,
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.borderColor = color; e.currentTarget.style.boxShadow = `0 2px 8px ${color}20`; }}
-                onMouseLeave={(e) => { e.currentTarget.style.borderColor = `${color}30`; e.currentTarget.style.boxShadow = `0 1px 4px ${color}10`; }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 800, color: C.titleDeep }}>
-                    {label}
-                  </span>
-                  <span style={{ fontFamily: T.mono, fontSize: 22, fontWeight: 800, color }}>
-                    {cov.total > 0 ? `${pct}%` : "\u2014"}
-                  </span>
-                </div>
-                {/* Progress bar */}
-                <div style={{ width: "100%", height: 8, borderRadius: R.pill, background: C.line, overflow: "hidden" }}>
-                  <div style={{
-                    width: `${pct}%`, height: "100%", borderRadius: R.pill,
-                    background: color,
-                    transition: "width 0.4s ease",
-                  }} />
-                </div>
-                <span style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint }}>
-                  {cov.complete} / {cov.total} completos
-                </span>
-              </button>
-            );
-          })}
+        <div style={{
+          fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.inkFaint,
+          textTransform: "uppercase" as const, letterSpacing: "0.08em",
+          marginBottom: S[2], paddingBottom: S[1],
+        }}>
+          Salud del derrotero
         </div>
-      </div>
-
-      {/* ── 2. Referencias en riesgo ── */}
-      <div>
-        {sectionTitle("Referencias en riesgo")}
-        {riskByLine.length === 0 ? (
+        {coverageCards.length === 0 ? (
           <div style={{
-            padding: S[3], fontFamily: T.mono, fontSize: 10, color: C.green,
-            background: C.greenLight, borderRadius: R.md, border: `1px solid ${C.greenBorder}`,
+            padding: S[3], fontFamily: T.mono, fontSize: 10, color: C.inkFaint,
+            background: C.surfaceAlt, borderRadius: R.sm, border: `1px solid ${C.line}`,
           }}>
-            Sin referencias proximas a retiro
+            Sin derrotero configurado
           </div>
         ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
+            {coverageCards.map(({ line, cov }) => {
+              const pct = cov.total > 0 ? cov.pct : 0;
+              const color = pct >= 80 ? C.green : pct >= 50 ? C.amber : C.red;
+              return (
+                <button
+                  key={line}
+                  onClick={() => onNavigate?.({ tab: "derrotero", line })}
+                  style={{
+                    display: "flex", alignItems: "center", gap: S[3],
+                    padding: `${S[2]}px ${S[3]}px`,
+                    background: C.white, border: `1px solid ${C.line}`, borderRadius: R.sm,
+                    cursor: "pointer", textAlign: "left" as const,
+                  }}
+                >
+                  <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: C.titleDeep, minWidth: 80 }}>
+                    {DERROTERO_LINE_LABEL[line] ?? line}
+                  </span>
+                  <div style={{ flex: 1, height: 6, borderRadius: R.pill, background: C.line, overflow: "hidden" }}>
+                    <div style={{ width: `${pct}%`, height: "100%", borderRadius: R.pill, background: color }} />
+                  </div>
+                  <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 800, color, minWidth: 36, textAlign: "right" as const }}>
+                    {pct}%
+                  </span>
+                  <span style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint }}>
+                    {cov.complete}/{cov.total}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* ── B. Riesgo de perder cobertura ── */}
+      {coverageRisk.length > 0 && (
+        <div>
+          <div style={{
+            fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.inkFaint,
+            textTransform: "uppercase" as const, letterSpacing: "0.08em",
+            marginBottom: S[2], paddingBottom: S[1],
+          }}>
+            Riesgo de perder cobertura
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
+            {coverageRisk.map((r) => {
+              const riskLevel = r.sinCobertura > 0 ? "ALTO" : "MEDIO";
+              const riskColor = riskLevel === "ALTO" ? C.red : C.amber;
+              return (
+                <div key={r.line} style={{
+                  display: "flex", alignItems: "center", gap: S[3],
+                  padding: `${S[2]}px ${S[3]}px`,
+                  background: riskLevel === "ALTO" ? C.redLight : C.amberLight,
+                  border: `1px solid ${riskLevel === "ALTO" ? C.redBorder : C.amberBorder}`,
+                  borderRadius: R.sm,
+                }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: C.titleDeep }}>
+                      {r.label}
+                    </div>
+                    <div style={{ fontFamily: T.mono, fontSize: 9, color: C.ink, marginTop: 2 }}>
+                      {r.dimensionLabel}
+                      {r.sinCobertura > 0 && (
+                        <span style={{ color: C.red, fontWeight: 700 }}> · {r.sinCobertura} sin cobertura</span>
+                      )}
+                    </div>
+                  </div>
+                  <span className="ag-op-status" style={{
+                    fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: riskColor,
+                    padding: `2px ${S[2]}px`, borderRadius: R.pill,
+                    background: `${riskColor}15`, border: `1px solid ${riskColor}30`,
+                  }}>
+                    {riskLevel}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── C. Referencias cerca del umbral de retiro ── */}
+      {riskByLine.length > 0 && (
+        <div>
+          <div style={{
+            fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.inkFaint,
+            textTransform: "uppercase" as const, letterSpacing: "0.08em",
+            marginBottom: S[2], paddingBottom: S[1],
+          }}>
+            Referencias cerca del umbral de retiro
+          </div>
           <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
             {riskByLine.map((r) => (
               <div key={r.line} style={{
                 display: "flex", alignItems: "center", gap: S[3],
-                padding: `${S[3]}px ${S[4]}px`,
-                background: C.amberLight,
-                border: `1px solid ${C.amberBorder}`,
-                borderRadius: R.md,
+                padding: `${S[2]}px ${S[3]}px`,
+                background: C.amberLight, border: `1px solid ${C.amberBorder}`, borderRadius: R.sm,
               }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: C.titleDeep }}>
@@ -3247,204 +3250,122 @@ function IntelligencePanel({ vendor, commercialRefs, retiroRefs, coverageByLine,
                     {r.rangeLabel}
                   </div>
                 </div>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontFamily: T.mono, fontSize: 18, fontWeight: 800, color: C.amber }}>
+                <div style={{ textAlign: "right" as const }}>
+                  <span style={{ fontFamily: T.mono, fontSize: 16, fontWeight: 800, color: C.amber }}>
                     {r.count}
-                  </div>
+                  </span>
                   <div style={{ fontFamily: T.mono, fontSize: 8, color: C.inkFaint }}>
-                    referencia{r.count !== 1 ? "s" : ""}
+                    ref{r.count !== 1 ? "s" : ""}
                   </div>
                 </div>
               </div>
             ))}
             <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint, paddingTop: S[1] }}>
-              Estas referencias aun son vigentes pero pueden convertirse en retiro si su inventario sigue bajando.
+              Vigentes pero podrian convertirse en retiro si el inventario sigue bajando.
             </div>
-          </div>
-        )}
-      </div>
-
-      {/* ── 3. Riesgo de perder cobertura ── */}
-      <div>
-        {sectionTitle("Riesgo de perder cobertura")}
-        {coverageRisk.length === 0 ? (
-          <div style={{
-            padding: S[3], fontFamily: T.mono, fontSize: 10, color: C.green,
-            background: C.greenLight, borderRadius: R.md, border: `1px solid ${C.greenBorder}`,
-          }}>
-            Sin riesgo de perdida de cobertura
-          </div>
-        ) : (
-          <div style={{
-            padding: S[4],
-            background: C.redLight,
-            border: `1px solid ${C.redBorder}`,
-            borderRadius: R.lg,
-          }}>
-            <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: C.red, marginBottom: S[3] }}>
-              Si hoy no ingresan referencias nuevas:
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-              {coverageRisk.map((r) => (
-                <div key={r.line} style={{
-                  padding: `${S[3]}px`,
-                  background: C.white,
-                  borderRadius: R.md,
-                  border: `1px solid ${C.redBorder}`,
-                }}>
-                  <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: C.titleDeep, marginBottom: S[1] }}>
-                    {r.label}
-                  </div>
-                  <div style={{ fontFamily: T.mono, fontSize: 10, color: C.ink }}>
-                    {r.groups > 0 && <>perdera <span style={{ fontWeight: 800, color: C.red }}>{r.groups}</span> grupo{r.groups !== 1 ? "s" : ""}</>}
-                    {r.groups > 0 && r.subgroups > 0 && " · "}
-                    {r.subgroups > 0 && <><span style={{ fontWeight: 800, color: C.red }}>{r.subgroups}</span> subgrupo{r.subgroups !== 1 ? "s" : ""}</>}
-                  </div>
-                  <div style={{ fontFamily: T.mono, fontSize: 9, color: C.red, fontWeight: 600, marginTop: 2 }}>
-                    {r.horizon}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* ── 4. Calidad del mostrario ── */}
-      <div>
-        {sectionTitle("Calidad del mostrario")}
-        <div style={{
-          display: "flex", flexDirection: "column", gap: 0,
-          background: C.white, borderRadius: R.lg,
-          border: `1px solid ${C.line}`,
-          overflow: "hidden",
-        }}>
-          {[
-            { label: "Vigentes", value: quality.vigentes, color: C.green },
-            { label: "Para retirar", value: quality.retiro, color: C.red },
-            { label: "Retiro urgente (sin inventario)", value: quality.retiroUrgente, color: C.red, indent: true },
-            { label: "Rotacion baja (proximas a retiro)", value: quality.rotacionBaja, color: C.amber, indent: true },
-            { label: "Sin clasificacion", value: quality.sinClasificar, color: C.inkFaint },
-          ].map(({ label, value, color, indent }, i) => (
-            <div key={label} style={{
-              display: "flex", justifyContent: "space-between", alignItems: "center",
-              padding: `${S[2]}px ${S[4]}px`,
-              paddingLeft: indent ? S[6] : S[4],
-              borderBottom: i < 4 ? `1px solid ${C.lineSubtle}` : "none",
-              background: indent ? `${C.surfaceAlt}80` : "transparent",
-            }}>
-              <span style={{ fontFamily: T.mono, fontSize: 10, color: C.ink }}>
-                {label}
-              </span>
-              <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 800, color: value > 0 ? color : C.inkFaint }}>
-                {value}
-              </span>
-            </div>
-          ))}
-          <div style={{
-            display: "flex", justifyContent: "space-between", alignItems: "center",
-            padding: `${S[3]}px ${S[4]}px`,
-            background: C.surfaceAlt,
-            borderTop: `1px solid ${C.line}`,
-          }}>
-            <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.titleDeep }}>
-              Total muestras en maleta
-            </span>
-            <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 800, color: C.titleDeep }}>
-              {quality.total}
-            </span>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* ── 5. Acciones por linea ── */}
-      <div>
-        {sectionTitle("Acciones por linea")}
-        {lineActions.length === 0 ? (
-          <div style={{
-            padding: S[3], fontFamily: T.mono, fontSize: 10, color: C.green,
-            background: C.greenLight, borderRadius: R.md, border: `1px solid ${C.greenBorder}`,
-          }}>
-            Sin acciones pendientes
-          </div>
-        ) : (
-          <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(lineActions.length, 3)}, 1fr)`, gap: S[3] }}>
-            {lineActions.map((la) => (
-              <div key={la.line} style={{
-                padding: S[4],
-                background: C.white,
-                border: `1px solid ${C.line}`,
-                borderRadius: R.lg,
-                textAlign: "center" as const,
-                boxShadow: `0 1px 3px ${C.ink}06`,
+      {/* ── D. Calidad del muestrario (collapsed, analytical only) ── */}
+      <div style={{ border: `1px solid ${C.line}`, borderRadius: R.sm, overflow: "hidden" }}>
+        <button
+          onClick={() => setQualityOpen(!qualityOpen)}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
+            padding: `${S[2]}px ${S[3]}px`, background: C.surfaceAlt,
+            border: "none", cursor: "pointer", borderBottom: qualityOpen ? `1px solid ${C.line}` : "none",
+          }}
+        >
+          <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.inkFaint, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>
+            Calidad del muestrario
+          </span>
+          <span style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint }}>
+            {qualityOpen ? "\u25B2" : "\u25BC"}
+          </span>
+        </button>
+        {qualityOpen && (
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {[
+              { label: "Retiro urgente (sin inventario)", value: quality.retiroUrgente, color: C.red },
+              { label: "Cerca del umbral de retiro", value: quality.nearRetiro, color: C.amber },
+              { label: "Sin clasificacion SAG", value: quality.sinClasificar, color: C.inkFaint },
+            ].map(({ label, value, color }, i, arr) => (
+              <div key={label} style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                padding: `${S[2]}px ${S[3]}px`,
+                borderBottom: i < arr.length - 1 ? `1px solid ${C.lineSubtle}` : "none",
               }}>
-                <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 800, color: C.titleDeep, marginBottom: S[3] }}>
-                  {la.label}
-                </div>
-                <div style={{ display: "flex", gap: S[3], justifyContent: "center" }}>
-                  <div>
-                    <div style={{ fontFamily: T.mono, fontSize: 20, fontWeight: 800, color: la.agregar > 0 ? C.green : C.inkFaint }}>
-                      {la.agregar}
-                    </div>
-                    <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 600, color: C.inkFaint }}>
-                      Agregar
-                    </div>
-                  </div>
-                  <div style={{ width: 1, background: C.line, alignSelf: "stretch" }} />
-                  <div>
-                    <div style={{ fontFamily: T.mono, fontSize: 20, fontWeight: 800, color: la.retirar > 0 ? C.red : C.inkFaint }}>
-                      {la.retirar}
-                    </div>
-                    <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 600, color: C.inkFaint }}>
-                      Retirar
-                    </div>
-                  </div>
-                </div>
+                <span style={{ fontFamily: T.mono, fontSize: 10, color: C.ink }}>{label}</span>
+                <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 800, color: value > 0 ? color : C.inkFaint }}>
+                  {value}
+                </span>
               </div>
             ))}
           </div>
         )}
       </div>
 
-      {/* ── 6. Impacto esperado ── */}
+      {/* ── E. Movimientos sugeridos + Potencial de cobertura ── */}
       <div>
-        {sectionTitle("Impacto esperado")}
         <div style={{
-          padding: S[3], fontFamily: T.mono, fontSize: 9, color: C.inkFaint, marginBottom: S[2],
+          fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.inkFaint,
+          textTransform: "uppercase" as const, letterSpacing: "0.08em",
+          marginBottom: S[2], paddingBottom: S[1],
         }}>
-          Si se ejecutan todas las acciones pendientes:
+          Movimientos sugeridos
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(projectedImpact.length, 3)}, 1fr)`, gap: S[3] }}>
-          {projectedImpact.map((p) => {
-            const improved = p.projected > p.current;
-            const arrowColor = improved ? C.green : p.projected === p.current ? C.inkFaint : C.red;
-            return (
-              <div key={p.line} style={{
-                padding: S[4],
-                background: C.white,
-                border: `1px solid ${improved ? C.greenBorder : C.line}`,
-                borderRadius: R.lg,
-                textAlign: "center" as const,
-                boxShadow: improved ? `0 1px 4px ${C.green}12` : `0 1px 3px ${C.ink}06`,
-              }}>
-                <div style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.titleDeep, marginBottom: S[2] }}>
+        <div style={{ display: "flex", gap: S[3], marginBottom: S[3] }}>
+          <button
+            onClick={() => onNavigate?.({ tab: "surtido" })}
+            style={{
+              flex: 1, padding: `${S[2]}px ${S[3]}px`, background: C.white,
+              border: `1px solid ${C.line}`, borderRadius: R.sm, cursor: "pointer",
+              textAlign: "center" as const,
+            }}
+          >
+            <div style={{ fontFamily: T.mono, fontSize: 16, fontWeight: 800, color: movements.porSurtir > 0 ? C.blueDark : C.inkFaint }}>
+              {movements.porSurtir}
+            </div>
+            <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint }}>posiciones por surtir</div>
+            <div style={{ fontFamily: T.mono, fontSize: 8, color: C.blueDark, marginTop: 2 }}>Ver Plan surtido →</div>
+          </button>
+          <button
+            onClick={() => onNavigate?.({ tab: "retiro" })}
+            style={{
+              flex: 1, padding: `${S[2]}px ${S[3]}px`, background: C.white,
+              border: `1px solid ${C.line}`, borderRadius: R.sm, cursor: "pointer",
+              textAlign: "center" as const,
+            }}
+          >
+            <div style={{ fontFamily: T.mono, fontSize: 16, fontWeight: 800, color: movements.paraRetiro > 0 ? C.red : C.inkFaint }}>
+              {movements.paraRetiro}
+            </div>
+            <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint }}>referencias para retiro</div>
+            <div style={{ fontFamily: T.mono, fontSize: 8, color: C.red, marginTop: 2 }}>Ver Retiro →</div>
+          </button>
+        </div>
+
+        {/* Potencial de cobertura — only shown when actionable improvement exists */}
+        {potential.length > 0 && (
+          <div style={{
+            padding: `${S[2]}px ${S[3]}px`,
+            background: C.greenLight, border: `1px solid ${C.greenBorder}`, borderRadius: R.sm,
+          }}>
+            <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: C.green, marginBottom: S[1] }}>
+              Potencial de cobertura (con candidatos disponibles)
+            </div>
+            {potential.map((p) => (
+              <div key={p.line} style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: 2 }}>
+                <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.titleDeep, minWidth: 80 }}>
                   {p.label}
-                </div>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: S[2] }}>
-                  <span style={{ fontFamily: T.mono, fontSize: 16, fontWeight: 800, color: C.inkFaint }}>
-                    {p.current}%
-                  </span>
-                  <span style={{ fontFamily: T.mono, fontSize: 14, fontWeight: 800, color: arrowColor }}>
-                    →
-                  </span>
-                  <span style={{ fontFamily: T.mono, fontSize: 18, fontWeight: 800, color: improved ? C.green : arrowColor }}>
-                    {p.projected}%
-                  </span>
-                </div>
+                </span>
+                <span style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint }}>{p.current}%</span>
+                <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 800, color: C.green }}>→ {p.projected}%</span>
               </div>
-            );
-          })}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
     </div>
@@ -4410,10 +4331,10 @@ function UnresolvedRefsPanel({
 // ═══════════════════════════════════════════════════════════════════════════
 
 const SUPPLY_ACTION_LABEL: Record<SupplyAction, string> = {
-  REEMPLAZAR_BODEGA: "Disponible en bodega",
+  REEMPLAZAR_BODEGA: "En bodega",
   COMPLETAR_DESDE_OP: "OP activa",
-  PRODUCCION_SUGERIDA: "Produccion sugerida",
-  RECOMPRA_SUGERIDA: "Recompra sugerida",
+  PRODUCCION_SUGERIDA: "Producir",
+  RECOMPRA_SUGERIDA: "Recomprar",
   SIN_COBERTURA: "Sin cobertura",
 };
 
@@ -4470,11 +4391,11 @@ function SupplySection({ title, count, color, defaultOpen, positions, emptyMessa
             <div className="ag-op-table">
               {/* Header */}
               <div className="ag-op-row" style={{
-                display: "grid", gridTemplateColumns: "1fr 50px 50px 110px",
+                display: "grid", gridTemplateColumns: "1fr 40px 40px 90px",
                 padding: `${S[1]}px ${S[3]}px`, background: C.surfaceAlt,
                 borderBottom: `1px solid ${C.line}`,
               }}>
-                {["Posicion", "Ideal", "Tiene", "Accion"].map((h) => (
+                {["Posicion", "Ideal", "Tiene", "Estado"].map((h) => (
                   <div key={h} style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: C.inkFaint, textTransform: "uppercase" as const }}>
                     {h}
                   </div>
@@ -4532,7 +4453,7 @@ function SupplyPositionRow({ pos }: { pos: SupplyPosition }) {
   const primaryLabel = pos.subgroupName;
   const secondaryLabel = pos.commercialWorld === "IMPORTACION"
     ? "Importacion"
-    : pos.brand
+    : pos.brand && pos.brand !== pos.groupName
       ? `${pos.brand} · ${pos.groupName}`
       : pos.groupName;
 
@@ -4542,7 +4463,7 @@ function SupplyPositionRow({ pos }: { pos: SupplyPosition }) {
         className="ag-op-row"
         onClick={() => setExpanded(!expanded)}
         style={{
-          display: "grid", gridTemplateColumns: "1fr 50px 50px 110px",
+          display: "grid", gridTemplateColumns: "1fr 40px 40px 90px",
           padding: `${S[2]}px ${S[3]}px`, cursor: "pointer", alignItems: "center",
           background: expanded ? C.blueLight : "transparent", transition: "background 0.1s",
         }}
@@ -4572,9 +4493,11 @@ function SupplyPositionRow({ pos }: { pos: SupplyPosition }) {
 
       {expanded && (
         <div style={{ padding: `${S[2]}px ${S[3]}px ${S[3]}px`, background: C.surfaceAlt, borderTop: `1px solid ${C.line}` }}>
-          {/* Best action explanation */}
+          {/* Summary: candidate count when candidates exist, otherwise explanation */}
           <div style={{ fontFamily: T.mono, fontSize: 10, color: C.ink, marginBottom: S[2], lineHeight: "1.5" }}>
-            {pos.bestActionExplanation}
+            {pos.candidates.length > 0
+              ? `${pos.candidates.length} candidato${pos.candidates.length > 1 ? "s" : ""} elegible${pos.candidates.length > 1 ? "s" : ""}`
+              : pos.bestActionExplanation}
           </div>
 
           {/* Candidates */}
