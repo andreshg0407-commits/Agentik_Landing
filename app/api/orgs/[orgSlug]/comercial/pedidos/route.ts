@@ -34,6 +34,8 @@ import {
   searchCustomers,
   getCustomer,
 } from "@/lib/comercial/clientes/canonical-customer-service";
+import { getCustomerCommercialContext } from "@/lib/comercial/frontline/customer-commercial-context";
+import { emitCustomerOverdueAttention } from "@/lib/comercial/frontline/frontline-attention-service";
 
 export async function POST(
   req: NextRequest,
@@ -187,6 +189,17 @@ export async function POST(
         return NextResponse.json({ error: "Cliente no encontrado" }, { status: 404 });
       }
       return NextResponse.json({ customer });
+    }
+
+    case "get_customer_context": {
+      const ctx = await getCustomerCommercialContext(orgId, body.profileId);
+      if (!ctx) {
+        return NextResponse.json({ error: "Cliente no encontrado" }, { status: 404 });
+      }
+      const overdueAlert = await emitCustomerOverdueAttention(
+        orgId, body.profileId, body.sellerId ?? null, orgSlug,
+      );
+      return NextResponse.json({ context: ctx, overdueAlert });
     }
 
     default:

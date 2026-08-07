@@ -31,6 +31,7 @@ import type {
 } from "@/lib/comercial/pedidos/order-product-types";
 import { getCommercialStockState, isProductSellable } from "@/lib/comercial/pedidos/order-product-types";
 import { CommercialReferenceThumbnail } from "@/components/comercial/commercial-reference-thumbnail";
+import type { CustomerCommercialContext, FrontlineAttentionItem } from "@/lib/comercial/frontline/frontline-types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -185,6 +186,11 @@ export function WholesaleOrderWizard({
   // Auto-distribution state (WIZARD-IMPROVEMENTS-01)
   const [autoDistributeQty, setAutoDistributeQty] = useState<number>(0);
 
+  // Customer commercial context (FRONTLINE-CORE-01)
+  const [customerContext, setCustomerContext] = useState<CustomerCommercialContext | null>(null);
+  const [customerOverdueAlert, setCustomerOverdueAlert] = useState<FrontlineAttentionItem | null>(null);
+  const [contextLoading, setContextLoading] = useState(false);
+
   // Validation: seller NOT required (warning only per FOUNDATION-01)
   const clientValid = clientMode === "selected"
     ? Boolean(header.customerName.trim() && (header.customerId.trim() || header.customerCode.trim()))
@@ -225,6 +231,20 @@ export function WholesaleOrderWizard({
     setClientMode("selected");
     setCustomerQuery("");
     setCustomerResults([]);
+
+    // Load customer commercial context (FRONTLINE-CORE-01)
+    if (c.profileId) {
+      setContextLoading(true);
+      orderApi(orgSlug, {
+        action: "get_customer_context",
+        profileId: c.profileId,
+        sellerId: c.sellerId || header.sellerId,
+      }).then(data => {
+        setCustomerContext(data.context ?? null);
+        setCustomerOverdueAlert(data.overdueAlert ?? null);
+        setContextLoading(false);
+      }).catch(() => setContextLoading(false));
+    }
   }
 
   function clearCustomer() {
@@ -237,6 +257,8 @@ export function WholesaleOrderWizard({
     setMissingSagCode(false);
     setSelectedCustomerCity("");
     setSelectedCustomerAddress("");
+    setCustomerContext(null);
+    setCustomerOverdueAlert(null);
   }
 
   // ── Product search ──────────────────────────────────────────────────────
@@ -779,6 +801,71 @@ export function WholesaleOrderWizard({
                       borderRadius: R.sm, border: `1px solid ${C.amberBorder}`,
                     }}>
                       Cliente sin codigo SAG. Podras crear el pedido en Agentik, pero no enviarlo a SAG hasta completar el codigo.
+                    </div>
+                  )}
+
+                  {/* Customer commercial context (FRONTLINE-CORE-01) */}
+                  {clientMode === "selected" && !contextLoading && customerOverdueAlert && (
+                    <div style={{
+                      fontFamily: T.mono, fontSize: T.sz.xs,
+                      padding: `${S[2]}px ${S[3]}px`,
+                      background: customerOverdueAlert.severity === "critical" ? C.redLight : C.amberLight,
+                      color: customerOverdueAlert.severity === "critical" ? C.red : C.amber,
+                      borderRadius: R.sm,
+                      border: `1px solid ${customerOverdueAlert.severity === "critical" ? C.redBorder : C.amberBorder}`,
+                    }}>
+                      <div style={{ fontWeight: T.wt.semibold }}>{customerOverdueAlert.title}</div>
+                      {/* BUSINESS_POLICY_PENDING: warning only, does not block order */}
+                    </div>
+                  )}
+
+                  {clientMode === "selected" && !contextLoading && customerContext && customerContext.topProductsByUnits.length > 0 && (
+                    <div style={{
+                      ...panel, padding: S[3],
+                      borderLeft: `3px solid ${C.blueDark}`,
+                    }}>
+                      <div style={{
+                        fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
+                        color: C.inkMid, marginBottom: S[2],
+                      }}>
+                        Productos mas comprados
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                        {customerContext.topProductsByUnits.slice(0, 5).map(p => (
+                          <div key={p.referenceCode} style={{
+                            display: "flex", justifyContent: "space-between", alignItems: "center",
+                            fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.ink,
+                            padding: `2px 0`,
+                          }}>
+                            <div style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              <span style={{ fontWeight: T.wt.semibold }}>{p.referenceCode}</span>
+                              {" "}
+                              <span style={{ color: C.inkMid }}>{p.description}</span>
+                            </div>
+                            <div style={{ marginLeft: S[2], whiteSpace: "nowrap", color: C.inkMid }}>
+                              {p.totalUnits} uds · {p.purchaseCount} pedido{p.purchaseCount !== 1 ? "s" : ""}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      {customerContext.lastPurchaseDate && (
+                        <div style={{
+                          fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint,
+                          marginTop: S[1],
+                        }}>
+                          Ultima compra: {new Date(customerContext.lastPurchaseDate).toLocaleDateString("es-CO")}
+                          {customerContext.totalOrdersL12 > 0 && ` · ${customerContext.totalOrdersL12} pedidos ultimos 12M`}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {clientMode === "selected" && contextLoading && (
+                    <div style={{
+                      fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint,
+                      padding: `${S[2]}px ${S[3]}px`,
+                    }}>
+                      Cargando contexto comercial...
                     </div>
                   )}
 
