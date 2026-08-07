@@ -18,6 +18,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { emitPortfolioAttentionSignals } from "@/lib/comercial/maletas/portfolio-copilot-domain-tools";
 import { getCustomerReceivables } from "./customer-commercial-context";
+import { getSellerInactiveCustomers } from "./seller-inactive-customers";
 import type {
   FrontlineAttentionItem,
   FrontlineAttentionResult,
@@ -203,6 +204,9 @@ export async function emitCustomerOverdueAttention(
   const receivables = await getCustomerReceivables(orgId, customerId);
   if (!receivables || receivables.overdueAmount <= 0) return null;
 
+  // Hard business rule (Section F): only trigger when maxDaysOverdue > 30
+  if (receivables.maxDaysOverdue <= 30) return null;
+
   const now = new Date().toISOString();
   return {
     type: "CUSTOMER_OVERDUE_WHILE_ORDERING",
@@ -228,6 +232,56 @@ export async function emitCustomerOverdueAttention(
   };
 }
 
+// ── Inactive customer attention ──────────────────────────────────────────────
+
+/**
+ * Emit CUSTOMER_INACTIVE_90D signals for a seller's inactive customers.
+ * Deterministic: customer.lastPurchaseDate > 90 days ago.
+ * NOT contextual — surfaces on Seller Home.
+ */
+async function getInactiveCustomerAttention(
+  orgId: string,
+  sellerId: string | null,
+  orgSlug: string,
+): Promise<FrontlineAttentionItem[]> {
+  if (!sellerId) return [];
+
+  try {
+    const result = await getSellerInactiveCustomers(orgId, sellerId, { inactiveDays: 90 });
+    const now = new Date().toISOString();
+    const provenance: FrontlineProvenance = {
+      source: "seller-inactive-customers",
+      asOf: now,
+    };
+
+    return result.items.slice(0, 10).map(item => ({
+      type: "CUSTOMER_INACTIVE_90D" as const,
+      severity: (item.daysSinceLastPurchase ?? 0) > 180 ? "warning" : "info" as const,
+      organizationId: orgId,
+      sellerId,
+      customerId: item.customerId,
+      title: item.classification === "NO_PURCHASE_HISTORY"
+        ? `${item.customerName}: sin historial de compras`
+        : `${item.customerName}: ${item.daysSinceLastPurchase} dias sin comprar`,
+      evidence: {
+        customerId: item.customerId,
+        customerName: item.customerName,
+        classification: item.classification,
+        lastPurchaseDate: item.lastPurchaseDate,
+        daysSinceLastPurchase: item.daysSinceLastPurchase,
+        receivables: item.receivables,
+      },
+      suggestedAction: "Crear pedido",
+      deepLink: `/${orgSlug}/comercial/clientes/${item.customerId}`,
+      createdAt: now,
+      deduplicationKey: `frontline:inactive_90d:${orgId}:${sellerId}:${item.customerId}`,
+      provenance,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 // ── Aggregated seller attention ─────────────────────────────────────────────
 
 /**
@@ -242,13 +296,14 @@ export async function getSellerAttention(
   const now = new Date().toISOString();
   const slug = orgSlug ?? "org";
 
-  // Parallel: portfolio + orders
-  const [portfolioItems, orderItems] = await Promise.all([
+  // Parallel: portfolio + orders + inactive customers
+  const [portfolioItems, orderItems, inactiveItems] = await Promise.all([
     getPortfolioAttention(orgId, sellerId, slug),
     getOrderAttention(orgId, sellerId, slug),
+    getInactiveCustomerAttention(orgId, sellerId, slug),
   ]);
 
-  const items = [...portfolioItems, ...orderItems];
+  const items = [...portfolioItems, ...orderItems, ...inactiveItems];
 
   // Sort by severity then date
   const severityRank = { critical: 0, warning: 1, info: 2 };

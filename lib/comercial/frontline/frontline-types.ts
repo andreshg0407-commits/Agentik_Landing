@@ -145,6 +145,7 @@ export type FrontlineAttentionType =
   // Customer / Cartera
   | "CUSTOMER_OVERDUE_WHILE_ORDERING"
   | "CUSTOMER_OVERDUE_RECEIVABLE"
+  | "CUSTOMER_INACTIVE_90D"
   // Orders
   | "ORDER_PENDING_SYNC"
   | "ORDER_SYNC_FAILED"
