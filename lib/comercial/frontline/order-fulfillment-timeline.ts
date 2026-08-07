@@ -131,6 +131,41 @@ export async function getOrderFulfillmentTimeline(
   };
 }
 
+// ── Strict fulfillment stage derivation (AGENTIK-SELLER-APP-UI-03-P0) ─────
+//
+// Exported for server components that already hold order data.
+// Only returns COMPLETED when canonical SAG status explicitly certifies:
+//   FACTURADO  → invoice COMPLETED (literal "invoiced")
+//   DESPACHADO → shipment COMPLETED (literal "dispatched")
+//   PENDIENTE / CONFIRMADO → pre-dispatch, pre-invoice: NOT_STARTED
+//   Unknown / CANCELADO → NOT_AVAILABLE (cannot determine)
+//   Delivery → always NOT_AVAILABLE (no integration)
+//
+// Rule: absence of invoice evidence ≠ confirmed no invoice.
+//       Do NOT default unknown to NOT_STARTED.
+
+export function deriveStrictFulfillmentStages(sagStatus: string): {
+  invoice: FulfillmentStageStatus;
+  shipment: FulfillmentStageStatus;
+  delivery: FulfillmentStageStatus;
+} {
+  switch (sagStatus) {
+    case "FACTURADO":
+      // SAG explicitly certifies: invoiced. Shipment not independently certified.
+      return { invoice: "COMPLETED", shipment: "NOT_AVAILABLE", delivery: "NOT_AVAILABLE" };
+    case "DESPACHADO":
+      // SAG explicitly certifies: dispatched. Invoice status unknown.
+      return { invoice: "NOT_AVAILABLE", shipment: "COMPLETED", delivery: "NOT_AVAILABLE" };
+    case "PENDIENTE":
+    case "CONFIRMADO":
+      // SAG lifecycle: pre-dispatch, pre-invoice. Canonically not invoiced/shipped.
+      return { invoice: "NOT_STARTED", shipment: "NOT_STARTED", delivery: "NOT_AVAILABLE" };
+    default:
+      // CANCELADO, unknown, or unmapped — cannot determine.
+      return { invoice: "NOT_AVAILABLE", shipment: "NOT_AVAILABLE", delivery: "NOT_AVAILABLE" };
+  }
+}
+
 // ── Batch: seller's recent orders with timelines ────────────────────────────
 
 /**

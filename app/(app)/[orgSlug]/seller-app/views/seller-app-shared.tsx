@@ -2,6 +2,7 @@
  * Seller App — Shared types, helpers, and primitives.
  *
  * Sprint: AGENTIK-SELLER-APP-UI-02
+ * Sprint: AGENTIK-SELLER-APP-UI-03
  * Extracted from seller-app-shell.tsx for maintainability.
  */
 "use client";
@@ -14,7 +15,63 @@ import type { SellerAppFeatureFlags } from "@/lib/comercial/frontline";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export type SellerTab = "inicio" | "clientes" | "nuevo_pedido" | "pedidos" | "perfil";
+export type SellerTab = "inicio" | "clientes" | "nuevo_pedido" | "pedidos" | "maleta" | "alertas" | "perfil";
+
+// ── Serialized portfolio types (from server) ────────────────────────────────
+
+export interface SerializedPortfolioRef {
+  reference: string;
+  description: string;
+  line: string;
+  sizeClass: string | null;
+  centralAvailable: number;
+  commercialHealth: string;
+  suggestedAction: string;
+  imageUrl: string | null;
+  state: string; // "vigente" | "reemplazar" | etc.
+}
+
+export interface SerializedPortfolio {
+  vendorId: string;
+  vendorName: string;
+  isActive: boolean;
+  totalRefs: number;
+  totalUnits: number;
+  health: string;
+  replaceRefs: number;
+  healthyRefs: number;
+  refs: SerializedPortfolioRef[];
+}
+
+export interface SerializedSupplyNeed {
+  subgroupName: string;
+  brand: string | null;
+  commercialWorld: string;
+  missingReferences: number;
+  bestAction: string;
+  bestActionExplanation: string;
+  candidateCount: number;
+}
+
+// ── Serialized order types (from server) ────────────────────────────────────
+
+export interface SerializedOrderCard {
+  id: string;
+  consecutivo: number;
+  customerName: string;
+  sellerName: string;
+  totalReferences: number;
+  totalUnits: number;
+  totalValue: number;
+  status: string;
+  origin: string;
+  syncState: string;
+  createdAt: string;
+  lastSyncAt: string | null;
+  fulfillmentStatus: string; // FulfillmentStageStatus: COMPLETED | IN_PROGRESS | NOT_STARTED | NOT_AVAILABLE
+  fulfillmentPercent: number | null; // null = NOT_AVAILABLE (no data source)
+  channel: string | null;
+}
 
 export interface SerializedCustomer {
   id: string;
@@ -54,6 +111,10 @@ export interface SellerAppShellProps {
     receivables: { total: number; overdue: number; maxDaysOverdue: number } | null;
   }>;
   features: SellerAppFeatureFlags;
+  // Block 3: Portfolio + Orders
+  portfolio: SerializedPortfolio | null;
+  supplyNeeds: SerializedSupplyNeed[];
+  orders: SerializedOrderCard[];
 }
 
 // ── Format helpers ──────────────────────────────────────────────────────────

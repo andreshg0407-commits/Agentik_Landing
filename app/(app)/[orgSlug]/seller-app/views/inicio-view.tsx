@@ -2,9 +2,10 @@
  * Seller App — Home View.
  *
  * Sprint: AGENTIK-SELLER-APP-UI-02
+ * Sprint: AGENTIK-SELLER-APP-UI-03 (enable Maleta + Alertas shortcuts)
  *
  * Home exposes:
- *   Action shortcuts: Tomar pedido, Clientes, Crear catalogo, Alertas, Mi maleta, Pedidos, Perfil
+ *   Action shortcuts: Tomar pedido, Clientes, Mi maleta, Pedidos, Alertas, Perfil
  *   Attention summary strip (critical/warning/total)
  *   Attention items (from FrontlineAttention)
  *
@@ -17,7 +18,9 @@ import type {
   FrontlineAttentionItem,
   FrontlineAttentionResult,
   AttentionSeverity,
+  SellerAppFeatureFlags,
 } from "@/lib/comercial/frontline";
+import { useSellerLocation } from "@/hooks/use-seller-location";
 import { SEV_BG, SEV_BORDER, SEV_TEXT, SEV_ICON, type SellerTab } from "./seller-app-shared";
 
 // ── Action shortcut definitions ─────────────────────────────────────────────
@@ -31,31 +34,51 @@ interface HomeAction {
   disabledLabel?: string;
 }
 
-const HOME_ACTIONS: HomeAction[] = [
-  { key: "pedido", label: "Tomar pedido", icon: "\u002B", tab: "nuevo_pedido" },
-  { key: "clientes", label: "Clientes", icon: "\uD83D\uDC64", tab: "clientes" },
-  { key: "catalogo", label: "Catalogo", icon: "\uD83D\uDCF7", disabled: true, disabledLabel: "Proximamente" },
-  { key: "maleta", label: "Mi maleta", icon: "\uD83D\uDCBC", disabled: true, disabledLabel: "Proximamente" },
-  { key: "pedidos", label: "Pedidos", icon: "\uD83D\uDCCB", tab: "pedidos" },
-  { key: "perfil", label: "Perfil", icon: "\uD83D\uDC64", tab: "perfil" },
-];
+function buildHomeActions(features: SellerAppFeatureFlags): HomeAction[] {
+  return [
+    { key: "pedido", label: "Tomar pedido", icon: "\u002B", tab: "nuevo_pedido" },
+    { key: "clientes", label: "Clientes", icon: "\uD83D\uDC64", tab: "clientes" },
+    { key: "maleta", label: "Mi maleta", icon: "\uD83D\uDCBC", tab: "maleta" },
+    { key: "pedidos", label: "Pedidos", icon: "\uD83D\uDCCB", tab: "pedidos" },
+    { key: "alertas", label: "Alertas", icon: "\u26A0", tab: "alertas" },
+    {
+      key: "catalogo",
+      label: "Crear catalogo",
+      icon: "\uD83D\uDCF7",
+      disabled: !features.SELLER_CATALOG_GENERATION,
+      disabledLabel: features.SELLER_CATALOG_GENERATION ? undefined : "Proximamente",
+    },
+    { key: "perfil", label: "Perfil", icon: "\uD83D\uDC64", tab: "perfil" },
+  ];
+}
 
 // ── Home View ───────────────────────────────────────────────────────────────
 
 export function InicioView({
   attention,
+  features,
   onNavigate,
 }: {
   attention: FrontlineAttentionResult;
   orgSlug: string;
+  features: SellerAppFeatureFlags;
   onNavigate?: (tab: SellerTab) => void;
 }) {
   const items = attention.items;
   const criticalCount = items.filter(i => i.severity === "critical").length;
   const warningCount = items.filter(i => i.severity === "warning").length;
+  const homeActions = buildHomeActions(features);
+  const { permission, location, requestLocation } = useSellerLocation();
 
   return (
     <div style={{ padding: S[4] }}>
+      {/* Location strip — truthful state */}
+      <LocationStrip
+        permission={permission}
+        location={location}
+        onRequest={requestLocation}
+      />
+
       {/* Action shortcuts grid */}
       <div style={{
         display: "grid",
@@ -63,7 +86,7 @@ export function InicioView({
         gap: S[2],
         marginBottom: S[4],
       }}>
-        {HOME_ACTIONS.map(action => (
+        {homeActions.map(action => (
           <button
             key={action.key}
             onClick={() => {
@@ -185,4 +208,98 @@ function SeverityBadge({ severity }: { severity: AttentionSeverity }) {
       {labels[severity]}
     </span>
   );
+}
+
+// ── Location strip (truthful states) ────────────────────────────────────────
+
+function LocationStrip({
+  permission,
+  location,
+  onRequest,
+}: {
+  permission: import("@/hooks/use-seller-location").LocationPermission;
+  location: import("@/hooks/use-seller-location").SellerLocation | null;
+  onRequest: () => void;
+}) {
+  // idle: not requested yet — show button to request
+  if (permission === "idle") {
+    return (
+      <button
+        onClick={onRequest}
+        style={{
+          display: "flex", alignItems: "center", gap: S[2],
+          width: "100%", padding: `${S[2]}px ${S[3]}px`,
+          background: C.blueLight, border: `1px solid ${C.blueBorder}`,
+          borderRadius: R.md, cursor: "pointer", fontFamily: T.mono,
+          fontSize: T.sz.xs, color: C.blue, marginBottom: S[3],
+        }}
+      >
+        <span style={{ fontSize: 14 }}>{"\uD83D\uDCCD"}</span>
+        Activar ubicacion
+      </button>
+    );
+  }
+
+  // requesting: waiting for browser response
+  if (permission === "requesting") {
+    return (
+      <div style={{
+        display: "flex", alignItems: "center", gap: S[2],
+        padding: `${S[2]}px ${S[3]}px`, background: C.surfaceAlt,
+        border: `1px solid ${C.line}`, borderRadius: R.md,
+        fontSize: T.sz.xs, color: C.inkMid, marginBottom: S[3],
+      }}>
+        <span style={{ fontSize: 14 }}>{"\uD83D\uDCCD"}</span>
+        Obteniendo ubicacion...
+      </div>
+    );
+  }
+
+  // denied: user denied permission
+  if (permission === "denied") {
+    return (
+      <div style={{
+        display: "flex", alignItems: "center", gap: S[2],
+        padding: `${S[2]}px ${S[3]}px`, background: C.amberLight,
+        border: `1px solid ${C.amberBorder}`, borderRadius: R.md,
+        fontSize: T.sz.xs, color: C.amberDark, marginBottom: S[3],
+      }}>
+        <span style={{ fontSize: 14 }}>{"\uD83D\uDCCD"}</span>
+        Ubicacion desactivada
+      </div>
+    );
+  }
+
+  // unavailable: device doesn't support geolocation
+  if (permission === "unavailable") {
+    return (
+      <div style={{
+        display: "flex", alignItems: "center", gap: S[2],
+        padding: `${S[2]}px ${S[3]}px`, background: C.surfaceAlt,
+        border: `1px solid ${C.line}`, borderRadius: R.md,
+        fontSize: T.sz.xs, color: C.inkLight, marginBottom: S[3],
+      }}>
+        <span style={{ fontSize: 14 }}>{"\uD83D\uDCCD"}</span>
+        Ubicacion no disponible
+      </div>
+    );
+  }
+
+  // granted: truthful presentation — no raw coordinates
+  if (permission === "granted" && location) {
+    return (
+      <div style={{
+        display: "flex", alignItems: "center", gap: S[2],
+        padding: `${S[2]}px ${S[3]}px`, background: C.greenLight,
+        border: `1px solid ${C.greenBorder}`, borderRadius: R.md,
+        fontSize: T.sz.xs, color: C.green, marginBottom: S[3],
+      }}>
+        <span style={{ fontSize: 14 }}>{"\uD83D\uDCCD"}</span>
+        <span>Ubicacion activa</span>
+        <span style={{ opacity: 0.7 }}>{"\u00B7"} Ciudad no disponible</span>
+      </div>
+    );
+  }
+
+  return null;
 }

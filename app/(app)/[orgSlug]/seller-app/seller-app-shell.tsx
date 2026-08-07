@@ -3,12 +3,13 @@
  *
  * Sprint: AGENTIK-SELLER-APP-UI-01 (Block 1: Inicio + Clientes)
  * Sprint: AGENTIK-SELLER-APP-UI-02 (Block 2: Nuevo Pedido + canonical nav)
+ * Sprint: AGENTIK-SELLER-APP-UI-03 (Block 3: Portfolio + Orders + Alerts)
  *
  * "use client" — receives flat props from server page.
  * Primary target: 390px.
  *
  * Canonical bottom nav V1: Inicio, Clientes, Pedido, Pedidos, Perfil
- * Maleta/Alertas/Catalog: Home shortcuts + attention deep links.
+ * Maleta/Alertas: accessible via Home shortcuts + bottom nav overflow.
  *
  * Shell owns: navigation, selected view, shared mobile frame.
  * Views live in ./views/ for maintainability.
@@ -21,6 +22,9 @@ import type { SellerTab, SellerAppShellProps } from "./views/seller-app-shared";
 import { InicioView } from "./views/inicio-view";
 import { ClientesView, ClienteDetailView } from "./views/clientes-view";
 import { NuevoPedidoView } from "./views/nuevo-pedido-view";
+import { SellerPortfolioView } from "./views/seller-portfolio-view";
+import { SellerOrdersView } from "./views/seller-orders-view";
+import { SellerAlertsView } from "./views/seller-alerts-view";
 import { PlaceholderView } from "./views/placeholder-view";
 
 // ── Canonical bottom nav V1 ─────────────────────────────────────────────────
@@ -30,7 +34,7 @@ const NAV_ITEMS: Array<{ key: SellerTab; label: string; icon: string }> = [
   { key: "clientes", label: "Clientes", icon: "\uD83D\uDC64" },
   { key: "nuevo_pedido", label: "Pedido", icon: "\u002B" },
   { key: "pedidos", label: "Pedidos", icon: "\uD83D\uDCCB" },
-  { key: "perfil", label: "Perfil", icon: "\u2699" },
+  { key: "perfil", label: "Perfil", icon: "\uD83D\uDC64" },
 ];
 
 // ── Main Shell ───────────────────────────────────────────────────────────────
@@ -39,6 +43,7 @@ export function SellerAppShell(props: SellerAppShellProps) {
   const [activeTab, setActiveTab] = useState<SellerTab>("inicio");
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [orderPreSelectedCustomerId, setOrderPreSelectedCustomerId] = useState<string | null>(null);
+  const [deepLinkContext, setDeepLinkContext] = useState<Record<string, string> | undefined>();
   const orderInProgressRef = useRef(false);
 
   const alertCount = useMemo(() => props.attention.items.length, [props.attention.items]);
@@ -71,6 +76,8 @@ export function SellerAppShell(props: SellerAppShellProps) {
     setActiveTab(tab);
     setSelectedCustomerId(null);
     if (tab !== "nuevo_pedido") setOrderPreSelectedCustomerId(null);
+    // Deep link context is consumed once — clear on next manual nav
+    setDeepLinkContext(undefined);
   }, [activeTab]);
 
   return (
@@ -107,7 +114,7 @@ export function SellerAppShell(props: SellerAppShellProps) {
         <div style={{ display: "flex", alignItems: "center", gap: S[3] }}>
           {/* Notification bell */}
           <button
-            onClick={() => handleTabChange("inicio")}
+            onClick={() => handleTabChange("alertas")}
             style={{
               position: "relative",
               border: "none", background: "transparent", cursor: "pointer",
@@ -147,6 +154,7 @@ export function SellerAppShell(props: SellerAppShellProps) {
           <InicioView
             attention={props.attention}
             orgSlug={props.orgSlug}
+            features={props.features}
             onNavigate={handleTabChange}
           />
         )}
@@ -181,7 +189,31 @@ export function SellerAppShell(props: SellerAppShellProps) {
             onWorkInProgressChange={(inProgress) => { orderInProgressRef.current = inProgress; }}
           />
         )}
-        {activeTab === "pedidos" && <PlaceholderView title="Pedidos" />}
+        {activeTab === "pedidos" && (
+          <SellerOrdersView
+            orders={props.orders}
+            orgSlug={props.orgSlug}
+            orgId={props.orgId}
+            initialOrderId={deepLinkContext?.orderId}
+          />
+        )}
+        {activeTab === "maleta" && (
+          <SellerPortfolioView
+            portfolio={props.portfolio}
+            supplyNeeds={props.supplyNeeds}
+            initialSection={deepLinkContext?.section}
+          />
+        )}
+        {activeTab === "alertas" && (
+          <SellerAlertsView
+            attention={props.attention}
+            onNavigate={(tab, context) => {
+              handleTabChange(tab);
+              // Set after handleTabChange (which clears context)
+              if (context) setDeepLinkContext(context);
+            }}
+          />
+        )}
         {activeTab === "perfil" && (
           <PerfilPlaceholderView sellerIdentity={props.sellerIdentity} />
         )}

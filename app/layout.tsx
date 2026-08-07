@@ -20,6 +20,8 @@ export const metadata: Metadata = {
   creator: "Agentik",
   publisher: "Agentik",
 
+  manifest: "/manifest.json",
+
   icons: {
     icon: [
       { url: "/icon-light-32x32.png", media: "(prefers-color-scheme: light)" },

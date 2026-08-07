@@ -1,0 +1,18 @@
+{
+  "name": "Agentik Seller",
+  "short_name": "Seller",
+  "description": "Agentik — App de vendedor",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#004AAD",
+  "theme_color": "#004AAD",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/og.png",
+      "sizes": "1200x630",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
