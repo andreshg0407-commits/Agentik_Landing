@@ -15,6 +15,7 @@ import {
   DetailSection, filterBtnStyle,
   type SerializedPortfolio, type SerializedPortfolioRef, type SerializedSupplyNeed,
 } from "./seller-app-shared";
+import { SellerIcon, appCard, EmptyState } from "./seller-ui-kit";
 
 // ── Sub-views ───────────────────────────────────────────────────────────────
 
@@ -43,12 +44,10 @@ export function SellerPortfolioView({
 
   if (!portfolio) {
     return (
-      <div style={{ padding: S[4], textAlign: "center", color: C.inkLight }}>
-        <div style={{ fontSize: T.sz.lg, marginBottom: S[2] }}>Mi Maleta</div>
-        <div style={{ fontSize: T.sz.md }}>No tienes una maleta asignada</div>
-        <div style={{ fontSize: T.sz.xs, marginTop: S[2], color: C.inkLight }}>
-          Contacta a tu administrador para que te asigne una maleta comercial
-        </div>
+      <div style={{ padding: S[4] }}>
+        <div style={{ fontSize: T.sz.xl, fontWeight: T.wt.bold, color: C.titleDeep, marginBottom: S[2] }}>Mi maleta</div>
+        <EmptyState icon="box" title="No tienes una maleta asignada"
+          subtitle="Contacta a tu administrador para que te asigne una maleta comercial" />
       </div>
     );
   }
@@ -70,8 +69,8 @@ export function SellerPortfolioView({
         marginBottom: S[3],
       }}>
         <div>
-          <div style={{ fontSize: T.sz.lg, fontWeight: T.wt.semibold, color: C.ink }}>
-            Mi Maleta
+          <div style={{ fontSize: T.sz.xl, fontWeight: T.wt.bold, color: C.titleDeep }}>
+            Mi maleta
           </div>
           <div style={{ fontSize: T.sz.xs, color: C.inkLight }}>
             {portfolio.vendorName}
@@ -81,11 +80,7 @@ export function SellerPortfolioView({
       </div>
 
       {/* KPI strip */}
-      <div style={{
-        display: "flex", gap: S[2], marginBottom: S[3],
-        padding: S[3], background: C.white, border: `1px solid ${C.line}`,
-        borderRadius: R.lg,
-      }}>
+      <div style={{ ...appCard, display: "flex", gap: S[2], marginBottom: S[3], padding: S[3] }}>
         <KpiChip label="Muestras" value={String(vigentes.length)} />
         <KpiChip label="Retiro" value={String(retiro.length)} color={retiro.length > 0 ? C.redDark : undefined} />
         <KpiChip label="Surtido" value={String(supplyNeeds.length)} color={supplyNeeds.length > 0 ? C.amberDark : undefined} />
@@ -99,10 +94,10 @@ export function SellerPortfolioView({
             onClick={() => setSection(s.key)}
             style={{
               ...filterBtnStyle,
-              flex: 1,
+              flex: 1, minHeight: 38,
               background: section === s.key ? C.blueDark : C.white,
-              color: section === s.key ? C.white : C.inkMid,
-              border: `1px solid ${section === s.key ? C.blueDark : C.line}`,
+              color: section === s.key ? C.white : C.ink,
+              border: `1.5px solid ${section === s.key ? C.blueDark : C.line}`,
               textAlign: "center",
             }}
           >
@@ -196,9 +191,9 @@ function RefCard({ ref_, isRetiro }: { ref_: SerializedPortfolioRef; isRetiro?: 
   const borderColor = isRetiro ? C.redBorder : C.line;
   return (
     <div style={{
+      ...appCard,
       display: "flex", gap: S[3], padding: S[3],
-      background: C.white, border: `1px solid ${borderColor}`,
-      borderRadius: R.lg,
+      border: `1px solid ${borderColor}`,
     }}>
       {/* Thumbnail */}
       <div style={{
@@ -235,8 +230,8 @@ function RefCard({ ref_, isRetiro }: { ref_: SerializedPortfolioRef; isRetiro?: 
           <span style={{ fontSize: T.sz.xs, color: C.inkLight }}>{ref_.line}</span>
           {isRetiro && (
             <span style={{
-              fontSize: 9, padding: `1px ${S[1]}px`, background: C.redLight,
-              color: C.redDark, borderRadius: R.sm, fontWeight: T.wt.medium,
+              fontSize: T.sz.xs, padding: `2px ${S[2]}px`, background: C.redLight,
+              color: C.redDark, borderRadius: R.pill, fontWeight: T.wt.bold,
             }}>
               Retirar
             </span>
@@ -266,10 +261,7 @@ function SupplyNeedCard({ need }: { need: SerializedSupplyNeed }) {
   const action = actionLabels[need.bestAction] ?? { label: need.bestAction, color: C.inkMid };
 
   return (
-    <div style={{
-      padding: S[3], background: C.white, border: `1px solid ${C.line}`,
-      borderRadius: R.lg,
-    }}>
+    <div style={{ ...appCard, padding: S[3] }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
           <div style={{ fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
@@ -341,12 +333,5 @@ function KpiChip({ label, value, color }: { label: string; value: string; color?
 }
 
 function EmptySection({ message }: { message: string }) {
-  return (
-    <div style={{
-      textAlign: "center", padding: `${S[8]}px ${S[4]}px`,
-      color: C.inkLight, fontSize: T.sz.md,
-    }}>
-      {message}
-    </div>
-  );
+  return <EmptyState icon="box" title={message} />;
 }

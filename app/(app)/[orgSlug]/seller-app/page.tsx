@@ -162,7 +162,7 @@ export default async function SellerAppPage({
           centralAvailable: w.centralAvailable,
           commercialHealth: "SIN_DATOS",
           suggestedAction: w.removalReason,
-          imageUrl: null,
+          imageUrl: w.imageUrl ?? null,
           state: "reemplazar",
         }));
 
@@ -209,25 +209,13 @@ export default async function SellerAppPage({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const orderWhere: Record<string, any> = { organizationId: organization.id };
 
-    if (!scope.canAccessAllOrders && sellerIdentity.sellerName) {
-      // Resolve deterministic sellerTerceroId from seller's canonical name
-      const terceroLookup = await db.customerOrderRecord.findFirst({
-        where: {
-          organizationId: organization.id,
-          sellerName: sellerIdentity.sellerName,
-          sellerTerceroId: { not: null },
-        },
-        select: { sellerTerceroId: true },
-      });
-
-      if (terceroLookup?.sellerTerceroId != null) {
-        // Deterministic integer match — strongest authority
-        orderWhere.sellerTerceroId = terceroLookup.sellerTerceroId;
-      } else {
-        // SELLER_ORDER_IDENTITY_BLOCKER: cannot resolve deterministic ID
-        // Return empty rather than use fuzzy/partial match
-        serializedOrders = [];
-      }
+    if (!scope.canAccessAllOrders && sellerIdentity.sagSellerCode) {
+      // sagSellerCode is the stable sellerTerceroId resolved during identity
+      // resolution (resolveSellerTerceroId). Integer authority — never name.
+      orderWhere.sellerTerceroId = parseInt(sellerIdentity.sagSellerCode, 10);
+    } else if (!scope.canAccessAllOrders) {
+      // No stable seller identity resolved — return empty
+      serializedOrders = [];
     }
 
     // Only query if we have a valid filter (or manager scope)

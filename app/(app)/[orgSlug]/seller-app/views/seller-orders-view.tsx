@@ -16,6 +16,7 @@ import {
   DetailSection, DetailKpi, filterBtnStyle, fmtCOP, fmtDaysAgo,
   type SerializedOrderCard,
 } from "./seller-app-shared";
+import { SellerIcon, StatusChip, EmptyState, appCard } from "./seller-ui-kit";
 
 // ── Status config ───────────────────────────────────────────────────────────
 
@@ -57,7 +58,7 @@ const FULFILLMENT_LABELS: Record<string, string> = {
   COMPLETED: "Facturado",
   IN_PROGRESS: "En proceso",
   NOT_STARTED: "Sin facturar",
-  NOT_AVAILABLE: "No disponible",
+  NOT_AVAILABLE: "Sin información aún",
 };
 
 // ── Fulfillment timeline stages ─────────────────────────────────────────────
@@ -131,7 +132,7 @@ export function SellerOrdersView({
   return (
     <div style={{ padding: S[4] }}>
       <div style={{
-        fontSize: T.sz.lg, fontWeight: T.wt.semibold, color: C.ink,
+        fontSize: T.sz.xl, fontWeight: T.wt.bold, color: C.titleDeep,
         marginBottom: S[3],
       }}>
         Pedidos
@@ -145,10 +146,10 @@ export function SellerOrdersView({
             onClick={() => setStatusFilter(g.key)}
             style={{
               ...filterBtnStyle,
-              flex: 1,
+              flex: 1, minHeight: 38,
               background: statusFilter === g.key ? C.blueDark : C.white,
-              color: statusFilter === g.key ? C.white : C.inkMid,
-              border: `1px solid ${statusFilter === g.key ? C.blueDark : C.line}`,
+              color: statusFilter === g.key ? C.white : C.ink,
+              border: `1.5px solid ${statusFilter === g.key ? C.blueDark : C.line}`,
               textAlign: "center",
             }}
           >
@@ -159,12 +160,11 @@ export function SellerOrdersView({
 
       {/* Order list */}
       {filtered.length === 0 ? (
-        <div style={{
-          textAlign: "center", padding: `${S[8]}px ${S[4]}px`,
-          color: C.inkLight, fontSize: T.sz.md,
-        }}>
-          {statusFilter === "all" ? "No tienes pedidos" : "Sin pedidos en esta categoria"}
-        </div>
+        <EmptyState
+          icon="clipboard"
+          title={statusFilter === "all" ? "No tienes pedidos" : "Sin pedidos en esta categoria"}
+          subtitle={statusFilter === "all" ? "Crea tu primer pedido desde Inicio" : undefined}
+        />
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
           {filtered.map(order => (
@@ -189,37 +189,33 @@ function OrderCard({ order, onClick }: { order: SerializedOrderCard; onClick: ()
     <button
       onClick={onClick}
       style={{
+        ...appCard,
         display: "block", width: "100%", textAlign: "left",
-        padding: S[3], background: C.white, border: `1px solid ${C.line}`,
-        borderRadius: R.lg, cursor: "pointer", fontFamily: T.mono,
+        padding: S[3], cursor: "pointer", fontFamily: T.mono,
+        minHeight: 72, touchAction: "manipulation",
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div>
-          <div style={{ fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: S[2] }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: T.sz.md, fontWeight: T.wt.bold, color: C.ink }}>
             #{order.consecutivo}
           </div>
           <div style={{
-            fontSize: T.sz.xs, color: C.inkMid, marginTop: 1,
+            fontSize: T.sz.sm, color: C.inkMid, marginTop: 1,
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-            maxWidth: 200,
           }}>
             {order.customerName}
           </div>
         </div>
-        <span style={{
-          fontSize: T.sz.xs, padding: `2px ${S[2]}px`,
-          background: sc.bg, color: sc.color,
-          borderRadius: R.sm, fontWeight: T.wt.medium,
-          whiteSpace: "nowrap",
-        }}>
+        <StatusChip bg={sc.bg} color={sc.color}>
           {STATUS_LABELS[order.status] ?? order.status}
-        </span>
+        </StatusChip>
       </div>
-      <div style={{ display: "flex", gap: S[3], marginTop: S[2], fontSize: T.sz.xs, color: C.inkLight }}>
+      <div style={{ display: "flex", alignItems: "center", gap: S[3], marginTop: S[2], fontSize: T.sz.xs, color: C.inkLight }}>
         <span>{fmtDaysAgo(order.createdAt)}</span>
         <span>{order.totalUnits} uds</span>
-        <span>{fmtCOP(order.totalValue)}</span>
+        <span style={{ fontWeight: T.wt.bold, color: C.ink, fontSize: T.sz.sm, marginLeft: "auto" }}>{fmtCOP(order.totalValue)}</span>
+        <SellerIcon name="chevronRight" size={15} color={C.inkGhost} />
       </div>
     </button>
   );
@@ -237,19 +233,17 @@ function OrderDetailView({ order, onBack }: { order: SerializedOrderCard; onBack
       <button
         onClick={onBack}
         style={{
+          display: "flex", alignItems: "center", gap: S[1],
           background: "none", border: "none", cursor: "pointer",
-          color: C.blue, fontSize: T.sz.sm, fontFamily: T.mono,
-          padding: 0, marginBottom: S[3],
+          color: C.blueDark, fontSize: T.sz.md, fontWeight: T.wt.semibold, fontFamily: T.mono,
+          padding: `${S[2]}px 0`, minHeight: 44, marginBottom: S[1], touchAction: "manipulation",
         }}
       >
-        {"\u2190"} Volver a pedidos
+        <SellerIcon name="back" size={17} color={C.blueDark} /> Pedidos
       </button>
 
       {/* Header */}
-      <div style={{
-        padding: S[4], background: C.white, border: `1px solid ${C.line}`,
-        borderRadius: R.lg, marginBottom: S[4],
-      }}>
+      <div style={{ ...appCard, padding: S[4], marginBottom: S[4] }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
             <div style={{ fontSize: T.sz.xl, fontWeight: T.wt.bold, color: C.ink }}>
@@ -329,7 +323,7 @@ function InvoiceStatusBadge({ status }: { status: string }) {
     COMPLETED: { label: "Facturado", bg: C.greenLight, color: C.green },
     IN_PROGRESS: { label: "En proceso", bg: C.amberLight, color: C.amberDark },
     NOT_STARTED: { label: "Sin facturar", bg: C.surfaceAlt, color: C.inkMid },
-    NOT_AVAILABLE: { label: "No disponible", bg: C.surfaceAlt, color: C.inkLight },
+    NOT_AVAILABLE: { label: "Sin información aún", bg: C.surfaceAlt, color: C.inkLight },
   };
   const m = map[status] ?? { label: "\u2014", bg: C.surfaceAlt, color: C.inkLight };
   return (
@@ -373,7 +367,7 @@ function TimelineStage({ stage, isLast }: { stage: FulfillmentStage; isLast: boo
         {stage.label}
         {stage.status === "not_available" && (
           <span style={{ fontSize: T.sz.xs, color: C.inkLight, marginLeft: S[1] }}>
-            {"\u2014"} No disponible
+            {"\u2014"} Sin información aún
           </span>
         )}
       </div>

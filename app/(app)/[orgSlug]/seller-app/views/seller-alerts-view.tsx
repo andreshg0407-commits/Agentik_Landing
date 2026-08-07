@@ -18,10 +18,11 @@ import type {
   AttentionSeverity,
 } from "@/lib/comercial/frontline";
 import {
-  SEV_BG, SEV_BORDER, SEV_TEXT, SEV_ICON,
+  SEV_BG, SEV_BORDER, SEV_TEXT,
   filterBtnStyle, fmtDaysAgo,
   type SellerTab,
 } from "./seller-app-shared";
+import { SellerIcon, StatusChip, EmptyState } from "./seller-ui-kit";
 
 // ── Filter tabs ─────────────────────────────────────────────────────────────
 
@@ -104,7 +105,7 @@ export function SellerAlertsView({
     <div style={{ padding: S[4] }}>
       {/* Header */}
       <div style={{
-        fontSize: T.sz.lg, fontWeight: T.wt.semibold, color: C.ink,
+        fontSize: T.sz.xl, fontWeight: T.wt.bold, color: C.titleDeep,
         marginBottom: S[3],
       }}>
         Alertas
@@ -124,10 +125,10 @@ export function SellerAlertsView({
             key={f.key}
             onClick={() => setFilter(f.key)}
             style={{
-              ...filterBtnStyle,
+              ...filterBtnStyle, minHeight: 38,
               background: filter === f.key ? C.blueDark : C.white,
-              color: filter === f.key ? C.white : C.inkMid,
-              border: `1px solid ${filter === f.key ? C.blueDark : C.line}`,
+              color: filter === f.key ? C.white : C.ink,
+              border: `1.5px solid ${filter === f.key ? C.blueDark : C.line}`,
             }}
           >
             {f.label}
@@ -137,12 +138,11 @@ export function SellerAlertsView({
 
       {/* Alert items */}
       {filtered.length === 0 ? (
-        <div style={{
-          textAlign: "center", padding: `${S[8]}px ${S[4]}px`,
-          color: C.inkLight, fontSize: T.sz.md,
-        }}>
-          {filter === "all" ? "Sin alertas pendientes" : `Sin alertas ${FILTERS.find(f => f.key === filter)?.label.toLowerCase()}`}
-        </div>
+        <EmptyState
+          icon="bell"
+          title={filter === "all" ? "Sin alertas pendientes" : `Sin alertas ${FILTERS.find(f => f.key === filter)?.label.toLowerCase()}`}
+          subtitle={filter === "all" ? "Todo al día en tu operación" : undefined}
+        />
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
           {filtered.map((item, i) => (
@@ -180,33 +180,67 @@ function SummaryChip({ label, count, bg, color, border }: {
 function AlertDetailCard({ item, onAction }: { item: FrontlineAttentionItem; onAction: () => void }) {
   const typeLabel = TYPE_LABELS[item.type] ?? item.type;
   const deepLink = resolveDeepLink(item);
+  // §32: retiro de muestra — referencia visible + CTA específica
+  const isWithdrawal = item.type === "SAMPLE_WITHDRAWAL_REQUIRED";
+  const ctaLabel = isWithdrawal ? "Ver retiro" : "Ver detalle";
 
   return (
     <div style={{
       padding: S[3], background: SEV_BG[item.severity],
-      border: `1px solid ${SEV_BORDER[item.severity]}`, borderRadius: R.lg,
+      border: `1px solid ${SEV_BORDER[item.severity]}`, borderRadius: 16,
     }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: S[2] }}>
-        <span style={{ fontSize: T.sz.lg, color: SEV_TEXT[item.severity], flexShrink: 0, marginTop: 1 }}>
-          {SEV_ICON[item.severity]}
-        </span>
+        {isWithdrawal ? (
+          <span aria-hidden style={{
+            width: 48, height: 48, borderRadius: 12, flexShrink: 0,
+            background: "rgba(255,255,255,0.65)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            overflow: "hidden",
+          }}>
+            {item.imageUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={item.imageUrl} alt={item.referenceCode ?? ""} style={{ width: "100%", height: "100%", objectFit: "cover" }} loading="lazy" />
+            ) : (
+              <SellerIcon name="box" size={20} color={SEV_TEXT[item.severity]} />
+            )}
+          </span>
+        ) : (
+          <span style={{ flexShrink: 0, marginTop: 1 }}>
+            <SellerIcon
+              name={item.severity === "info" ? "info" : "alert"}
+              size={17}
+              color={SEV_TEXT[item.severity]}
+            />
+          </span>
+        )}
         <div style={{ flex: 1, minWidth: 0 }}>
           {/* Type badge */}
           <div style={{
-            fontSize: 9, fontWeight: T.wt.medium, color: SEV_TEXT[item.severity],
-            textTransform: "uppercase" as const, letterSpacing: "0.04em",
-            marginBottom: 2,
+            fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: SEV_TEXT[item.severity],
+            textTransform: "uppercase" as const, letterSpacing: "0.05em",
+            marginBottom: 2, opacity: 0.85,
           }}>
             {typeLabel}
           </div>
           {/* Title */}
-          <div style={{ fontSize: T.sz.sm, fontWeight: T.wt.medium, color: SEV_TEXT[item.severity], lineHeight: 1.4 }}>
+          <div style={{ fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: SEV_TEXT[item.severity], lineHeight: 1.45 }}>
             {item.title}
           </div>
-          {/* Evidence summary */}
+          {/* Reference (retiro) */}
+          {isWithdrawal && item.referenceCode && (
+            <div style={{ fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink, marginTop: 2 }}>
+              Ref. {item.referenceCode}
+            </div>
+          )}
+          {/* Evidence summary — motivo real; en retiro se suma la acción clara */}
           {item.suggestedAction && (
-            <div style={{ fontSize: T.sz.xs, color: C.inkMid, marginTop: S[1] }}>
+            <div style={{ fontSize: T.sz.xs, color: C.inkMid, marginTop: S[1], lineHeight: 1.5 }}>
               {item.suggestedAction}
+            </div>
+          )}
+          {isWithdrawal && (
+            <div style={{ fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: SEV_TEXT[item.severity], marginTop: S[1] }}>
+              Retira esta muestra de tu maleta
             </div>
           )}
           {/* Deep link CTA */}
@@ -214,13 +248,14 @@ function AlertDetailCard({ item, onAction }: { item: FrontlineAttentionItem; onA
             <button
               onClick={onAction}
               style={{
-                marginTop: S[2], padding: `${S[1]}px ${S[3]}px`,
-                background: "rgba(255,255,255,0.7)", border: `1px solid ${SEV_BORDER[item.severity]}`,
-                borderRadius: R.md, fontSize: T.sz.xs, fontWeight: T.wt.medium,
+                marginTop: S[2], padding: `${S[2]}px ${S[3]}px`, minHeight: 38,
+                background: "rgba(255,255,255,0.8)", border: `1px solid ${SEV_BORDER[item.severity]}`,
+                borderRadius: 12, fontSize: T.sz.sm, fontWeight: T.wt.semibold,
                 color: SEV_TEXT[item.severity], cursor: "pointer", fontFamily: T.mono,
+                display: "inline-flex", alignItems: "center", gap: 5, touchAction: "manipulation",
               }}
             >
-              Ver detalle
+              {ctaLabel} <SellerIcon name="chevronRight" size={13} color={SEV_TEXT[item.severity]} />
             </button>
           )}
         </div>

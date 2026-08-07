@@ -24,6 +24,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { C, T, S, R, E } from "@/lib/ui/tokens";
 import type { SerializedCustomer, SellerIdentityProps } from "./seller-app-shared";
+import { SellerIcon } from "./seller-ui-kit";
 import { fmtCOP, DetailSection, DetailKpi } from "./seller-app-shared";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -417,34 +418,54 @@ function WizardHeader({ step, onBack, onExit }: { step: WizardStep; onBack: () =
   };
 
   const showBack = step !== "submitting" && step !== "result";
+  const inFlow = step !== "submitting" && step !== "result";
+  const current = Math.min(stepNumber[step], 5);
 
   return (
     <div style={{ marginBottom: S[4] }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: S[2] }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: S[1] }}>
         {showBack ? (
           <button onClick={onBack} style={{
+            display: "flex", alignItems: "center", gap: S[1],
             border: "none", background: "transparent", cursor: "pointer",
-            fontFamily: T.mono, fontSize: T.sz.md, color: C.blueDark, padding: 0,
+            fontFamily: T.mono, fontSize: T.sz.md, fontWeight: T.wt.semibold,
+            color: C.blueDark, padding: `${S[2]}px 0`, minHeight: 44, touchAction: "manipulation",
           }}>
-            {"\u2190"} Atras
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={C.blueDark} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M14.5 5.5 8 12l6.5 6.5" />
+            </svg>
+            Atras
           </button>
         ) : <div />}
-        {step !== "submitting" && step !== "result" && (
+        {inFlow && (
           <button onClick={onExit} style={{
             border: "none", background: "transparent", cursor: "pointer",
-            fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight, padding: 0,
+            fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight,
+            padding: `${S[2]}px 0`, minHeight: 44, touchAction: "manipulation",
           }}>
             Cancelar
           </button>
         )}
       </div>
-      <div style={{ fontSize: T.sz.lg, fontWeight: T.wt.semibold, color: C.ink }}>
+      <div style={{ fontSize: T.sz.xl, fontWeight: T.wt.bold, color: C.titleDeep, letterSpacing: "-0.3px" }}>
         {stepLabels[step]}
       </div>
-      {step !== "submitting" && step !== "result" && (
-        <div style={{ fontSize: T.sz.xs, color: C.inkLight, marginTop: 2 }}>
-          Paso {stepNumber[step]} de 5
-        </div>
+      {inFlow && (
+        <>
+          {/* §23: progreso móvil compacto — dónde estoy y qué falta */}
+          <div style={{ display: "flex", gap: 5, marginTop: S[2] }} aria-label={`Paso ${current} de 5`}>
+            {[1, 2, 3, 4, 5].map(n => (
+              <span key={n} aria-hidden style={{
+                flex: 1, height: 4, borderRadius: 999,
+                background: n <= current ? C.blueDark : C.line,
+                transition: "background 0.2s",
+              }} />
+            ))}
+          </div>
+          <div style={{ fontSize: T.sz.xs, color: C.inkLight, marginTop: S[1] }}>
+            Paso {current} de 5
+          </div>
+        </>
       )}
     </div>
   );
@@ -701,7 +722,7 @@ function CustomerContextStep({
           borderRadius: R.lg, marginBottom: S[3],
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
-            <span style={{ fontSize: T.sz.lg }}>{"\u26A0"}</span>
+            <SellerIcon name="alert" size={18} color={C.amberDark} />
             <div>
               <div style={{ fontWeight: T.wt.semibold, fontSize: T.sz.sm, color: C.amberDark }}>
                 Cliente con cartera vencida &gt;30 dias
@@ -893,12 +914,14 @@ function ProductSearchStep({
       {/* Floating cart indicator */}
       {cartCount > 0 && (
         <button onClick={onGoToCart} style={{
-          position: "fixed", bottom: 72, left: "50%", transform: "translateX(-50%)",
-          width: "calc(100% - 32px)", maxWidth: 398,
+          position: "fixed", bottom: "calc(76px + env(safe-area-inset-bottom, 0px))",
+          left: "50%", transform: "translateX(-50%)",
+          width: "calc(100% - 32px)", maxWidth: 398, minHeight: 52,
           padding: `${S[3]}px ${S[4]}px`, background: C.blueDark, color: C.white,
-          border: "none", borderRadius: R.lg, fontFamily: T.mono, fontSize: T.sz.md,
-          fontWeight: T.wt.semibold, cursor: "pointer", boxShadow: E.lg,
+          border: "none", borderRadius: 16, fontFamily: T.mono, fontSize: T.sz.md,
+          fontWeight: T.wt.bold, cursor: "pointer", boxShadow: "0 10px 26px rgba(0,74,173,0.4)",
           display: "flex", justifyContent: "space-between", alignItems: "center",
+          zIndex: 95, touchAction: "manipulation",
         }}>
           <span>Ver carrito ({cartCount})</span>
           <span>{fmtCOP(cartTotal)}</span>
@@ -938,18 +961,19 @@ function ProductCard({
 
   return (
     <div style={{
-      background: C.white, border: `1px solid ${C.line}`, borderRadius: R.lg,
-      overflow: "hidden",
+      background: C.white, border: `1px solid ${C.line}`, borderRadius: 16,
+      overflow: "hidden", boxShadow: E.sm,
     }}>
       <button onClick={onExpand} disabled={!sellable} style={{
         display: "flex", width: "100%", textAlign: "left", padding: S[3],
         border: "none", background: "transparent", cursor: sellable ? "pointer" : "default",
-        fontFamily: T.mono, gap: S[3], alignItems: "center",
-        opacity: sellable ? 1 : 0.5,
+        fontFamily: T.mono, gap: S[3], alignItems: "center", minHeight: 72,
+        opacity: sellable ? 1 : 0.5, touchAction: "manipulation",
       }}>
         {product.thumbnailUrl && (
-          <img src={product.thumbnailUrl} alt="" style={{
-            width: 48, height: 48, objectFit: "cover", borderRadius: R.sm, flexShrink: 0,
+          <img src={product.thumbnailUrl} alt="" loading="lazy" style={{
+            width: 56, height: 56, objectFit: "cover", borderRadius: 12, flexShrink: 0,
+            background: C.surfaceAlt,
           }} />
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -969,8 +993,8 @@ function ProductCard({
             </span>
           </div>
         </div>
-        <span style={{ fontSize: T.sz.lg, color: C.inkLight, flexShrink: 0 }}>
-          {isExpanded ? "\u25B2" : "\u25BC"}
+        <span aria-hidden style={{ flexShrink: 0, transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>
+          <SellerIcon name="chevronRight" size={17} color={C.inkGhost} />
         </span>
       </button>
 
@@ -1242,8 +1266,9 @@ function ReviewStep({
           padding: S[3], background: C.amberLight, border: `1px solid ${C.amberBorder}`,
           borderRadius: R.lg, marginBottom: S[3],
         }}>
-          <div style={{ fontSize: T.sz.sm, color: C.amberDark, fontWeight: T.wt.medium }}>
-            {"\u26A0"} {overdueAlert.message || "Cliente con cartera vencida >30 dias"}
+          <div style={{ display: "flex", alignItems: "flex-start", gap: S[2], fontSize: T.sz.sm, color: C.amberDark, fontWeight: T.wt.semibold, lineHeight: 1.5 }}>
+            <SellerIcon name="alert" size={16} color={C.amberDark} />
+            <span>{overdueAlert.message || "Cliente con cartera vencida >30 dias"}</span>
           </div>
         </div>
       )}
@@ -1298,16 +1323,17 @@ function ReviewStep({
       {/* Actions */}
       <div style={{ display: "flex", gap: S[2], marginTop: S[2] }}>
         <button onClick={onBack} style={{
-          flex: 1, padding: `${S[3]}px`, background: C.white, color: C.inkMid,
-          border: `1px solid ${C.line}`, borderRadius: R.md, fontFamily: T.mono,
-          fontSize: T.sz.md, cursor: "pointer",
+          flex: 1, minHeight: 52, padding: `${S[3]}px`, background: C.white, color: C.inkMid,
+          border: `1.5px solid ${C.line}`, borderRadius: 14, fontFamily: T.mono,
+          fontSize: T.sz.md, fontWeight: T.wt.semibold, cursor: "pointer", touchAction: "manipulation",
         }}>
           Editar
         </button>
         <button onClick={onSubmit} style={{
-          flex: 2, padding: `${S[3]}px`, background: C.blueDark, color: C.white,
-          border: "none", borderRadius: R.md, fontFamily: T.mono, fontSize: T.sz.md,
-          fontWeight: T.wt.bold, cursor: "pointer",
+          flex: 2, minHeight: 52, padding: `${S[3]}px`, background: C.blueDark, color: C.white,
+          border: "none", borderRadius: 14, fontFamily: T.mono, fontSize: T.sz.lg,
+          fontWeight: T.wt.bold, cursor: "pointer", boxShadow: "0 8px 22px rgba(0,74,173,0.3)",
+          touchAction: "manipulation",
         }}>
           Enviar pedido
         </button>
@@ -1329,8 +1355,16 @@ function ResultStep({
     <div style={{ textAlign: "center", padding: `${S[10]}px ${S[4]}px` }}>
       {result.ok ? (
         <>
-          <div style={{ fontSize: 48, marginBottom: S[3] }}>{"\u2705"}</div>
-          <div style={{ fontSize: T.sz.xl, fontWeight: T.wt.bold, color: C.ink, marginBottom: S[2] }}>
+          <div style={{
+            width: 72, height: 72, borderRadius: 24, background: C.greenLight,
+            border: `1.5px solid ${C.greenBorder}`, margin: `0 auto ${S[3]}px`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke={C.green} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M20 6.5 9.5 17 4.5 12" />
+            </svg>
+          </div>
+          <div style={{ fontSize: T.sz["2xl"], fontWeight: T.wt.bold, color: C.titleDeep, marginBottom: S[2] }}>
             Pedido enviado
           </div>
           {result.error && (
@@ -1344,8 +1378,16 @@ function ResultStep({
         </>
       ) : (
         <>
-          <div style={{ fontSize: 48, marginBottom: S[3] }}>{"\u274C"}</div>
-          <div style={{ fontSize: T.sz.xl, fontWeight: T.wt.bold, color: C.red, marginBottom: S[2] }}>
+          <div style={{
+            width: 72, height: 72, borderRadius: 24, background: C.redLight,
+            border: `1.5px solid ${C.redBorder}`, margin: `0 auto ${S[3]}px`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={C.redDark} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M6 6l12 12M18 6 6 18" />
+            </svg>
+          </div>
+          <div style={{ fontSize: T.sz["2xl"], fontWeight: T.wt.bold, color: C.red, marginBottom: S[2] }}>
             Error al crear pedido
           </div>
           <div style={{ fontSize: T.sz.sm, color: C.inkMid, marginBottom: S[4] }}>
@@ -1354,9 +1396,10 @@ function ResultStep({
         </>
       )}
       <button onClick={onDone} style={{
-        padding: `${S[3]}px ${S[6]}px`, background: C.blueDark, color: C.white,
-        border: "none", borderRadius: R.md, fontFamily: T.mono, fontSize: T.sz.md,
-        fontWeight: T.wt.semibold, cursor: "pointer",
+        minHeight: 52, padding: `${S[3]}px ${S[6]}px`, background: C.blueDark, color: C.white,
+        border: "none", borderRadius: 14, fontFamily: T.mono, fontSize: T.sz.lg,
+        fontWeight: T.wt.semibold, cursor: "pointer", touchAction: "manipulation",
+        boxShadow: "0 8px 22px rgba(0,74,173,0.3)",
       }}>
         Volver al inicio
       </button>

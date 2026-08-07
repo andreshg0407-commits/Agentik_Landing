@@ -18,6 +18,7 @@ import {
   DetailSection,
   DetailKpi,
 } from "./seller-app-shared";
+import { SellerIcon, SearchField, StatusChip, EmptyState, appCard, btnPrimary } from "./seller-ui-kit";
 
 // ── Clientes List ───────────────────────────────────────────────────────────
 
@@ -57,40 +58,29 @@ export function ClientesView({
 
   return (
     <div style={{ padding: S[4] }}>
-      <input
-        type="text"
-        placeholder="Buscar cliente..."
-        value={search}
-        onChange={e => setSearch(e.target.value)}
-        style={{
-          width: "100%", padding: `${S[2]}px ${S[3]}px`, border: `1px solid ${C.line}`,
-          borderRadius: R.md, fontFamily: T.mono, fontSize: T.sz.md, background: C.white,
-          outline: "none", boxSizing: "border-box", marginBottom: S[3],
-        }}
-      />
+      <div style={{ marginBottom: S[3] }}>
+        <SearchField value={search} onChange={setSearch} placeholder="Buscar cliente..." />
+      </div>
       <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[4] }}>
         <button onClick={() => setShowInactiveOnly(false)} style={{
-          ...filterBtnStyle,
+          ...filterBtnStyle, minHeight: 38, border: `1.5px solid ${!showInactiveOnly ? C.blueDark : C.line}`,
           background: !showInactiveOnly ? C.blueDark : C.white,
-          color: !showInactiveOnly ? C.white : C.inkMid,
-          border: `1px solid ${!showInactiveOnly ? C.blueDark : C.line}`,
+          color: !showInactiveOnly ? C.white : C.ink,
         }}>
           Todos ({customers.length})
         </button>
         <button onClick={() => setShowInactiveOnly(true)} style={{
-          ...filterBtnStyle,
+          ...filterBtnStyle, minHeight: 38, border: `1.5px solid ${showInactiveOnly ? C.amberDark : C.line}`,
           background: showInactiveOnly ? C.amberDark : C.white,
-          color: showInactiveOnly ? C.white : C.inkMid,
-          border: `1px solid ${showInactiveOnly ? C.amberDark : C.line}`,
+          color: showInactiveOnly ? C.white : C.ink,
         }}>
           Inactivos +90d ({inactiveCustomerIds.length})
         </button>
       </div>
 
       {filtered.length === 0 ? (
-        <div style={{ textAlign: "center", padding: `${S[10]}px ${S[4]}px`, color: C.inkLight, fontSize: T.sz.md }}>
-          {search ? "Sin resultados" : "Sin clientes"}
-        </div>
+        <EmptyState icon="users" title={search ? "Sin resultados" : "Sin clientes"}
+          subtitle={search ? "Prueba con otro nombre, NIT o ciudad" : undefined} />
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
           {filtered.map(c => {
@@ -118,46 +108,54 @@ function CustomerCard({ customer, isInactive, inactiveInfo, onSelect }: {
   const hasOverdue = customer.overdueReceivable > 0 && customer.maxDpd > 30;
   return (
     <button onClick={onSelect} style={{
-      display: "block", width: "100%", textAlign: "left", padding: S[3],
-      background: C.white, border: `1px solid ${hasOverdue ? C.redBorder : isInactive ? C.amberBorder : C.line}`,
-      borderRadius: R.lg, cursor: "pointer", fontFamily: T.mono,
+      ...appCard,
+      display: "flex", alignItems: "flex-start", gap: S[3], width: "100%",
+      textAlign: "left", padding: S[3],
+      border: `1px solid ${hasOverdue ? C.redBorder : isInactive ? C.amberBorder : C.line}`,
+      cursor: "pointer", fontFamily: T.mono, minHeight: 76, touchAction: "manipulation",
     }}>
-      <div style={{ display: "flex", alignItems: "center", gap: S[1], marginBottom: S[1] }}>
-        <span style={{
-          fontSize: T.sz.md, fontWeight: T.wt.semibold, color: C.ink, flex: 1, minWidth: 0,
-          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-        }}>
-          {customer.name}
-        </span>
-        {isInactive && (
+      <span aria-hidden style={{
+        width: 42, height: 42, borderRadius: 13, flexShrink: 0,
+        background: hasOverdue ? C.redLight : C.blueLight,
+        color: hasOverdue ? C.redDark : C.blueDark,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: T.sz.lg, fontWeight: T.wt.bold,
+      }}>
+        {(customer.name || "C")[0].toUpperCase()}
+      </span>
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: S[1], marginBottom: 2 }}>
           <span style={{
-            fontSize: T.sz.xs, color: C.amberDark, background: C.amberLight,
-            padding: `1px ${S[1]}px`, borderRadius: R.sm, whiteSpace: "nowrap",
+            fontSize: T.sz.md, fontWeight: T.wt.bold, color: C.ink, flex: 1, minWidth: 0,
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
           }}>
-            {inactiveInfo?.daysSinceLastPurchase ? `${inactiveInfo.daysSinceLastPurchase}d` : "Sin compras"}
+            {customer.name}
           </span>
-        )}
-        {hasOverdue && (
-          <span style={{
-            fontSize: T.sz.xs, color: C.redDark, background: C.redLight,
-            padding: `1px ${S[1]}px`, borderRadius: R.sm, whiteSpace: "nowrap",
-          }}>
-            {customer.maxDpd}d vencido
-          </span>
-        )}
-      </div>
-      <div style={{ fontSize: T.sz.xs, color: C.inkLight, marginBottom: S[1] }}>
-        {customer.city ?? "\u2014"}{customer.nit ? ` \u00B7 ${customer.nit}` : ""}
-      </div>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: T.sz.xs, color: C.inkMid }}>
-        <span>
-          Cartera: {fmtCOP(customer.totalReceivable)}
-          {customer.overdueReceivable > 0 && (
-            <span style={{ color: C.red }}> ({fmtCOP(customer.overdueReceivable)} vencida)</span>
+          {isInactive && (
+            <StatusChip bg={C.amberLight} color={C.amberDark}>
+              {inactiveInfo?.daysSinceLastPurchase ? `${inactiveInfo.daysSinceLastPurchase}d` : "Sin compras"}
+            </StatusChip>
+          )}
+          {hasOverdue && (
+            <StatusChip bg={C.redLight} color={C.redDark}>{customer.maxDpd}d vencido</StatusChip>
           )}
         </span>
-        <span>Ult: {fmtDaysAgo(customer.lastPurchaseDate)}</span>
-      </div>
+        <span style={{ display: "block", fontSize: T.sz.xs, color: C.inkLight, marginBottom: S[1] }}>
+          {customer.city ?? "\u2014"}{customer.nit ? ` \u00B7 ${customer.nit}` : ""}
+        </span>
+        <span style={{ display: "flex", justifyContent: "space-between", gap: S[2], fontSize: T.sz.xs, color: C.inkMid }}>
+          <span style={{ minWidth: 0 }}>
+            Cartera: <strong style={{ color: C.ink }}>{fmtCOP(customer.totalReceivable)}</strong>
+            {customer.overdueReceivable > 0 && (
+              <span style={{ color: C.red }}> ({fmtCOP(customer.overdueReceivable)} vencida)</span>
+            )}
+          </span>
+          <span style={{ whiteSpace: "nowrap" }}>Ult: {fmtDaysAgo(customer.lastPurchaseDate)}</span>
+        </span>
+      </span>
+      <span aria-hidden style={{ alignSelf: "center" }}>
+        <SellerIcon name="chevronRight" size={16} color={C.inkGhost} />
+      </span>
     </button>
   );
 }
@@ -204,9 +202,10 @@ export function ClienteDetailView({
       <button onClick={onBack} style={{
         display: "flex", alignItems: "center", gap: S[1], border: "none",
         background: "transparent", cursor: "pointer", fontFamily: T.mono,
-        fontSize: T.sz.md, color: C.blueDark, padding: 0, marginBottom: S[3],
+        fontSize: T.sz.md, fontWeight: T.wt.semibold, color: C.blueDark,
+        padding: `${S[2]}px 0`, minHeight: 44, marginBottom: S[1], touchAction: "manipulation",
       }}>
-        {"\u2190"} Clientes
+        <SellerIcon name="back" size={17} color={C.blueDark} /> Clientes
       </button>
 
       <h2 style={{
@@ -219,18 +218,34 @@ export function ClienteDetailView({
         {customer?.city ?? "\u2014"}{customer?.nit ? ` \u00B7 NIT: ${customer.nit}` : ""}
       </div>
 
-      {/* Create order CTA */}
+      {/* §20: cartera vencida >30d — advertencia fuerte y controlada (NO bloquea) */}
+      {customer && customer.overdueReceivable > 0 && customer.maxDpd > 30 && (
+        <div style={{
+          display: "flex", alignItems: "flex-start", gap: S[2],
+          padding: S[3], marginBottom: S[3],
+          background: C.redLight, border: `1px solid ${C.redBorder}`, borderRadius: 16,
+        }}>
+          <SellerIcon name="alert" size={18} color={C.redDark} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: T.sz.md, fontWeight: T.wt.bold, color: C.redDark }}>
+              Cartera vencida
+            </div>
+            <div style={{ fontSize: T.sz.sm, color: C.redDark, marginTop: 2, lineHeight: 1.5 }}>
+              {fmtCOP(customer.overdueReceivable)} vencida · hasta {customer.maxDpd} días.
+              Puedes registrar el pedido; queda como advertencia.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create order CTA — acción primaria (§19) */}
       {onCreateOrder && (
         <button
           onClick={() => onCreateOrder(customerId)}
-          style={{
-            width: "100%", padding: `${S[2]}px ${S[4]}px`, marginBottom: S[4],
-            background: C.blueDark, color: C.white, border: "none",
-            borderRadius: R.md, fontFamily: T.mono, fontSize: T.sz.md,
-            fontWeight: T.wt.semibold, cursor: "pointer",
-          }}
+          style={{ ...btnPrimary, marginBottom: S[4] }}
         >
-          + Crear pedido
+          <SellerIcon name="cart" size={19} color={C.white} />
+          Crear pedido
         </button>
       )}
 

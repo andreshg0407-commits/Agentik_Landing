@@ -68,16 +68,25 @@ async function getPortfolioAttention(
           deepLink = `/${orgSlug}/comercial/maletas?vendor=${item.sellerId}&tab=surtido`;
         }
 
+        // Carry product image for withdrawal alerts (P0: retiro must show photo)
+        const imageUrl = frontlineType === "SAMPLE_WITHDRAWAL_REQUIRED"
+          ? (item.evidence?.firstRetiroImageUrl as string | null) ?? null
+          : undefined;
+
         return {
           type: frontlineType,
           severity: item.severity,
           organizationId: orgId,
           sellerId: item.sellerId,
           portfolioId: item.portfolioId ?? undefined,
+          referenceCode: frontlineType === "SAMPLE_WITHDRAWAL_REQUIRED"
+            ? (item.evidence?.firstRetiroRef as string | null) ?? undefined
+            : undefined,
           title: item.title,
           evidence: item.evidence,
           suggestedAction: item.suggestedAction ?? undefined,
           deepLink,
+          imageUrl,
           createdAt: item.createdAt,
           deduplicationKey: `frontline:${item.deduplicationKey}`,
           provenance,

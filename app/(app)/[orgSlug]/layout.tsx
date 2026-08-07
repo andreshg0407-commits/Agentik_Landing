@@ -65,6 +65,16 @@ export default async function OrgLayout({
     showPlatformAdmin,
   });
 
+  // ── Seller App shell bypass ─────────────────────────────────────────────────
+  // /[orgSlug]/seller-app is a dedicated mobile-first viewport.
+  // It owns the full screen — no enterprise rails, sidebars, or right panels.
+  // All roles (seller, manager, admin) see the Seller App as a standalone surface.
+  const isSellerApp = pathname.includes(`/${ctx.orgSlug}/seller-app`);
+
+  if (isSellerApp) {
+    return <>{children}</>;
+  }
+
   return (
     <>
       <style>{`

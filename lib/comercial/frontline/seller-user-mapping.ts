@@ -18,6 +18,7 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { buildSellerDirectory } from "@/lib/comercial/foundation/seller-directory";
+import { lookupSellerTerceroId, bootstrapSellerTerceroId } from "./seller-tercero-mapping";
 import type {
   ResolvedSellerIdentity,
   SellerMappingSource,
@@ -96,13 +97,21 @@ export async function resolveCurrentSeller(input: {
     const directory = await buildSellerDirectory(organizationId);
     const seller = directory.sellers.find(s => s.sellerSlug === explicitSlug);
 
+    // Canonical slug → sellerTerceroId lookup (no runtime name matching).
+    // Primary: slug-based lookup from persisted canonical mapping.
+    // Fallback: bootstrap from sellerName (slug normalization, not name authority).
+    // Source: CustomerOrderRecord.sellerTerceroId ← SAG ka_nl_tercero_vend
+    const sagSellerCode =
+      await lookupSellerTerceroId(organizationId, explicitSlug) ??
+      await bootstrapSellerTerceroId(organizationId, seller?.sellerName ?? null);
+
     return {
       userId,
       organizationId,
       sellerId: explicitSlug,
       sellerName: seller?.sellerName ?? null,
       sellerSlug: explicitSlug,
-      sagSellerCode: null,
+      sagSellerCode,
       role,
       mappingSource: "membership_seller_slug",
       isSellerScoped: !isManager,
@@ -142,13 +151,16 @@ export async function resolveCurrentSeller(input: {
     });
 
     if (match) {
+      const sagCode =
+        await lookupSellerTerceroId(organizationId, match.sellerSlug) ??
+        await bootstrapSellerTerceroId(organizationId, match.sellerName);
       return {
         userId,
         organizationId,
         sellerId: match.sellerSlug,
         sellerName: match.sellerName,
         sellerSlug: match.sellerSlug,
-        sagSellerCode: null,
+        sagSellerCode: sagCode,
         role,
         mappingSource: "email_crm_match",
         isSellerScoped: true,

@@ -168,6 +168,9 @@ export interface FrontlineAttentionItem {
   suggestedAction?: string;
   deepLink?: string;
 
+  /** Presentation-safe product image (optional). Not in dedup key. */
+  imageUrl?: string | null;
+
   createdAt: string;
   deduplicationKey: string;
 
