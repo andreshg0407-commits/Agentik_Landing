@@ -207,9 +207,10 @@ function buildCanonical(
 export async function getCustomer(
   organizationId: string,
   customerId: string,
+  options?: { sellerScopeFilter?: Record<string, unknown> },
 ): Promise<CanonicalCommercialCustomer | null> {
   const p = await db.customerProfile.findFirst({
-    where: { id: customerId, organizationId },
+    where: { id: customerId, organizationId, ...(options?.sellerScopeFilter ?? {}) },
     select: PROFILE_SELECT,
   });
   if (!p) return null;
@@ -335,11 +336,13 @@ export async function getCustomerBranches(
 export async function searchCustomers(
   organizationId: string,
   query: string,
+  options?: { sellerScopeFilter?: Record<string, unknown> },
 ): Promise<CustomerSearchResult[]> {
   const q = query.trim();
   const where: any = {
     organizationId,
     status: "ACTIVE",
+    ...(options?.sellerScopeFilter ?? {}),
   };
   if (q) {
     where.OR = [

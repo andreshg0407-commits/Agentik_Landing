@@ -40,6 +40,12 @@ export type {
   SellerAppNavigation,
   OverdueEnforcementLevel,
   OverduePolicyConfig,
+  LocationPermissionState,
+  SellerLocationContext,
+  CommissionBand,
+  SellerCommissionStatement,
+  SellerAdvanceMovement,
+  SellerAdvanceStatement,
 } from "./seller-app-types";
 
-export { DEFAULT_OVERDUE_POLICY } from "./seller-app-types";
+export { DEFAULT_OVERDUE_POLICY, SELLER_COMMISSION_BANDS } from "./seller-app-types";

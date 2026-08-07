@@ -12,6 +12,9 @@
  *   - Inactive customers: >90 day intelligence
  *   - Catalog generation: stub contract for Marketing Studio
  *   - Feature flags: seller app capabilities
+ *   - Location context: browser geolocation capture
+ *   - Commission policy: frozen business rates (NOT implemented)
+ *   - Advances contract: account 133010 read model (NOT implemented)
  */
 
 import type { FrontlineProvenance, AttentionSeverity } from "./frontline-types";
@@ -191,3 +194,91 @@ export const DEFAULT_OVERDUE_POLICY: OverduePolicyConfig = {
   enforcement: "WARNING",
   thresholdDays: 30,
 };
+
+// ── Seller Location Context ────────────────────────────────────────────────
+//
+// Browser Geolocation for coordinates. Approved reverse-geocoding for city.
+// No IP-based city inference. Not order-blocking unless future policy.
+
+export type LocationPermissionState = "granted" | "denied" | "prompt" | "unavailable";
+
+export interface SellerLocationContext {
+  latitude: number | null;
+  longitude: number | null;
+  accuracy: number | null;         // meters
+  city: string | null;             // from approved reverse-geocoding only
+  capturedAt: string | null;       // ISO
+  permissionState: LocationPermissionState;
+}
+
+// ── Seller Commission Policy (FROZEN — NOT implemented) ────────────────────
+//
+// Sprint: AGENTIK-SELLER-APP-PRODUCT-CONTRACT-01
+// Status: FROZEN. Business rates stored as domain policy. NOT in React.
+//
+// Calculates commission % based on days from invoice issue to collection.
+// Missing SAG sources documented in seller-app-product-contract.md:
+//   1. Seller ID on invoice (vw_agentik_cartera exposes VENDEDOR name, not ID)
+//   2. Invoice issue date from recaudos join
+//   3. Partial payment behavior certification
+//   4. Account 133010 per-seller movements
+
+export interface CommissionBand {
+  minDays: number;
+  maxDays: number;      // inclusive
+  rate: number;         // e.g. 0.05 = 5%
+}
+
+export const SELLER_COMMISSION_BANDS: CommissionBand[] = [
+  { minDays: 0,   maxDays: 59,  rate: 0.05 },
+  { minDays: 60,  maxDays: 75,  rate: 0.04 },
+  { minDays: 76,  maxDays: 90,  rate: 0.03 },
+  { minDays: 91,  maxDays: 105, rate: 0.02 },
+  { minDays: 106, maxDays: Infinity, rate: 0.01 },
+];
+
+export interface SellerCommissionStatement {
+  sellerId: string;
+  sellerName: string;
+  periodStart: string;          // ISO date
+  periodEnd: string;            // ISO date
+
+  lines: Array<{
+    invoiceNumber: string;
+    customerName: string;
+    invoiceDate: string;        // ISO date — when invoice was issued
+    collectionDate: string;     // ISO date — when payment was received
+    daysToCollect: number;      // collectionDate - invoiceDate
+    invoiceAmount: number;
+    collectedAmount: number;
+    commissionRate: number;     // from SELLER_COMMISSION_BANDS
+    commissionAmount: number;   // collectedAmount * commissionRate
+  }>;
+
+  totalCommission: number;
+  status: "DRAFT" | "APPROVED" | "PAID";
+}
+
+// ── Seller Advances / Loans Contract (FROZEN — NOT implemented) ────────────
+//
+// Account: 133010 (PRESTAMOS / ANTICIPOS VENDEDORES)
+// Source: SAG accounting module — NO current vw_agentik view exposes this.
+// seller <-> accounting third-party must be deterministic. No name join.
+
+export interface SellerAdvanceMovement {
+  date: string;                 // ISO date
+  documentNumber: string;
+  concept: string;
+  debit: number;
+  credit: number;
+}
+
+export interface SellerAdvanceStatement {
+  sellerId: string;
+  sellerName: string;
+  accountCode: "133010";
+  currentBalance: number;
+  movements: SellerAdvanceMovement[];
+  asOf: string;                 // ISO
+  status: "NOT_AVAILABLE";      // until SAG view exists
+}

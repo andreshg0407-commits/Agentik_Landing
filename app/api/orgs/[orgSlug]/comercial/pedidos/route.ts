@@ -6,6 +6,7 @@
  *          return_to_draft, check_duplicate, stats, send_to_sag
  *
  * Sprint: COMERCIAL-PEDIDOS-CREATOR-01
+ * Sprint: AGENTIK-SELLER-APP-UI-02-P0-SELLER-SCOPE
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -36,20 +37,59 @@ import {
 } from "@/lib/comercial/clientes/canonical-customer-service";
 import { getCustomerCommercialContext } from "@/lib/comercial/frontline/customer-commercial-context";
 import { emitCustomerOverdueAttention } from "@/lib/comercial/frontline/frontline-attention-service";
+import {
+  resolveCurrentSeller,
+  deriveSellerScope,
+  customerScopeFilter,
+} from "@/lib/comercial/frontline/seller-user-mapping";
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ orgSlug: string }> },
 ) {
   const { orgSlug } = await params;
-  const { organization } = await requireOrgAccess(orgSlug);
+  const { user, organization } = await requireOrgAccess(orgSlug);
   const orgId = organization.id;
+
+  // Resolve seller identity + scope for customer authorization
+  const sellerIdentity = await resolveCurrentSeller({
+    organizationId: orgId,
+    userId: user.id,
+  });
+  const sellerScope = deriveSellerScope(sellerIdentity);
+  const custScopeFilter = customerScopeFilter(sellerScope);
 
   const body = await req.json();
   const action = body.action as string;
 
   switch (action) {
     case "create": {
+      // Verify seller can create order for this customer
+      if (body.header?.customerId && !sellerScope.canAccessAllCustomers) {
+        // Resolve customer by NIT or profileId to verify ownership
+        const custAuth = await getCustomer(orgId, body.header.customerId, {
+          sellerScopeFilter: custScopeFilter,
+        });
+        // Also check by customerCode (sagCode) if customerId lookup fails
+        // because customerId in the header is NIT, not profileId
+        if (!custAuth && body.header.customerCode) {
+          const { prisma } = await import("@/lib/prisma");
+          const profileByCode = await (prisma as any).customerProfile.findFirst({
+            where: {
+              organizationId: orgId,
+              erpId: body.header.customerCode,
+              ...custScopeFilter,
+            },
+            select: { id: true },
+          });
+          if (!profileByCode) {
+            return NextResponse.json(
+              { error: "No autorizado para crear pedido para este cliente" },
+              { status: 403 },
+            );
+          }
+        }
+      }
       if (body.wizardSessionKey) {
         const { order, alreadyExists, reservation } = await createOrderDraftDeduped(orgId, {
           header: body.header, lines: body.lines,
@@ -166,7 +206,9 @@ export async function POST(
     }
 
     case "search_customers": {
-      const results = await searchCustomers(orgId, body.query ?? "");
+      const results = await searchCustomers(orgId, body.query ?? "", {
+        sellerScopeFilter: custScopeFilter,
+      });
       // Map canonical results to wizard-compatible shape
       const customers = results.map(r => ({
         customerCode: r.sagCode ?? "",
@@ -184,14 +226,23 @@ export async function POST(
     }
 
     case "get_customer_detail": {
-      const customer = await getCustomer(orgId, body.profileId);
+      const customer = await getCustomer(orgId, body.profileId, {
+        sellerScopeFilter: custScopeFilter,
+      });
       if (!customer) {
-        return NextResponse.json({ error: "Cliente no encontrado" }, { status: 404 });
+        return NextResponse.json({ error: "Cliente no encontrado" }, { status: 403 });
       }
       return NextResponse.json({ customer });
     }
 
     case "get_customer_context": {
+      // Verify customer belongs to seller before loading context
+      const custCheck = await getCustomer(orgId, body.profileId, {
+        sellerScopeFilter: custScopeFilter,
+      });
+      if (!custCheck) {
+        return NextResponse.json({ error: "Cliente no encontrado" }, { status: 403 });
+      }
       const ctx = await getCustomerCommercialContext(orgId, body.profileId);
       if (!ctx) {
         return NextResponse.json({ error: "Cliente no encontrado" }, { status: 404 });
