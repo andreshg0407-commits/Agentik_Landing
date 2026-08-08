@@ -88,6 +88,8 @@ export function SellerAppShell(props: SellerAppShellProps) {
       const confirmed = window.confirm("Tiene un pedido en progreso. ¿Desea salir y perder los cambios?");
       if (!confirmed) return;
     }
+    // Dismiss keyboard + reset iOS Safari visual viewport before switching views
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     setActiveTab(tab);
     setSelectedCustomerId(null);
     if (tab !== "nuevo_pedido") setOrderPreSelectedCustomerId(null);

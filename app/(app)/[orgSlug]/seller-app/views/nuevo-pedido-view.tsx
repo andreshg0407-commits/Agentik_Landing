@@ -582,10 +582,9 @@ function CustomerSelectionStep({
         placeholder="Buscar por nombre o NIT..."
         value={search}
         onChange={e => setSearch(e.target.value)}
-        autoFocus
         style={{
           width: "100%", padding: `${S[2]}px ${S[3]}px`, border: `1px solid ${C.line}`,
-          borderRadius: R.md, fontFamily: T.mono, fontSize: T.sz.md, background: C.white,
+          borderRadius: R.md, fontFamily: T.mono, fontSize: 16, background: C.white,
           outline: "none", boxSizing: "border-box", marginBottom: S[3],
         }}
       />
@@ -879,10 +878,9 @@ function ProductSearchStep({
         placeholder="Buscar referencia o nombre..."
         value={query}
         onChange={e => setQuery(e.target.value)}
-        autoFocus
         style={{
           width: "100%", padding: `${S[2]}px ${S[3]}px`, border: `1px solid ${C.line}`,
-          borderRadius: R.md, fontFamily: T.mono, fontSize: T.sz.md, background: C.white,
+          borderRadius: R.md, fontFamily: T.mono, fontSize: 16, background: C.white,
           outline: "none", boxSizing: "border-box", marginBottom: S[3],
         }}
       />
@@ -1086,7 +1084,7 @@ function VariantGrid({
               onChange={e => { const n = parseInt(e.target.value); if (n > 0) setQuantity(n); }}
               style={{
                 width: 40, textAlign: "center", border: "none", fontFamily: T.mono,
-                fontSize: T.sz.md, outline: "none", background: "transparent",
+                fontSize: 16, outline: "none", background: "transparent",
               }}
             />
             <button onClick={() => setQuantity(q => q + 1)} style={{
@@ -1314,7 +1312,7 @@ function ReviewStep({
           rows={3}
           style={{
             width: "100%", padding: S[2], border: `1px solid ${C.line}`,
-            borderRadius: R.sm, fontFamily: T.mono, fontSize: T.sz.sm,
+            borderRadius: R.sm, fontFamily: T.mono, fontSize: 16,
             resize: "vertical", outline: "none", boxSizing: "border-box",
           }}
         />
