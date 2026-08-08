@@ -9,15 +9,40 @@
  * Copy genérico antes de autenticar (sin identidad de vendedor implícita).
  */
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
 import { signIn } from "next-auth/react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 const BLUE = "#004AAD";
 const NAVY = "#0D2454";
 
+/**
+ * Validate callbackUrl is an internal path only (no open redirect).
+ * Returns "/" for any external, protocol-based, or malformed value.
+ */
+function sanitizeCallbackUrl(raw: string | null): string {
+  if (!raw || typeof raw !== "string") return "/";
+  const trimmed = raw.trim();
+  // Must start with exactly one "/" — reject "//host", empty, protocol schemes
+  if (!trimmed.startsWith("/") || trimmed.startsWith("//")) return "/";
+  // Reject protocol-like patterns anywhere
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) return "/";
+  // Reject backslash tricks (\\host)
+  if (trimmed.startsWith("\\")) return "/";
+  return trimmed;
+}
+
 export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -42,7 +67,9 @@ export default function LoginPage() {
       return;
     }
 
-    router.push("/");
+    // Redirect to the originally requested page (internal only)
+    const callbackUrl = sanitizeCallbackUrl(searchParams.get("callbackUrl"));
+    router.push(callbackUrl);
   }
 
   const labelStyle: React.CSSProperties = {

@@ -1,4 +1,5 @@
 import { headers }    from "next/headers";
+import { redirect }  from "next/navigation";
 import { requireTenant }                          from "@/lib/tenant";
 import { getEnabledModules, resolveModuleForPath } from "@/lib/tenant/modules";
 import { filterModulesByRole, isInternalRole }    from "@/lib/auth/module-access";
@@ -28,7 +29,19 @@ export default async function OrgLayout({
   params:   Promise<{ orgSlug: string }>;
 }) {
   const { orgSlug } = await params;
-  const ctx     = await requireTenant(orgSlug);
+
+  let ctx;
+  try {
+    ctx = await requireTenant(orgSlug);
+  } catch (err: unknown) {
+    // Expired/invalid session → redirect to login with callback
+    if (err instanceof Error && err.message === "UNAUTHENTICATED") {
+      const pathname = headers().get("x-invoke-path") ?? `/${orgSlug}`;
+      redirect(`/login?callbackUrl=${encodeURIComponent(pathname)}`);
+    }
+    // ORG_NOT_FOUND, FORBIDDEN_NOT_MEMBER, FORBIDDEN_ROLE → re-throw (existing policy)
+    throw err;
+  }
   const orgMods = await getEnabledModules(ctx.orgId);
 
   // Intersect org-level feature flags with role-based visibility
