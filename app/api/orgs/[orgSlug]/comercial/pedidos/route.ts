@@ -220,7 +220,15 @@ export async function POST(
         address: r.address ?? "",
         sellerName: r.seller?.name ?? "",
         sellerId: r.seller?.id ?? "",
-        sagReadiness: r.sagReadiness,
+        // Normalize sagReadiness from canonical status string to UI object shape
+        sagReadiness: r.sagReadiness === "READY" ? null : {
+          status: r.sagReadiness,
+          blockers: r.sagReadiness === "DRAFT_ONLY"
+            ? [{ field: "sagCode", reason: "Cliente sin código SAG — solo borrador" }]
+            : r.sagReadiness === "BLOCKED"
+              ? [{ field: "sagCode", reason: "Cliente bloqueado para pedidos SAG" }]
+              : [],
+        },
       }));
       return NextResponse.json({ customers });
     }
@@ -250,7 +258,29 @@ export async function POST(
       const overdueAlert = await emitCustomerOverdueAttention(
         orgId, body.profileId, body.sellerId ?? null, orgSlug,
       );
-      return NextResponse.json({ context: ctx, overdueAlert });
+      // Normalize to Seller App UI contract shape
+      const uiContext = {
+        identity: { name: ctx.customerName, nit: ctx.nitNormalized ?? "" },
+        receivables: ctx.receivables ? {
+          total: ctx.receivables.totalReceivable,
+          overdue: ctx.receivables.overdueAmount,
+          maxDaysOverdue: ctx.receivables.maxDaysOverdue,
+          overdueDocumentCount: ctx.receivables.overdueDocumentCount,
+        } : null,
+        topProductsByUnits: ctx.topProductsByUnits.map(p => ({
+          referenceCode: p.referenceCode,
+          description: p.description,
+          totalUnits: p.totalUnits,
+          purchaseCount: p.purchaseCount,
+        })),
+        totalOrdersL12: ctx.totalOrdersL12,
+        lastPurchaseDate: ctx.lastPurchaseDate,
+      };
+      const uiOverdueAlert = overdueAlert ? {
+        severity: overdueAlert.severity,
+        message: overdueAlert.title,
+      } : null;
+      return NextResponse.json({ context: uiContext, overdueAlert: uiOverdueAlert });
     }
 
     default:

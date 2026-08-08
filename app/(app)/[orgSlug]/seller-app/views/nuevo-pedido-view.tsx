@@ -613,7 +613,7 @@ function CustomerSelectionStep({
               </div>
               {c.sagReadiness && c.sagReadiness.status !== "READY" && (
                 <div style={{ fontSize: T.sz.xs, color: C.amberDark, marginTop: 2 }}>
-                  {c.sagReadiness.blockers.map(b => b.reason).join("; ")}
+                  {(c.sagReadiness.blockers ?? []).map(b => b.reason).join("; ") || c.sagReadiness.status}
                 </div>
               )}
             </button>
