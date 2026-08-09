@@ -100,30 +100,12 @@ interface SelectedCustomer {
 
 // ── Main Component ──────────────────────────────────────────────────────────
 
-/** Shape of an existing order passed in for edit mode. */
-export interface EditOrderPayload {
-  id: string;
-  consecutivo: number;
-  header: {
-    customerId: string;
-    customerName: string;
-    customerCode: string;
-    sellerId: string;
-    sellerName: string;
-    channel: string;
-    notes: string;
-  };
-  lines: CartLine[];
-  status: string;
-}
-
 export function NuevoPedidoView({
   orgSlug,
   orgId,
   sellerIdentity,
   customers,
   preSelectedCustomerId,
-  editOrder,
   onExit,
   onWorkInProgressChange,
 }: {
@@ -132,30 +114,15 @@ export function NuevoPedidoView({
   sellerIdentity: SellerIdentityProps;
   customers: SerializedCustomer[];
   preSelectedCustomerId?: string | null;
-  editOrder?: EditOrderPayload | null;
   onExit: () => void;
   onWorkInProgressChange?: (inProgress: boolean) => void;
 }) {
-  const isEditMode = !!editOrder;
-
-  // In edit mode, skip directly to products step with preloaded data
-  const [step, setStep] = useState<WizardStep>(isEditMode ? "products" : "customer");
-  const [selectedCustomer, setSelectedCustomer] = useState<SelectedCustomer | null>(
-    isEditMode ? {
-      profileId: "",
-      customerCode: editOrder!.header.customerCode,
-      customerName: editOrder!.header.customerName,
-      customerId: editOrder!.header.customerId,
-      city: "",
-      address: "",
-      sellerName: editOrder!.header.sellerName,
-      sellerId: editOrder!.header.sellerId,
-    } : null,
-  );
+  const [step, setStep] = useState<WizardStep>("customer");
+  const [selectedCustomer, setSelectedCustomer] = useState<SelectedCustomer | null>(null);
   const [customerContext, setCustomerContext] = useState<CustomerContext | null>(null);
   const [overdueAlert, setOverdueAlert] = useState<{ severity: string; message: string } | null>(null);
-  const [cart, setCart] = useState<CartLine[]>(isEditMode ? editOrder!.lines : []);
-  const [notes, setNotes] = useState(isEditMode ? editOrder!.header.notes ?? "" : "");
+  const [cart, setCart] = useState<CartLine[]>([]);
+  const [notes, setNotes] = useState("");
   const [submitResult, setSubmitResult] = useState<{ ok: boolean; orderId?: string; error?: string } | null>(null);
   const [wizardSessionKey] = useState(() => `SA-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
 
@@ -275,36 +242,7 @@ export function NuevoPedidoView({
         colorName: l.colorName,
       }));
 
-      if (isEditMode && editOrder) {
-        // Edit mode: update existing draft via update_draft
-        const updateRes = await fetch(`/api/orgs/${orgSlug}/comercial/pedidos`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "update_draft",
-            orderId: editOrder.id,
-            header,
-            lines,
-          }),
-        });
-
-        if (!updateRes.ok) {
-          const err = await updateRes.json().catch(() => ({}));
-          setSubmitResult({ ok: false, error: err.error ?? `Error ${updateRes.status}` });
-          setStep("result");
-          return;
-        }
-
-        const { order: updatedOrder } = await updateRes.json();
-        setSubmitResult({
-          ok: true,
-          orderId: updatedOrder?.id ?? editOrder.id,
-        });
-        setStep("result");
-        return;
-      }
-
-      // Create mode: create draft (idempotent via wizardSessionKey) + submit
+      // Create draft (idempotent via wizardSessionKey) + submit
       const createRes = await fetch(`/api/orgs/${orgSlug}/comercial/pedidos`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -361,7 +299,7 @@ export function NuevoPedidoView({
       setSubmitResult({ ok: false, error: "Error de conexion. Intente nuevamente." });
       setStep("result");
     }
-  }, [selectedCustomer, cart, notes, orgSlug, sellerIdentity, wizardSessionKey, isEditMode, editOrder]);
+  }, [selectedCustomer, cart, notes, orgSlug, sellerIdentity, wizardSessionKey]);
 
   const cartTotal = useMemo(() => cart.reduce((s, l) => s + l.lineTotal, 0), [cart]);
   const cartUnits = useMemo(() => cart.reduce((s, l) => s + l.quantity, 0), [cart]);
@@ -369,7 +307,7 @@ export function NuevoPedidoView({
   return (
     <div style={{ padding: S[4] }}>
       {/* Step header */}
-      <WizardHeader step={step} editMode={isEditMode} editConsecutivo={editOrder?.consecutivo} onBack={() => {
+      <WizardHeader step={step} onBack={() => {
         if (step === "context") setStep("customer");
         else if (step === "products") setStep("context");
         else if (step === "cart") setStep("products");
@@ -439,7 +377,6 @@ export function NuevoPedidoView({
           cartTotal={cartTotal}
           cartUnits={cartUnits}
           overdueAlert={overdueAlert}
-          editMode={isEditMode}
           onBack={() => setStep("cart")}
           onSubmit={handleSubmit}
         />
@@ -457,7 +394,7 @@ export function NuevoPedidoView({
       )}
 
       {step === "result" && submitResult && (
-        <ResultStep result={submitResult} editMode={isEditMode} onDone={onExit} />
+        <ResultStep result={submitResult} onDone={onExit} />
       )}
     </div>
   );
@@ -465,17 +402,17 @@ export function NuevoPedidoView({
 
 // ── Wizard Header ───────────────────────────────────────────────────────────
 
-function WizardHeader({ step, editMode, editConsecutivo, onBack, onExit }: {
-  step: WizardStep; editMode?: boolean; editConsecutivo?: number;
+function WizardHeader({ step, onBack, onExit }: {
+  step: WizardStep;
   onBack: () => void; onExit: () => void;
 }) {
   const stepLabels: Record<WizardStep, string> = {
     customer: "Seleccionar cliente",
     context: "Contexto del cliente",
-    products: editMode ? `Editar pedido #${editConsecutivo ?? ""}` : "Agregar productos",
-    cart: editMode ? "Carrito (editando)" : "Carrito",
-    review: editMode ? "Revisar cambios" : "Revisar pedido",
-    submitting: editMode ? "Guardando..." : "Enviando...",
+    products: "Agregar productos",
+    cart: "Carrito",
+    review: "Revisar pedido",
+    submitting: "Enviando...",
     result: "Resultado",
   };
 
@@ -1488,7 +1425,6 @@ function ReviewStep({
   cartTotal,
   cartUnits,
   overdueAlert,
-  editMode,
   onBack,
   onSubmit,
 }: {
@@ -1499,7 +1435,6 @@ function ReviewStep({
   cartTotal: number;
   cartUnits: number;
   overdueAlert: { severity: string; message: string } | null;
-  editMode?: boolean;
   onBack: () => void;
   onSubmit: () => void;
 }) {
@@ -1580,7 +1515,7 @@ function ReviewStep({
           fontWeight: T.wt.bold, cursor: "pointer", boxShadow: "0 8px 22px rgba(0,74,173,0.3)",
           touchAction: "manipulation",
         }}>
-          {editMode ? "Guardar cambios" : "Enviar pedido"}
+          Enviar pedido
         </button>
       </div>
     </div>
@@ -1591,11 +1526,9 @@ function ReviewStep({
 
 function ResultStep({
   result,
-  editMode,
   onDone,
 }: {
   result: { ok: boolean; orderId?: string; error?: string };
-  editMode?: boolean;
   onDone: () => void;
 }) {
   return (
@@ -1612,7 +1545,7 @@ function ResultStep({
             </svg>
           </div>
           <div style={{ fontSize: T.sz["2xl"], fontWeight: T.wt.bold, color: C.titleDeep, marginBottom: S[2] }}>
-            {editMode ? "Pedido actualizado" : "Pedido creado"}
+            Pedido creado
           </div>
           {result.error && (
             <div style={{ fontSize: T.sz.sm, color: C.amberDark, marginBottom: S[3] }}>
@@ -1635,7 +1568,7 @@ function ResultStep({
             </svg>
           </div>
           <div style={{ fontSize: T.sz["2xl"], fontWeight: T.wt.bold, color: C.red, marginBottom: S[2] }}>
-            {editMode ? "Error al guardar cambios" : "Error al crear pedido"}
+            Error al crear pedido
           </div>
           <div style={{ fontSize: T.sz.sm, color: C.inkMid, marginBottom: S[4] }}>
             {result.error ?? "Error desconocido"}

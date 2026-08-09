@@ -183,16 +183,26 @@ export async function POST(
     }
 
     case "mark_pending_sag": {
+      // SAG sync mutations are desktop-only — seller role blocked
+      if (sellerScope.level === "seller") {
+        return NextResponse.json({ error: "Sincronización SAG no autorizada para vendedores" }, { status: 403 });
+      }
       const order = await markPendingSag(orgId, body.orderId);
       return NextResponse.json({ order });
     }
 
     case "mark_synced": {
+      if (sellerScope.level === "seller") {
+        return NextResponse.json({ error: "Sincronización SAG no autorizada para vendedores" }, { status: 403 });
+      }
       const order = await markSynced(orgId, body.orderId, body.sagOrderId);
       return NextResponse.json({ order });
     }
 
     case "mark_conflict": {
+      if (sellerScope.level === "seller") {
+        return NextResponse.json({ error: "Sincronización SAG no autorizada para vendedores" }, { status: 403 });
+      }
       const order = await markConflict(orgId, body.orderId, body.sagError);
       return NextResponse.json({ order });
     }
@@ -223,6 +233,10 @@ export async function POST(
     }
 
     case "send_to_sag": {
+      // HARD GATE: SAG synchronization is desktop-only — seller role blocked
+      if (sellerScope.level === "seller") {
+        return NextResponse.json({ error: "Sincronización SAG no autorizada para vendedores" }, { status: 403 });
+      }
       const order = await getOrder(orgId, body.orderId);
       if (!order) return NextResponse.json({ error: "Pedido no encontrado" }, { status: 404 });
       const result = await sendOrderToSagQueue(orgId, body.userId ?? "usuario", order);

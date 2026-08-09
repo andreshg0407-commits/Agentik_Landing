@@ -23,6 +23,7 @@ import {
   type SerializedOrderCard,
 } from "./seller-app-shared";
 import { SellerIcon, StatusChip, EmptyState, appCard } from "./seller-ui-kit";
+import { ExistingOrderEditor } from "./existing-order-editor";
 
 // ── Status config ───────────────────────────────────────────────────────────
 
@@ -167,21 +168,40 @@ export function SellerOrdersView({
   orgSlug,
   orgId,
   initialOrderId,
-  onEditOrder,
 }: {
   orders: SerializedOrderCard[];
   orgSlug: string;
   orgId: string;
   initialOrderId?: string;
-  onEditOrder?: (editPayload: import("./nuevo-pedido-view").EditOrderPayload) => void;
 }) {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(initialOrderId ?? null);
+  const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusGroup>("all");
 
   const filtered = useMemo(() => {
     if (statusFilter === "all") return orders;
     return orders.filter(o => orderStatusGroup(o.status, o.syncState) === statusFilter);
   }, [orders, statusFilter]);
+
+  // Editor view — dedicated existing-order editor (NOT the wizard)
+  if (editingOrderId) {
+    return (
+      <ExistingOrderEditor
+        orderId={editingOrderId}
+        orgSlug={orgSlug}
+        orgId={orgId}
+        onClose={(updatedId) => {
+          setEditingOrderId(null);
+          // Return to detail of the same order after save
+          if (updatedId) setSelectedOrderId(updatedId);
+        }}
+        onDeleted={() => {
+          setEditingOrderId(null);
+          setSelectedOrderId(null);
+        }}
+      />
+    );
+  }
 
   // Detail view — fetches full order from server
   if (selectedOrderId) {
@@ -196,7 +216,7 @@ export function SellerOrdersView({
         orgSlug={orgSlug}
         orgId={orgId}
         onBack={() => setSelectedOrderId(null)}
-        onEditOrder={onEditOrder}
+        onEditOrder={(id) => setEditingOrderId(id)}
       />
     );
   }
@@ -307,7 +327,7 @@ function OrderDetailView({
   orgSlug: string;
   orgId: string;
   onBack: () => void;
-  onEditOrder?: (editPayload: import("./nuevo-pedido-view").EditOrderPayload) => void;
+  onEditOrder?: (orderId: string) => void;
 }) {
   const [detail, setDetail] = useState<OrderDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(true);
@@ -483,33 +503,7 @@ function OrderDetailView({
               disabled={!detail || !onEditOrder}
               onClick={() => {
                 if (!detail || !onEditOrder) return;
-                onEditOrder({
-                  id: detail.id,
-                  consecutivo: detail.consecutivo,
-                  header: {
-                    customerId: detail.header.customerId,
-                    customerName: detail.header.customerName,
-                    customerCode: detail.header.customerCode,
-                    sellerId: detail.header.sellerId,
-                    sellerName: detail.header.sellerName,
-                    channel: detail.header.channel,
-                    notes: detail.header.notes,
-                  },
-                  lines: detail.lines.filter(l => !l.removed).map(l => ({
-                    id: l.id,
-                    referenceCode: l.referenceCode,
-                    productName: l.productName,
-                    size: l.size,
-                    color: l.color,
-                    colorName: l.colorName ?? "",
-                    quantity: l.quantity,
-                    availableUnits: l.availableUnits,
-                    unitPrice: l.unitPrice,
-                    lineTotal: l.lineTotal,
-                    thumbnailUrl: l.thumbnailUrl ?? null,
-                  })),
-                  status: detail.status,
-                });
+                onEditOrder(detail.id);
               }}
               style={{
                 ...actionBtnStyle,

@@ -23,7 +23,7 @@ import type { SellerTab, SellerAppShellProps } from "./views/seller-app-shared";
 import { SellerIcon, CopilotSphere, appCard, StatusChip } from "./views/seller-ui-kit";
 import { InicioView } from "./views/inicio-view";
 import { ClientesView, ClienteDetailView } from "./views/clientes-view";
-import { NuevoPedidoView, type EditOrderPayload } from "./views/nuevo-pedido-view";
+import { NuevoPedidoView } from "./views/nuevo-pedido-view";
 import { SellerPortfolioView } from "./views/seller-portfolio-view";
 import { SellerOrdersView } from "./views/seller-orders-view";
 import { SellerAlertsView } from "./views/seller-alerts-view";
@@ -59,7 +59,6 @@ export function SellerAppShell(props: SellerAppShellProps) {
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [orderPreSelectedCustomerId, setOrderPreSelectedCustomerId] = useState<string | null>(null);
   const [deepLinkContext, setDeepLinkContext] = useState<Record<string, string> | undefined>();
-  const [editOrder, setEditOrder] = useState<EditOrderPayload | null>(null);
   const orderInProgressRef = useRef(false);
 
   const alertCount = useMemo(() => props.attention.items.length, [props.attention.items]);
@@ -78,14 +77,8 @@ export function SellerAppShell(props: SellerAppShellProps) {
     setSelectedCustomerId(null);
   }, []);
 
-  const handleEditOrder = useCallback((payload: EditOrderPayload) => {
-    setEditOrder(payload);
-    setActiveTab("nuevo_pedido");
-  }, []);
-
   const handleExitOrder = useCallback(() => {
     setOrderPreSelectedCustomerId(null);
-    setEditOrder(null);
     setActiveTab("inicio");
   }, []);
 
@@ -101,7 +94,6 @@ export function SellerAppShell(props: SellerAppShellProps) {
     setSelectedCustomerId(null);
     if (tab !== "nuevo_pedido") {
       setOrderPreSelectedCustomerId(null);
-      setEditOrder(null);
     }
     // Deep link context is consumed once — clear on next manual nav
     setDeepLinkContext(undefined);
@@ -228,7 +220,6 @@ export function SellerAppShell(props: SellerAppShellProps) {
             sellerIdentity={props.sellerIdentity}
             customers={props.customers}
             preSelectedCustomerId={orderPreSelectedCustomerId}
-            editOrder={editOrder}
             onExit={handleExitOrder}
             onWorkInProgressChange={(inProgress) => { orderInProgressRef.current = inProgress; }}
           />
@@ -239,7 +230,6 @@ export function SellerAppShell(props: SellerAppShellProps) {
             orgSlug={props.orgSlug}
             orgId={props.orgId}
             initialOrderId={deepLinkContext?.orderId}
-            onEditOrder={handleEditOrder}
           />
         )}
         {activeTab === "maleta" && (

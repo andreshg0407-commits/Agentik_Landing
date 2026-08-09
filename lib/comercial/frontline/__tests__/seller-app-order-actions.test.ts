@@ -671,79 +671,80 @@ describe("S. Seller scope enforcement on delete_draft", () => {
 // Suite T: Edit flow implementation (P0-CLOSE FIX 3)
 // ===========================================================================
 
-describe("T. Edit flow implementation", () => {
-  const view = read(NUEVO_PEDIDO_VIEW);
+describe("T. Edit flow — dedicated ExistingOrderEditor (not wizard reuse)", () => {
   const ordersView = read(SELLER_ORDERS_VIEW);
   const shell = read(SHELL);
+  const nuevoPedido = read(NUEVO_PEDIDO_VIEW);
 
-  it("T1: NuevoPedidoView exports EditOrderPayload interface", () => {
+  it("T1: NuevoPedidoView does NOT export EditOrderPayload (removed)", () => {
     assert.ok(
-      view.includes("export interface EditOrderPayload"),
-      "Must export EditOrderPayload for type sharing",
+      !nuevoPedido.includes("export interface EditOrderPayload"),
+      "EditOrderPayload must be removed — editing uses ExistingOrderEditor now",
     );
   });
 
-  it("T2: NuevoPedidoView accepts editOrder prop", () => {
+  it("T2: NuevoPedidoView does NOT accept editOrder prop (removed)", () => {
     assert.ok(
-      view.includes("editOrder?:") || view.includes("editOrder?:"),
-      "Must accept optional editOrder prop",
+      !nuevoPedido.includes("editOrder?:") && !nuevoPedido.includes("editOrder:"),
+      "NuevoPedidoView is now purely a create wizard — no editOrder prop",
     );
   });
 
-  it("T3: Edit mode uses update_draft action (not create)", () => {
+  it("T3: SellerOrdersView imports ExistingOrderEditor", () => {
     assert.ok(
-      view.includes('action: "update_draft"') && view.includes("editOrder.id"),
-      "Must call update_draft with existing order ID in edit mode",
+      ordersView.includes("ExistingOrderEditor"),
+      "Orders view must import the dedicated editor component",
     );
   });
 
-  it("T4: Edit mode shows context-appropriate labels", () => {
+  it("T4: SellerOrdersView has editingOrderId state", () => {
     assert.ok(
-      view.includes("Guardar cambios") && view.includes("Pedido actualizado"),
-      "Submit button and result must reflect edit context",
+      ordersView.includes("editingOrderId"),
+      "Orders view must track which order is being edited",
     );
   });
 
-  it("T5: OrderDetailView passes order data to onEditOrder callback", () => {
+  it("T5: Editor renders when editingOrderId is set", () => {
     assert.ok(
-      ordersView.includes("onEditOrder") && ordersView.includes("onEditOrder({"),
-      "Detail view must construct EditOrderPayload and call onEditOrder",
+      ordersView.includes("editingOrderId") && ordersView.includes("<ExistingOrderEditor"),
+      "Must render ExistingOrderEditor when an order is selected for editing",
     );
   });
 
-  it("T6: Shell wires onEditOrder from SellerOrdersView to NuevoPedidoView", () => {
+  it("T6: Shell does NOT pass editOrder or onEditOrder (cleaned up)", () => {
     assert.ok(
-      shell.includes("onEditOrder={handleEditOrder}") && shell.includes("editOrder={editOrder}"),
-      "Shell must pass editOrder to NuevoPedidoView and onEditOrder to SellerOrdersView",
+      !shell.includes("editOrder={") && !shell.includes("onEditOrder={"),
+      "Shell must not have edit-mode wiring — editing stays in Pedidos tab",
     );
   });
 
   it("T7: Edit button is NOT disabled in detail view", () => {
-    // The old disabled button without handler is gone
     assert.ok(
       !ordersView.includes('title="Editar pedido (proximamente)"'),
       "Edit button must not have 'proximamente' placeholder",
     );
   });
 
-  it("T8: Edit mode preloads cart lines from existing order", () => {
+  it("T8: NuevoPedidoView has no isEditMode branching", () => {
     assert.ok(
-      view.includes("isEditMode ? editOrder!.lines : []"),
-      "Cart must be preloaded with existing lines in edit mode",
+      !nuevoPedido.includes("isEditMode"),
+      "Create wizard must have zero edit-mode logic",
     );
   });
 
-  it("T9: Edit mode preloads notes from existing order", () => {
+  it("T9: Shell does NOT import EditOrderPayload", () => {
     assert.ok(
-      view.includes('isEditMode ? editOrder!.header.notes'),
-      "Notes must be preloaded from existing order",
+      !shell.includes("EditOrderPayload"),
+      "Shell must not reference the removed EditOrderPayload type",
     );
   });
 
-  it("T10: Edit mode skips customer selection (starts at products)", () => {
+  it("T10: ExistingOrderEditor file exists", () => {
+    const editorPath = SELLER_ORDERS_VIEW.replace("seller-orders-view.tsx", "existing-order-editor.tsx");
+    const editor = read(editorPath);
     assert.ok(
-      view.includes('isEditMode ? "products" : "customer"'),
-      "Edit mode must skip to products step",
+      editor.includes("ExistingOrderEditor") && editor.includes("update_draft"),
+      "Dedicated editor component must exist with update_draft capability",
     );
   });
 });

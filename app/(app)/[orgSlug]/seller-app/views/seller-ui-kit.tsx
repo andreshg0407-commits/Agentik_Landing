@@ -108,6 +108,19 @@ const ICON_PATHS: Record<string, ReactNode> = {
   ),
   check: <path d="M20 6.5 9.5 17 4.5 12" />,
   back: <path d="M14.5 5.5 8 12l6.5 6.5" />,
+  plus: (
+    <>
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </>
+  ),
+  minus: <line x1="5" y1="12" x2="19" y2="12" />,
+  trash: (
+    <>
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </>
+  ),
   pencil: (
     <>
       <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7.2 18.8l-4 1 1-4z" />
