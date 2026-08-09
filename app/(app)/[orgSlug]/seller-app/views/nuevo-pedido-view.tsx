@@ -158,8 +158,8 @@ export function NuevoPedidoView({
         setSelectedCustomer({
           profileId: customer.id,
           customerCode: customer.sagCode ?? "",
-          customerName: customer.name,
-          customerId: customer.nit ?? "",
+          customerName: customer.legalName ?? customer.tradeName ?? "",
+          customerId: customer.nitNormalized ?? customer.documentNumber ?? "",
           city: customer.city ?? "",
           address: customer.address ?? "",
           sellerName: customer.seller?.name ?? sellerIdentity.sellerName ?? "",
@@ -535,8 +535,8 @@ function CustomerSelectionStep({
           onSelect({
             profileId: customer.id,
             customerCode: customer.sagCode ?? "",
-            customerName: customer.name,
-            customerId: customer.nit ?? "",
+            customerName: customer.legalName ?? customer.tradeName ?? "",
+            customerId: customer.nitNormalized ?? customer.documentNumber ?? "",
             city: customer.city ?? "",
             address: customer.address ?? "",
             sellerName: customer.seller?.name ?? "",
@@ -1542,7 +1542,7 @@ function ResultStep({
             </svg>
           </div>
           <div style={{ fontSize: T.sz["2xl"], fontWeight: T.wt.bold, color: C.titleDeep, marginBottom: S[2] }}>
-            Pedido enviado
+            Pedido creado
           </div>
           {result.error && (
             <div style={{ fontSize: T.sz.sm, color: C.amberDark, marginBottom: S[3] }}>
@@ -1550,7 +1550,7 @@ function ResultStep({
             </div>
           )}
           <div style={{ fontSize: T.sz.sm, color: C.inkLight, marginBottom: S[4] }}>
-            Estado: Listo para enviar a SAG
+            Guardado y listo para enviar
           </div>
         </>
       ) : (

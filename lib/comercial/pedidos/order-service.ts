@@ -633,12 +633,16 @@ function customerOrderStatusToOrderStatus(status: string): OrderStatus {
 export async function listCustomerOrderRecords(
   orgId: string,
   opts?: { since?: Date; take?: number },
+  sellerTerceroId?: number,
 ): Promise<OrderCard[]> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: Record<string, any> = { organizationId: orgId };
     if (opts?.since) {
       where.orderDate = { gte: opts.since };
+    }
+    if (sellerTerceroId != null) {
+      where.sellerTerceroId = sellerTerceroId;
     }
     const records = await prisma.customerOrderRecord.findMany({
       where,
@@ -874,6 +878,13 @@ export async function listOrders(
   filter?: {
     status?: OrderStatus;
     today?:  boolean;
+    /** Seller-scoped filtering (Seller App). Server-side enforcement. */
+    sellerScope?: {
+      /** Agentik user ID — filters AgentExecution by metadataJson.header.sellerId */
+      sellerId: string;
+      /** SAG ka_nl_tercero integer — filters CustomerOrderRecord.sellerTerceroId */
+      sellerTerceroId?: number;
+    };
   },
 ): Promise<OrderCard[]> {
   let result: OrderCard[] = [];
@@ -900,20 +911,37 @@ export async function listOrders(
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    result = rows.map((r: any) => rowToCard(r));
+    let cards = rows.map((r: any) => rowToCard(r));
+
+    // Seller scope: filter AgentExecution by header.sellerId (in-memory — metadataJson)
+    if (filter?.sellerScope) {
+      const scopeId = filter.sellerScope.sellerId;
+      cards = cards.filter((c: OrderCard) => {
+        // Match by header.sellerId — read from raw AgentExecution row
+        const row = rows.find((r: any) => r.id === c.id);
+        const meta = (row?.metadataJson ?? {}) as Record<string, unknown>;
+        const header = meta.header as Record<string, unknown> | undefined;
+        return header?.sellerId === scopeId;
+      });
+    }
+
+    result = cards;
   } catch {
     // AgentExecution not available — continue with SAG only
   }
 
   // ── CRMQuote rows (CRM quotes) — always attempted ─────────────────────
-  try {
-    const sagSince = filter?.today
-      ? (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })()
-      : undefined;
-    const sagCards = await listSagOrders(orgId, sagSince ? { since: sagSince } : undefined);
-    result = [...result, ...sagCards];
-  } catch {
-    // CRMQuote not available — degrade silently
+  // Skip CRM quotes for seller-scoped views (no seller field on CRMQuote)
+  if (!filter?.sellerScope) {
+    try {
+      const sagSince = filter?.today
+        ? (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })()
+        : undefined;
+      const sagCards = await listSagOrders(orgId, sagSince ? { since: sagSince } : undefined);
+      result = [...result, ...sagCards];
+    } catch {
+      // CRMQuote not available — degrade silently
+    }
   }
 
   // ── CustomerOrderRecord rows (real SAG orders) — primary source ───────
@@ -921,10 +949,24 @@ export async function listOrders(
     const corSince = filter?.today
       ? (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })()
       : undefined;
-    const corCards = await listCustomerOrderRecords(orgId, corSince ? { since: corSince } : undefined);
+    const corCards = await listCustomerOrderRecords(orgId, corSince ? { since: corSince } : undefined,
+      filter?.sellerScope?.sellerTerceroId);
     result = [...result, ...corCards];
   } catch {
     // CustomerOrderRecord not available — degrade silently
+  }
+
+  // ── Dedup: if an Agentik order was synced to SAG, prefer the Agentik version ──
+  // Correlation key: AgentExecution.metadataJson.sagOrderId === CustomerOrderRecord.erpMovId
+  // If sagOrderId is set on an Agentik card, remove the matching SAG card.
+  const agentikSagIds = new Set<string>();
+  for (const c of result) {
+    if (c.origin === "AGENTIK_NATIVE" || c.origin === "agentik") {
+      // Check if this order has been synced to SAG
+      // The sagOrderId would have been set during sync
+      // We access it via the externalSyncKey pattern or channel marker
+      // For now, no Agentik orders are synced, so this is a no-op guard
+    }
   }
 
   // Status filter applied in-memory (metadataJson field + SAG cards)

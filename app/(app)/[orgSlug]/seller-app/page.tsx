@@ -20,6 +20,7 @@ import { getSellerInactiveCustomers } from "@/lib/comercial/frontline/seller-ina
 import { getSellerAppFeatureFlags } from "@/lib/comercial/frontline/seller-app-features";
 import { deriveStrictFulfillmentStages } from "@/lib/comercial/frontline/order-fulfillment-timeline";
 import { getSalesPortfolio, getSalesPortfolioReferences, getSalesPortfolioWithdrawalItems, getSalesPortfolioSupplyPlanForVendor } from "@/lib/comercial/maletas/portfolio-copilot-domain-tools";
+import { listOrders } from "@/lib/comercial/pedidos/order-service";
 import { prisma } from "@/lib/prisma";
 import { SellerAppShell } from "./seller-app-shell";
 import type { SerializedPortfolio, SerializedPortfolioRef, SerializedSupplyNeed, SerializedOrderCard } from "./views/seller-app-shared";
@@ -195,65 +196,60 @@ export default async function SellerAppPage({
     }
   }
 
-  // ── Load orders (deterministic seller identity at DB boundary) ────────────
+  // ── Load orders (canonical merged source with seller scope) ───────────────
   //
-  // AGENTIK-SELLER-APP-UI-03-P0-FINAL: deterministic seller enforcement.
-  // Uses sellerTerceroId (Int) for EXACT match — no name/slug/contains.
-  // Resolution: sellerName → find matching sellerTerceroId → filter by integer.
-  // If no deterministic ID can be resolved → return empty (SELLER_ORDER_IDENTITY_BLOCKER).
+  // AGENTIK-SELLER-APP-ORDER-VISIBILITY-FIX-P0: use canonical listOrders()
+  // with sellerScope for server-side seller enforcement.
+  // Merges AgentExecution (Agentik-native) + CustomerOrderRecord (SAG).
   // Manager/admin → canAccessAllOrders → no seller filter.
   // Fulfillment: canonical authority via deriveStrictFulfillmentStages().
   //
   let serializedOrders: SerializedOrderCard[] = [];
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const orderWhere: Record<string, any> = { organizationId: organization.id };
+    // Build seller scope for listOrders (server-side enforcement)
+    const sellerScope = (!scope.canAccessAllOrders && sellerIdentity.sellerId)
+      ? {
+          sellerId: sellerIdentity.sellerId,
+          sellerTerceroId: sellerIdentity.sagSellerCode
+            ? parseInt(sellerIdentity.sagSellerCode, 10) || undefined
+            : undefined,
+        }
+      : undefined;
 
-    if (!scope.canAccessAllOrders && sellerIdentity.sagSellerCode) {
-      // sagSellerCode is the stable sellerTerceroId resolved during identity
-      // resolution (resolveSellerTerceroId). Integer authority — never name.
-      orderWhere.sellerTerceroId = parseInt(sellerIdentity.sagSellerCode, 10);
-    } else if (!scope.canAccessAllOrders) {
-      // No stable seller identity resolved — return empty
+    // Seller-scoped sellers with no identity → return empty
+    if (!scope.canAccessAllOrders && !sellerScope) {
       serializedOrders = [];
-    }
-
-    // Only query if we have a valid filter (or manager scope)
-    if (scope.canAccessAllOrders || orderWhere.sellerTerceroId != null) {
-      const orderRecords = await db.customerOrderRecord.findMany({
-        where: orderWhere,
-        orderBy: { orderDate: "desc" },
-        take: 50,
-        include: { _count: { select: { lines: true } } },
+    } else {
+      const orderCards = await listOrders(organization.id, {
+        sellerScope,
       });
 
-      serializedOrders = orderRecords.map((r: any) => {
-        const sagStatus = String(r.status ?? "");
-        const status = sagStatus === "FACTURADO" || sagStatus === "CONFIRMADO" || sagStatus === "DESPACHADO"
-          ? "sincronizado"
-          : sagStatus === "CANCELADO" ? "cancelado" : "pendiente_sag";
-
-        // Canonical fulfillment authority — deriveStrictFulfillmentStages
+      serializedOrders = orderCards.slice(0, 50).map(c => {
+        // Derive fulfillment from SAG status for SAG orders
+        const sagStatus = c.origin === "SAG_HISTORICAL"
+          ? (c.status === "sincronizado" ? "FACTURADO" : c.status === "cancelado" ? "CANCELADO" : "")
+          : "";
         const fulfillment = deriveStrictFulfillmentStages(sagStatus);
 
-        const orderDate = r.orderDate instanceof Date ? r.orderDate.toISOString() : String(r.orderDate ?? "");
+        // Agentik-native orders: fulfillment not available yet
+        const isNative = c.origin === "AGENTIK_NATIVE" || c.origin === "agentik";
 
         return {
-          id: r.id,
-          consecutivo: r.orderNumber ? parseInt(r.orderNumber, 10) || 0 : 0,
-          customerName: r.customerName ?? "",
-          sellerName: r.sellerName ?? "",
-          totalReferences: r.lineCount ?? r._count?.lines ?? 0,
-          totalUnits: r.totalUnits != null ? Number(r.totalUnits) : 0,
-          totalValue: r.amount != null ? Number(r.amount) : 0,
-          status,
-          origin: "SAG_HISTORICAL",
-          syncState: "sincronizado",
-          createdAt: orderDate,
-          lastSyncAt: r.syncedAt instanceof Date ? r.syncedAt.toISOString() : r.syncedAt ? String(r.syncedAt) : null,
-          fulfillmentStatus: fulfillment.invoice,
-          fulfillmentPercent: null,
-          channel: null as string | null,
+          id: c.id,
+          consecutivo: c.consecutivo,
+          customerName: c.customerName,
+          sellerName: c.sellerName,
+          totalReferences: c.totalReferences,
+          totalUnits: c.totalUnits,
+          totalValue: c.totalValue,
+          status: c.status,
+          origin: c.origin,
+          syncState: c.syncState,
+          createdAt: c.createdAt,
+          lastSyncAt: c.lastSyncAt,
+          fulfillmentStatus: isNative ? "NOT_AVAILABLE" : fulfillment.invoice,
+          fulfillmentPercent: isNative ? null : (fulfillment.invoice === "COMPLETED" ? 100 : null),
+          channel: c.channel ?? null,
         };
       });
     }
