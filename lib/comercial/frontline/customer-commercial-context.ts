@@ -18,6 +18,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { getCustomer } from "@/lib/comercial/clientes/canonical-customer-service";
 import { getCustomerTopProducts } from "./customer-purchase-intelligence";
+import { resolveReceivableTruthStatus } from "./receivable-truth-status";
 import type {
   CustomerCommercialContext,
   CustomerReceivablesContext,
@@ -80,6 +81,9 @@ export async function getCustomerReceivables(
     maxDaysOverdue,
     currency: "COP",
     asOf: new Date().toISOString(),
+    // AGENTIK-RECEIVABLES-SAFETY-LOCK-P0: stamp truth status.
+    // Currently all tenants are UNVERIFIED (no certified recon pipeline).
+    truthStatus: resolveReceivableTruthStatus("__default__"),
   };
 }
 

@@ -317,6 +317,8 @@ export async function POST(
           overdue: ctx.receivables.overdueAmount,
           maxDaysOverdue: ctx.receivables.maxDaysOverdue,
           overdueDocumentCount: ctx.receivables.overdueDocumentCount,
+          // AGENTIK-RECEIVABLES-SAFETY-LOCK-P0
+          truthStatus: ctx.receivables.truthStatus,
         } : null,
         topProductsByUnits: ctx.topProductsByUnits.map(p => ({
           referenceCode: p.referenceCode,

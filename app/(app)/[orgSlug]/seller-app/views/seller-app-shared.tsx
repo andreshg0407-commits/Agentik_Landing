@@ -83,6 +83,11 @@ export interface SerializedCustomer {
   overdueReceivable: number;
   maxDpd: number;
   lastPurchaseDate: string | null;
+  /**
+   * AGENTIK-RECEIVABLES-SAFETY-LOCK-P0
+   * Presentation gate: only "CERTIFIED" allows overdue warnings.
+   */
+  receivableTruthStatus: string;
 }
 
 export interface SellerIdentityProps {

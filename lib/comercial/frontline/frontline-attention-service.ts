@@ -213,6 +213,10 @@ export async function emitCustomerOverdueAttention(
   const receivables = await getCustomerReceivables(orgId, customerId);
   if (!receivables || receivables.overdueAmount <= 0) return null;
 
+  // AGENTIK-RECEIVABLES-SAFETY-LOCK-P0: suppress overdue attention
+  // when receivable data is not certified (no payment application reconciliation).
+  if (receivables.truthStatus !== "CERTIFIED") return null;
+
   // Hard business rule (Section F): only trigger when maxDaysOverdue > 30
   if (receivables.maxDaysOverdue <= 30) return null;
 

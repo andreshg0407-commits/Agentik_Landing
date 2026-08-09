@@ -105,7 +105,10 @@ function CustomerCard({ customer, isInactive, inactiveInfo, onSelect }: {
   inactiveInfo: SellerAppShellProps["inactiveCustomers"][number] | null;
   onSelect: () => void;
 }) {
-  const hasOverdue = customer.overdueReceivable > 0 && customer.maxDpd > 30;
+  // AGENTIK-RECEIVABLES-SAFETY-LOCK-P0: suppress overdue presentation
+  // when receivable data is not certified.
+  const isCertified = customer.receivableTruthStatus === "CERTIFIED";
+  const hasOverdue = isCertified && customer.overdueReceivable > 0 && customer.maxDpd > 30;
   return (
     <button onClick={onSelect} style={{
       ...appCard,
@@ -146,7 +149,7 @@ function CustomerCard({ customer, isInactive, inactiveInfo, onSelect }: {
         <span style={{ display: "flex", justifyContent: "space-between", gap: S[2], fontSize: T.sz.xs, color: C.inkMid }}>
           <span style={{ minWidth: 0 }}>
             Cartera: <strong style={{ color: C.ink }}>{fmtCOP(customer.totalReceivable)}</strong>
-            {customer.overdueReceivable > 0 && (
+            {isCertified && customer.overdueReceivable > 0 && (
               <span style={{ color: C.red }}> ({fmtCOP(customer.overdueReceivable)} vencida)</span>
             )}
           </span>
@@ -219,7 +222,8 @@ export function ClienteDetailView({
       </div>
 
       {/* §20: cartera vencida >30d — advertencia fuerte y controlada (NO bloquea) */}
-      {customer && customer.overdueReceivable > 0 && customer.maxDpd > 30 && (
+      {/* AGENTIK-RECEIVABLES-SAFETY-LOCK-P0: only show when truthStatus === CERTIFIED */}
+      {customer && customer.receivableTruthStatus === "CERTIFIED" && customer.overdueReceivable > 0 && customer.maxDpd > 30 && (
         <div style={{
           display: "flex", alignItems: "flex-start", gap: S[2],
           padding: S[3], marginBottom: S[3],
@@ -251,13 +255,19 @@ export function ClienteDetailView({
 
       {customer && (
         <DetailSection title="Cartera">
-          <div style={{ display: "flex", gap: S[3] }}>
-            <DetailKpi label="Total" value={fmtCOP(customer.totalReceivable)} />
-            <DetailKpi label="Vencida" value={fmtCOP(customer.overdueReceivable)}
-              color={customer.overdueReceivable > 0 ? C.red : undefined} />
-            <DetailKpi label="Max dias" value={customer.maxDpd > 0 ? `${customer.maxDpd}d` : "\u2014"}
-              color={customer.maxDpd > 30 ? C.red : undefined} />
-          </div>
+          {customer.receivableTruthStatus === "CERTIFIED" ? (
+            <div style={{ display: "flex", gap: S[3] }}>
+              <DetailKpi label="Total" value={fmtCOP(customer.totalReceivable)} />
+              <DetailKpi label="Vencida" value={fmtCOP(customer.overdueReceivable)}
+                color={customer.overdueReceivable > 0 ? C.red : undefined} />
+              <DetailKpi label="Max dias" value={customer.maxDpd > 0 ? `${customer.maxDpd}d` : "\u2014"}
+                color={customer.maxDpd > 30 ? C.red : undefined} />
+            </div>
+          ) : (
+            <div style={{ fontSize: T.sz.sm, color: C.inkLight, fontStyle: "italic" }}>
+              Información de cartera en validación
+            </div>
+          )}
         </DetailSection>
       )}
 

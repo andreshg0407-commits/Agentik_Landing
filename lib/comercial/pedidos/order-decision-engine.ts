@@ -37,6 +37,7 @@ import type {
 } from "./order-decision-types";
 
 import type { OrderPolicyPackConfig } from "./order-policy-pack-config";
+import { isReceivableDataCertified } from "@/lib/comercial/frontline/receivable-truth-status";
 
 // ── Evidence builder ────────────────────────────────────────────────────────
 
@@ -165,6 +166,31 @@ export function evaluateCustomerCredit(
 
   const alerts: CustomerCreditResult["alerts"] = [];
   let creditStatus: CustomerCreditResult["creditStatus"] = "approved";
+
+  // AGENTIK-RECEIVABLES-SAFETY-LOCK-P0: when receivable data is not
+  // certified, always return "approved" — no credit warnings or blocks.
+  if (!isReceivableDataCertified(ctx.tenantId ?? "")) {
+    return {
+      customerId,
+      customerName,
+      totalReceivable,
+      overdueReceivable,
+      maxDaysPastDue,
+      creditStatus: "approved",
+      alerts: [],
+      evidence: buildEvidence(
+        "ORDER_CUSTOMER_CREDIT",
+        `occ-${customerId}`,
+        "Validacion Cartera del Cliente",
+        `Datos de cartera no certificados. No se genera alerta.`,
+        { customerId, customerName, truthStatus: "UNVERIFIED" },
+        "Sin accion — datos en validacion",
+        "Cartera no certificada. Se omite validacion de credito hasta que el pipeline de reconciliacion este activo.",
+        0.3,
+        "info",
+      ),
+    };
+  }
 
   if (maxDaysPastDue >= criticalDaysPastDue) {
     creditStatus = "blocked";

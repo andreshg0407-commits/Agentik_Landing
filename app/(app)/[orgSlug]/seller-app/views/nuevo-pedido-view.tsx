@@ -81,7 +81,7 @@ interface ProductSearchResult {
 
 interface CustomerContext {
   identity: { name: string; nit: string };
-  receivables: { total: number; overdue: number; maxDaysOverdue: number; overdueDocumentCount: number } | null;
+  receivables: { total: number; overdue: number; maxDaysOverdue: number; overdueDocumentCount: number; truthStatus?: string } | null;
   topProductsByUnits: Array<{ referenceCode: string; description: string; totalUnits: number; purchaseCount: number }>;
   totalOrdersL12: number;
   lastPurchaseDate: string | null;
@@ -697,7 +697,12 @@ function CustomerContextStep({
     return () => { cancelled = true; };
   }, [orgSlug, customer.profileId, sellerIdentity.sellerId, customerContext, setCustomerContext, setOverdueAlert]);
 
+  // AGENTIK-RECEIVABLES-SAFETY-LOCK-P0: suppress overdue presentation
+  // when receivable data is not certified. overdueAlert is already gated
+  // server-side via emitCustomerOverdueAttention(), but the hasOverdue
+  // flag is derived client-side and must also be suppressed.
   const hasOverdue = customerContext?.receivables
+    && customerContext.receivables.truthStatus === "CERTIFIED"
     && customerContext.receivables.overdue > 0
     && customerContext.receivables.maxDaysOverdue > 30;
 

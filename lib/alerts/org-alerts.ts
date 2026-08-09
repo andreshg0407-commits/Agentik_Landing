@@ -19,6 +19,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { getCarteraKpis } from "@/lib/finance/cartera-kpis";
+import { isReceivableDataCertified } from "@/lib/comercial/frontline/receivable-truth-status";
 
 // ─── Thresholds ───────────────────────────────────────────────────────────────
 
@@ -106,6 +107,13 @@ export interface CarteraAlertSummary {
 export async function generateCarteraAlerts(
   organizationId: string,
 ): Promise<CarteraAlertSummary> {
+  // AGENTIK-RECEIVABLES-SAFETY-LOCK-P0: suppress cartera alerts when
+  // receivable data is not certified. No tenant is certified yet.
+  // organizationId is used as lookup key — returns false for all.
+  if (!isReceivableDataCertified(organizationId)) {
+    return { generated: 0, resolved: 0 };
+  }
+
   const kpis = await getCarteraKpis(organizationId);
 
   if (!kpis.hasData) {

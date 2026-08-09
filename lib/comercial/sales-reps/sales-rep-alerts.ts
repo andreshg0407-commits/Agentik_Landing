@@ -22,6 +22,7 @@ import type {
 } from "./sales-rep-decision-types";
 
 import type { SalesRepPolicyPackConfig } from "./sales-rep-policy-pack-config";
+import { isReceivableDataCertified } from "@/lib/comercial/frontline/receivable-truth-status";
 
 // ── Alert ID generator ─────────────────────────────────────────────────────
 
@@ -97,6 +98,10 @@ export function buildOverdueReceivableAlert(
   result: OverdueReceivableResult,
   config: SalesRepPolicyPackConfig,
 ): SalesRepAlert | null {
+  // AGENTIK-RECEIVABLES-SAFETY-LOCK-P0: suppress overdue alert
+  // when receivable data is not certified.
+  if (!isReceivableDataCertified(ctx.tenantId)) return null;
+
   // Only build alert when actually overdue
   if (result.alertSeverity === "info") return null;
 

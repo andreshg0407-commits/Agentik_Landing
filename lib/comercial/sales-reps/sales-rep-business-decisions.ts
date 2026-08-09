@@ -11,6 +11,7 @@ import type {
   BusinessDecision,
   BusinessDecisionEvidence,
 } from "@/lib/comercial/business-policy/business-decision-types";
+import { isReceivableDataCertified } from "@/lib/comercial/frontline/receivable-truth-status";
 
 import type {
   MalletOutOfStockResult,
@@ -76,6 +77,12 @@ export function buildOverdueReceivableDecisions(
   results: OverdueReceivableResult[],
   tenantId: string,
 ): BusinessDecision[] {
+  // AGENTIK-RECEIVABLES-SAFETY-LOCK-P0: suppress all overdue receivable
+  // decisions until receivable data is certified. No tenant is certified yet.
+  // Note: tenantId here is orgId, not orgSlug — but since no tenant is
+  // certified, isReceivableDataCertified returns false for any input.
+  if (!isReceivableDataCertified(tenantId)) return [];
+
   return results
     .filter(r => r.alertSeverity !== "info")
     .map(r => ({

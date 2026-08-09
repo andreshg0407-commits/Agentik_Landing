@@ -22,6 +22,7 @@ import { deriveStrictFulfillmentStages } from "@/lib/comercial/frontline/order-f
 import { getSalesPortfolio, getSalesPortfolioReferences, getSalesPortfolioWithdrawalItems, getSalesPortfolioSupplyPlanForVendor } from "@/lib/comercial/maletas/portfolio-copilot-domain-tools";
 import { listOrders } from "@/lib/comercial/pedidos/order-service";
 import { prisma } from "@/lib/prisma";
+import { resolveReceivableTruthStatus } from "@/lib/comercial/frontline/receivable-truth-status";
 import { SellerAppShell } from "./seller-app-shell";
 import type { SerializedPortfolio, SerializedPortfolioRef, SerializedSupplyNeed, SerializedOrderCard } from "./views/seller-app-shared";
 
@@ -104,6 +105,9 @@ export default async function SellerAppPage({
     }
   }
 
+  // AGENTIK-RECEIVABLES-SAFETY-LOCK-P0: resolve truth status for this tenant
+  const receivableTruthStatus = resolveReceivableTruthStatus(orgSlug);
+
   // Serialize customers for client
   const serializedCustomers = customers.map((c: any) => {
     const nitKey = c.sagTerceroId != null ? String(c.sagTerceroId) : null;
@@ -119,6 +123,7 @@ export default async function SellerAppPage({
       overdueReceivable: Number(c.overdueReceivable ?? 0),
       maxDpd: c.maxDpd ?? 0,
       lastPurchaseDate: lastPurchase,
+      receivableTruthStatus,
     };
   });
 

@@ -106,6 +106,17 @@ export interface CustomerReceivablesContext {
   maxDaysOverdue: number;
   currency: string;
   asOf: string;
+
+  /**
+   * AGENTIK-RECEIVABLES-SAFETY-LOCK-P0
+   *
+   * Presentation eligibility. Only "CERTIFIED" allows overdue data
+   * to be shown as definitive financial fact (warnings, alerts, attention).
+   *
+   * Current state: all tenants are "UNVERIFIED" until
+   * AGENTIK-RECEIVABLES-AR-TRUTH-01 completes.
+   */
+  truthStatus: import("./receivable-truth-status").ReceivableTruthStatus;
 }
 
 // ── Customer commercial context ─────────────────────────────────────────────
