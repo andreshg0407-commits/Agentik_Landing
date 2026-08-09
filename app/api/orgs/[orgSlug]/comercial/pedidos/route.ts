@@ -30,6 +30,8 @@ import {
   computeServerKpiStats,
 } from "@/lib/comercial/pedidos/order-service";
 import { sendOrderToSagQueue } from "@/lib/comercial/pedidos/order-sag-bridge";
+import { buildOrderSharePayload } from "@/lib/comercial/pedidos/order-share";
+import { getOrganizationBranding } from "@/lib/tenant/branding";
 import { buildSellerDirectory } from "@/lib/comercial/foundation/seller-directory";
 import {
   searchCustomers,
@@ -90,21 +92,39 @@ export async function POST(
           }
         }
       }
+      // Server-side seller authority: for seller-scoped users, override
+      // client-supplied sellerId/sellerName with server-resolved identity.
+      // This prevents seller A from creating orders attributed to seller B.
+      const createHeader = { ...body.header };
+      if (!sellerScope.canAccessAllOrders && sellerIdentity.sellerId) {
+        createHeader.sellerId = sellerIdentity.sellerId;
+        createHeader.sellerName = sellerIdentity.sellerName ?? createHeader.sellerName ?? "";
+      }
+
       if (body.wizardSessionKey) {
         const { order, alreadyExists, reservation } = await createOrderDraftDeduped(orgId, {
-          header: body.header, lines: body.lines,
+          header: createHeader, lines: body.lines,
           createdBy: body.createdBy ?? "usuario",
           wizardSessionKey: body.wizardSessionKey,
         });
         return NextResponse.json({ order, alreadyExists, reservation });
       }
       const { order, reservation } = await createOrderDraft(orgId, {
-        header: body.header, lines: body.lines, createdBy: body.createdBy ?? "usuario",
+        header: createHeader, lines: body.lines, createdBy: body.createdBy ?? "usuario",
       });
       return NextResponse.json({ order, reservation });
     }
 
     case "delete_draft": {
+      // Seller scope enforcement: verify ownership before deletion
+      if (!sellerScope.canAccessAllOrders && sellerIdentity.sellerId) {
+        const existing = await getOrder(orgId, body.orderId);
+        if (!existing) return NextResponse.json({ error: "Pedido no encontrado" }, { status: 404 });
+        const orderSellerId = existing.header?.sellerId;
+        if (orderSellerId && orderSellerId !== sellerIdentity.sellerId) {
+          return NextResponse.json({ error: "No autorizado para eliminar este pedido" }, { status: 403 });
+        }
+      }
       const result = await deleteDraftOrder(orgId, body.orderId);
       if (!result.ok) {
         return NextResponse.json({ ok: false, error: result.error }, { status: 409 });
@@ -121,10 +141,27 @@ export async function POST(
 
     case "get": {
       const order = await getOrder(orgId, body.orderId);
+      if (!order) return NextResponse.json({ order: null });
+      // Seller scope enforcement: seller A cannot view seller B order
+      if (!sellerScope.canAccessAllOrders && sellerIdentity.sellerId) {
+        const orderSellerId = order.header?.sellerId;
+        if (orderSellerId && orderSellerId !== sellerIdentity.sellerId) {
+          return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+        }
+      }
       return NextResponse.json({ order });
     }
 
     case "update_draft": {
+      // Seller scope enforcement: verify ownership before mutation
+      if (!sellerScope.canAccessAllOrders && sellerIdentity.sellerId) {
+        const existing = await getOrder(orgId, body.orderId);
+        if (!existing) return NextResponse.json({ error: "Pedido no encontrado" }, { status: 404 });
+        const orderSellerId = existing.header?.sellerId;
+        if (orderSellerId && orderSellerId !== sellerIdentity.sellerId) {
+          return NextResponse.json({ error: "No autorizado para editar este pedido" }, { status: 403 });
+        }
+      }
       const { order, reservation } = await updateOrderDraft(orgId, body.orderId, {
         header: body.header, lines: body.lines,
       });
@@ -281,6 +318,29 @@ export async function POST(
         message: overdueAlert.title,
       } : null;
       return NextResponse.json({ context: uiContext, overdueAlert: uiOverdueAlert });
+    }
+
+    case "share": {
+      const order = await getOrder(orgId, body.orderId);
+      if (!order) return NextResponse.json({ error: "Pedido no encontrado" }, { status: 404 });
+      // Seller scope enforcement
+      if (!sellerScope.canAccessAllOrders && sellerIdentity.sellerId) {
+        const orderSellerId = order.header?.sellerId;
+        if (orderSellerId && orderSellerId !== sellerIdentity.sellerId) {
+          return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+        }
+      }
+      const branding = await getOrganizationBranding(orgId);
+      const sharePayload = buildOrderSharePayload(order, {
+        commercialName: branding.commercialName || "Agentik",
+        legalName: branding.legalName || "Agentik",
+        phone: branding.phone || "",
+        email: branding.email || "",
+        website: branding.website || "",
+        logoUrl: branding.logoUrl || "",
+        documentFooter: branding.documentFooter || "",
+      });
+      return NextResponse.json({ share: sharePayload });
     }
 
     default:

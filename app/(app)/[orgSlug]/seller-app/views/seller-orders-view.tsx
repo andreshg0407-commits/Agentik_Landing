@@ -2,16 +2,22 @@
  * Seller App — Pedidos Realizados View.
  *
  * Sprint: AGENTIK-SELLER-APP-UI-03
+ * Sprint: AGENTIK-SELLER-APP-ORDER-ACTIONS-P0
  *
- * Mobile seller-scoped order list + detail + fulfillment.
+ * Mobile seller-scoped order list + detail + fulfillment + edit + share.
  * Uses canonical Pedidos domain. Seller sees only own orders.
+ *
+ * Detail: fetches full order via API `get` action (lines, header, totals).
+ * Edit: reuses canonical `updateOrderDraft()` via API `update_draft` action.
+ * Share: reuses canonical `buildOrderSharePayload()` via API `share` action.
+ * PDF: reuses canonical `exportOrderPdf()` via API `/pedidos/pdf` route.
  *
  * Fulfillment stages shown ONLY when factual authority exists.
  */
 "use client";
 
-import { useState, useMemo } from "react";
-import { C, T, S, R } from "@/lib/ui/tokens";
+import { useState, useMemo, useCallback, useEffect } from "react";
+import { C, T, S, R, E } from "@/lib/ui/tokens";
 import {
   DetailSection, DetailKpi, filterBtnStyle, fmtCOP, fmtDaysAgo,
   type SerializedOrderCard,
@@ -61,6 +67,75 @@ const FULFILLMENT_LABELS: Record<string, string> = {
   NOT_AVAILABLE: "Sin información aún",
 };
 
+// ── Action availability (domain policy) ─────────────────────────────────────
+
+function isEditable(origin: string, status: string, syncState: string): boolean {
+  // Only Agentik-native orders in pre-SAG states are editable
+  const isNative = origin === "AGENTIK_NATIVE" || origin === "agentik";
+  if (!isNative) return false;
+  return status === "borrador" || status === "listo_para_enviar";
+}
+
+function isShareable(_origin: string, _status: string): boolean {
+  // All orders are shareable (view-only share of document)
+  return true;
+}
+
+// ── Order detail types (from server getOrder) ───────────────────────────────
+
+interface OrderLineDetail {
+  id: string;
+  referenceCode: string;
+  productName: string;
+  size: string;
+  color: string;
+  colorName?: string | null;
+  quantity: number;
+  availableUnits: number | null;
+  unitPrice: number;
+  lineTotal: number;
+  removed: boolean;
+  thumbnailUrl?: string | null;
+}
+
+interface OrderDetail {
+  id: string;
+  consecutivo: number;
+  header: {
+    customerId: string;
+    customerName: string;
+    customerCode: string;
+    sellerId: string;
+    sellerName: string;
+    channel: string;
+    notes: string;
+    deliveryMode?: string;
+    deliveryDate?: string | null;
+    discountType?: string;
+    discountValue?: number;
+    customerNotes?: string;
+    customerAddress?: string;
+    customerCity?: string;
+    orderDate?: string;
+  };
+  lines: OrderLineDetail[];
+  status: string;
+  origin: string;
+  syncState: string;
+  summary: {
+    totalLines: number;
+    activeLines: number;
+    totalUnits: number;
+    totalValue: number;
+    uniqueReferences: number;
+    discountAmount?: number;
+    totalFinal?: number;
+  };
+  createdAt: string;
+  lastSyncAt: string | null;
+  sagOrderId: string | null;
+}
+
 // ── Fulfillment timeline stages ─────────────────────────────────────────────
 
 interface FulfillmentStage {
@@ -70,11 +145,8 @@ interface FulfillmentStage {
 
 function buildFulfillmentTimeline(order: SerializedOrderCard): FulfillmentStage[] {
   const stages: FulfillmentStage[] = [];
-
-  // Stage 1: Pedido recibido — always true if order exists
   stages.push({ label: "Pedido recibido", status: "complete" });
 
-  // Stage 2: Facturacion — derived from server-side fulfillmentStatus
   if (order.fulfillmentStatus === "COMPLETED") {
     stages.push({ label: "Facturado", status: "complete" });
   } else if (order.fulfillmentStatus === "IN_PROGRESS") {
@@ -83,12 +155,8 @@ function buildFulfillmentTimeline(order: SerializedOrderCard): FulfillmentStage[
     stages.push({ label: "Facturacion", status: "pending" });
   }
 
-  // Stage 3: Despacho — NOT_AVAILABLE (no carrier/tracking data source)
   stages.push({ label: "Despacho", status: "not_available" });
-
-  // Stage 4: Entrega — NOT_AVAILABLE (no delivery confirmation source)
   stages.push({ label: "Entrega", status: "not_available" });
-
   return stages;
 }
 
@@ -99,11 +167,13 @@ export function SellerOrdersView({
   orgSlug,
   orgId,
   initialOrderId,
+  onEditOrder,
 }: {
   orders: SerializedOrderCard[];
   orgSlug: string;
   orgId: string;
   initialOrderId?: string;
+  onEditOrder?: (editPayload: import("./nuevo-pedido-view").EditOrderPayload) => void;
 }) {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(initialOrderId ?? null);
   const [statusFilter, setStatusFilter] = useState<StatusGroup>("all");
@@ -113,17 +183,20 @@ export function SellerOrdersView({
     return orders.filter(o => orderStatusGroup(o.status, o.syncState) === statusFilter);
   }, [orders, statusFilter]);
 
-  // Detail view
+  // Detail view — fetches full order from server
   if (selectedOrderId) {
-    const order = orders.find(o => o.id === selectedOrderId);
-    if (!order) {
+    const orderCard = orders.find(o => o.id === selectedOrderId);
+    if (!orderCard) {
       setSelectedOrderId(null);
       return null;
     }
     return (
       <OrderDetailView
-        order={order}
+        orderCard={orderCard}
+        orgSlug={orgSlug}
+        orgId={orgId}
         onBack={() => setSelectedOrderId(null)}
+        onEditOrder={onEditOrder}
       />
     );
   }
@@ -223,9 +296,133 @@ function OrderCard({ order, onClick }: { order: SerializedOrderCard; onClick: ()
 
 // ── Order Detail View ───────────────────────────────────────────────────────
 
-function OrderDetailView({ order, onBack }: { order: SerializedOrderCard; onBack: () => void }) {
-  const sc = STATUS_COLORS[order.status] ?? { bg: C.surfaceAlt, color: C.inkMid };
-  const timeline = buildFulfillmentTimeline(order);
+function OrderDetailView({
+  orderCard,
+  orgSlug,
+  orgId,
+  onBack,
+  onEditOrder,
+}: {
+  orderCard: SerializedOrderCard;
+  orgSlug: string;
+  orgId: string;
+  onBack: () => void;
+  onEditOrder?: (editPayload: import("./nuevo-pedido-view").EditOrderPayload) => void;
+}) {
+  const [detail, setDetail] = useState<OrderDetail | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(true);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [shareLoading, setShareLoading] = useState(false);
+
+  const sc = STATUS_COLORS[orderCard.status] ?? { bg: C.surfaceAlt, color: C.inkMid };
+  const timeline = buildFulfillmentTimeline(orderCard);
+
+  const canEdit = isEditable(orderCard.origin, orderCard.status, orderCard.syncState);
+  const canShare = isShareable(orderCard.origin, orderCard.status);
+
+  // Fetch full order detail from server
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/orgs/${orgSlug}/comercial/pedidos`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "get", orderId: orderCard.id }),
+        });
+        if (r.ok && !cancelled) {
+          const data = await r.json();
+          if (data.order) setDetail(data.order);
+        }
+      } catch { /* degrade silently */ }
+      if (!cancelled) setLoadingDetail(false);
+    })();
+    return () => { cancelled = true; };
+  }, [orgSlug, orderCard.id]);
+
+  // Fetch canonical PDF blob from server (shared by download + share)
+  const fetchPdfBlob = useCallback(async (): Promise<Blob | null> => {
+    try {
+      const r = await fetch(`/api/orgs/${orgSlug}/comercial/pedidos/pdf`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId: orderCard.id }),
+      });
+      if (r.ok) return r.blob();
+    } catch { /* ignore */ }
+    return null;
+  }, [orgSlug, orderCard.id]);
+
+  // Download PDF (browser file download)
+  const handleDownloadPdf = useCallback(async () => {
+    setPdfLoading(true);
+    const blob = await fetchPdfBlob();
+    if (blob) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `pedido_${orderCard.consecutivo}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+    setPdfLoading(false);
+  }, [fetchPdfBlob, orderCard.consecutivo]);
+
+  // Share PDF via Web Share API (native share sheet — iOS Safari / Android Chrome)
+  // Falls back to text-only WhatsApp if Web Share not available
+  const handleSharePdf = useCallback(async () => {
+    setShareLoading(true);
+    const blob = await fetchPdfBlob();
+    const fileName = `pedido_${orderCard.consecutivo}.pdf`;
+
+    if (blob) {
+      // Attempt Web Share API with PDF file
+      const pdfFile = new File([blob], fileName, { type: "application/pdf" });
+      if (typeof navigator !== "undefined" && navigator.share && navigator.canShare?.({ files: [pdfFile] })) {
+        try {
+          await navigator.share({
+            title: `Pedido #${orderCard.consecutivo}`,
+            text: `Pedido #${orderCard.consecutivo} — ${orderCard.customerName}`,
+            files: [pdfFile],
+          });
+          setShareLoading(false);
+          return;
+        } catch (e: any) {
+          // AbortError = user cancelled share sheet — not an error
+          if (e?.name === "AbortError") {
+            setShareLoading(false);
+            return;
+          }
+          // Fall through to text fallback
+        }
+      }
+    }
+
+    // Fallback: text-only WhatsApp share (when Web Share API unavailable or PDF failed)
+    try {
+      const r = await fetch(`/api/orgs/${orgSlug}/comercial/pedidos`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "share", orderId: orderCard.id }),
+      });
+      if (r.ok) {
+        const { share } = await r.json();
+        if (share?.whatsappText) {
+          const encoded = encodeURIComponent(share.whatsappText);
+          window.open(`https://wa.me/?text=${encoded}`, "_blank");
+        }
+      }
+    } catch { /* ignore */ }
+    setShareLoading(false);
+  }, [fetchPdfBlob, orderCard.consecutivo, orderCard.customerName, orgSlug, orderCard.id]);
+
+  // Use detail totals when available, fall back to card-level data
+  const totalValue = detail?.summary?.totalFinal ?? detail?.summary?.totalValue ?? orderCard.totalValue;
+  const totalUnits = detail?.summary?.totalUnits ?? orderCard.totalUnits;
+  const totalRefs = detail?.summary?.uniqueReferences ?? orderCard.totalReferences;
+  const activeLines = detail ? detail.lines.filter(l => !l.removed) : [];
 
   return (
     <div style={{ padding: S[4] }}>
@@ -242,15 +439,15 @@ function OrderDetailView({ order, onBack }: { order: SerializedOrderCard; onBack
         <SellerIcon name="back" size={17} color={C.blueDark} /> Pedidos
       </button>
 
-      {/* Header */}
-      <div style={{ ...appCard, padding: S[4], marginBottom: S[4] }}>
+      {/* Header card */}
+      <div style={{ ...appCard, padding: S[4], marginBottom: S[3] }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
             <div style={{ fontSize: T.sz.xl, fontWeight: T.wt.bold, color: C.ink }}>
-              Pedido #{order.consecutivo}
+              Pedido #{orderCard.consecutivo}
             </div>
             <div style={{ fontSize: T.sz.sm, color: C.inkMid, marginTop: 2 }}>
-              {order.customerName}
+              {detail?.header?.customerName || orderCard.customerName}
             </div>
           </div>
           <span style={{
@@ -258,40 +455,166 @@ function OrderDetailView({ order, onBack }: { order: SerializedOrderCard; onBack
             background: sc.bg, color: sc.color,
             borderRadius: R.sm, fontWeight: T.wt.medium,
           }}>
-            {STATUS_LABELS[order.status] ?? order.status}
+            {STATUS_LABELS[orderCard.status] ?? orderCard.status}
           </span>
         </div>
 
         {/* KPIs */}
         <div style={{ display: "flex", gap: S[3], marginTop: S[3] }}>
-          <DetailKpi label="Referencias" value={String(order.totalReferences)} />
-          <DetailKpi label="Unidades" value={String(order.totalUnits)} />
-          <DetailKpi label="Total" value={fmtCOP(order.totalValue)} />
+          <DetailKpi label="Referencias" value={String(totalRefs)} />
+          <DetailKpi label="Unidades" value={String(totalUnits)} />
+          <DetailKpi label="Total" value={fmtCOP(totalValue)} />
         </div>
 
         {/* Metadata */}
-        <div style={{ display: "flex", gap: S[3], marginTop: S[3], fontSize: T.sz.xs, color: C.inkLight }}>
-          <span>Fecha: {fmtDaysAgo(order.createdAt)}</span>
-          {order.channel && <span>Canal: {order.channel}</span>}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: S[3], marginTop: S[3], fontSize: T.sz.xs, color: C.inkLight }}>
+          <span>Fecha: {fmtDaysAgo(orderCard.createdAt)}</span>
+          {detail?.header?.sellerName && <span>Vendedor: {detail.header.sellerName}</span>}
+          {orderCard.channel && <span>Canal: {orderCard.channel}</span>}
+          {detail?.header?.orderDate && <span>Fecha pedido: {detail.header.orderDate}</span>}
         </div>
       </div>
 
+      {/* Action buttons */}
+      {(canEdit || canShare) && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: S[2], marginBottom: S[3] }}>
+          {canEdit && (
+            <button
+              disabled={!detail || !onEditOrder}
+              onClick={() => {
+                if (!detail || !onEditOrder) return;
+                onEditOrder({
+                  id: detail.id,
+                  consecutivo: detail.consecutivo,
+                  header: {
+                    customerId: detail.header.customerId,
+                    customerName: detail.header.customerName,
+                    customerCode: detail.header.customerCode,
+                    sellerId: detail.header.sellerId,
+                    sellerName: detail.header.sellerName,
+                    channel: detail.header.channel,
+                    notes: detail.header.notes,
+                  },
+                  lines: detail.lines.filter(l => !l.removed).map(l => ({
+                    id: l.id,
+                    referenceCode: l.referenceCode,
+                    productName: l.productName,
+                    size: l.size,
+                    color: l.color,
+                    colorName: l.colorName ?? "",
+                    quantity: l.quantity,
+                    availableUnits: l.availableUnits,
+                    unitPrice: l.unitPrice,
+                    lineTotal: l.lineTotal,
+                    thumbnailUrl: l.thumbnailUrl ?? null,
+                  })),
+                  status: detail.status,
+                });
+              }}
+              style={{
+                ...actionBtnStyle,
+                flex: 1,
+                opacity: detail ? 1 : 0.5,
+              }}
+            >
+              <SellerIcon name="pencil" size={16} color={C.blueDark} />
+              <span>{loadingDetail ? "..." : "Editar"}</span>
+            </button>
+          )}
+          {canShare && (
+            <>
+              <button
+                onClick={handleDownloadPdf}
+                disabled={pdfLoading}
+                style={{ ...actionBtnStyle, flex: 1 }}
+              >
+                <SellerIcon name="download" size={16} color={C.blueDark} />
+                <span>{pdfLoading ? "..." : "Descargar PDF"}</span>
+              </button>
+              <button
+                onClick={handleSharePdf}
+                disabled={shareLoading}
+                style={{ ...actionBtnStyle, flex: 1 }}
+              >
+                <SellerIcon name="shareExternal" size={16} color={C.blueDark} />
+                <span>{shareLoading ? "..." : "Compartir PDF"}</span>
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Order lines */}
+      <DetailSection title={`Lineas${activeLines.length > 0 ? ` (${activeLines.length})` : ""}`}>
+        {loadingDetail ? (
+          <div style={{ fontSize: T.sz.sm, color: C.inkLight, padding: S[2] }}>
+            Cargando detalle...
+          </div>
+        ) : activeLines.length === 0 ? (
+          <div style={{ fontSize: T.sz.sm, color: C.inkLight, padding: S[2] }}>
+            {"\u2014"} Sin lineas disponibles
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+            {activeLines.map((line, i) => (
+              <OrderLineRow key={line.id} line={line} isLast={i === activeLines.length - 1} />
+            ))}
+            {/* Line total */}
+            <div style={{
+              display: "flex", justifyContent: "space-between",
+              padding: `${S[2]}px 0`, marginTop: S[1],
+              borderTop: `1px solid ${C.line}`,
+              fontSize: T.sz.sm, fontWeight: T.wt.bold, color: C.ink,
+            }}>
+              <span>Total</span>
+              <span>{fmtCOP(totalValue)}</span>
+            </div>
+          </div>
+        )}
+      </DetailSection>
+
+      {/* Discount info */}
+      {detail?.summary?.discountAmount != null && detail.summary.discountAmount > 0 && (
+        <DetailSection title="Condiciones">
+          <div style={{ fontSize: T.sz.sm, color: C.ink }}>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span>Subtotal</span>
+              <span>{fmtCOP(detail.summary.totalValue)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: S[1], color: C.green }}>
+              <span>Descuento</span>
+              <span>-{fmtCOP(detail.summary.discountAmount)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: S[1], fontWeight: T.wt.bold }}>
+              <span>Total final</span>
+              <span>{fmtCOP(detail.summary.totalFinal ?? detail.summary.totalValue)}</span>
+            </div>
+          </div>
+        </DetailSection>
+      )}
+
+      {/* Notes */}
+      {detail?.header?.notes && (
+        <DetailSection title="Notas">
+          <div style={{ fontSize: T.sz.sm, color: C.ink, whiteSpace: "pre-wrap" }}>
+            {detail.header.notes}
+          </div>
+        </DetailSection>
+      )}
+
       {/* Fulfillment timeline */}
       <DetailSection title="Cumplimiento">
-        {/* Invoice status */}
         <div style={{
           display: "flex", alignItems: "center", gap: S[2],
           marginBottom: S[3],
         }}>
-          <InvoiceStatusBadge status={order.fulfillmentStatus} />
-          {order.fulfillmentPercent != null && order.fulfillmentPercent > 0 && (
+          <InvoiceStatusBadge status={orderCard.fulfillmentStatus} />
+          {orderCard.fulfillmentPercent != null && orderCard.fulfillmentPercent > 0 && (
             <span style={{ fontSize: T.sz.xs, color: C.inkMid }}>
-              {order.fulfillmentPercent}% facturado
+              {orderCard.fulfillmentPercent}% facturado
             </span>
           )}
         </div>
-
-        {/* Timeline */}
         <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
           {timeline.map((stage, i) => (
             <TimelineStage key={stage.label} stage={stage} isLast={i === timeline.length - 1} />
@@ -302,19 +625,99 @@ function OrderDetailView({ order, onBack }: { order: SerializedOrderCard; onBack
       {/* Sync state */}
       <DetailSection title="Sincronizacion">
         <div style={{ fontSize: T.sz.sm, color: C.ink }}>
-          {order.syncState === "sincronizado" && "Sincronizado con SAG"}
-          {order.syncState === "nunca_sincronizado" && "Pendiente de sincronizacion"}
-          {order.syncState === "error_sincronizacion" && "Error de sincronizacion"}
+          {orderCard.syncState === "sincronizado" && "Sincronizado con SAG"}
+          {orderCard.syncState === "nunca_sincronizado" && "Pendiente de sincronizacion"}
+          {orderCard.syncState === "error_sincronizacion" && "Error de sincronizacion"}
         </div>
-        {order.lastSyncAt && (
+        {orderCard.lastSyncAt && (
           <div style={{ fontSize: T.sz.xs, color: C.inkLight, marginTop: S[1] }}>
-            Ultima sync: {fmtDaysAgo(order.lastSyncAt)}
+            Ultima sync: {fmtDaysAgo(orderCard.lastSyncAt)}
           </div>
         )}
+        {detail?.sagOrderId && (
+          <div style={{ fontSize: T.sz.xs, color: C.inkLight, marginTop: S[1] }}>
+            SAG ID: {detail.sagOrderId}
+          </div>
+        )}
+      </DetailSection>
+
+      {/* Source */}
+      <DetailSection title="Origen">
+        <div style={{ fontSize: T.sz.sm, color: C.ink }}>
+          {orderCard.origin === "AGENTIK_NATIVE" || orderCard.origin === "agentik"
+            ? "Creado en Agentik"
+            : orderCard.origin === "SAG_HISTORICAL" || orderCard.origin === "sag_customer_order"
+              ? "Historial SAG"
+              : orderCard.origin === "CRM_LEGACY"
+                ? "CRM Legado"
+                : orderCard.origin}
+        </div>
       </DetailSection>
     </div>
   );
 }
+
+// ── Order line row ──────────────────────────────────────────────────────────
+
+function OrderLineRow({ line, isLast }: { line: OrderLineDetail; isLast: boolean }) {
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: S[2],
+      padding: `${S[2]}px 0`,
+      borderBottom: isLast ? "none" : `1px solid ${C.surfaceAlt}`,
+      fontSize: T.sz.sm,
+    }}>
+      {/* Thumbnail */}
+      {line.thumbnailUrl && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={line.thumbnailUrl}
+          alt=""
+          style={{
+            width: 40, height: 40, borderRadius: R.sm,
+            objectFit: "cover", flexShrink: 0,
+            border: `1px solid ${C.line}`,
+          }}
+        />
+      )}
+      {/* Info */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: T.wt.semibold, color: C.ink }}>
+          {line.referenceCode}
+        </div>
+        <div style={{ fontSize: T.sz.xs, color: C.inkMid, marginTop: 1 }}>
+          {line.colorName ?? line.color}{line.size ? ` / ${line.size}` : ""}
+        </div>
+      </div>
+      {/* Quantity + price */}
+      <div style={{ textAlign: "right", flexShrink: 0 }}>
+        <div style={{ fontWeight: T.wt.semibold, color: C.ink }}>
+          {fmtCOP(line.lineTotal)}
+        </div>
+        <div style={{ fontSize: T.sz.xs, color: C.inkLight }}>
+          {line.quantity} × {fmtCOP(line.unitPrice)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Action button style ────────────────────────────────────────────────────
+
+const actionBtnStyle: React.CSSProperties = {
+  display: "flex", alignItems: "center", justifyContent: "center", gap: S[1],
+  padding: `${S[2]}px ${S[3]}px`,
+  minHeight: 44,
+  background: C.white,
+  border: `1.5px solid ${C.blueDark}`,
+  borderRadius: R.lg,
+  color: C.blueDark,
+  fontFamily: T.mono,
+  fontSize: T.sz.sm,
+  fontWeight: T.wt.semibold,
+  cursor: "pointer",
+  touchAction: "manipulation",
+};
 
 // ── Sub-components ──────────────────────────────────────────────────────────
 
@@ -346,7 +749,6 @@ function TimelineStage({ stage, isLast }: { stage: FulfillmentStage; isLast: boo
 
   return (
     <div style={{ display: "flex", alignItems: "flex-start", gap: S[2] }}>
-      {/* Dot + line */}
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 16 }}>
         <div style={{
           width: 10, height: 10, borderRadius: "50%",
@@ -357,7 +759,6 @@ function TimelineStage({ stage, isLast }: { stage: FulfillmentStage; isLast: boo
           <div style={{ width: 2, height: 24, background: lineColor }} />
         )}
       </div>
-      {/* Label */}
       <div style={{
         fontSize: T.sz.sm,
         color: stage.status === "not_available" ? C.inkLight : C.ink,
