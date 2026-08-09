@@ -28,7 +28,10 @@ import type {
   OrderLineCandidate,
   OrderInventoryStatus,
 } from "./order-product-types";
+import type { SizeInventorySnapshot } from "./order-decision-types";
 import { computeStatus } from "./order-inventory-service";
+import { evaluateAutoSizeDistribution } from "./order-decision-engine";
+import { CASTILLITOS_ORDER_POLICY_PACK_CONFIG } from "./order-policy-pack-config";
 
 // ── Internal product map entry ──────────────────────────────────────────────
 
@@ -427,6 +430,165 @@ export function normalizeProductForOrder(
     availableUnits: variant.availability.availableUnits,
     unitPrice:      product.unitPrice,
     thumbnailUrl:   product.thumbnailUrl,
+  };
+}
+
+// ── Auto-assortment proposal (server boundary) ─────────────────────────────
+//
+// Server-authoritative: loads canonical inventory, runs the canonical engine,
+// and splits per-size allocation across eligible colors.
+// React must NEVER perform this logic.
+//
+// Sprint: AGENTIK-SELLER-APP-ORDER-AUTO-ASSORTMENT-P0-CLOSE
+
+/** Presentation-safe line in an auto-assortment proposal */
+export interface AutoAssortmentProposalLine {
+  variantId: string;
+  size: string;
+  color: string;
+  availableUnits: number;
+  allocatedUnits: number;
+}
+
+/** Presentation-safe auto-assortment proposal DTO */
+export interface AutoAssortmentProposal {
+  referenceCode: string;
+  productName: string;
+  requestedUnits: number;
+  allocatedUnits: number;
+  unallocatedUnits: number;
+  fulfillable: boolean;
+  lines: AutoAssortmentProposalLine[];
+  explanation: string;
+}
+
+/**
+ * Compute an auto-assortment proposal for a reference.
+ *
+ * 1. Loads canonical variant inventory from Prisma (server-authoritative).
+ * 2. Builds SizeInventorySnapshot (aggregates across colors per size).
+ * 3. Calls evaluateAutoSizeDistribution() — the canonical engine.
+ * 4. Splits per-size allocation across eligible colors (floor + remainder).
+ * 5. Returns a presentation-safe DTO.
+ */
+export async function computeAutoAssortmentProposal(
+  orgId: string,
+  referenceCode: string,
+  requestedUnits: number,
+): Promise<AutoAssortmentProposal> {
+  // 1. Load canonical variants with server-authoritative inventory
+  const variants = await getProductVariants(orgId, referenceCode);
+  const product = (await searchOrderProducts(orgId, referenceCode, 1))
+    .find(r => r.referenceCode.toUpperCase() === referenceCode.toUpperCase());
+
+  const productName = product?.productName ?? referenceCode;
+
+  // Filter to eligible variants (have size/color and stock)
+  const eligible = variants.filter(
+    v => (v.size || v.color) && v.availability.availableUnits !== null && v.availability.availableUnits > 0,
+  );
+
+  if (eligible.length === 0) {
+    return {
+      referenceCode, productName, requestedUnits,
+      allocatedUnits: 0, unallocatedUnits: requestedUnits,
+      fulfillable: false, lines: [],
+      explanation: "Sin inventario disponible para esta referencia",
+    };
+  }
+
+  // 2. Build SizeInventorySnapshot — aggregate across all colors per size
+  const sizeMap = new Map<string, number>();
+  for (const v of eligible) {
+    const avail = v.availability.availableUnits!;
+    sizeMap.set(v.size, (sizeMap.get(v.size) ?? 0) + avail);
+  }
+
+  const snapshot: SizeInventorySnapshot = {
+    referenceCode,
+    productName,
+    sizes: [...sizeMap.entries()].map(([size, avail]) => ({
+      size, sizeName: size, availableUnits: avail,
+    })),
+  };
+
+  // 3. Call canonical engine
+  const result = evaluateAutoSizeDistribution(
+    referenceCode, productName, requestedUnits, snapshot,
+    CASTILLITOS_ORDER_POLICY_PACK_CONFIG,
+  );
+
+  // 4. Split per-size allocation across eligible colors (floor + remainder)
+  const lines: AutoAssortmentProposalLine[] = [];
+
+  for (const entry of result.distribution) {
+    if (entry.allocatedUnits <= 0) continue;
+
+    const sizeVariants = eligible
+      .filter(v => v.size === entry.size)
+      .sort((a, b) => a.color.localeCompare(b.color));
+    if (sizeVariants.length === 0) continue;
+
+    let remaining = entry.allocatedUnits;
+    const perColor = Math.floor(remaining / sizeVariants.length);
+
+    // Phase 1: floor division across colors
+    for (const sv of sizeVariants) {
+      const cellAvail = sv.availability.availableUnits!;
+      const alloc = Math.min(perColor || remaining, cellAvail, remaining);
+      if (alloc > 0) {
+        lines.push({
+          variantId: sv.variantId,
+          size: sv.size,
+          color: sv.color,
+          availableUnits: cellAvail,
+          allocatedUnits: alloc,
+        });
+        remaining -= alloc;
+      }
+    }
+
+    // Phase 2: distribute remainder
+    if (remaining > 0) {
+      for (const sv of sizeVariants) {
+        if (remaining <= 0) break;
+        const existing = lines.find(l => l.variantId === sv.variantId);
+        const already = existing?.allocatedUnits ?? 0;
+        const cellAvail = sv.availability.availableUnits!;
+        const canAdd = Math.min(remaining, cellAvail - already);
+        if (canAdd > 0) {
+          if (existing) {
+            existing.allocatedUnits += canAdd;
+          } else {
+            lines.push({
+              variantId: sv.variantId,
+              size: sv.size,
+              color: sv.color,
+              availableUnits: cellAvail,
+              allocatedUnits: canAdd,
+            });
+          }
+          remaining -= canAdd;
+        }
+      }
+    }
+  }
+
+  const totalAllocated = lines.reduce((s, l) => s + l.allocatedUnits, 0);
+
+  // 5. Build explanation
+  const sizesUsed = new Set(lines.map(l => l.size)).size;
+  const explanation = totalAllocated === requestedUnits
+    ? `Distribucion completa: ${totalAllocated} uds en ${sizesUsed} tallas`
+    : `Distribucion parcial: ${totalAllocated} de ${requestedUnits} uds — inventario insuficiente`;
+
+  return {
+    referenceCode, productName, requestedUnits,
+    allocatedUnits: totalAllocated,
+    unallocatedUnits: requestedUnits - totalAllocated,
+    fulfillable: totalAllocated === requestedUnits,
+    lines,
+    explanation,
   };
 }
 

@@ -900,6 +900,7 @@ function ProductSearchStep({
           <ProductCard
             key={p.referenceCode}
             product={p}
+            orgSlug={orgSlug}
             isExpanded={expandedRef === p.referenceCode}
             variants={expandedRef === p.referenceCode ? variants : []}
             loadingVariants={expandedRef === p.referenceCode && loadingVariants}
@@ -931,6 +932,7 @@ function ProductSearchStep({
 
 function ProductCard({
   product,
+  orgSlug,
   isExpanded,
   variants,
   loadingVariants,
@@ -938,6 +940,7 @@ function ProductCard({
   onAddVariant,
 }: {
   product: ProductSearchResult;
+  orgSlug: string;
   isExpanded: boolean;
   variants: ProductSearchResult["variants"];
   loadingVariants: boolean;
@@ -1009,7 +1012,9 @@ function ProductCard({
             </div>
           )}
           {!loadingVariants && variants.length > 0 && (
-            <VariantGrid variants={variants} onAdd={(v, qty) => onAddVariant(v, qty)} />
+            <VariantGrid variants={variants} product={product} orgSlug={orgSlug} onAdd={(v, qty) => onAddVariant(v, qty)} onAddBatch={(lines) => {
+              for (const line of lines) onAddVariant(line.variant, line.qty);
+            }} />
           )}
         </div>
       )}
@@ -1017,92 +1022,266 @@ function ProductCard({
   );
 }
 
+/** Server-returned auto-assortment proposal line */
+interface ProposalLine {
+  variantId: string;
+  size: string;
+  color: string;
+  availableUnits: number;
+  allocatedUnits: number;
+}
+
+/** Server-returned auto-assortment proposal */
+interface AssortmentProposal {
+  referenceCode: string;
+  productName: string;
+  requestedUnits: number;
+  allocatedUnits: number;
+  unallocatedUnits: number;
+  fulfillable: boolean;
+  lines: ProposalLine[];
+  explanation: string;
+}
+
 function VariantGrid({
   variants,
+  product,
+  orgSlug,
   onAdd,
+  onAddBatch,
 }: {
   variants: ProductSearchResult["variants"];
+  product: ProductSearchResult;
+  orgSlug: string;
   onAdd: (v: ProductSearchResult["variants"][number], qty: number) => void;
+  onAddBatch: (lines: Array<{ variant: ProductSearchResult["variants"][number]; qty: number }>) => void;
 }) {
   const [selectedVariant, setSelectedVariant] = useState<string | null>(null);
   const [quantity, setQuantity] = useState(1);
+  const [mode, setMode] = useState<"auto" | "manual">("auto");
+  const [autoQty, setAutoQty] = useState<number>(0);
+  const [proposal, setProposal] = useState<AssortmentProposal | null>(null);
+  const [distributing, setDistributing] = useState(false);
 
-  // Group variants by size
-  const sizes = useMemo(() => {
-    const map = new Map<string, ProductSearchResult["variants"]>();
-    for (const v of variants) {
-      const key = v.size || "?";
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(v);
+  // Request server-authoritative auto-assortment proposal
+  async function handleAutoDistribute() {
+    if (autoQty <= 0) return;
+    setDistributing(true);
+    setProposal(null);
+    try {
+      const r = await fetch(`/api/orgs/${orgSlug}/comercial/pedidos/products`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "auto_assortment",
+          referenceCode: product.referenceCode,
+          requestedUnits: autoQty,
+        }),
+      });
+      if (r.ok) {
+        const { proposal: p } = await r.json();
+        setProposal(p ?? null);
+      }
+    } catch { /* degrade silently */ }
+    setDistributing(false);
+  }
+
+  // Accept server proposal — create cart lines from canonical proposal lines
+  function handleAddProposalToCart() {
+    if (!proposal) return;
+    const lines: Array<{ variant: ProductSearchResult["variants"][number]; qty: number }> = [];
+    for (const pl of proposal.lines) {
+      if (pl.allocatedUnits <= 0) continue;
+      const v = variants.find(vr => vr.variantId === pl.variantId);
+      if (v) lines.push({ variant: v, qty: pl.allocatedUnits });
     }
-    return map;
-  }, [variants]);
+    onAddBatch(lines);
+    setProposal(null);
+    setAutoQty(0);
+  }
 
   const selected = variants.find(v => v.variantId === selectedVariant);
 
   return (
     <div style={{ paddingTop: S[2] }}>
-      <div style={{ fontSize: T.sz.xs, color: C.inkMid, marginBottom: S[2], fontWeight: T.wt.medium }}>
-        Seleccionar talla y color:
-      </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: S[2] }}>
-        {variants.filter(v => v.size || v.color).map(v => {
-          const isSelected = selectedVariant === v.variantId;
-          const available = v.availability.availableUnits;
-          const isOut = available !== null && available <= 0;
-          return (
-            <button
-              key={v.variantId}
-              onClick={() => { if (!isOut) { setSelectedVariant(v.variantId); setQuantity(1); } }}
-              disabled={isOut}
-              style={{
-                padding: `${S[1]}px ${S[2]}px`, fontSize: T.sz.xs,
-                border: `1px solid ${isSelected ? C.blueDark : C.line}`,
-                borderRadius: R.sm, fontFamily: T.mono, cursor: isOut ? "default" : "pointer",
-                background: isSelected ? C.blueLight : isOut ? C.surfaceAlt : C.white,
-                color: isOut ? C.inkLight : isSelected ? C.blueDark : C.ink,
-                opacity: isOut ? 0.5 : 1,
-              }}
-            >
-              {v.size}{v.color ? `/${v.color}` : ""}
-              {available !== null ? ` (${available})` : ""}
-            </button>
-          );
-        })}
+      {/* Mode toggle */}
+      <div style={{ display: "flex", gap: 0, marginBottom: S[3], borderRadius: R.md, overflow: "hidden", border: `1px solid ${C.line}` }}>
+        <button onClick={() => setMode("auto")} style={{
+          flex: 1, padding: `${S[2]}px 0`, fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
+          border: "none", cursor: "pointer",
+          background: mode === "auto" ? C.blueDark : C.white,
+          color: mode === "auto" ? C.white : C.inkMid,
+        }}>
+          Surtido automatico
+        </button>
+        <button onClick={() => setMode("manual")} style={{
+          flex: 1, padding: `${S[2]}px 0`, fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
+          border: "none", borderLeft: `1px solid ${C.line}`, cursor: "pointer",
+          background: mode === "manual" ? C.blueDark : C.white,
+          color: mode === "manual" ? C.white : C.inkMid,
+        }}>
+          Seleccion manual
+        </button>
       </div>
 
-      {selected && (
-        <div style={{ display: "flex", alignItems: "center", gap: S[2], marginTop: S[2] }}>
-          <div style={{ display: "flex", alignItems: "center", border: `1px solid ${C.line}`, borderRadius: R.md }}>
-            <button onClick={() => setQuantity(q => Math.max(1, q - 1))} style={{
-              width: 32, height: 32, border: "none", background: "transparent",
-              cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.lg, color: C.ink,
-            }}>-</button>
+      {/* ── Auto-assortment mode ───────────────────────────────────────── */}
+      {mode === "auto" && (
+        <div>
+          <div style={{ fontSize: T.sz.xs, color: C.inkMid, marginBottom: S[2] }}>
+            Ingresa la cantidad total y se distribuira entre tallas con stock
+          </div>
+          <div style={{ display: "flex", gap: S[2], alignItems: "center", marginBottom: S[3] }}>
             <input
               type="number"
-              value={quantity}
-              onChange={e => { const n = parseInt(e.target.value); if (n > 0) setQuantity(n); }}
+              min={1}
+              value={autoQty || ""}
+              onChange={e => { setAutoQty(parseInt(e.target.value) || 0); setProposal(null); }}
+              placeholder="Cantidad"
               style={{
-                width: 40, textAlign: "center", border: "none", fontFamily: T.mono,
-                fontSize: 16, outline: "none", background: "transparent",
+                flex: 1, padding: `${S[2]}px ${S[3]}px`, border: `1px solid ${C.line}`,
+                borderRadius: R.md, fontFamily: T.mono, fontSize: 16, background: C.white,
+                outline: "none", boxSizing: "border-box", textAlign: "center",
               }}
             />
-            <button onClick={() => setQuantity(q => q + 1)} style={{
-              width: 32, height: 32, border: "none", background: "transparent",
-              cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.lg, color: C.ink,
-            }}>+</button>
+            <button
+              onClick={handleAutoDistribute}
+              disabled={autoQty <= 0 || distributing}
+              style={{
+                padding: `${S[2]}px ${S[3]}px`, fontFamily: T.mono, fontSize: T.sz.sm,
+                fontWeight: T.wt.semibold, border: "none", borderRadius: R.md, cursor: autoQty > 0 && !distributing ? "pointer" : "default",
+                background: autoQty > 0 && !distributing ? C.blueDark : C.surfaceAlt,
+                color: autoQty > 0 && !distributing ? C.white : C.inkLight,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {distributing ? "..." : "Distribuir"}
+            </button>
           </div>
-          <button
-            onClick={() => { onAdd(selected, quantity); setSelectedVariant(null); setQuantity(1); }}
-            style={{
-              flex: 1, padding: `${S[2]}px ${S[3]}px`, background: C.blueDark, color: C.white,
-              border: "none", borderRadius: R.md, fontFamily: T.mono, fontSize: T.sz.sm,
-              fontWeight: T.wt.semibold, cursor: "pointer",
-            }}
-          >
-            Agregar
-          </button>
+
+          {/* Server-generated proposal */}
+          {proposal && (
+            <div style={{ marginBottom: S[3] }}>
+              <div style={{
+                padding: `${S[1]}px ${S[2]}px`, marginBottom: S[2], borderRadius: R.sm,
+                fontFamily: T.mono, fontSize: T.sz.xs,
+                background: proposal.fulfillable ? `${C.green}10` : `${C.amber}10`,
+                color: proposal.fulfillable ? C.green : C.amberDark,
+                border: `1px solid ${proposal.fulfillable ? C.green : C.amber}20`,
+              }}>
+                {proposal.explanation}
+              </div>
+
+              {/* Per-line proposal table */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                {proposal.lines.filter(l => l.allocatedUnits > 0).map(l => (
+                  <div key={l.variantId} style={{
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                    padding: `${S[1]}px ${S[2]}px`, background: C.surfaceAlt, borderRadius: R.sm,
+                    fontFamily: T.mono, fontSize: T.sz.xs,
+                  }}>
+                    <span style={{ fontWeight: T.wt.semibold, color: C.ink }}>
+                      {l.size}{l.color ? `/${l.color}` : ""}
+                    </span>
+                    <div style={{ display: "flex", gap: S[2], alignItems: "center" }}>
+                      <span style={{ color: C.inkMid }}>{l.allocatedUnits} uds</span>
+                      <span style={{ color: C.inkFaint, fontSize: T.sz["2xs"] }}>de {l.availableUnits} disp</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {proposal.unallocatedUnits > 0 && (
+                <div style={{
+                  fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.amberDark,
+                  marginTop: S[1], padding: `${S[1]}px ${S[2]}px`,
+                }}>
+                  {proposal.unallocatedUnits} uds sin asignar por inventario insuficiente
+                </div>
+              )}
+
+              {/* Accept proposal */}
+              <button
+                onClick={handleAddProposalToCart}
+                style={{
+                  width: "100%", marginTop: S[3], padding: `${S[3]}px 0`,
+                  background: C.blueDark, color: C.white, border: "none",
+                  borderRadius: R.md, fontFamily: T.mono, fontSize: T.sz.md,
+                  fontWeight: T.wt.bold, cursor: "pointer",
+                }}
+              >
+                Agregar al pedido ({proposal.allocatedUnits} uds)
+              </button>
+            </div>
+          )}
         </div>
+      )}
+
+      {/* ── Manual mode ────────────────────────────────────────────────── */}
+      {mode === "manual" && (
+        <>
+          <div style={{ fontSize: T.sz.xs, color: C.inkMid, marginBottom: S[2], fontWeight: T.wt.medium }}>
+            Seleccionar talla y color:
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: S[2] }}>
+            {variants.filter(v => v.size || v.color).map(v => {
+              const isSelected = selectedVariant === v.variantId;
+              const available = v.availability.availableUnits;
+              const isOut = available !== null && available <= 0;
+              return (
+                <button
+                  key={v.variantId}
+                  onClick={() => { if (!isOut) { setSelectedVariant(v.variantId); setQuantity(1); } }}
+                  disabled={isOut}
+                  style={{
+                    padding: `${S[1]}px ${S[2]}px`, fontSize: T.sz.xs,
+                    border: `1px solid ${isSelected ? C.blueDark : C.line}`,
+                    borderRadius: R.sm, fontFamily: T.mono, cursor: isOut ? "default" : "pointer",
+                    background: isSelected ? C.blueLight : isOut ? C.surfaceAlt : C.white,
+                    color: isOut ? C.inkLight : isSelected ? C.blueDark : C.ink,
+                    opacity: isOut ? 0.5 : 1,
+                  }}
+                >
+                  {v.size}{v.color ? `/${v.color}` : ""}
+                  {available !== null ? ` (${available})` : ""}
+                </button>
+              );
+            })}
+          </div>
+
+          {selected && (
+            <div style={{ display: "flex", alignItems: "center", gap: S[2], marginTop: S[2] }}>
+              <div style={{ display: "flex", alignItems: "center", border: `1px solid ${C.line}`, borderRadius: R.md }}>
+                <button onClick={() => setQuantity(q => Math.max(1, q - 1))} style={{
+                  width: 32, height: 32, border: "none", background: "transparent",
+                  cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.lg, color: C.ink,
+                }}>-</button>
+                <input
+                  type="number"
+                  value={quantity}
+                  onChange={e => { const n = parseInt(e.target.value); if (n > 0) setQuantity(n); }}
+                  style={{
+                    width: 40, textAlign: "center", border: "none", fontFamily: T.mono,
+                    fontSize: 16, outline: "none", background: "transparent",
+                  }}
+                />
+                <button onClick={() => setQuantity(q => q + 1)} style={{
+                  width: 32, height: 32, border: "none", background: "transparent",
+                  cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.lg, color: C.ink,
+                }}>+</button>
+              </div>
+              <button
+                onClick={() => { onAdd(selected, quantity); setSelectedVariant(null); setQuantity(1); }}
+                style={{
+                  flex: 1, padding: `${S[2]}px ${S[3]}px`, background: C.blueDark, color: C.white,
+                  border: "none", borderRadius: R.md, fontFamily: T.mono, fontSize: T.sz.sm,
+                  fontWeight: T.wt.semibold, cursor: "pointer",
+                }}
+              >
+                Agregar
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

@@ -1,9 +1,10 @@
 /**
  * POST /api/orgs/[orgSlug]/comercial/pedidos/products
  *
- * Actions: search, variants, availability
+ * Actions: search, variants, availability, auto_assortment
  *
  * Sprint: COMERCIAL-PEDIDOS-POS-02
+ * Sprint: AGENTIK-SELLER-APP-ORDER-AUTO-ASSORTMENT-P0-CLOSE
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -12,6 +13,7 @@ import {
   searchOrderProducts,
   getProductVariants,
   getVariantAvailability,
+  computeAutoAssortmentProposal,
 } from "@/lib/comercial/pedidos/order-product-search";
 
 export async function POST(
@@ -41,6 +43,15 @@ export async function POST(
         orgId, body.referenceCode, body.size, body.color,
       );
       return NextResponse.json({ availability });
+    }
+
+    case "auto_assortment": {
+      const qty = Number(body.requestedUnits);
+      if (!body.referenceCode || !qty || qty <= 0) {
+        return NextResponse.json({ error: "referenceCode and requestedUnits required" }, { status: 400 });
+      }
+      const proposal = await computeAutoAssortmentProposal(orgId, body.referenceCode, qty);
+      return NextResponse.json({ proposal });
     }
 
     default:
