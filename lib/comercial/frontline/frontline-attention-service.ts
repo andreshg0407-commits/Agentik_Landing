@@ -210,7 +210,12 @@ export async function emitCustomerOverdueAttention(
   sellerId: string | null,
   orgSlug: string,
 ): Promise<FrontlineAttentionItem | null> {
-  const receivables = await getCustomerReceivables(orgId, customerId);
+  // Resolve sagTerceroId to enable canonical AR path (CERTIFIED)
+  const profile = await db.customerProfile.findFirst({
+    where: { organizationId: orgId, id: customerId },
+    select: { sagTerceroId: true },
+  });
+  const receivables = await getCustomerReceivables(orgId, customerId, profile?.sagTerceroId ?? null);
   if (!receivables || receivables.overdueAmount <= 0) return null;
 
   // AGENTIK-RECEIVABLES-SAFETY-LOCK-P0: suppress overdue attention
@@ -239,7 +244,7 @@ export async function emitCustomerOverdueAttention(
     createdAt: now,
     deduplicationKey: `frontline:customer_overdue:${orgId}:${customerId}`,
     provenance: {
-      source: "CustomerReceivable (Prisma)",
+      source: receivables.truthStatus === "CERTIFIED" ? "vw_agentik_cartera (SAG)" : "CustomerReceivable (Prisma)",
       asOf: now,
     },
   };

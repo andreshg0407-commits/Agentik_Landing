@@ -211,12 +211,17 @@ enum CollectionAppliedStatus {
 }
 
 /// Where the real monetary amount in CollectionRecord came from.
-/// SAG_V_PAGOSNEW is the primary confirmed source (Valor_Pagado).
+///
+/// AGENTIK-RECEIVABLES-AR-TRUTH-01:
+///   CANONICAL = SAG_VW_AGENTIK_RECAUDOS (dbo.vw_agentik_recaudos)
+///   LEGACY    = SAG_V_PAGOSNEW (v_pagosnew) — MUST NOT be used as AR authority
+///   v_pagosnew MUST NOT be used as: primary, fallback, complement, union, or gap filler.
 enum CollectionAmountSource {
-  SAG_V_PAGOSNEW    // v_pagosnew.Valor_Pagado — confirmed 2026-04-30
-  SAG_V_MOVPAGOS    // v_movimientos_pagos_con_facturas (pending validation)
-  SAG_V_DOCPAGOS    // v_documentos_pagos_detalle (pending validation)
-  MANUAL            // manually entered by operator
+  SAG_V_PAGOSNEW            // LEGACY — v_pagosnew.Valor_Pagado — NOT canonical AR authority
+  SAG_VW_AGENTIK_RECAUDOS   // CANONICAL — dbo.vw_agentik_recaudos — authoritative AR source
+  SAG_V_MOVPAGOS            // PENDING — v_movimientos_pagos_con_facturas
+  SAG_V_DOCPAGOS            // PENDING — v_documentos_pagos_detalle
+  MANUAL                    // manually entered by operator
 }
 
 enum ActionTaskType {
@@ -1961,11 +1966,16 @@ model CollectionRecord {
   customerName   String?
 
   // ── Amount ───────────────────────────────────────────────────────────────────
-  /// Valor_Pagado from v_pagosnew. Always positive (Math.abs applied in mapper).
+  /// Valor_Pagado from v_pagosnew (LEGACY) or vw_agentik_recaudos (CANONICAL).
+  /// Always positive (Math.abs applied in mapper).
+  /// AGENTIK-RECEIVABLES-AR-TRUTH-01: when amountSource = SAG_V_PAGOSNEW,
+  /// this amount MUST NOT be treated as canonical AR authority.
   amount         Decimal  @db.Decimal(18, 2)
   currency       String   @default("COP")
 
   // ── Source provenance ────────────────────────────────────────────────────────
+  /// AGENTIK-RECEIVABLES-AR-TRUTH-01: SAG_V_PAGOSNEW = LEGACY (default for
+  /// existing rows). SAG_VW_AGENTIK_RECAUDOS = CANONICAL AR authority.
   amountSource   CollectionAmountSource @default(SAG_V_PAGOSNEW)
 
   // ── Applied invoices (populated when view provides application detail) ───────

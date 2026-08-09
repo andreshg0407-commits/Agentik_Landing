@@ -485,7 +485,14 @@ export function mapSagMovement(
   };
 }
 
-// ── Collection mapper — SAG v_pagosnew ────────────────────────────────────────
+// ── Collection mapper — SAG v_pagosnew (LEGACY) ───────────────────────────────
+//
+// AGENTIK-RECEIVABLES-AR-TRUTH-01:
+// v_pagosnew is the LEGACY collection source. Output from this mapper
+// MUST NOT be treated as canonical AR authority.
+//   CANONICAL_COLLECTION_SOURCE = dbo.vw_agentik_recaudos
+//   LEGACY_COLLECTION_SOURCE    = v_pagosnew
+// v_pagosnew MUST NOT be used as: primary, fallback, complement, union, or gap filler.
 
 // Cobro codes this mapper accepts. Any other code is rejected (returns null).
 const COLLECTION_CODES = new Set(["R1", "R2", "RS", "RC", "RG", "RA", "SI", "AN"]);

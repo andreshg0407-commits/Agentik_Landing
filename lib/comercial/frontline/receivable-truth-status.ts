@@ -14,6 +14,13 @@
  * all overdue warnings, attention items, and definitive financial statements
  * derived from CustomerReceivable are SUPPRESSED.
  *
+ * AGENTIK-RECEIVABLES-AR-TRUTH-01 establishes:
+ *   CANONICAL_COLLECTION_SOURCE = dbo.vw_agentik_recaudos
+ *   LEGACY_COLLECTION_SOURCE    = v_pagosnew (SAG_V_PAGOSNEW)
+ *
+ * CollectionRecord sourced from SAG_V_PAGOSNEW MUST NOT be used as
+ * canonical AR authority. See collection-source-authority.ts.
+ *
  * This file is pure types + deterministic resolver. No DB. No SAG. No side effects.
  */
 

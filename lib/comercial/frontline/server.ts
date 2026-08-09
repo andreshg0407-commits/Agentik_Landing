@@ -12,6 +12,10 @@ export { getCustomerPurchaseHistory, getCustomerTopProducts } from "./customer-p
 export { getCustomerReceivables, getCustomerCommercialContext } from "./customer-commercial-context";
 export { getSellerAttention, emitCustomerOverdueAttention } from "./frontline-attention-service";
 
+// Canonical AR Truth (AGENTIK-RECEIVABLES-AR-TRUTH-01)
+export { fetchCertifiedArSnapshot, fetchCertifiedCustomerAr, fetchCustomerArWithStatus } from "./canonical-ar-service";
+export { fetchCertifiedCustomerRecaudos, fetchDocumentCollections } from "./canonical-recaudos-service";
+
 // Seller App V1 (AGENTIK-SELLER-APP-V1-01)
 export { getSellerInactiveCustomers } from "./seller-inactive-customers";
 export { getOrderFulfillmentTimeline, getSellerOrderTimelines } from "./order-fulfillment-timeline";

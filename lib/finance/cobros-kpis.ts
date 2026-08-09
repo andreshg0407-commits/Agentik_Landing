@@ -15,6 +15,12 @@
  *
  * When CollectionRecord is empty (collections sync not yet run), falls back to
  * SaleRecord count-only from cobros-breakdown.ts.
+ *
+ * AGENTIK-RECEIVABLES-AR-TRUTH-01:
+ * CollectionRecord is currently sourced from v_pagosnew (SAG_V_PAGOSNEW).
+ * v_pagosnew is LEGACY — these KPIs are operational telemetry, NOT canonical
+ * AR authority. They MUST NOT be used to compute net receivable balances,
+ * overdue amounts, or credit decisions. Canonical source: dbo.vw_agentik_recaudos.
  */
 
 import { prisma } from "@/lib/prisma";

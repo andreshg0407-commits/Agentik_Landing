@@ -27,6 +27,13 @@
  * - Never mutates any DB record
  * - Never throws (all errors → LOW confidence result with notes)
  * - Read-only: uses prisma.$transaction with a read-only flavor (SELECT only)
+ *
+ * ── AR TRUTH SOURCE AUTHORITY (AGENTIK-RECEIVABLES-AR-TRUTH-01) ─────────────
+ * CollectionRecord rows currently sourced from SAG_V_PAGOSNEW (v_pagosnew).
+ * v_pagosnew is LEGACY — it MUST NOT be used as canonical AR authority.
+ * Shadow reconciliation output is SIMULATION ONLY — never authoritative.
+ * Results carry `sourceAuthority: "LEGACY"` to prevent misuse.
+ * Canonical source: dbo.vw_agentik_recaudos (SAG_VW_AGENTIK_RECAUDOS).
  */
 
 import { prisma } from "@/lib/prisma";
@@ -34,6 +41,10 @@ import {
   parseAppliedFacts,
   extractInvoiceCandidates,
 } from "./applied-facts-parser";
+import {
+  LEGACY_COLLECTION_SOURCE,
+  type CollectionSourceAuthority,
+} from "@/lib/comercial/frontline/collection-source-authority";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -100,6 +111,19 @@ export interface ShadowReconciliationResult {
 
   /** Explanatory note when confidence is LOW or variance is large */
   note?: string;
+
+  /**
+   * AGENTIK-RECEIVABLES-AR-TRUTH-01: source authority of the CollectionRecord
+   * data used to compute inferredPaid.
+   *
+   * "LEGACY" = sourced from v_pagosnew (SAG_V_PAGOSNEW) — SIMULATION ONLY,
+   *            MUST NOT be treated as canonical AR truth.
+   * "CANONICAL" = sourced from vw_agentik_recaudos — authoritative AR data.
+   *
+   * Currently always "LEGACY" because all CollectionRecord rows come from
+   * v_pagosnew. Will become "CANONICAL" when vw_agentik_recaudos sync is active.
+   */
+  sourceAuthority: CollectionSourceAuthority;
 }
 
 export interface ShadowReconciliationSummary {
@@ -120,6 +144,12 @@ export interface ShadowReconciliationSummary {
   lowConfidence:       number;
   /** % of balance that shadow-reconciliation can explain */
   explainabilityRate:  number;
+
+  /**
+   * AGENTIK-RECEIVABLES-AR-TRUTH-01: source authority of CollectionRecord data.
+   * "LEGACY" when sourced from v_pagosnew — results are simulation only.
+   */
+  sourceAuthority: CollectionSourceAuthority;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -351,6 +381,9 @@ export async function shadowReconcileCustomer(
       currentStatus:    rec.status,
       theoreticalStatus: theoreticalStatus(theorBal, originalAmount),
       note,
+      // AGENTIK-RECEIVABLES-AR-TRUTH-01: all CollectionRecord rows currently
+      // sourced from v_pagosnew (LEGACY). Results are simulation only.
+      sourceAuthority: "LEGACY" as CollectionSourceAuthority,
     };
   });
 }
@@ -474,6 +507,8 @@ export async function shadowReconcileOrg(
       currentStatus:      rec.status,
       theoreticalStatus:  theoreticalStatus(theorBal, originalAmount),
       note,
+      // AGENTIK-RECEIVABLES-AR-TRUTH-01: LEGACY source — simulation only.
+      sourceAuthority: "LEGACY" as CollectionSourceAuthority,
     };
   });
 
@@ -520,6 +555,8 @@ export async function shadowReconcileOrg(
     mediumConfidence:   medConf,
     lowConfidence:      lowConf,
     explainabilityRate,
+    // AGENTIK-RECEIVABLES-AR-TRUTH-01: LEGACY source — simulation only.
+    sourceAuthority: "LEGACY" as CollectionSourceAuthority,
   };
 
   return { results, summary };

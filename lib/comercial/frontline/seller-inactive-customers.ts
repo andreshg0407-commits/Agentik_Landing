@@ -168,11 +168,19 @@ export async function getSellerInactiveCustomers(
     });
   }
 
+  // Build customerId → sagTerceroId lookup for canonical AR path
+  const sagIdByCustomerId = new Map<string, number>();
+  for (const customer of customerMap.values()) {
+    if (customer.sagTerceroId != null) {
+      sagIdByCustomerId.set(customer.id, customer.sagTerceroId);
+    }
+  }
+
   // Step 5: Enrich top items with receivables and purchase summary (max 20)
   const enrichLimit = Math.min(items.length, 20);
   const enrichPromises = items.slice(0, enrichLimit).map(async (item) => {
     const [recv, topProducts] = await Promise.all([
-      getCustomerReceivables(orgId, item.customerId),
+      getCustomerReceivables(orgId, item.customerId, sagIdByCustomerId.get(item.customerId) ?? null),
       getCustomerTopProducts(orgId, item.customerId, { ranking: "UNITS", limit: 3 }),
     ]);
 

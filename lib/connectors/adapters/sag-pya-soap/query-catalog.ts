@@ -426,6 +426,13 @@ const PRODUCTION: Record<string, QueryEntry> = {
 // ─────────────────────────────────────────────────────────────────────────────
 // COLLECTIONS — Cobros reales desde v_pagosnew
 // Source confirmed: v_pagosnew.Valor_Pagado + Codigo_Fuente_Comprobante (2026-04-30)
+//
+// AGENTIK-RECEIVABLES-AR-TRUTH-01:
+// v_pagosnew is the LEGACY collection source. CollectionRecord rows from this
+// view MUST NOT be treated as canonical AR authority.
+//   CANONICAL_COLLECTION_SOURCE = dbo.vw_agentik_recaudos
+//   LEGACY_COLLECTION_SOURCE    = v_pagosnew
+// v_pagosnew MUST NOT be used as: primary, fallback, complement, union, or gap filler.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const COLLECTIONS: Record<string, QueryEntry> = {
@@ -833,6 +840,120 @@ const COMMERCIAL_PRODUCTS: Record<string, QueryEntry> = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// CANONICAL AR VIEWS — vw_agentik_cartera + vw_agentik_recaudos
+// Source: AGENTIK-RECEIVABLES-AR-TRUTH-01 (Section 1 probe, 2026-08-09)
+//
+// These views are the CANONICAL authority for accounts receivable.
+// vw_agentik_cartera: open receivable documents with SAG-computed SALDO_PENDIENTE
+// vw_agentik_recaudos: collection applications at document level
+//
+// Join key: cartera.DOCUMENTO = recaudos.DOCUMENTO_RELACIONADO + CLIENTE_ID
+// Customer key: CLIENTE_ID = TERCEROS.ka_nl_tercero (SAG customer PK)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CANONICAL_AR: Record<string, QueryEntry> = {
+
+  cartera: {
+    key:     "canonicalAr.cartera",
+    purpose: "Pull all open receivable documents from vw_agentik_cartera — SALDO_PENDIENTE pre-computed by SAG.",
+    method:  "consultaSagJson",
+    query:   "SELECT * FROM vw_agentik_cartera",
+    expectedFields: [
+      "DOCUMENTO", "TIPO_DOCUMENTO", "CLIENTE_ID", "CLIENTE", "VENDEDOR",
+      "FECHA_DOCUMENTO", "FECHA_VENCIMIENTO", "DIAS_MORA",
+      "VALOR_DOCUMENTO", "SALDO_PENDIENTE", "ESTADO_CARTERA",
+      "CIUDAD", "CANAL_VENTA",
+    ],
+    notes: [
+      "Confirmed 2026-08-09: 714 docs, 660 with SALDO > 0, 443 customers.",
+      "SALDO_PENDIENTE is pre-computed by SAG — already includes all applied collections.",
+      "DIAS_MORA is live-computed by SAG at query time.",
+      "ESTADO_CARTERA: 'En Mora' (559) | 'Pendiente de Pago' (155).",
+      "TIPO_DOCUMENTO: 'Factura' (656) | 'Nota Credito' (58).",
+      "Negative SALDO_PENDIENTE = credit notes with unapplied balance (54 docs).",
+      "DOCUMENTO prefix: FE=Factura Electronica, F2=Factura tipo 2, NC=Nota Credito.",
+    ].join(" | "),
+    validationChecklist: [
+      "Confirmed view exists on CURRENT database (2026-08-09)",
+      "Confirmed all 13 fields present",
+      "Confirmed CLIENTE_ID = TERCEROS.ka_nl_tercero",
+      "Confirmed DOCUMENTO is the join key to vw_agentik_recaudos.DOCUMENTO_RELACIONADO",
+    ],
+    status: "validated",
+  },
+
+  carteraByCliente: {
+    key:     "canonicalAr.carteraByCliente",
+    purpose: "Pull open receivables for a single customer by CLIENTE_ID (ka_nl_tercero).",
+    method:  "consultaSagJson",
+    query:   "SELECT * FROM vw_agentik_cartera WHERE CLIENTE_ID = {clienteId}",
+    expectedFields: [
+      "DOCUMENTO", "TIPO_DOCUMENTO", "CLIENTE_ID", "CLIENTE", "VENDEDOR",
+      "FECHA_DOCUMENTO", "FECHA_VENCIMIENTO", "DIAS_MORA",
+      "VALOR_DOCUMENTO", "SALDO_PENDIENTE", "ESTADO_CARTERA",
+      "CIUDAD", "CANAL_VENTA",
+    ],
+    notes: "Replace {clienteId} with numeric ka_nl_tercero. Returns 0 rows if fully paid.",
+    validationChecklist: [
+      "Confirmed: AMV LLANO (856) returns 0 rows = fully paid",
+      "Confirmed: GLORIA PATRICIA (1244) returns 2 docs with real balances",
+    ],
+    status: "validated",
+  },
+
+  recaudos: {
+    key:     "canonicalAr.recaudos",
+    purpose: "Pull all collection applications from vw_agentik_recaudos — one row per document application.",
+    method:  "consultaSagJson",
+    query:   "SELECT * FROM vw_agentik_recaudos",
+    expectedFields: [
+      "ID_RECAUDO", "FECHA_RECAUDO", "CLIENTE_ID", "CLIENTE",
+      "DOCUMENTO_RELACIONADO", "VALOR_RECAUDADO",
+      "CONCILIADO", "REFERENCIA_BANCARIA", "ID_MOVIMIENTO_BANCO",
+      "MONTO_NO_APLICADO", "BANCO", "REFERENCIA_PAGO",
+    ],
+    notes: [
+      "Confirmed 2026-08-09: 47,043 rows, 4,421 customers, 35,671 distinct documents.",
+      "VALOR_RECAUDADO: positive=payment, negative=credit note/reversal (12,455 negative rows).",
+      "CONCILIADO: 100% NULL (bank reconciliation not used).",
+      "REFERENCIA_PAGO: 100% empty string.",
+      "ID_RECAUDO is NOT unique per row — same ID appears N times for N document applications.",
+      "MONTO_NO_APLICADO > 0 on 6,747 rows (total $7.76B unapplied).",
+      "DOCUMENTO_RELACIONADO prefix: FE=Factura Electronica, F2=Factura, NC=Nota Credito, ND=Nota Debito, H1=?, AN=Anticipo, B1=?.",
+      "CLIENTE_ID = TERCEROS.ka_nl_tercero (confirmed with AMV LLANO 856 → NIT 900469068).",
+      "WARNING: SUM(VALOR_RECAUDADO) overflows INT — must CAST to BIGINT for aggregation.",
+    ].join(" | "),
+    validationChecklist: [
+      "Confirmed view exists on CURRENT database (2026-08-09)",
+      "Confirmed all 12 fields present",
+      "Confirmed join to vw_agentik_cartera.DOCUMENTO works",
+      "Confirmed CLIENTE_ID matches TERCEROS.ka_nl_tercero",
+    ],
+    status: "validated",
+  },
+
+  recaudosByCliente: {
+    key:     "canonicalAr.recaudosByCliente",
+    purpose: "Pull collection applications for a single customer.",
+    method:  "consultaSagJson",
+    query:   "SELECT * FROM vw_agentik_recaudos WHERE CLIENTE_ID = {clienteId} ORDER BY FECHA_RECAUDO DESC",
+    expectedFields: [
+      "ID_RECAUDO", "FECHA_RECAUDO", "CLIENTE_ID", "CLIENTE",
+      "DOCUMENTO_RELACIONADO", "VALOR_RECAUDADO",
+      "CONCILIADO", "REFERENCIA_BANCARIA", "ID_MOVIMIENTO_BANCO",
+      "MONTO_NO_APLICADO", "BANCO", "REFERENCIA_PAGO",
+    ],
+    notes: "Replace {clienteId} with numeric ka_nl_tercero. AMV LLANO (856): 330 rows, $506M total.",
+    validationChecklist: [
+      "Confirmed: AMV LLANO (856) returns 330 rows",
+      "Confirmed: join to cartera.DOCUMENTO works for document-level truth",
+    ],
+    status: "validated",
+  },
+
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Unified catalog export
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -848,6 +969,7 @@ export const QUERY_CATALOG = {
   accounts:       ACCOUNTS,
   commercialProducts: COMMERCIAL_PRODUCTS,
   masterLookups:  MASTER_LOOKUPS,
+  canonicalAr:    CANONICAL_AR,
 } as const;
 
 /** Flat list of all query entries for iteration / report generation */

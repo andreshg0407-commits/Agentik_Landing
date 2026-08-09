@@ -49,3 +49,18 @@ export type {
 } from "./seller-app-types";
 
 export { DEFAULT_OVERDUE_POLICY, SELLER_COMMISSION_BANDS } from "./seller-app-types";
+
+// Canonical AR Truth types (AGENTIK-RECEIVABLES-AR-TRUTH-01)
+export type {
+  SagCarteraRow,
+  SagRecaudoRow,
+  CertifiedReceivableDocument,
+  CertifiedCustomerReceivableSnapshot,
+  CertifiedArSnapshot,
+  ArAgingBand,
+  CanonicalArResult,
+  CustomerArResult,
+  CertifiedCollectionApplication,
+  CertifiedCustomerCollectionSnapshot,
+  CanonicalRecaudosResult,
+} from "./canonical-ar-types";

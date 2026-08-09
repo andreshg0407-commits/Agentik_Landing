@@ -552,6 +552,12 @@ export const saleRecordStorage: StorageHandler<UnifiedMovement> = {
 // Dedup key: (organizationId, naturalKey) — naturalKey = record.sourceId from mapper.
 // Batch strategy: Promise.allSettled per batch (same as CustomerOrderRecord).
 // No post-batch KPI refresh needed here — getCobrosKpis() reads live from the table.
+//
+// AGENTIK-RECEIVABLES-AR-TRUTH-01:
+// amountSource is hardcoded to "SAG_V_PAGOSNEW" — this is the LEGACY source.
+// CollectionRecord rows from this handler MUST NOT be treated as canonical
+// AR authority. Canonical source: dbo.vw_agentik_recaudos (SAG_VW_AGENTIK_RECAUDOS).
+// v_pagosnew MUST NOT be used as primary, fallback, complement, union, or gap filler.
 
 const COLLECTION_BATCH_SIZE = 200;
 

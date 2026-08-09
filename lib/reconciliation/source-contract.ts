@@ -154,12 +154,18 @@ export const RECONCILIATION_SOURCES: Readonly<Record<ReconciliationSourceType, R
   },
 
   // ── SAG Payments (Cobros) ───────────────────────────────────────────────────
-  // CollectionRecord from v_pagosnew
-  // Partially available — SAG sync active, PUC validation pending
+  // CollectionRecord from v_pagosnew (LEGACY source)
+  //
+  // AGENTIK-RECEIVABLES-AR-TRUTH-01:
+  // v_pagosnew is LEGACY — CollectionRecord from this source MUST NOT be
+  // treated as canonical AR authority.
+  //   CANONICAL_COLLECTION_SOURCE = dbo.vw_agentik_recaudos
+  //   LEGACY_COLLECTION_SOURCE    = v_pagosnew
+  // v_pagosnew MUST NOT be used as: primary, fallback, complement, union, or gap filler.
 
   "sag_payments": {
     sourceId:             "sag_payments",
-    label:                "Cobros SAG",
+    label:                "Cobros SAG (legacy v_pagosnew)",
     shortLabel:           "SAG Cobros",
     provider:             "SAG PYA",
     readiness:            "pending_sag_validation",
@@ -168,7 +174,7 @@ export const RECONCILIATION_SOURCES: Readonly<Record<ReconciliationSourceType, R
     requiresCredential:   false,
     requiresUpload:       false,
     requiresIntegration:  false,
-    readinessNote:        "CollectionRecord disponible. Validación de códigos PUC pendiente para conciliación bancaria.",
+    readinessNote:        "LEGACY: v_pagosnew. No es fuente canónica de AR. Fuente canónica: dbo.vw_agentik_recaudos. Validación PUC pendiente.",
     relatedSagCodes:      ["H1", "B1", "B2", "CP"],
   },
 
