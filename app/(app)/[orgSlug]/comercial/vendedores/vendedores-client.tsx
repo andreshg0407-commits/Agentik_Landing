@@ -24,6 +24,8 @@ import type { Vendedor360Data } from "@/lib/comercial/vendors/vendedor-360-types
 
 type SellerActivityStatus = "activo" | "atencion" | "inactivo";
 
+type SellerAppAccessState = "no_access" | "invited" | "active" | "disabled";
+
 interface SellerCard {
   sellerName: string;
   sellerSlug: string;
@@ -40,6 +42,8 @@ interface SellerCard {
   daysSinceLastActivity: number | null;
   isActive: boolean;
   activityStatus: SellerActivityStatus;
+  accessState: SellerAppAccessState;
+  accessEmail: string | null;
 }
 
 interface Props {
@@ -570,10 +574,12 @@ function SellerProfileCard({
             gap: S[2],
             alignItems: "center",
             marginTop: 2,
+            flexWrap: "wrap",
           }}>
             <StatusChip variant={healthToVariant(health)}>
               {healthLabel(health)}
             </StatusChip>
+            <AccessBadge state={seller.accessState} />
             <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight }}>
               {fmtDaysAgo(seller.lastActivityAt)}
             </span>
@@ -648,6 +654,29 @@ function CardMiniKpi({ label, value }: { label: string; value: string }) {
         {value}
       </div>
     </div>
+  );
+}
+
+// ── Access Badge ─────────────────────────────────────────────────────────────
+
+function AccessBadge({ state }: { state: SellerAppAccessState }) {
+  if (state === "no_access") return null;
+  const config: Record<string, { label: string; bg: string; color: string; border: string }> = {
+    invited: { label: "Invitado", bg: C.amberLight, color: C.amber, border: C.amberBorder },
+    active: { label: "Seller App", bg: C.greenLight, color: C.green, border: C.greenBorder },
+    disabled: { label: "Revocado", bg: C.redLight, color: C.red, border: C.redBorder },
+  };
+  const c = config[state];
+  if (!c) return null;
+  return (
+    <span style={{
+      fontFamily: T.mono, fontSize: 9, fontWeight: T.wt.bold,
+      padding: "1px 6px", borderRadius: R.pill,
+      background: c.bg, color: c.color, border: `1px solid ${c.border}`,
+      textTransform: "uppercase", letterSpacing: "0.04em",
+    }}>
+      {c.label}
+    </span>
   );
 }
 
@@ -838,7 +867,7 @@ function DrawerContent({
       </div>
 
       {/* ── Tab Content ──────────────────────────────────────────────────── */}
-      {tab === "perfil" && <TabPerfil data={data} />}
+      {tab === "perfil" && <TabPerfil data={data} orgSlug={orgSlug} sellerSlug={data.identity.sellerSlug} />}
       {tab === "clientes" && <TabClientes data={data} orgSlug={orgSlug} />}
       {tab === "ventas" && <TabVentas data={data} />}
       {tab === "recaudos" && <TabRecaudos />}
@@ -982,7 +1011,7 @@ function ProvisionalBanner() {
 
 // ── Tab: Perfil ───────────────────────────────────────────────────────────────
 
-function TabPerfil({ data }: { data: Vendedor360Data }) {
+function TabPerfil({ data, orgSlug, sellerSlug }: { data: Vendedor360Data; orgSlug: string; sellerSlug: string }) {
   const { identity } = data;
 
   return (
@@ -1002,6 +1031,8 @@ function TabPerfil({ data }: { data: Vendedor360Data }) {
         </div>
       </Panel>
 
+      <SellerAppAccessPanel orgSlug={orgSlug} sellerSlug={sellerSlug} />
+
       <Panel>
         <PanelHeader title="Cobertura comercial" />
         <div style={{
@@ -1017,6 +1048,185 @@ function TabPerfil({ data }: { data: Vendedor360Data }) {
         </div>
       </Panel>
     </div>
+  );
+}
+
+// ── Seller App Access Panel ─────────────────────────────────────────────────
+
+function SellerAppAccessPanel({ orgSlug, sellerSlug }: { orgSlug: string; sellerSlug: string }) {
+  const [state, setState] = useState<SellerAppAccessState | null>(null);
+  const [email, setEmail] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [provisionEmail, setProvisionEmail] = useState("");
+  const [setupUrl, setSetupUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    fetch(`/api/orgs/${orgSlug}/comercial/vendedores/${encodeURIComponent(sellerSlug)}/access`)
+      .then(r => r.json())
+      .then(d => { setState(d.state ?? "no_access"); setEmail(d.email ?? null); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [orgSlug, sellerSlug]);
+
+  const handleProvision = async () => {
+    if (!provisionEmail.trim()) { setError("Ingresa el correo del vendedor"); return; }
+    setActionLoading(true); setError(null); setSetupUrl(null);
+    try {
+      const res = await fetch(`/api/orgs/${orgSlug}/comercial/vendedores/${encodeURIComponent(sellerSlug)}/access`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "provision", email: provisionEmail.trim() }),
+      });
+      const d = await res.json();
+      if (!d.ok) { setError(d.error ?? "Error al provisionar acceso"); }
+      else {
+        setState("invited");
+        setEmail(provisionEmail.trim());
+        if (d.setupUrl) setSetupUrl(d.setupUrl);
+      }
+    } catch { setError("Error de conexion"); }
+    setActionLoading(false);
+  };
+
+  const handleResend = async () => {
+    setActionLoading(true); setError(null); setSetupUrl(null);
+    try {
+      const res = await fetch(`/api/orgs/${orgSlug}/comercial/vendedores/${encodeURIComponent(sellerSlug)}/access`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "resend" }),
+      });
+      const d = await res.json();
+      if (!d.ok) { setError(d.error ?? "Error al reenviar"); }
+      else if (d.setupUrl) { setSetupUrl(d.setupUrl); }
+    } catch { setError("Error de conexion"); }
+    setActionLoading(false);
+  };
+
+  const handleRevoke = async () => {
+    setActionLoading(true); setError(null); setSetupUrl(null);
+    try {
+      const res = await fetch(`/api/orgs/${orgSlug}/comercial/vendedores/${encodeURIComponent(sellerSlug)}/access`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "revoke" }),
+      });
+      const d = await res.json();
+      if (!d.ok) { setError(d.error ?? "Error al revocar"); }
+      else { setState("disabled"); }
+    } catch { setError("Error de conexion"); }
+    setActionLoading(false);
+  };
+
+  const copySetupUrl = () => {
+    if (!setupUrl) return;
+    const fullUrl = `${window.location.origin}${setupUrl}`;
+    navigator.clipboard.writeText(fullUrl).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
+  };
+
+  if (loading) return null;
+
+  return (
+    <Panel>
+      <PanelHeader title="Acceso Seller App" badge={
+        state ? <AccessBadge state={state} /> : null
+      } />
+      <div style={{ padding: S[3], display: "flex", flexDirection: "column", gap: S[3] }}>
+
+        {state === "no_access" && (
+          <>
+            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>
+              Este vendedor no tiene acceso a Seller App. Ingresa su correo para generar un enlace de configuracion.
+            </div>
+            <div style={{ display: "flex", gap: S[2] }}>
+              <input
+                type="email" value={provisionEmail} onChange={e => setProvisionEmail(e.target.value)}
+                placeholder="vendedor@correo.com"
+                style={{
+                  flex: 1, fontFamily: T.mono, fontSize: T.sz.xs,
+                  padding: `${S[2]}px ${S[3]}px`, border: `1px solid ${C.line}`,
+                  borderRadius: R.sm, background: C.white, outline: "none",
+                }}
+              />
+              <button onClick={handleProvision} disabled={actionLoading}
+                className="ag-action-primary" style={{ fontFamily: T.mono, fontSize: T.sz.xs, whiteSpace: "nowrap" }}>
+                {actionLoading ? "..." : "Dar acceso"}
+              </button>
+            </div>
+          </>
+        )}
+
+        {state === "invited" && (
+          <>
+            <div className="ag-op-table">
+              <InfoRow label="Correo" value={email ?? "\u2014"} />
+              <InfoRow label="Estado" value="Invitacion pendiente" />
+            </div>
+            <div style={{ display: "flex", gap: S[2] }}>
+              <button onClick={handleResend} disabled={actionLoading}
+                className="ag-action-secondary" style={{ fontFamily: T.mono, fontSize: T.sz.xs }}>
+                {actionLoading ? "..." : "Reenviar invitacion"}
+              </button>
+              <button onClick={handleRevoke} disabled={actionLoading}
+                className="ag-action-ghost" style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.red }}>
+                Revocar
+              </button>
+            </div>
+          </>
+        )}
+
+        {state === "active" && (
+          <>
+            <div className="ag-op-table">
+              <InfoRow label="Correo" value={email ?? "\u2014"} />
+              <InfoRow label="Estado" value="Acceso activo" />
+            </div>
+            <div>
+              <button onClick={handleRevoke} disabled={actionLoading}
+                className="ag-action-ghost" style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.red }}>
+                Revocar acceso
+              </button>
+            </div>
+          </>
+        )}
+
+        {state === "disabled" && (
+          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>
+            Acceso revocado. El vendedor no puede ingresar a Seller App.
+          </div>
+        )}
+
+        {setupUrl && (
+          <div style={{
+            padding: `${S[2]}px ${S[3]}px`, background: C.blueLight,
+            border: `1px solid ${C.blueBorder}`, borderRadius: R.card,
+          }}>
+            <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.blueDark, marginBottom: 4 }}>
+              Enlace de configuracion generado
+            </div>
+            <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkMid, wordBreak: "break-all", marginBottom: 6 }}>
+              Comparte este enlace con el vendedor para que configure su contrasena.
+            </div>
+            <button onClick={copySetupUrl}
+              className="ag-action-primary" style={{ fontFamily: T.mono, fontSize: T.sz.xs }}>
+              {copied ? "Copiado" : "Copiar enlace"}
+            </button>
+          </div>
+        )}
+
+        {error && (
+          <div style={{
+            padding: `${S[2]}px ${S[3]}px`, background: C.redLight,
+            border: `1px solid ${C.redBorder}`, borderRadius: R.card,
+            fontFamily: T.mono, fontSize: T.sz.xs, color: C.red,
+          }}>
+            {error}
+          </div>
+        )}
+      </div>
+    </Panel>
   );
 }
 

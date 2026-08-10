@@ -97,13 +97,13 @@ export async function resolveCurrentSeller(input: {
     const directory = await buildSellerDirectory(organizationId);
     const seller = directory.sellers.find(s => s.sellerSlug === explicitSlug);
 
-    // Canonical slug → sellerTerceroId lookup (no runtime name matching).
-    // Primary: slug-based lookup from persisted canonical mapping.
-    // Fallback: bootstrap from sellerName (slug normalization, not name authority).
-    // Source: CustomerOrderRecord.sellerTerceroId ← SAG ka_nl_tercero_vend
-    const sagSellerCode =
-      await lookupSellerTerceroId(organizationId, explicitSlug) ??
-      await bootstrapSellerTerceroId(organizationId, seller?.sellerName ?? null);
+    // Provisioned sellers have sellerTerceroId persisted in permissionsJson.
+    // Fallback: slug-based lookup from CustomerOrderRecord (pre-provisioning era).
+    const explicitTerceroId = permissions?.sellerTerceroId as number | undefined;
+    const sagSellerCode = explicitTerceroId
+      ? String(explicitTerceroId)
+      : (await lookupSellerTerceroId(organizationId, explicitSlug) ??
+         await bootstrapSellerTerceroId(organizationId, seller?.sellerName ?? null));
 
     return {
       userId,

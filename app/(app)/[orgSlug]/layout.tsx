@@ -8,6 +8,7 @@ import { TenantSwitcher }                         from "@/components/layout/tena
 import { C }                                      from "@/lib/ui/tokens";
 import { buildNavDomains }                        from "@/components/shell/module-nav-config";
 import { WorkspaceShellClient }                   from "@/components/shell/workspace-shell-client";
+import { prisma }                                 from "@/lib/prisma";
 
 // ── Role → badge accent ───────────────────────────────────────────────────────
 
@@ -42,6 +43,25 @@ export default async function OrgLayout({
     // ORG_NOT_FOUND, FORBIDDEN_NOT_MEMBER, FORBIDDEN_ROLE → re-throw (existing policy)
     throw err;
   }
+  // ── Seller confinement gate ─────────────────────────────────────────────────
+  // Provisioned sellers (OPERATOR/VIEWER with sellerSlug) are confined to /seller-app.
+  // They CANNOT access the enterprise desktop by direct URL navigation.
+  // This is the SINGLE enforcement point — no route-by-route checks needed.
+  const SELLER_CONFINED_ROLES = new Set(["OPERATOR", "VIEWER"]);
+  const pathname    = headers().get("x-invoke-path") ?? "";
+  const isSellerApp = pathname.includes(`/${ctx.orgSlug}/seller-app`);
+
+  if (SELLER_CONFINED_ROLES.has(ctx.role) && !isSellerApp) {
+    const membership = await prisma.membership.findUnique({
+      where: { organizationId_userId: { organizationId: ctx.orgId, userId: ctx.userId } },
+      select: { permissionsJson: true },
+    });
+    const perms = membership?.permissionsJson as Record<string, unknown> | null;
+    if (perms?.sellerSlug) {
+      redirect(`/${ctx.orgSlug}/seller-app`);
+    }
+  }
+
   const orgMods = await getEnabledModules(ctx.orgId);
 
   // Intersect org-level feature flags with role-based visibility
@@ -53,7 +73,6 @@ export default async function OrgLayout({
   const showPlatformAdmin = ctx.role === "SUPER_ADMIN";
 
   // ── Route guard ──────────────────────────────────────────────────────────────
-  const pathname    = headers().get("x-invoke-path") ?? "";
   const routeModule = resolveModuleForPath(ctx.orgSlug, pathname);
   const isBlocked   = routeModule !== null && !mods.has(routeModule);
   // ────────────────────────────────────────────────────────────────────────────
@@ -82,8 +101,6 @@ export default async function OrgLayout({
   // /[orgSlug]/seller-app is a dedicated mobile-first viewport.
   // It owns the full screen — no enterprise rails, sidebars, or right panels.
   // All roles (seller, manager, admin) see the Seller App as a standalone surface.
-  const isSellerApp = pathname.includes(`/${ctx.orgSlug}/seller-app`);
-
   if (isSellerApp) {
     return <>{children}</>;
   }

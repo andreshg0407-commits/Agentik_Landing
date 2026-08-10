@@ -15,7 +15,7 @@ export async function GET(
   { params }: { params: Promise<{ orgSlug: string; sellerSlug: string }> },
 ) {
   const { orgSlug, sellerSlug } = await params;
-  const { user, organization } = await requireOrgAccess(orgSlug);
+  const { user, organization } = await requireOrgAccess(orgSlug, { allowProvisionedSeller: true });
 
   // Seller scope enforcement: seller can only view own profile
   const sellerIdentity = await resolveCurrentSeller({ organizationId: organization.id, userId: user.id });

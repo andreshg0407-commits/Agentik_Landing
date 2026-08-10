@@ -2,7 +2,20 @@ import { MembershipStatus, OrgStatus } from "@prisma/client";
 import { getCurrentUser } from "@/lib/auth/auth";
 import { prisma } from "@/lib/prisma";
 
-export async function requireOrgAccess(orgSlug: string) {
+// ── Seller confinement at API level ─────────────────────────────────────────
+// Provisioned sellers (OPERATOR/VIEWER with sellerSlug in permissionsJson) are
+// confined to Seller App APIs. By default, requireOrgAccess DENIES them.
+// Seller App API routes opt in with { allowProvisionedSeller: true }.
+// Non-provisioned OPERATOR/VIEWER (no sellerSlug) are unaffected.
+
+const SELLER_CONFINED_ROLES = new Set(["OPERATOR", "VIEWER"]);
+
+export interface OrgAccessOptions {
+  /** Set true for Seller App API routes. Default false = enterprise only. */
+  allowProvisionedSeller?: boolean;
+}
+
+export async function requireOrgAccess(orgSlug: string, opts?: OrgAccessOptions) {
   const user = await getCurrentUser();
 
   if (!user) {
@@ -29,11 +42,19 @@ export async function requireOrgAccess(orgSlug: string) {
         userId: user.id,
       },
     },
-    select: { id: true, role: true, status: true },
+    select: { id: true, role: true, status: true, permissionsJson: true },
   });
 
   if (!membership || membership.status !== MembershipStatus.ACTIVE) {
     throw new Error("ACCESS_DENIED");
+  }
+
+  // Seller confinement gate: provisioned sellers cannot call enterprise APIs
+  if (!opts?.allowProvisionedSeller && SELLER_CONFINED_ROLES.has(membership.role)) {
+    const perms = membership.permissionsJson as Record<string, unknown> | null;
+    if (perms?.sellerSlug) {
+      throw new Error("ACCESS_DENIED_SELLER_CONFINED");
+    }
   }
 
   return { user, organization, membership };

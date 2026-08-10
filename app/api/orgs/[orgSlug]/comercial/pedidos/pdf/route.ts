@@ -18,7 +18,7 @@ export async function POST(
   { params }: { params: Promise<{ orgSlug: string }> },
 ) {
   const { orgSlug } = await params;
-  const { user, organization } = await requireOrgAccess(orgSlug);
+  const { user, organization } = await requireOrgAccess(orgSlug, { allowProvisionedSeller: true });
   const orgId = organization.id;
 
   const body = await req.json();

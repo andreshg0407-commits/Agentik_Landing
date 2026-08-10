@@ -15,6 +15,9 @@
 import { redirect }      from "next/navigation";
 import { requireTenant } from "@/lib/tenant";
 import { getRoleHome }   from "@/lib/auth/role-home";
+import { prisma }        from "@/lib/prisma";
+
+const SELLER_ROLES = new Set(["OPERATOR", "VIEWER"]);
 
 export default async function OrgRootPage({
   params,
@@ -23,6 +26,19 @@ export default async function OrgRootPage({
 }) {
   const { orgSlug } = await params;
   const ctx  = await requireTenant(orgSlug);
+
+  // Provisioned sellers (OPERATOR/VIEWER with sellerSlug) go to Seller App
+  if (SELLER_ROLES.has(ctx.role)) {
+    const membership = await prisma.membership.findUnique({
+      where: { organizationId_userId: { organizationId: ctx.orgId, userId: ctx.userId } },
+      select: { permissionsJson: true },
+    });
+    const perms = membership?.permissionsJson as Record<string, unknown> | null;
+    if (perms?.sellerSlug) {
+      redirect(`/${orgSlug}/seller-app`);
+    }
+  }
+
   const home = getRoleHome(ctx.role);
   redirect(`/${orgSlug}/${home}`);
 }
