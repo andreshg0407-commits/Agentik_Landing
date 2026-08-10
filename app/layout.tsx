@@ -23,10 +23,12 @@ export const metadata: Metadata = {
   manifest: "/manifest.json",
 
   icons: {
+    // AGENTIK-BRAND-HYGIENE-01: solo assets que EXISTEN en /public
+    // (el /icon.svg referenciado nunca existió — el tab icon caía en 404).
     icon: [
+      { url: "/favicon.ico", sizes: "48x48" },
       { url: "/icon-light-32x32.png", media: "(prefers-color-scheme: light)" },
       { url: "/icon-dark-32x32.png", media: "(prefers-color-scheme: dark)" },
-      { url: "/icon.svg", type: "image/svg+xml" },
     ],
     apple: "/apple-icon.png",
   },
