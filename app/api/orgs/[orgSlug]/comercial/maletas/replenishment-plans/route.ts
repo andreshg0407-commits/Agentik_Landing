@@ -19,6 +19,7 @@ import {
   generatePlanDocument,
   updatePlanStatus,
 } from "@/lib/comercial/maletas/replenishment-plan-service";
+import { resolveCurrentSeller, deriveSellerScope } from "@/lib/comercial/frontline/seller-user-mapping";
 
 export const runtime = "nodejs";
 
@@ -27,7 +28,14 @@ export async function GET(
   { params }: { params: { orgSlug: string } },
 ) {
   try {
-    const { organization } = await requireOrgAccess(params.orgSlug);
+    const { user, organization } = await requireOrgAccess(params.orgSlug);
+
+    // Replenishment plans are admin-only
+    const sellerIdentity = await resolveCurrentSeller({ organizationId: organization.id, userId: user.id });
+    const scope = deriveSellerScope(sellerIdentity);
+    if (scope.level === "seller") {
+      return NextResponse.json({ ok: false, error: "No autorizado" }, { status: 403 });
+    }
     const { searchParams } = new URL(req.url);
     const vendorId = searchParams.get("vendorId") ?? undefined;
     const status = searchParams.get("status") ?? undefined;
@@ -47,6 +55,14 @@ export async function POST(
 ) {
   try {
     const { organization, user } = await requireOrgAccess(params.orgSlug);
+
+    // Replenishment plans are admin-only
+    const sellerIdentityPost = await resolveCurrentSeller({ organizationId: organization.id, userId: user.id });
+    const scopePost = deriveSellerScope(sellerIdentityPost);
+    if (scopePost.level === "seller") {
+      return NextResponse.json({ ok: false, error: "No autorizado" }, { status: 403 });
+    }
+
     const body = await req.json();
     const action = body.action as string;
     const userId = user.id;

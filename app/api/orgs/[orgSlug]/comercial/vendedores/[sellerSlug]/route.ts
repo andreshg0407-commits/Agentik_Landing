@@ -7,6 +7,7 @@
 
 import { requireOrgAccess } from "@/lib/auth/org-access";
 import { loadVendedor360 } from "@/lib/comercial/vendors/vendedor-360-loader";
+import { resolveCurrentSeller, deriveSellerScope } from "@/lib/comercial/frontline/seller-user-mapping";
 import { NextResponse } from "next/server";
 
 export async function GET(
@@ -14,7 +15,16 @@ export async function GET(
   { params }: { params: Promise<{ orgSlug: string; sellerSlug: string }> },
 ) {
   const { orgSlug, sellerSlug } = await params;
-  const { organization } = await requireOrgAccess(orgSlug);
+  const { user, organization } = await requireOrgAccess(orgSlug);
+
+  // Seller scope enforcement: seller can only view own profile
+  const sellerIdentity = await resolveCurrentSeller({ organizationId: organization.id, userId: user.id });
+  const scope = deriveSellerScope(sellerIdentity);
+  if (!scope.canAccessAllSellers && sellerIdentity.sellerSlug) {
+    if (sellerSlug !== sellerIdentity.sellerSlug) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+    }
+  }
 
   const data = await loadVendedor360(organization.id, sellerSlug);
 

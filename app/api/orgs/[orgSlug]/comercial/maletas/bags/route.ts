@@ -17,6 +17,7 @@ import { NextResponse }         from "next/server";
 import { requireOrgAccess }     from "@/lib/auth/org-access";
 import { listBags, createBag }  from "@/lib/comercial/maletas/vendor-bag-repository";
 import type { CreateBagInput }  from "@/lib/comercial/maletas/vendor-bag-repository";
+import { resolveCurrentSeller, deriveSellerScope } from "@/lib/comercial/frontline/seller-user-mapping";
 
 export const runtime = "nodejs";
 
@@ -25,9 +26,17 @@ export async function GET(
   { params }: { params: { orgSlug: string } },
 ) {
   try {
-    const { organization } = await requireOrgAccess(params.orgSlug);
+    const { user, organization } = await requireOrgAccess(params.orgSlug);
     const { searchParams } = new URL(req.url);
-    const salesRepId = searchParams.get("salesRepId") ?? undefined;
+    let salesRepId = searchParams.get("salesRepId") ?? undefined;
+
+    // Seller scope enforcement: seller-scoped users can only see their own bags
+    const sellerIdentity = await resolveCurrentSeller({ organizationId: organization.id, userId: user.id });
+    const scope = deriveSellerScope(sellerIdentity);
+    if (!scope.canAccessAllPortfolios && sellerIdentity.sellerId) {
+      // Force filter to own seller, ignore client-supplied salesRepId
+      salesRepId = sellerIdentity.sellerId;
+    }
 
     const bags = await listBags(organization.id, salesRepId);
     return NextResponse.json({ ok: true, bags });
@@ -43,7 +52,14 @@ export async function POST(
   { params }: { params: { orgSlug: string } },
 ) {
   try {
-    const { organization } = await requireOrgAccess(params.orgSlug);
+    const { user, organization } = await requireOrgAccess(params.orgSlug);
+    // Bag creation is admin-only — sellers don't create bags
+    const sellerIdentity = await resolveCurrentSeller({ organizationId: organization.id, userId: user.id });
+    const scope = deriveSellerScope(sellerIdentity);
+    if (scope.level === "seller") {
+      return NextResponse.json({ ok: false, error: "No autorizado para crear maletas" }, { status: 403 });
+    }
+
     const body = await req.json() as CreateBagInput;
 
     if (!body.salesRepId || !body.season) {

@@ -12,6 +12,7 @@
 import { NextResponse }            from "next/server";
 import { requireOrgAccess }        from "@/lib/auth/org-access";
 import { getBag, updateBagStatus } from "@/lib/comercial/maletas/vendor-bag-repository";
+import { resolveCurrentSeller, deriveSellerScope } from "@/lib/comercial/frontline/seller-user-mapping";
 
 export const runtime = "nodejs";
 
@@ -20,9 +21,19 @@ export async function GET(
   { params }: { params: { orgSlug: string; bagId: string } },
 ) {
   try {
-    const { organization } = await requireOrgAccess(params.orgSlug);
+    const { user, organization } = await requireOrgAccess(params.orgSlug);
     const bag = await getBag(organization.id, params.bagId);
     if (!bag) return NextResponse.json({ ok: false, error: "Bag not found" }, { status: 404 });
+
+    // Seller scope enforcement: seller can only view their own bag
+    const sellerIdentity = await resolveCurrentSeller({ organizationId: organization.id, userId: user.id });
+    const scope = deriveSellerScope(sellerIdentity);
+    if (!scope.canAccessAllPortfolios && sellerIdentity.sellerId) {
+      if ((bag as any).salesRepId && (bag as any).salesRepId !== sellerIdentity.sellerId) {
+        return NextResponse.json({ ok: false, error: "No autorizado" }, { status: 403 });
+      }
+    }
+
     return NextResponse.json({ ok: true, bag });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Internal error";
@@ -36,7 +47,13 @@ export async function PATCH(
   { params }: { params: { orgSlug: string; bagId: string } },
 ) {
   try {
-    const { organization } = await requireOrgAccess(params.orgSlug);
+    const { user, organization } = await requireOrgAccess(params.orgSlug);
+    // Bag status changes are admin-only
+    const sellerIdentity = await resolveCurrentSeller({ organizationId: organization.id, userId: user.id });
+    const scope = deriveSellerScope(sellerIdentity);
+    if (scope.level === "seller") {
+      return NextResponse.json({ ok: false, error: "No autorizado para modificar maletas" }, { status: 403 });
+    }
     const body = await req.json() as { status?: string };
 
     const validStatuses = ["borrador", "activa", "pausada", "archivada"] as const;

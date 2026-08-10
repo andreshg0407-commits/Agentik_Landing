@@ -47,7 +47,7 @@ async function getPortfolioAttention(
     };
 
     return result.items
-      .filter(item => !sellerId || item.sellerId === sellerId || item.sellerId === null)
+      .filter(item => !sellerId || item.sellerId === sellerId)
       .filter(item =>
         item.type === "PORTFOLIO_WITHDRAWAL_REQUIRED" ||
         item.type === "PORTFOLIO_SUPPLY_REQUIRED" ||
@@ -121,7 +121,7 @@ async function getOrderAttention(
   threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
 
   const sellerFilter = sellerId
-    ? { sellerName: { contains: sellerId, mode: "insensitive" as const } }
+    ? { sellerName: { equals: sellerId, mode: "insensitive" as const } }
     : {};
 
   const pendingOrders = await db.customerOrderRecord.findMany({

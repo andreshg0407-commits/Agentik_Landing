@@ -29,6 +29,7 @@ import {
   ingestOrderLineBatch,
   type OrderLineInput,
 }                                        from "@/lib/comercial/maletas/order-ingest-service";
+import { resolveCurrentSeller, deriveSellerScope } from "@/lib/comercial/frontline/seller-user-mapping";
 
 export const runtime = "nodejs";
 
@@ -37,7 +38,14 @@ export async function POST(
   { params }: { params: { orgSlug: string } },
 ) {
   try {
-    const { organization } = await requireOrgAccess(params.orgSlug);
+    const { user, organization } = await requireOrgAccess(params.orgSlug);
+
+    // Seller scope enforcement: inventory ingestion is admin-only
+    const sellerIdentity = await resolveCurrentSeller({ organizationId: organization.id, userId: user.id });
+    const scope = deriveSellerScope(sellerIdentity);
+    if (scope.level === "seller") {
+      return NextResponse.json({ ok: false, error: "No autorizado para registrar despachos" }, { status: 403 });
+    }
     const body = await req.json() as
       | OrderLineInput
       | { lines: OrderLineInput[] };

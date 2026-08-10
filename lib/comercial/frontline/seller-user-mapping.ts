@@ -147,7 +147,7 @@ export async function resolveCurrentSeller(input: {
     const emailLocal = userEmail.split("@")[0].toLowerCase();
     const match = directory.sellers.find(s => {
       const slug = s.sellerSlug.toLowerCase();
-      return slug === emailLocal || slug.includes(emailLocal) || emailLocal.includes(slug);
+      return slug === emailLocal;
     });
 
     if (match) {

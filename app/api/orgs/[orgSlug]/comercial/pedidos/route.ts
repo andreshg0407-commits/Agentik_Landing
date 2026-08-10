@@ -133,8 +133,17 @@ export async function POST(
     }
 
     case "list": {
+      // Server-side seller scope enforcement
+      const listSellerScope = (!sellerScope.canAccessAllOrders && sellerIdentity.sellerId)
+        ? {
+            sellerId: sellerIdentity.sellerId,
+            sellerTerceroId: sellerIdentity.sagSellerCode
+              ? parseInt(sellerIdentity.sagSellerCode, 10) || undefined
+              : undefined,
+          }
+        : undefined;
       const orders = await listOrders(orgId, {
-        status: body.status, today: body.today,
+        status: body.status, today: body.today, sellerScope: listSellerScope,
       });
       return NextResponse.json({ orders });
     }
@@ -169,6 +178,15 @@ export async function POST(
     }
 
     case "update_line": {
+      // Seller scope enforcement: verify ownership before line mutation
+      if (!sellerScope.canAccessAllOrders && sellerIdentity.sellerId) {
+        const existing = await getOrder(orgId, body.orderId);
+        if (!existing) return NextResponse.json({ error: "Pedido no encontrado" }, { status: 404 });
+        const orderSellerId = existing.header?.sellerId;
+        if (orderSellerId && orderSellerId !== sellerIdentity.sellerId) {
+          return NextResponse.json({ error: "No autorizado para editar este pedido" }, { status: 403 });
+        }
+      }
       const order = await updateOrderLine(orgId, body.orderId, body.lineId, {
         quantity: body.quantity,
         removed:  body.removed,
@@ -178,6 +196,15 @@ export async function POST(
     }
 
     case "submit": {
+      // Seller scope enforcement: verify ownership before submission
+      if (!sellerScope.canAccessAllOrders && sellerIdentity.sellerId) {
+        const existing = await getOrder(orgId, body.orderId);
+        if (!existing) return NextResponse.json({ error: "Pedido no encontrado" }, { status: 404 });
+        const orderSellerId = existing.header?.sellerId;
+        if (orderSellerId && orderSellerId !== sellerIdentity.sellerId) {
+          return NextResponse.json({ error: "No autorizado para enviar este pedido" }, { status: 403 });
+        }
+      }
       const { order, reservation } = await submitOrder(orgId, body.orderId);
       return NextResponse.json({ order, reservation });
     }
@@ -208,11 +235,29 @@ export async function POST(
     }
 
     case "cancel": {
+      // Seller scope enforcement: verify ownership before cancellation
+      if (!sellerScope.canAccessAllOrders && sellerIdentity.sellerId) {
+        const existing = await getOrder(orgId, body.orderId);
+        if (!existing) return NextResponse.json({ error: "Pedido no encontrado" }, { status: 404 });
+        const orderSellerId = existing.header?.sellerId;
+        if (orderSellerId && orderSellerId !== sellerIdentity.sellerId) {
+          return NextResponse.json({ error: "No autorizado para cancelar este pedido" }, { status: 403 });
+        }
+      }
       const { order, reservation } = await cancelOrder(orgId, body.orderId);
       return NextResponse.json({ order, reservation });
     }
 
     case "return_to_draft": {
+      // Seller scope enforcement: verify ownership before status change
+      if (!sellerScope.canAccessAllOrders && sellerIdentity.sellerId) {
+        const existing = await getOrder(orgId, body.orderId);
+        if (!existing) return NextResponse.json({ error: "Pedido no encontrado" }, { status: 404 });
+        const orderSellerId = existing.header?.sellerId;
+        if (orderSellerId && orderSellerId !== sellerIdentity.sellerId) {
+          return NextResponse.json({ error: "No autorizado para modificar este pedido" }, { status: 403 });
+        }
+      }
       const order = await returnToDraft(orgId, body.orderId);
       return NextResponse.json({ order });
     }
@@ -223,11 +268,19 @@ export async function POST(
     }
 
     case "stats": {
+      // Stats are org-wide aggregates — seller-scoped users must not see org totals
+      if (sellerScope.level === "seller") {
+        return NextResponse.json({ error: "Estadísticas no disponibles para vendedores" }, { status: 403 });
+      }
       const stats = await getOrderStats(orgId);
       return NextResponse.json({ stats });
     }
 
     case "kpi_stats": {
+      // KPI stats are org-wide — restricted to admin/manager
+      if (sellerScope.level === "seller") {
+        return NextResponse.json({ error: "KPIs no disponibles para vendedores" }, { status: 403 });
+      }
       const kpiStats = await computeServerKpiStats(orgId);
       return NextResponse.json({ kpiStats });
     }
@@ -307,7 +360,7 @@ export async function POST(
         return NextResponse.json({ error: "Cliente no encontrado" }, { status: 404 });
       }
       const overdueAlert = await emitCustomerOverdueAttention(
-        orgId, body.profileId, body.sellerId ?? null, orgSlug,
+        orgId, body.profileId, sellerIdentity.sellerId, orgSlug,
       );
       // Normalize to Seller App UI contract shape
       const uiContext = {

@@ -15,6 +15,7 @@
 import { NextResponse } from "next/server";
 import { requireOrgAccess } from "@/lib/auth/org-access";
 import { getActiveInventoryForSalesPortfolio } from "@/lib/inventory/inventory-portfolio-loader";
+import { resolveCurrentSeller, deriveSellerScope } from "@/lib/comercial/frontline/seller-user-mapping";
 
 export const runtime = "nodejs";
 
@@ -23,7 +24,14 @@ export async function GET(
   { params }: { params: { orgSlug: string } },
 ) {
   try {
-    const { organization } = await requireOrgAccess(params.orgSlug);
+    const { user, organization } = await requireOrgAccess(params.orgSlug);
+
+    // Portfolio inventory construction is admin-only
+    const sellerIdentity = await resolveCurrentSeller({ organizationId: organization.id, userId: user.id });
+    const scope = deriveSellerScope(sellerIdentity);
+    if (scope.level === "seller") {
+      return NextResponse.json({ ok: false, error: "No autorizado" }, { status: 403 });
+    }
     const result = await getActiveInventoryForSalesPortfolio(
       organization.id,
       params.orgSlug,
