@@ -13,6 +13,10 @@
       "schedule": "0 5 * * *"
     },
     {
+      "path": "/api/cron/current-orders-sync",
+      "schedule": "30 5 * * *"
+    },
+    {
       "path": "/api/internal/financial-memory/capture",
       "schedule": "0 6 * * *"
     }

@@ -444,6 +444,20 @@ export const CASTILLITOS_SOURCE_SEMANTIC_RULES: readonly SourceSemanticRule[] = 
     participaEnCartera: false, participaEnVentas: false, participaEnCxp: false, participaEnCaja: false,
     canalOperacion: "MIXTO",
   },
+
+  // ── 263. PEDIDOS CLIENTES LUDISAM (fuente CURRENT — ka_ni_fuente exclusivo de LUDISAM) ──
+  // Semánticamente idéntico a PD (40): clase 4, sc_cobrar_pagar=C, pedidos de cliente.
+  // codigoFuente mapeado a "PD" para que mapSagOrder lo acepte sin cambios.
+  // SAG k_sc_codigo_fuente real = "PL". Sprint AGENTIK-CURRENT-SAG-ORDER-INGESTION-01.
+  {
+    kaNiFuente: 263, codigoFuente: "PD", nombreFuente: "PEDIDOS CLIENTES LUDISAM",
+    clasificacionCastillitos: "OFICIAL", nota: "Fuente exclusiva de LUDISAM (CURRENT). Equivalente semántico de PD (40) en CASTILLO-ALZATE.",
+    estadoUso: "ACTIVE", capaDato: "SAG_OFICIAL",
+    familiaDocumento: "PEDIDO", efectoFinanciero: "SIN_IMPACTO_DASHBOARD",
+    moduloDashboard: "VENTAS_DIA", signo: 0,
+    participaEnCartera: false, participaEnVentas: false, participaEnCxp: false, participaEnCaja: false,
+    canalOperacion: "MIXTO",
+  },
   {
     kaNiFuente: 41, codigoFuente: "AP", nombreFuente: "AJUSTE PEDIDOS",
     clasificacionCastillitos: "OFICIAL", nota: null,
