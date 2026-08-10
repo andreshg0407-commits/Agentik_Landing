@@ -81,6 +81,15 @@ const ICON_PATHS: Record<string, ReactNode> = {
     </>
   ),
   chevronRight: <path d="m9.5 5.5 6.5 6.5-6.5 6.5" />,
+  phone: (
+    <path d="M5 4h3.5l1.5 4-2 1.5a12.5 12.5 0 0 0 6.5 6.5L16 14l4 1.5V19a1.5 1.5 0 0 1-1.6 1.5C10.4 19.9 4.1 13.6 3.5 5.6A1.5 1.5 0 0 1 5 4Z" />
+  ),
+  whatsapp: (
+    <>
+      <path d="M12 3.5a8.5 8.5 0 0 0-7.3 12.8L3.5 20.5l4.3-1.1A8.5 8.5 0 1 0 12 3.5Z" />
+      <path d="M9 8.8c.7 2.6 2.6 4.5 5.2 5.2l.9-1.4 2 .9" strokeWidth="1.6" />
+    </>
+  ),
   arrowRight: (
     <>
       <path d="M4.5 12h15" />

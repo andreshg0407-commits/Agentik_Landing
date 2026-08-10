@@ -88,6 +88,15 @@ export interface SerializedCustomer {
    * Presentation gate: only "CERTIFIED" allows overdue warnings.
    */
   receivableTruthStatus: string;
+
+  // ── AGENTIK-SELLER-APP-CLIENTS-360-V1-01 ──
+  /** Contacto (CustomerProfile.phone / email) — habilita Llamar / WhatsApp si es válido. */
+  phone: string | null;
+  email: string | null;
+  /** Ventas facturadas últimos 12 meses (Σ CustomerOrderRecord.amount, FACTURADO). */
+  sales12M: number;
+  /** Pedidos facturados últimos 12 meses. */
+  orders12M: number;
 }
 
 export interface SellerIdentityProps {

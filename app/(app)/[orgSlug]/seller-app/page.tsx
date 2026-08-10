@@ -65,6 +65,8 @@ export default async function SellerAppPage({
       nit: true,
       nitNormalized: true,
       city: true,
+      phone: true,
+      email: true,
       sellerSlug: true,
       sellerName: true,
       totalReceivable: true,
@@ -105,6 +107,31 @@ export default async function SellerAppPage({
     }
   }
 
+  // AGENTIK-SELLER-APP-CLIENTS-360-V1-01: ventas facturadas 12M por cliente
+  // (mismo read model canónico local; Σ amount + conteo, FACTURADO, ventana 12M).
+  const twelveMonthsAgo = new Date();
+  twelveMonthsAgo.setUTCFullYear(twelveMonthsAgo.getUTCFullYear() - 1);
+  const sales12MRows = nitKeys.length > 0
+    ? await db.customerOrderRecord.groupBy({
+        by: ["customerNit"],
+        where: {
+          organizationId: organization.id,
+          customerNit: { in: nitKeys },
+          status: "FACTURADO",
+          orderDate: { gte: twelveMonthsAgo },
+        },
+        _sum: { amount: true },
+        _count: { _all: true },
+      })
+    : [];
+  const sales12MMap: Record<string, { total: number; orders: number }> = {};
+  for (const row of sales12MRows) {
+    sales12MMap[row.customerNit] = {
+      total: Number(row._sum.amount ?? 0),
+      orders: row._count._all,
+    };
+  }
+
   // AGENTIK-RECEIVABLES-SAFETY-LOCK-P0: resolve truth status for this tenant
   const receivableTruthStatus = resolveReceivableTruthStatus(orgSlug);
 
@@ -124,11 +151,28 @@ export default async function SellerAppPage({
       maxDpd: c.maxDpd ?? 0,
       lastPurchaseDate: lastPurchase,
       receivableTruthStatus,
+      phone: c.phone ?? null,
+      email: c.email ?? null,
+      sales12M: nitKey ? sales12MMap[nitKey]?.total ?? 0 : 0,
+      orders12M: nitKey ? sales12MMap[nitKey]?.orders ?? 0 : 0,
     };
   });
 
   // Inactive customer IDs for filter
-  const inactiveIds = new Set(inactiveResult.items.map(i => i.customerId));
+  // AGENTIK-SELLER-APP-CLIENTS-360-V1-01 — GAP GATE (+90d vs sin historial):
+  // el filtro "+90 días sin comprar" SOLO admite clientes con historial de
+  // compra real: classification INACTIVE_90D ∧ lastPurchaseDate presente ∧
+  // daysSinceLastPurchase > 90. NO_PURCHASE_HISTORY es un estado distinto y
+  // JAMÁS entra a este filtro. (Regla en el server path, no en React.)
+  const inactiveIds = new Set(
+    inactiveResult.items
+      .filter(i =>
+        i.classification === "INACTIVE_90D" &&
+        i.lastPurchaseDate !== null &&
+        (i.daysSinceLastPurchase ?? 0) > 90,
+      )
+      .map(i => i.customerId),
+  );
 
   // Feature flags
   const features = getSellerAppFeatureFlags(organization.id);

@@ -1,8 +1,18 @@
 /**
- * Seller App — Clientes (Customers) View + Detail.
+ * Seller App — Clientes (CRM móvil) + Cliente 360.
  *
  * Sprint: AGENTIK-SELLER-APP-UI-02
- * Extracted from seller-app-shell.tsx.
+ * Sprint: AGENTIK-SELLER-APP-CLIENTS-360-V1-01
+ *
+ * Clientes = CRM del vendedor, NO selector de pedido:
+ *   - Filtros V1: Todos · Cartera vencida · Top clientes · +90 días sin comprar
+ *   - Cliente 360: identidad/contacto · estado comercial · última compra ·
+ *     ventas 12M · cartera certificada · top productos · pedidos recientes ·
+ *     acciones (Crear pedido / Llamar / WhatsApp cuando el teléfono es válido)
+ *
+ * "Crear pedido" abre el flujo canónico con el cliente autorizado preseleccionado
+ * (handler existente del shell). El viewer scope se hereda del servidor — esta
+ * vista no consulta nada fuera de las rutas autorizadas.
  */
 "use client";
 
@@ -18,7 +28,32 @@ import {
   DetailSection,
   DetailKpi,
 } from "./seller-app-shared";
-import { SellerIcon, SearchField, StatusChip, EmptyState, appCard, btnPrimary } from "./seller-ui-kit";
+import { SellerIcon, SearchField, StatusChip, EmptyState, appCard, btnPrimary, btnSecondary } from "./seller-ui-kit";
+
+// ── Contacto: validez de teléfono (Colombia) ────────────────────────────────
+// Llamar: cualquier número con >= 7 dígitos. WhatsApp: celular CO válido
+// (10 dígitos iniciando en 3, o ya con indicativo 573). Si no es válido, la
+// acción NO se muestra — nunca un botón muerto.
+
+export function telHref(phone: string | null): string | null {
+  if (!phone) return null;
+  const digits = phone.replace(/\D/g, "");
+  return digits.length >= 7 ? `tel:${digits.length === 10 ? "+57" + digits : digits}` : null;
+}
+
+export function waHref(phone: string | null): string | null {
+  if (!phone) return null;
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length === 10 && digits.startsWith("3")) return `https://wa.me/57${digits}`;
+  if (digits.length === 12 && digits.startsWith("573")) return `https://wa.me/${digits}`;
+  return null;
+}
+
+// ── Filtros V1 (CRM, no picker) ─────────────────────────────────────────────
+
+export type ClientesFilter = "todos" | "cartera" | "top" | "inactivos";
+
+const TOP_CLIENTES_N = 10;
 
 // ── Clientes List ───────────────────────────────────────────────────────────
 
@@ -38,13 +73,32 @@ export function ClientesView({
   onSelectCustomer: (id: string) => void;
 }) {
   const [search, setSearch] = useState("");
-  const [showInactiveOnly, setShowInactiveOnly] = useState(false);
+  const [filter, setFilter] = useState<ClientesFilter>("todos");
 
   const inactiveSet = useMemo(() => new Set(inactiveCustomerIds), [inactiveCustomerIds]);
 
+  // Cartera vencida: SOLO con verdad certificada (SAFETY-LOCK-P0)
+  const overdueIds = useMemo(() => new Set(
+    customers
+      .filter(c => c.receivableTruthStatus === "CERTIFIED" && c.overdueReceivable > 0)
+      .map(c => c.id),
+  ), [customers]);
+
+  // Top clientes: ranking por ventas facturadas 12M (read model canónico)
+  const topIds = useMemo(() => new Set(
+    [...customers]
+      .filter(c => c.sales12M > 0)
+      .sort((a, b) => b.sales12M - a.sales12M)
+      .slice(0, TOP_CLIENTES_N)
+      .map(c => c.id),
+  ), [customers]);
+
   const filtered = useMemo(() => {
     let list = customers;
-    if (showInactiveOnly) list = list.filter(c => inactiveSet.has(c.id));
+    if (filter === "cartera") list = list.filter(c => overdueIds.has(c.id));
+    else if (filter === "top") {
+      list = [...list].filter(c => topIds.has(c.id)).sort((a, b) => b.sales12M - a.sales12M);
+    } else if (filter === "inactivos") list = list.filter(c => inactiveSet.has(c.id));
     if (search.trim()) {
       const q = search.toLowerCase().trim();
       list = list.filter(c =>
@@ -54,32 +108,45 @@ export function ClientesView({
       );
     }
     return list;
-  }, [customers, search, showInactiveOnly, inactiveSet]);
+  }, [customers, search, filter, inactiveSet, overdueIds, topIds]);
+
+  const chips: Array<{ key: ClientesFilter; label: string; count: number; activeBg: string }> = [
+    { key: "todos", label: "Todos", count: customers.length, activeBg: C.blueDark },
+    { key: "cartera", label: "Cartera vencida", count: overdueIds.size, activeBg: C.redDark },
+    { key: "top", label: "Top clientes", count: topIds.size, activeBg: C.blueDark },
+    { key: "inactivos", label: "+90 días sin comprar", count: inactiveSet.size, activeBg: C.amberDark },
+  ];
 
   return (
     <div style={{ padding: S[4] }}>
       <div style={{ marginBottom: S[3] }}>
         <SearchField value={search} onChange={setSearch} placeholder="Buscar cliente..." />
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[4] }}>
-        <button onClick={() => setShowInactiveOnly(false)} style={{
-          ...filterBtnStyle, minHeight: 38, border: `1.5px solid ${!showInactiveOnly ? C.blueDark : C.line}`,
-          background: !showInactiveOnly ? C.blueDark : C.white,
-          color: !showInactiveOnly ? C.white : C.ink,
-        }}>
-          Todos ({customers.length})
-        </button>
-        <button onClick={() => setShowInactiveOnly(true)} style={{
-          ...filterBtnStyle, minHeight: 38, border: `1.5px solid ${showInactiveOnly ? C.amberDark : C.line}`,
-          background: showInactiveOnly ? C.amberDark : C.white,
-          color: showInactiveOnly ? C.white : C.ink,
-        }}>
-          Inactivos +90d ({inactiveCustomerIds.length})
-        </button>
+
+      {/* Filtros V1 — scroll horizontal, táctil */}
+      <div style={{
+        display: "flex", gap: S[2],
+        overflowX: "auto", WebkitOverflowScrolling: "touch",
+        margin: `0 -${S[4]}px ${S[4]}px`, padding: `0 ${S[4]}px`,
+      }}>
+        {chips.map(ch => {
+          const active = filter === ch.key;
+          return (
+            <button key={ch.key} onClick={() => setFilter(ch.key)} style={{
+              ...filterBtnStyle, minHeight: 38, flexShrink: 0,
+              border: `1.5px solid ${active ? ch.activeBg : C.line}`,
+              background: active ? ch.activeBg : C.white,
+              color: active ? C.white : C.ink,
+              touchAction: "manipulation",
+            }}>
+              {ch.label} ({ch.count})
+            </button>
+          );
+        })}
       </div>
 
       {filtered.length === 0 ? (
-        <EmptyState icon="users" title={search ? "Sin resultados" : "Sin clientes"}
+        <EmptyState icon="users" title={search ? "Sin resultados" : "Sin clientes en este filtro"}
           subtitle={search ? "Prueba con otro nombre, NIT o ciudad" : undefined} />
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
@@ -90,6 +157,7 @@ export function ClientesView({
               : null;
             return (
               <CustomerCard key={c.id} customer={c} isInactive={isInactive}
+                isTop={topIds.has(c.id)} showSales={filter === "top"}
                 inactiveInfo={inactiveInfo} onSelect={() => onSelectCustomer(c.id)} />
             );
           })}
@@ -99,9 +167,11 @@ export function ClientesView({
   );
 }
 
-function CustomerCard({ customer, isInactive, inactiveInfo, onSelect }: {
+function CustomerCard({ customer, isInactive, isTop, showSales, inactiveInfo, onSelect }: {
   customer: SerializedCustomer;
   isInactive: boolean;
+  isTop: boolean;
+  showSales: boolean;
   inactiveInfo: SellerAppShellProps["inactiveCustomers"][number] | null;
   onSelect: () => void;
 }) {
@@ -134,6 +204,9 @@ function CustomerCard({ customer, isInactive, inactiveInfo, onSelect }: {
           }}>
             {customer.name}
           </span>
+          {isTop && showSales && (
+            <StatusChip bg={C.blueLight} color={C.blueDark}>Top</StatusChip>
+          )}
           {isInactive && (
             <StatusChip bg={C.amberLight} color={C.amberDark}>
               {inactiveInfo?.daysSinceLastPurchase ? `${inactiveInfo.daysSinceLastPurchase}d` : "Sin compras"}
@@ -144,13 +217,19 @@ function CustomerCard({ customer, isInactive, inactiveInfo, onSelect }: {
           )}
         </span>
         <span style={{ display: "block", fontSize: T.sz.xs, color: C.inkLight, marginBottom: S[1] }}>
-          {customer.city ?? "\u2014"}{customer.nit ? ` \u00B7 ${customer.nit}` : ""}
+          {customer.city ?? "—"}{customer.nit ? ` · ${customer.nit}` : ""}
         </span>
         <span style={{ display: "flex", justifyContent: "space-between", gap: S[2], fontSize: T.sz.xs, color: C.inkMid }}>
           <span style={{ minWidth: 0 }}>
-            Cartera: <strong style={{ color: C.ink }}>{fmtCOP(customer.totalReceivable)}</strong>
-            {isCertified && customer.overdueReceivable > 0 && (
-              <span style={{ color: C.red }}> ({fmtCOP(customer.overdueReceivable)} vencida)</span>
+            {showSales ? (
+              <>12M: <strong style={{ color: C.ink }}>{fmtCOP(customer.sales12M)}</strong> {"·"} {customer.orders12M} pedidos</>
+            ) : (
+              <>
+                Cartera: <strong style={{ color: C.ink }}>{fmtCOP(customer.totalReceivable)}</strong>
+                {isCertified && customer.overdueReceivable > 0 && (
+                  <span style={{ color: C.red }}> ({fmtCOP(customer.overdueReceivable)} vencida)</span>
+                )}
+              </>
             )}
           </span>
           <span style={{ whiteSpace: "nowrap" }}>Ult: {fmtDaysAgo(customer.lastPurchaseDate)}</span>
@@ -163,7 +242,22 @@ function CustomerCard({ customer, isInactive, inactiveInfo, onSelect }: {
   );
 }
 
-// ── Cliente Detail View ─────────────────────────────────────────────────────
+// ── Cliente 360 ─────────────────────────────────────────────────────────────
+
+interface RecentOrder {
+  orderNumber: string;
+  orderDate: string;
+  status: string;
+  amount: number;
+  totalUnits: number | null;
+  lineCount: number | null;
+}
+
+const ORDER_STATUS_CHIP: Record<string, { bg: string; color: string; label: string }> = {
+  FACTURADO: { bg: C.greenLight, color: C.greenDark, label: "Facturado" },
+  PENDIENTE: { bg: C.amberLight, color: C.amberDark, label: "Pendiente" },
+  CANCELADO: { bg: C.redLight, color: C.redDark, label: "Cancelado" },
+};
 
 export function ClienteDetailView({
   customerId,
@@ -181,24 +275,41 @@ export function ClienteDetailView({
   onCreateOrder?: (customerId: string) => void;
 }) {
   const [context, setContext] = useState<CustomerCommercialContext | null>(null);
+  const [recentOrders, setRecentOrders] = useState<RecentOrder[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const customer = customers.find(c => c.id === customerId);
+  const tel = telHref(customer?.phone ?? null);
+  const wa = waHref(customer?.phone ?? null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
     setContext(null);
+    setRecentOrders(null);
 
+    // Contexto 360 + pedidos recientes en paralelo (ambas rutas con viewer scope)
     fetch(`/api/orgs/${orgSlug}/comercial/customer-context?customerId=${customerId}`)
       .then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); })
       .then(data => { if (!cancelled) { setContext(data); setLoading(false); } })
       .catch(() => { if (!cancelled) { setError("No se pudo cargar el detalle"); setLoading(false); } });
 
+    fetch(`/api/orgs/${orgSlug}/comercial/customer-recent-orders?customerId=${customerId}`)
+      .then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); })
+      .then(data => { if (!cancelled) setRecentOrders(Array.isArray(data.orders) ? data.orders : []); })
+      .catch(() => { if (!cancelled) setRecentOrders([]); });
+
     return () => { cancelled = true; };
   }, [orgSlug, customerId]);
+
+  // GAP GATE: "+90 días sin comprar" EXIGE lastPurchaseDate real; un cliente
+  // sin historial de compras es otro estado (nunca se muestra como +90d).
+  const hasPurchaseHistory = !!customer?.lastPurchaseDate;
+  const isInactive90 = hasPurchaseHistory
+    ? (Date.now() - new Date(customer!.lastPurchaseDate!).getTime()) / 86_400_000 > 90
+    : false;
 
   return (
     <div style={{ padding: S[4] }}>
@@ -211,6 +322,7 @@ export function ClienteDetailView({
         <SellerIcon name="back" size={17} color={C.blueDark} /> Clientes
       </button>
 
+      {/* Identidad / contacto */}
       <h2 style={{
         fontSize: T.sz.xl, fontWeight: T.wt.semibold, color: C.ink,
         margin: `0 0 ${S[1]}px`, fontFamily: T.mono,
@@ -218,7 +330,9 @@ export function ClienteDetailView({
         {customer?.name ?? "Cliente"}
       </h2>
       <div style={{ fontSize: T.sz.xs, color: C.inkLight, marginBottom: S[3] }}>
-        {customer?.city ?? "\u2014"}{customer?.nit ? ` \u00B7 NIT: ${customer.nit}` : ""}
+        {customer?.city ?? "—"}
+        {customer?.nit ? ` · NIT: ${customer.nit}` : ""}
+        {customer?.phone ? ` · ${customer.phone}` : ""}
       </div>
 
       {/* §20: cartera vencida >30d — advertencia fuerte y controlada (NO bloquea) */}
@@ -242,17 +356,58 @@ export function ClienteDetailView({
         </div>
       )}
 
-      {/* Create order CTA — acción primaria (§19) */}
+      {/* Acciones — Crear pedido (flujo canónico, cliente preseleccionado) + contacto */}
       {onCreateOrder && (
         <button
           onClick={() => onCreateOrder(customerId)}
-          style={{ ...btnPrimary, marginBottom: S[4] }}
+          style={{ ...btnPrimary, marginBottom: (tel || wa) ? S[2] : S[4] }}
         >
           <SellerIcon name="cart" size={19} color={C.white} />
           Crear pedido
         </button>
       )}
+      {(tel || wa) && (
+        <div style={{ display: "flex", gap: S[2], marginBottom: S[4] }}>
+          {tel && (
+            <a href={tel} style={{ ...btnSecondary, flex: 1, textDecoration: "none" }}>
+              <SellerIcon name="phone" size={18} color={C.blueDark} />
+              Llamar
+            </a>
+          )}
+          {wa && (
+            <a href={wa} target="_blank" rel="noopener noreferrer"
+              style={{ ...btnSecondary, flex: 1, textDecoration: "none" }}>
+              <SellerIcon name="whatsapp" size={18} color={C.blueDark} />
+              WhatsApp
+            </a>
+          )}
+        </div>
+      )}
 
+      {/* Estado comercial */}
+      {customer && (
+        <DetailSection title="Estado comercial">
+          <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[3], flexWrap: "wrap" }}>
+            {!hasPurchaseHistory ? (
+              <StatusChip bg={C.surfaceAlt} color={C.inkMid}>Sin historial de compras</StatusChip>
+            ) : isInactive90 ? (
+              <StatusChip bg={C.amberLight} color={C.amberDark}>+90 días sin comprar</StatusChip>
+            ) : (
+              <StatusChip bg={C.greenLight} color={C.greenDark}>Activo</StatusChip>
+            )}
+            {customer.receivableTruthStatus === "CERTIFIED" && customer.overdueReceivable > 0 && (
+              <StatusChip bg={C.redLight} color={C.redDark}>Cartera vencida</StatusChip>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: S[3] }}>
+            <DetailKpi label="Ventas 12M" value={fmtCOP(customer.sales12M)} />
+            <DetailKpi label="Pedidos 12M" value={String(customer.orders12M)} />
+            <DetailKpi label="Ult. compra" value={fmtDaysAgo(customer.lastPurchaseDate)} />
+          </div>
+        </DetailSection>
+      )}
+
+      {/* Cartera certificada */}
       {customer && (
         <DetailSection title="Cartera">
           {customer.receivableTruthStatus === "CERTIFIED" ? (
@@ -260,7 +415,7 @@ export function ClienteDetailView({
               <DetailKpi label="Total" value={fmtCOP(customer.totalReceivable)} />
               <DetailKpi label="Vencida" value={fmtCOP(customer.overdueReceivable)}
                 color={customer.overdueReceivable > 0 ? C.red : undefined} />
-              <DetailKpi label="Max dias" value={customer.maxDpd > 0 ? `${customer.maxDpd}d` : "\u2014"}
+              <DetailKpi label="Max dias" value={customer.maxDpd > 0 ? `${customer.maxDpd}d` : "—"}
                 color={customer.maxDpd > 30 ? C.red : undefined} />
             </div>
           ) : (
@@ -284,7 +439,7 @@ export function ClienteDetailView({
 
       {context && !loading && (
         <>
-          {context.receivables && (
+          {context.receivables && customer?.receivableTruthStatus === "CERTIFIED" && (
             <DetailSection title="Detalle cartera">
               <div style={{ display: "flex", gap: S[3], flexWrap: "wrap" }}>
                 <DetailKpi label="Documentos vencidos" value={String(context.receivables.overdueDocumentCount)} />
@@ -316,14 +471,39 @@ export function ClienteDetailView({
               ))}
             </DetailSection>
           )}
-
-          <DetailSection title="Actividad reciente">
-            <div style={{ display: "flex", gap: S[3] }}>
-              <DetailKpi label="Pedidos 12M" value={String(context.totalOrdersL12)} />
-              <DetailKpi label="Ult compra" value={fmtDaysAgo(context.lastPurchaseDate)} />
-            </div>
-          </DetailSection>
         </>
+      )}
+
+      {/* Pedidos recientes (read model canónico local) */}
+      {recentOrders !== null && recentOrders.length > 0 && (
+        <DetailSection title="Pedidos recientes">
+          {recentOrders.map((o, i) => {
+            const chip = ORDER_STATUS_CHIP[o.status] ?? { bg: C.surfaceAlt, color: C.inkMid, label: o.status };
+            return (
+              <div key={`${o.orderNumber}-${i}`} style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                padding: `${S[2]}px 0`,
+                borderBottom: i < recentOrders.length - 1 ? `1px solid ${C.lineSubtle}` : undefined,
+                fontSize: T.sz.sm,
+              }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
+                    <span style={{ fontWeight: T.wt.semibold, color: C.ink }}>#{o.orderNumber}</span>
+                    <StatusChip bg={chip.bg} color={chip.color}>{chip.label}</StatusChip>
+                  </div>
+                  <div style={{ color: C.inkLight, fontSize: T.sz.xs, marginTop: 2 }}>
+                    {new Date(o.orderDate).toLocaleDateString("es-CO", { day: "numeric", month: "short", year: "numeric" })}
+                    {o.lineCount != null ? ` · ${o.lineCount} ref` : ""}
+                    {o.totalUnits != null ? ` · ${Math.round(o.totalUnits)} uds` : ""}
+                  </div>
+                </div>
+                <div style={{ fontWeight: T.wt.semibold, color: C.ink, flexShrink: 0, marginLeft: S[2] }}>
+                  {fmtCOP(o.amount)}
+                </div>
+              </div>
+            );
+          })}
+        </DetailSection>
       )}
     </div>
   );
