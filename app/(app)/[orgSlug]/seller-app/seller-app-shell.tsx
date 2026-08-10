@@ -20,13 +20,14 @@
 import { useState, useCallback, useMemo, useRef } from "react";
 import { C, T, S, R, E } from "@/lib/ui/tokens";
 import type { SellerTab, SellerAppShellProps } from "./views/seller-app-shared";
-import { SellerIcon, CopilotSphere, appCard, StatusChip } from "./views/seller-ui-kit";
+import { SellerIcon, CopilotSphere } from "./views/seller-ui-kit";
 import { InicioView } from "./views/inicio-view";
 import { ClientesView, ClienteDetailView } from "./views/clientes-view";
 import { NuevoPedidoView } from "./views/nuevo-pedido-view";
 import { SellerPortfolioView } from "./views/seller-portfolio-view";
 import { SellerOrdersView } from "./views/seller-orders-view";
 import { SellerAlertsView } from "./views/seller-alerts-view";
+import { PerfilView } from "./views/perfil-view";
 
 // ── Canonical bottom nav V1 (LOCKED — §13/§45) ──────────────────────────────
 
@@ -250,7 +251,7 @@ export function SellerAppShell(props: SellerAppShellProps) {
           />
         )}
         {activeTab === "perfil" && (
-          <PerfilView sellerIdentity={props.sellerIdentity} />
+          <PerfilView sellerIdentity={props.sellerIdentity} orgSlug={props.orgSlug} />
         )}
       </main>
 
@@ -320,66 +321,6 @@ export function SellerAppShell(props: SellerAppShellProps) {
           );
         })}
       </nav>
-    </div>
-  );
-}
-
-// ── Perfil — identidad real + slots financieros veraces (§36–§38) ───────────
-
-function PerfilView({ sellerIdentity }: { sellerIdentity: SellerAppShellProps["sellerIdentity"] }) {
-  return (
-    <div style={{ padding: S[4] }}>
-      {/* Seller identity card */}
-      <div style={{
-        ...appCard, padding: S[5], marginBottom: S[4], textAlign: "center",
-      }}>
-        <div style={{
-          width: 64, height: 64, borderRadius: 20,
-          background: C.blueDark, color: C.white,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: T.sz["2xl"], fontWeight: T.wt.bold,
-          margin: "0 auto", marginBottom: S[3], boxShadow: E.md,
-        }}>
-          {sellerInitials(sellerIdentity.sellerName)}
-        </div>
-        <div style={{ fontSize: T.sz.xl, fontWeight: T.wt.bold, color: C.titleDeep }}>
-          {sellerIdentity.sellerName ?? "Vendedor"}
-        </div>
-        <div style={{ fontSize: T.sz.sm, color: C.inkLight, marginTop: 3 }}>
-          {sellerIdentity.isManagerOrAbove ? "Administrador" : "Vendedor"}
-          {sellerIdentity.sellerSlug ? ` · ${sellerIdentity.sellerSlug}` : ""}
-        </div>
-      </div>
-
-      {/* Slots financieros — preparados, JAMÁS con cifras inventadas (§36–§38) */}
-      {[
-        { title: "Mis comisiones", subtitle: "Comisión del período y detalle por pedido", icon: "clipboard" },
-        { title: "Mis anticipos", subtitle: "Saldo y movimientos de anticipos", icon: "briefcase" },
-      ].map(section => (
-        <div key={section.title} style={{
-          ...appCard, padding: S[4], marginBottom: S[2],
-          display: "flex", alignItems: "center", gap: S[3],
-        }}>
-          <div style={{
-            width: 44, height: 44, borderRadius: 14, background: C.surfaceAlt,
-            display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-          }}>
-            <SellerIcon name={section.icon} size={20} color={C.inkFaint} />
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: T.wt.semibold, fontSize: T.sz.md, color: C.ink }}>
-              {section.title}
-            </div>
-            <div style={{ fontSize: T.sz.xs, color: C.inkLight, marginTop: 2, lineHeight: 1.5 }}>
-              {section.subtitle}
-            </div>
-          </div>
-          <StatusChip bg={C.surfaceAlt} color={C.inkLight}>Próximamente</StatusChip>
-        </div>
-      ))}
-      <div style={{ fontSize: T.sz.xs, color: C.inkFaint, lineHeight: 1.6, marginTop: S[2] }}>
-        Comisiones y anticipos se activarán cuando su fuente contable esté certificada.
-      </div>
     </div>
   );
 }

@@ -873,7 +873,7 @@ function DrawerContent({
       {tab === "recaudos" && <TabRecaudos />}
       {tab === "cartera" && <TabCartera data={data} />}
       {tab === "metas" && <TabMetas />}
-      {tab === "comisiones" && <TabComisiones />}
+      {tab === "comisiones" && <TabComisiones orgSlug={orgSlug} sellerSlug={data.identity.sellerSlug} />}
       {tab === "inteligencia" && <TabInteligencia data={data} />}
     </div>
   );
@@ -1602,23 +1602,137 @@ function TabMetas() {
 
 // ── Tab: Comisiones ───────────────────────────────────────────────────────────
 
-function TabComisiones() {
+function TabComisiones({ orgSlug, sellerSlug }: { orgSlug: string; sellerSlug: string }) {
+  const now = new Date();
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [loading, setLoading] = useState(true);
+  const [statement, setStatement] = useState<any>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(false);
+    fetch(`/api/orgs/${orgSlug}/comercial/seller-financial/commissions?year=${year}&month=${month}&sellerSlug=${encodeURIComponent(sellerSlug)}`)
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(d => { if (!cancelled) { setStatement(d); setLoading(false); } })
+      .catch(() => { if (!cancelled) { setError(true); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, [orgSlug, sellerSlug, year, month]);
+
+  const canGoNext = year < now.getFullYear() || (year === now.getFullYear() && month < now.getMonth() + 1);
+  const handlePrev = () => {
+    if (month === 1) { setYear(y => y - 1); setMonth(12); }
+    else setMonth(m => m - 1);
+  };
+  const handleNext = () => {
+    if (!canGoNext) return;
+    if (month === 12) { setYear(y => y + 1); setMonth(1); }
+    else setMonth(m => m + 1);
+  };
+
+  const MONTH_NAMES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[4] }}>
-      <PyaPendingBanner>
-        Esta seccion mostrara comision acumulada, comision pagada, pendiente e historico.
-      </PyaPendingBanner>
-
+      {/* Period selector */}
       <div style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(2, 1fr)",
-        gap: S[2],
+        display: "flex", alignItems: "center", justifyContent: "center", gap: S[3],
+        padding: `${S[2]}px 0`,
       }}>
-        <MiniKpi label="Comision acumulada" value="\u2014" />
-        <MiniKpi label="Comision pagada" value="\u2014" />
-        <MiniKpi label="Pendiente" value="\u2014" />
-        <MiniKpi label="Historico" value="\u2014" />
+        <button onClick={handlePrev} style={{
+          background: "none", border: `1px solid ${C.line}`, borderRadius: R.card,
+          width: 32, height: 32, cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.md,
+          display: "flex", alignItems: "center", justifyContent: "center", color: C.ink,
+        }}>&larr;</button>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.md, fontWeight: T.wt.bold, color: C.titleDeep, minWidth: 120, textAlign: "center" }}>
+          {MONTH_NAMES[month - 1]} {year}
+        </span>
+        <button onClick={handleNext} disabled={!canGoNext} style={{
+          background: "none", border: `1px solid ${canGoNext ? C.line : C.surfaceAlt}`, borderRadius: R.card,
+          width: 32, height: 32, cursor: canGoNext ? "pointer" : "default", fontFamily: T.mono, fontSize: T.sz.md,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          color: canGoNext ? C.ink : C.inkLight, opacity: canGoNext ? 1 : 0.4,
+        }}>&rarr;</button>
       </div>
+
+      {loading && (
+        <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight, textAlign: "center", padding: S[4] }}>
+          Calculando comisiones...
+        </div>
+      )}
+
+      {error && (
+        <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.red, textAlign: "center", padding: S[4] }}>
+          No se pudo cargar la informacion de comisiones.
+        </div>
+      )}
+
+      {!loading && !error && statement && (
+        <>
+          {/* Truth state messages */}
+          {statement.truthState === "IDENTITY_UNRESOLVED" && (
+            <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight, textAlign: "center", padding: S[3] }}>
+              Este vendedor no tiene un ID SAG vinculado. No se pueden calcular comisiones.
+            </div>
+          )}
+          {statement.truthState === "SAG_UNAVAILABLE" && (
+            <div style={{
+              fontFamily: T.mono, fontSize: T.sz.sm, color: C.amber, textAlign: "center", padding: S[3],
+              background: C.amberLight, borderRadius: R.card, border: `1px solid ${C.amberBorder}`,
+            }}>
+              SAG no disponible. Intente mas tarde.
+            </div>
+          )}
+
+          {/* KPIs */}
+          {(statement.truthState === "CERTIFIED" || statement.truthState === "CERTIFIED_ZERO") && (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: S[2] }}>
+                <MiniKpi label="Comision" value={statement.totalCommission > 0 ? fmtCurrency(statement.totalCommission) : "\u2014"} />
+                <MiniKpi label="Recaudado" value={statement.totalCollected > 0 ? fmtCurrency(statement.totalCollected) : "\u2014"} />
+                <MiniKpi label="Aplicaciones" value={statement.totalApplications > 0 ? fmtNum(statement.totalApplications) : "\u2014"} />
+              </div>
+
+              {/* Band breakdown */}
+              {statement.bandSummary && statement.bandSummary.length > 0 && (
+                <Panel>
+                  <PanelHeader title="Por banda de dias" />
+                  <div style={{ padding: S[3] }}>
+                    <table className="ag-op-table" style={{ width: "100%", fontFamily: T.mono, fontSize: T.sz.xs }}>
+                      <thead>
+                        <tr>
+                          <th style={{ textAlign: "left", padding: `${S[1]}px ${S[2]}px`, color: C.inkMid, fontWeight: T.wt.semibold }}>Banda</th>
+                          <th style={{ textAlign: "right", padding: `${S[1]}px ${S[2]}px`, color: C.inkMid, fontWeight: T.wt.semibold }}>Apps</th>
+                          <th style={{ textAlign: "right", padding: `${S[1]}px ${S[2]}px`, color: C.inkMid, fontWeight: T.wt.semibold }}>Recaudado</th>
+                          <th style={{ textAlign: "right", padding: `${S[1]}px ${S[2]}px`, color: C.inkMid, fontWeight: T.wt.semibold }}>Comision</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {statement.bandSummary.map((b: any) => (
+                          <tr key={b.band} className="ag-op-row">
+                            <td style={{ padding: `${S[1]}px ${S[2]}px`, color: C.ink }}>{b.band}</td>
+                            <td style={{ padding: `${S[1]}px ${S[2]}px`, textAlign: "right", color: C.ink }}>{b.applications}</td>
+                            <td style={{ padding: `${S[1]}px ${S[2]}px`, textAlign: "right", color: C.ink }}>{fmtCurrency(b.collectedAmount)}</td>
+                            <td style={{ padding: `${S[1]}px ${S[2]}px`, textAlign: "right", color: C.blueDark, fontWeight: T.wt.bold }}>{fmtCurrency(b.commissionAmount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Panel>
+              )}
+
+              {statement.truthState === "CERTIFIED_ZERO" && (
+                <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight, textAlign: "center", padding: S[3] }}>
+                  Sin aplicaciones de recaudo en este periodo.
+                </div>
+              )}
+            </>
+          )}
+        </>
+      )}
     </div>
   );
 }
