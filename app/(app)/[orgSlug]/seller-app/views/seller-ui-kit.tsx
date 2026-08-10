@@ -221,7 +221,7 @@ export const btnPrimary: CSSProperties = {
   display: "flex", alignItems: "center", justifyContent: "center", gap: S[2],
   width: "100%", minHeight: 48, padding: `${S[3]}px ${S[4]}px`,
   background: C.blueDark, color: C.white, border: "none", borderRadius: 14,
-  fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.semibold,
+  fontFamily: T.sans, fontSize: T.sz.lg, fontWeight: T.wt.semibold,
   cursor: "pointer", boxShadow: E.md, touchAction: "manipulation" as const,
 };
 
@@ -229,13 +229,13 @@ export const btnSecondary: CSSProperties = {
   display: "flex", alignItems: "center", justifyContent: "center", gap: S[2],
   width: "100%", minHeight: 48, padding: `${S[3]}px ${S[4]}px`,
   background: C.white, color: C.blueDark, border: `1.5px solid ${C.blueBorder}`,
-  borderRadius: 14, fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.semibold,
+  borderRadius: 14, fontFamily: T.sans, fontSize: T.sz.lg, fontWeight: T.wt.semibold,
   cursor: "pointer", touchAction: "manipulation" as const,
 };
 
 export const searchInput: CSSProperties = {
   width: "100%", minHeight: 48, padding: `${S[3]}px ${S[3]}px ${S[3]}px 42px`,
-  border: `1.5px solid ${C.line}`, borderRadius: 14, fontFamily: T.mono,
+  border: `1.5px solid ${C.line}`, borderRadius: 14, fontFamily: T.sans,
   fontSize: 16, background: C.white, color: C.ink, outline: "none",
   boxSizing: "border-box" as const,
 };

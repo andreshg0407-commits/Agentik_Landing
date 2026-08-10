@@ -105,7 +105,7 @@ export function SellerAppShell(props: SellerAppShellProps) {
 
   return (
     <div style={{
-      fontFamily: T.mono,
+      fontFamily: T.sans,
       fontSize: T.sz.base,
       color: C.ink,
       background: C.surface,
@@ -302,7 +302,7 @@ export function SellerAppShell(props: SellerAppShellProps) {
                 cursor: "pointer",
                 position: "relative",
                 color: isActive ? C.blueDark : C.inkLight,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 fontSize: T.sz.xs,
                 fontWeight: isActive ? T.wt.semibold : T.wt.medium,
                 transition: "color 0.15s",

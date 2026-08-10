@@ -217,6 +217,7 @@ export function DetailKpi({
         fontSize: T.sz.lg,
         fontWeight: T.wt.semibold,
         color: color ?? C.ink,
+        fontVariantNumeric: "tabular-nums",
       }}>
         {value}
       </div>
@@ -227,7 +228,7 @@ export function DetailKpi({
 export const filterBtnStyle: React.CSSProperties = {
   padding: `${S[1]}px ${S[3]}px`,
   borderRadius: R.pill,
-  fontFamily: T.mono,
+  fontFamily: T.sans,
   fontSize: T.sz.sm,
   fontWeight: T.wt.medium,
   cursor: "pointer",

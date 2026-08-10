@@ -193,14 +193,22 @@ function buildStyles(primary: string) {
       borderBottom: "1 solid #f1f5f9",
       paddingVertical: 3,
       paddingHorizontal: 4,
+      alignItems: "center",
     },
-    colRef:   { width: "15%" },
-    colName:  { width: "23%" },
+    colThumb: { width: "6%", alignItems: "center" },
+    colRef:   { width: "14%" },
+    colName:  { width: "20%" },
     colColor: { width: "12%", textAlign: "center" },
-    colSize:  { width: "10%", textAlign: "center" },
+    colSize:  { width: "8%", textAlign: "center" },
     colQty:   { width: "10%", textAlign: "right" },
     colPrice: { width: "15%", textAlign: "right" },
     colTotal: { width: "15%", textAlign: "right" },
+    lineThumb: {
+      width: 18,
+      height: 18,
+      borderRadius: 3,
+      objectFit: "cover" as const,
+    },
     headerText: {
       fontSize: 7,
       fontFamily: "Helvetica-Bold",
@@ -515,6 +523,7 @@ export function OrderPdfDocument({
 
           {/* Table header */}
           <View style={s.tableHeader}>
+            <View style={s.colThumb} />
             <Text style={[s.headerText, s.colRef]}>Referencia</Text>
             <Text style={[s.headerText, s.colName]}>Descripcion</Text>
             <Text style={[s.headerText, s.colColor]}>Color</Text>
@@ -527,6 +536,11 @@ export function OrderPdfDocument({
           {/* Table rows */}
           {activeLines.map((line: OrderLine) => (
             <View key={line.id} style={s.tableRow}>
+              <View style={s.colThumb}>
+                {line.thumbnailUrl ? (
+                  <Image src={line.thumbnailUrl} style={s.lineThumb} />
+                ) : null}
+              </View>
               <Text style={[s.cellBold, s.colRef]}>{line.referenceCode}</Text>
               <Text style={[s.cellText, s.colName]}>{line.productName}</Text>
               <Text style={[s.cellText, s.colColor]}>{line.color}</Text>

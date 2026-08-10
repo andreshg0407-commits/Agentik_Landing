@@ -64,6 +64,8 @@ export interface CustomerTopProduct {
   totalSalesValue: number;
   purchaseCount: number;          // distinct orders containing this ref
   lastPurchaseDate: string | null; // ISO
+  /** Hero image from ProductAssetLink(role="hero") → GeneratedAsset.assetUrl */
+  thumbnailUrl: string | null;
 }
 
 export type TopProductRanking = "UNITS" | "SALES_VALUE";

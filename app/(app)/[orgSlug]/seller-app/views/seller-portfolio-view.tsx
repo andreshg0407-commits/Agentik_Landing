@@ -45,9 +45,9 @@ export function SellerPortfolioView({
   if (!portfolio) {
     return (
       <div style={{ padding: S[4] }}>
-        <div style={{ fontSize: T.sz.xl, fontWeight: T.wt.bold, color: C.titleDeep, marginBottom: S[2] }}>Mi maleta</div>
-        <EmptyState icon="box" title="No tienes una maleta asignada"
-          subtitle="Contacta a tu administrador para que te asigne una maleta comercial" />
+        <div style={{ fontSize: T.sz.xl, fontWeight: T.wt.bold, color: C.titleDeep, marginBottom: S[2] }}>Mi portafolio</div>
+        <EmptyState icon="box" title="No tienes un portafolio asignado"
+          subtitle="Contacta a tu administrador para que te asigne un portafolio comercial" />
       </div>
     );
   }
@@ -70,7 +70,7 @@ export function SellerPortfolioView({
       }}>
         <div>
           <div style={{ fontSize: T.sz.xl, fontWeight: T.wt.bold, color: C.titleDeep }}>
-            Mi maleta
+            Mi portafolio
           </div>
           <div style={{ fontSize: T.sz.xs, color: C.inkLight }}>
             {portfolio.vendorName}
@@ -149,7 +149,7 @@ function RetiroSection({ refs }: { refs: SerializedPortfolioRef[] }) {
         borderRadius: R.lg, marginBottom: S[3],
         fontSize: T.sz.sm, color: C.redDark,
       }}>
-        Retira estas muestras de tu maleta. El stock central esta agotado o por debajo del umbral.
+        Retira estas muestras de tu portafolio. El stock central esta agotado o por debajo del umbral.
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
         {refs.map(r => (
@@ -164,7 +164,7 @@ function RetiroSection({ refs }: { refs: SerializedPortfolioRef[] }) {
 
 function SurtidoSection({ needs }: { needs: SerializedSupplyNeed[] }) {
   if (needs.length === 0) {
-    return <EmptySection message="Tu maleta esta completa, no hay posiciones faltantes" />;
+    return <EmptySection message="Tu portafolio esta completo, no hay posiciones faltantes" />;
   }
 
   return (
@@ -174,7 +174,7 @@ function SurtidoSection({ needs }: { needs: SerializedSupplyNeed[] }) {
         borderRadius: R.lg, marginBottom: S[3],
         fontSize: T.sz.sm, color: C.blue,
       }}>
-        Posiciones del derrotero que faltan en tu maleta. Tu administrador coordinara el envio.
+        Posiciones del derrotero que faltan en tu portafolio. Tu administrador coordinara el envio.
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
         {needs.map(n => (

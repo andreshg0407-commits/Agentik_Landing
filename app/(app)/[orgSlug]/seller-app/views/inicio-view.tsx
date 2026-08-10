@@ -7,7 +7,7 @@
  *
  * Home (CONTRATO LOCKED — §45):
  *   Acción dominante: Crear nuevo pedido (§8)
- *   Atajos: Clientes · Crear catálogo (gated) · Alertas (conteo real) · Mi maleta
+ *   Atajos: Clientes · Crear catálogo (gated) · Alertas (conteo real) · Mi portafolio
  *   Ubicación compacta (estados veraces) + vista previa de alertas (feed completo en Alertas).
  *
  * Catalog = feature-gated (Próximamente). Presentación only.
@@ -55,7 +55,7 @@ export function InicioView({
           width: "100%", minHeight: 116, padding: `${S[4]}px ${S[4]}px`,
           borderRadius: 20, border: "none", cursor: "pointer", textAlign: "left",
           background: `linear-gradient(135deg, ${C.blueDark} 0%, ${C.titleDeep} 100%)`,
-          color: C.white, fontFamily: T.mono,
+          color: C.white, fontFamily: T.sans,
           boxShadow: "0 10px 28px rgba(0,74,173,0.32)",
           marginBottom: S[3], touchAction: "manipulation",
         }}
@@ -107,7 +107,7 @@ export function InicioView({
         />
         <HomeShortcut
           icon="box" tint={C.surfaceAlt} iconColor={C.titleDeep}
-          label="Mi maleta" subtitle="Mi mostrario"
+          label="Mi portafolio" subtitle="Mi mostrario"
           onPress={() => onNavigate?.("maleta")}
         />
       </div>
@@ -120,7 +120,7 @@ export function InicioView({
               onClick={() => onNavigate?.("alertas")}
               style={{
                 border: "none", background: "transparent", cursor: "pointer",
-                fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
+                fontFamily: T.sans, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
                 color: C.blueDark, padding: `${S[1]}px 0`, display: "flex", alignItems: "center", gap: 3,
               }}
             >
@@ -157,7 +157,7 @@ function HomeShortcut({
         ...appCard,
         display: "flex", flexDirection: "column", alignItems: "flex-start", gap: S[2],
         padding: S[4], minHeight: 122, textAlign: "left",
-        cursor: disabled ? "default" : "pointer", fontFamily: T.mono,
+        cursor: disabled ? "default" : "pointer", fontFamily: T.sans,
         opacity: disabled ? 0.62 : 1, position: "relative",
         touchAction: "manipulation",
       }}
@@ -240,7 +240,7 @@ function LocationStrip({
   const base = {
     display: "flex", alignItems: "center", gap: S[2],
     padding: `${S[1]}px ${S[2]}px`, borderRadius: R.pill,
-    fontSize: T.sz.xs, fontFamily: T.mono, marginBottom: S[3],
+    fontSize: T.sz.xs, fontFamily: T.sans, marginBottom: S[3],
     width: "fit-content" as const, maxWidth: "100%",
   };
 
@@ -249,7 +249,7 @@ function LocationStrip({
     return (
       <button onClick={onRequest} style={{
         ...base, background: C.blueLight, border: `1px solid ${C.blueBorder}`,
-        color: C.blueDark, cursor: "pointer", minHeight: 32, touchAction: "manipulation",
+        color: C.blueDark, cursor: "pointer", minHeight: 44, touchAction: "manipulation",
       }}>
         <SellerIcon name="pin" size={13} color={C.blueDark} />
         Activar ubicación

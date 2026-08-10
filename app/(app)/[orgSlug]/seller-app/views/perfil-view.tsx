@@ -364,13 +364,13 @@ function CommissionContent({
                 <span style={{ color: C.ink, fontWeight: T.wt.medium }}>
                   {BAND_LABELS[b.band] ?? b.band}
                 </span>
-                <span style={{ textAlign: "right", color: C.inkMid }}>
+                <span style={{ textAlign: "right", color: C.inkMid, fontVariantNumeric: "tabular-nums" }}>
                   {BAND_RATES[b.band] ?? "—"}
                 </span>
-                <span style={{ textAlign: "right", color: C.ink }}>
+                <span style={{ textAlign: "right", color: C.ink, fontVariantNumeric: "tabular-nums" }}>
                   {fmtCOP(b.collectedAmount)}
                 </span>
-                <span style={{ textAlign: "right", color: C.greenDark, fontWeight: T.wt.semibold }}>
+                <span style={{ textAlign: "right", color: C.greenDark, fontWeight: T.wt.semibold, fontVariantNumeric: "tabular-nums" }}>
                   {fmtCOP(b.commissionAmount)}
                 </span>
               </div>
@@ -385,7 +385,7 @@ function CommissionContent({
           <button onClick={onToggleEntries} style={{
             width: "100%", padding: `${S[2]}px 0`,
             border: "none", background: "transparent",
-            fontFamily: T.mono, fontSize: T.sz.sm,
+            fontFamily: T.sans, fontSize: T.sz.sm,
             color: C.blueDark, fontWeight: T.wt.semibold,
             cursor: "pointer", textAlign: "center",
             touchAction: "manipulation",
@@ -430,13 +430,13 @@ function CommissionContent({
                       {e.invoiceDate} → {e.collectionDate}
                     </div>
                   </div>
-                  <span style={{ textAlign: "right", color: C.inkMid, alignSelf: "center" }}>
+                  <span style={{ textAlign: "right", color: C.inkMid, alignSelf: "center", fontVariantNumeric: "tabular-nums" }}>
                     {e.days}d
                   </span>
-                  <span style={{ textAlign: "right", color: C.ink, alignSelf: "center" }}>
+                  <span style={{ textAlign: "right", color: C.ink, alignSelf: "center", fontVariantNumeric: "tabular-nums" }}>
                     {fmtCOP(e.collectedAmount)}
                   </span>
-                  <span style={{ textAlign: "right", color: C.greenDark, fontWeight: T.wt.medium, alignSelf: "center" }}>
+                  <span style={{ textAlign: "right", color: C.greenDark, fontWeight: T.wt.medium, alignSelf: "center", fontVariantNumeric: "tabular-nums" }}>
                     {fmtCOP(e.commissionAmount)}
                   </span>
                 </div>
@@ -462,6 +462,7 @@ function KpiBox({ label, value, color }: { label: string; value: string; color?:
       <div style={{
         fontSize: T.sz.lg, fontWeight: T.wt.bold,
         color: color ?? C.titleDeep,
+        fontVariantNumeric: "tabular-nums",
       }}>
         {value}
       </div>
@@ -470,7 +471,7 @@ function KpiBox({ label, value, color }: { label: string; value: string; color?:
 }
 
 const navBtnStyle: React.CSSProperties = {
-  width: 36, height: 36, borderRadius: 10,
+  width: 44, height: 44, borderRadius: 12,
   border: `1px solid ${C.line}`, background: C.white,
   display: "flex", alignItems: "center", justifyContent: "center",
   cursor: "pointer", padding: 0, touchAction: "manipulation",

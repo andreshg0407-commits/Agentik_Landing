@@ -284,7 +284,7 @@ function OrderCard({ order, onClick }: { order: SerializedOrderCard; onClick: ()
       style={{
         ...appCard,
         display: "block", width: "100%", textAlign: "left",
-        padding: S[3], cursor: "pointer", fontFamily: T.mono,
+        padding: S[3], cursor: "pointer", fontFamily: T.sans,
         minHeight: 72, touchAction: "manipulation",
       }}
     >
@@ -307,7 +307,7 @@ function OrderCard({ order, onClick }: { order: SerializedOrderCard; onClick: ()
       <div style={{ display: "flex", alignItems: "center", gap: S[3], marginTop: S[2], fontSize: T.sz.xs, color: C.inkLight }}>
         <span>{fmtDaysAgo(order.createdAt)}</span>
         <span>{order.totalUnits} uds</span>
-        <span style={{ fontWeight: T.wt.bold, color: C.ink, fontSize: T.sz.sm, marginLeft: "auto" }}>{fmtCOP(order.totalValue)}</span>
+        <span style={{ fontWeight: T.wt.bold, color: C.ink, fontSize: T.sz.sm, marginLeft: "auto", fontVariantNumeric: "tabular-nums" }}>{fmtCOP(order.totalValue)}</span>
         <SellerIcon name="chevronRight" size={15} color={C.inkGhost} />
       </div>
     </button>
@@ -452,7 +452,7 @@ function OrderDetailView({
         style={{
           display: "flex", alignItems: "center", gap: S[1],
           background: "none", border: "none", cursor: "pointer",
-          color: C.blueDark, fontSize: T.sz.md, fontWeight: T.wt.semibold, fontFamily: T.mono,
+          color: C.blueDark, fontSize: T.sz.md, fontWeight: T.wt.semibold, fontFamily: T.sans,
           padding: `${S[2]}px 0`, minHeight: 44, marginBottom: S[1], touchAction: "manipulation",
         }}
       >
@@ -561,7 +561,7 @@ function OrderDetailView({
               fontSize: T.sz.sm, fontWeight: T.wt.bold, color: C.ink,
             }}>
               <span>Total</span>
-              <span>{fmtCOP(totalValue)}</span>
+              <span style={{ fontVariantNumeric: "tabular-nums" }}>{fmtCOP(totalValue)}</span>
             </div>
           </div>
         )}
@@ -570,7 +570,7 @@ function OrderDetailView({
       {/* Discount info */}
       {detail?.summary?.discountAmount != null && detail.summary.discountAmount > 0 && (
         <DetailSection title="Condiciones">
-          <div style={{ fontSize: T.sz.sm, color: C.ink }}>
+          <div style={{ fontSize: T.sz.sm, color: C.ink, fontVariantNumeric: "tabular-nums" }}>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
               <span>Subtotal</span>
               <span>{fmtCOP(detail.summary.totalValue)}</span>
@@ -684,7 +684,7 @@ function OrderLineRow({ line, isLast }: { line: OrderLineDetail; isLast: boolean
         </div>
       </div>
       {/* Quantity + price */}
-      <div style={{ textAlign: "right", flexShrink: 0 }}>
+      <div style={{ textAlign: "right", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
         <div style={{ fontWeight: T.wt.semibold, color: C.ink }}>
           {fmtCOP(line.lineTotal)}
         </div>
@@ -706,7 +706,7 @@ const actionBtnStyle: React.CSSProperties = {
   border: `1.5px solid ${C.blueDark}`,
   borderRadius: R.lg,
   color: C.blueDark,
-  fontFamily: T.mono,
+  fontFamily: T.sans,
   fontSize: T.sz.sm,
   fontWeight: T.wt.semibold,
   cursor: "pointer",

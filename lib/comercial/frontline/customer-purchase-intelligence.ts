@@ -16,6 +16,7 @@
 
 import "server-only";
 import { prisma } from "@/lib/prisma";
+import { resolveHeroImagesByReferenceCodes } from "@/lib/comercial/product-hero-media";
 import type {
   CustomerPurchaseHistoryResult,
   CustomerPurchaseHistoryItem,
@@ -217,6 +218,10 @@ export async function getCustomerTopProducts(
     )
     .slice(0, limit);
 
+  // Batch hero image resolution — exact referenceCode match only
+  const refCodes = sorted.map(p => p.referenceCode);
+  const heroMap = await resolveHeroImagesByReferenceCodes(orgId, refCodes);
+
   const products: CustomerTopProduct[] = sorted.map(p => ({
     referenceCode: p.referenceCode,
     description: p.description,
@@ -224,6 +229,7 @@ export async function getCustomerTopProducts(
     totalSalesValue: p.totalSalesValue,
     purchaseCount: p.orderIds.size,
     lastPurchaseDate: p.lastPurchaseDate,
+    thumbnailUrl: heroMap.get(p.referenceCode) ?? null,
   }));
 
   return {

@@ -418,7 +418,7 @@ export function ExistingOrderEditor({
           onClick={() => onClose()}
           style={{
             padding: `${S[2]}px ${S[4]}px`, background: C.blueDark, color: C.white,
-            border: "none", borderRadius: R.md, fontFamily: T.mono, fontSize: T.sz.md,
+            border: "none", borderRadius: R.md, fontFamily: T.sans, fontSize: T.sz.md,
             cursor: "pointer", marginTop: S[3],
           }}
         >
@@ -437,7 +437,7 @@ export function ExistingOrderEditor({
           style={{
             display: "flex", alignItems: "center", gap: S[1],
             background: "none", border: "none", cursor: "pointer",
-            color: C.blueDark, fontSize: T.sz.md, fontWeight: T.wt.semibold, fontFamily: T.mono,
+            color: C.blueDark, fontSize: T.sz.md, fontWeight: T.wt.semibold, fontFamily: T.sans,
             padding: `${S[2]}px 0`, minHeight: 44, marginBottom: S[2], touchAction: "manipulation",
           }}
         >
@@ -464,7 +464,7 @@ export function ExistingOrderEditor({
         style={{
           display: "flex", alignItems: "center", gap: S[1],
           background: "none", border: "none", cursor: "pointer",
-          color: C.blueDark, fontSize: T.sz.md, fontWeight: T.wt.semibold, fontFamily: T.mono,
+          color: C.blueDark, fontSize: T.sz.md, fontWeight: T.wt.semibold, fontFamily: T.sans,
           padding: `${S[2]}px 0`, minHeight: 44, marginBottom: S[1], touchAction: "manipulation",
         }}
       >
@@ -482,7 +482,7 @@ export function ExistingOrderEditor({
         <div style={{ display: "flex", gap: S[3], marginTop: S[2], fontSize: T.sz.xs, color: C.inkLight }}>
           <span>{sc.label}</span>
           <span>{draftUnits} uds</span>
-          <span style={{ fontWeight: T.wt.bold, color: C.ink }}>{fmtCOP(draftTotal)}</span>
+          <span style={{ fontWeight: T.wt.bold, color: C.ink, fontVariantNumeric: "tabular-nums" }}>{fmtCOP(draftTotal)}</span>
         </div>
       </div>
 
@@ -517,16 +517,23 @@ export function ExistingOrderEditor({
           >
             {/* Reference header */}
             <div style={{ display: "flex", gap: S[2], alignItems: "center", marginBottom: S[2] }}>
-              {group.thumbnailUrl && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={group.thumbnailUrl} alt=""
-                  style={{
-                    width: 40, height: 40, borderRadius: R.sm,
-                    objectFit: "cover", flexShrink: 0, border: `1px solid ${C.line}`,
-                  }}
-                />
-              )}
+              <div style={{
+                width: 40, height: 40, borderRadius: R.sm, flexShrink: 0,
+                background: C.surfaceAlt, overflow: "hidden", border: `1px solid ${C.line}`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                {group.thumbnailUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={group.thumbnailUrl} alt=""
+                    style={{ width: 40, height: 40, objectFit: "cover", display: "block" }}
+                  />
+                ) : (
+                  <span style={{ fontSize: 10, color: C.inkFaint, fontWeight: T.wt.medium }}>
+                    {group.refCode.replace(/[^A-Z0-9]/gi, "").slice(0, 2).toUpperCase()}
+                  </span>
+                )}
+              </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: T.wt.bold, fontSize: T.sz.md, color: C.ink }}>
                   {group.refCode}
@@ -545,7 +552,7 @@ export function ExistingOrderEditor({
                   style={{
                     padding: `${S[1]}px ${S[2]}px`, border: "none",
                     background: "transparent", cursor: "pointer",
-                    fontSize: T.sz.xs, color: C.red, fontFamily: T.mono,
+                    fontSize: T.sz.xs, color: C.red, fontFamily: T.sans,
                     fontWeight: T.wt.medium, touchAction: "manipulation",
                   }}
                 >
@@ -585,7 +592,7 @@ export function ExistingOrderEditor({
                     aria-label="Menos"
                     style={{
                       width: 36, height: 36, border: "none", background: "transparent",
-                      cursor: line.quantity > 1 ? "pointer" : "default", fontFamily: T.mono,
+                      cursor: line.quantity > 1 ? "pointer" : "default", fontFamily: T.sans,
                       fontSize: T.sz.lg, color: line.quantity > 1 ? C.ink : C.inkLight,
                       display: "flex", alignItems: "center", justifyContent: "center",
                       touchAction: "manipulation",
@@ -601,7 +608,7 @@ export function ExistingOrderEditor({
                       if (n > 0) handleSetQuantity(line.id, n);
                     }}
                     style={{
-                      width: 42, textAlign: "center", border: "none", fontFamily: T.mono,
+                      width: 42, textAlign: "center", border: "none", fontFamily: T.sans,
                       fontSize: 16, outline: "none", background: "transparent",
                       padding: 0,
                     }}
@@ -611,7 +618,7 @@ export function ExistingOrderEditor({
                     aria-label="Mas"
                     style={{
                       width: 36, height: 36, border: "none", background: "transparent",
-                      cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.lg, color: C.ink,
+                      cursor: "pointer", fontFamily: T.sans, fontSize: T.sz.lg, color: C.ink,
                       display: "flex", alignItems: "center", justifyContent: "center",
                       touchAction: "manipulation",
                     }}
@@ -656,7 +663,7 @@ export function ExistingOrderEditor({
                   onClick={() => handleUndoRemove(l.id)}
                   style={{
                     border: "none", background: "transparent", cursor: "pointer",
-                    color: C.blueDark, fontFamily: T.mono, fontSize: T.sz.xs,
+                    color: C.blueDark, fontFamily: T.sans, fontSize: T.sz.xs,
                     fontWeight: T.wt.semibold, touchAction: "manipulation",
                   }}
                 >
@@ -675,7 +682,7 @@ export function ExistingOrderEditor({
           display: "flex", alignItems: "center", justifyContent: "center", gap: S[2],
           width: "100%", minHeight: 48, padding: `${S[3]}px ${S[4]}px`,
           background: C.white, color: C.blueDark, border: `1.5px solid ${C.blueBorder}`,
-          borderRadius: 14, fontFamily: T.mono, fontSize: T.sz.md, fontWeight: T.wt.semibold,
+          borderRadius: 14, fontFamily: T.sans, fontSize: T.sz.md, fontWeight: T.wt.semibold,
           cursor: "pointer", touchAction: "manipulation", marginBottom: S[4],
         }}
       >
@@ -692,7 +699,7 @@ export function ExistingOrderEditor({
           rows={3}
           style={{
             width: "100%", padding: S[2], border: `1px solid ${C.line}`,
-            borderRadius: R.sm, fontFamily: T.mono, fontSize: 16,
+            borderRadius: R.sm, fontFamily: T.sans, fontSize: 16,
             resize: "vertical", outline: "none", boxSizing: "border-box",
           }}
         />
@@ -707,7 +714,7 @@ export function ExistingOrderEditor({
           width: "100%", minHeight: 52, padding: `${S[3]}px ${S[4]}px`,
           background: saving ? C.inkLight : C.blueDark,
           color: C.white, border: "none", borderRadius: 14,
-          fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold,
+          fontFamily: T.sans, fontSize: T.sz.lg, fontWeight: T.wt.bold,
           cursor: saving ? "default" : "pointer",
           boxShadow: saving ? "none" : E.md,
           touchAction: "manipulation", marginBottom: S[4],
@@ -729,7 +736,7 @@ export function ExistingOrderEditor({
               width: "100%", minHeight: 48, padding: `${S[3]}px ${S[4]}px`,
               background: "transparent", color: C.red,
               border: `1.5px solid ${C.red}`,
-              borderRadius: 14, fontFamily: T.mono, fontSize: T.sz.md,
+              borderRadius: 14, fontFamily: T.sans, fontSize: T.sz.md,
               fontWeight: T.wt.semibold, cursor: "pointer", touchAction: "manipulation",
             }}
           >
@@ -757,7 +764,7 @@ export function ExistingOrderEditor({
                 style={{
                   flex: 1, minHeight: 44, padding: `${S[2]}px`,
                   background: C.white, color: C.ink, border: `1px solid ${C.line}`,
-                  borderRadius: R.md, fontFamily: T.mono, fontSize: T.sz.sm,
+                  borderRadius: R.md, fontFamily: T.sans, fontSize: T.sz.sm,
                   fontWeight: T.wt.semibold, cursor: "pointer", touchAction: "manipulation",
                 }}
               >
@@ -769,7 +776,7 @@ export function ExistingOrderEditor({
                 style={{
                   flex: 1, minHeight: 44, padding: `${S[2]}px`,
                   background: C.red, color: C.white, border: "none",
-                  borderRadius: R.md, fontFamily: T.mono, fontSize: T.sz.sm,
+                  borderRadius: R.md, fontFamily: T.sans, fontSize: T.sz.sm,
                   fontWeight: T.wt.bold, cursor: deleting ? "default" : "pointer",
                   touchAction: "manipulation",
                 }}
@@ -891,7 +898,7 @@ function AddProductsPanel({
         onChange={e => setQuery(e.target.value)}
         style={{
           width: "100%", padding: `${S[2]}px ${S[3]}px`, border: `1px solid ${C.line}`,
-          borderRadius: R.md, fontFamily: T.mono, fontSize: 16, background: C.white,
+          borderRadius: R.md, fontFamily: T.sans, fontSize: 16, background: C.white,
           outline: "none", boxSizing: "border-box", marginBottom: S[3],
         }}
       />
@@ -1010,16 +1017,25 @@ function AddProductCard({
       <button onClick={onExpand} disabled={!sellable} style={{
         display: "flex", width: "100%", textAlign: "left", padding: S[3],
         border: "none", background: "transparent", cursor: sellable ? "pointer" : "default",
-        fontFamily: T.mono, gap: S[3], alignItems: "center", minHeight: 72,
+        fontFamily: T.sans, gap: S[3], alignItems: "center", minHeight: 72,
         opacity: sellable ? 1 : 0.5, touchAction: "manipulation",
       }}>
-        {product.thumbnailUrl && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={product.thumbnailUrl} alt="" loading="lazy" style={{
-            width: 56, height: 56, objectFit: "cover", borderRadius: 12, flexShrink: 0,
-            background: C.surfaceAlt,
-          }} />
-        )}
+        <div style={{
+          width: 56, height: 56, borderRadius: 12, flexShrink: 0,
+          background: C.surfaceAlt, overflow: "hidden",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          {product.thumbnailUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={product.thumbnailUrl} alt="" loading="lazy" style={{
+              width: 56, height: 56, objectFit: "cover", display: "block",
+            }} />
+          ) : (
+            <span style={{ fontSize: T.sz.xs, color: C.inkFaint, fontWeight: T.wt.medium }}>
+              {product.referenceCode.replace(/[^A-Z0-9]/gi, "").slice(0, 2).toUpperCase()}
+            </span>
+          )}
+        </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: T.wt.semibold, fontSize: T.sz.md, color: C.ink }}>
             {product.referenceCode}
@@ -1059,7 +1075,7 @@ function AddProductCard({
               {/* Mode toggle */}
               <div style={{ display: "flex", gap: 0, marginBottom: S[3], borderRadius: R.md, overflow: "hidden", border: `1px solid ${C.line}` }}>
                 <button onClick={() => setMode("auto")} style={{
-                  flex: 1, padding: `${S[2]}px 0`, fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
+                  flex: 1, padding: `${S[2]}px 0`, fontFamily: T.sans, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
                   border: "none", cursor: "pointer",
                   background: mode === "auto" ? C.blueDark : C.white,
                   color: mode === "auto" ? C.white : C.inkMid,
@@ -1067,7 +1083,7 @@ function AddProductCard({
                   Surtido automatico
                 </button>
                 <button onClick={() => setMode("manual")} style={{
-                  flex: 1, padding: `${S[2]}px 0`, fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
+                  flex: 1, padding: `${S[2]}px 0`, fontFamily: T.sans, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
                   border: "none", borderLeft: `1px solid ${C.line}`, cursor: "pointer",
                   background: mode === "manual" ? C.blueDark : C.white,
                   color: mode === "manual" ? C.white : C.inkMid,
@@ -1089,7 +1105,7 @@ function AddProductCard({
                       placeholder="Cantidad"
                       style={{
                         flex: 1, padding: `${S[2]}px ${S[3]}px`, border: `1px solid ${C.line}`,
-                        borderRadius: R.md, fontFamily: T.mono, fontSize: 16, background: C.white,
+                        borderRadius: R.md, fontFamily: T.sans, fontSize: 16, background: C.white,
                         outline: "none", boxSizing: "border-box", textAlign: "center",
                       }}
                     />
@@ -1097,7 +1113,7 @@ function AddProductCard({
                       onClick={handleAutoDistribute}
                       disabled={autoQty <= 0 || distributing}
                       style={{
-                        padding: `${S[2]}px ${S[3]}px`, fontFamily: T.mono, fontSize: T.sz.sm,
+                        padding: `${S[2]}px ${S[3]}px`, fontFamily: T.sans, fontSize: T.sz.sm,
                         fontWeight: T.wt.semibold, border: "none", borderRadius: R.md,
                         cursor: autoQty > 0 && !distributing ? "pointer" : "default",
                         background: autoQty > 0 && !distributing ? C.blueDark : C.surfaceAlt,
@@ -1112,7 +1128,7 @@ function AddProductCard({
                     <div style={{ marginBottom: S[3] }}>
                       <div style={{
                         padding: `${S[1]}px ${S[2]}px`, marginBottom: S[2], borderRadius: R.sm,
-                        fontFamily: T.mono, fontSize: T.sz.xs,
+                        fontFamily: T.sans, fontSize: T.sz.xs,
                         background: proposal.fulfillable ? `${C.green}10` : `${C.amber}10`,
                         color: proposal.fulfillable ? C.green : C.amberDark,
                         border: `1px solid ${proposal.fulfillable ? C.green : C.amber}20`,
@@ -1124,7 +1140,7 @@ function AddProductCard({
                           <div key={l.variantId} style={{
                             display: "flex", justifyContent: "space-between", alignItems: "center",
                             padding: `${S[1]}px ${S[2]}px`, background: C.surfaceAlt, borderRadius: R.sm,
-                            fontFamily: T.mono, fontSize: T.sz.xs,
+                            fontFamily: T.sans, fontSize: T.sz.xs,
                           }}>
                             <span style={{ fontWeight: T.wt.semibold, color: C.ink }}>
                               {l.size}{l.color ? `/${l.color}` : ""}
@@ -1138,7 +1154,7 @@ function AddProductCard({
                       </div>
                       {proposal.unallocatedUnits > 0 && (
                         <div style={{
-                          fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.amberDark,
+                          fontFamily: T.sans, fontSize: T.sz["2xs"], color: C.amberDark,
                           marginTop: S[1], padding: `${S[1]}px ${S[2]}px`,
                         }}>
                           {proposal.unallocatedUnits} uds sin asignar por inventario insuficiente
@@ -1149,7 +1165,7 @@ function AddProductCard({
                         style={{
                           width: "100%", marginTop: S[3], padding: `${S[3]}px 0`,
                           background: C.blueDark, color: C.white, border: "none",
-                          borderRadius: R.md, fontFamily: T.mono, fontSize: T.sz.md,
+                          borderRadius: R.md, fontFamily: T.sans, fontSize: T.sz.md,
                           fontWeight: T.wt.bold, cursor: "pointer",
                         }}
                       >
@@ -1179,7 +1195,7 @@ function AddProductCard({
                           style={{
                             padding: `${S[1]}px ${S[2]}px`, fontSize: T.sz.xs,
                             border: `1px solid ${isSelected ? C.blueDark : C.line}`,
-                            borderRadius: R.sm, fontFamily: T.mono, cursor: isOut ? "default" : "pointer",
+                            borderRadius: R.sm, fontFamily: T.sans, cursor: isOut ? "default" : "pointer",
                             background: isSelected ? C.blueLight : isOut ? C.surfaceAlt : C.white,
                             color: isOut ? C.inkLight : isSelected ? C.blueDark : C.ink,
                             opacity: isOut ? 0.5 : 1,
@@ -1196,26 +1212,26 @@ function AddProductCard({
                       <div style={{ display: "flex", alignItems: "center", border: `1px solid ${C.line}`, borderRadius: R.md }}>
                         <button onClick={() => setQuantity(q => Math.max(1, q - 1))} style={{
                           width: 32, height: 32, border: "none", background: "transparent",
-                          cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.lg, color: C.ink,
+                          cursor: "pointer", fontFamily: T.sans, fontSize: T.sz.lg, color: C.ink,
                         }}>-</button>
                         <input
                           type="number" value={quantity}
                           onChange={e => { const n = parseInt(e.target.value); if (n > 0) setQuantity(n); }}
                           style={{
-                            width: 40, textAlign: "center", border: "none", fontFamily: T.mono,
+                            width: 40, textAlign: "center", border: "none", fontFamily: T.sans,
                             fontSize: 16, outline: "none", background: "transparent",
                           }}
                         />
                         <button onClick={() => setQuantity(q => q + 1)} style={{
                           width: 32, height: 32, border: "none", background: "transparent",
-                          cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.lg, color: C.ink,
+                          cursor: "pointer", fontFamily: T.sans, fontSize: T.sz.lg, color: C.ink,
                         }}>+</button>
                       </div>
                       <button
                         onClick={() => { onAddVariant(selected, quantity); setSelectedVariant(null); setQuantity(1); }}
                         style={{
                           flex: 1, padding: `${S[2]}px ${S[3]}px`, background: C.blueDark, color: C.white,
-                          border: "none", borderRadius: R.md, fontFamily: T.mono, fontSize: T.sz.sm,
+                          border: "none", borderRadius: R.md, fontFamily: T.sans, fontSize: T.sz.sm,
                           fontWeight: T.wt.semibold, cursor: "pointer",
                         }}
                       >

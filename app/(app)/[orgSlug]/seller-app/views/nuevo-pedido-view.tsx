@@ -82,7 +82,7 @@ interface ProductSearchResult {
 interface CustomerContext {
   identity: { name: string; nit: string };
   receivables: { total: number; overdue: number; maxDaysOverdue: number; overdueDocumentCount: number; truthStatus?: string } | null;
-  topProductsByUnits: Array<{ referenceCode: string; description: string; totalUnits: number; purchaseCount: number }>;
+  topProductsByUnits: Array<{ referenceCode: string; description: string; totalUnits: number; purchaseCount: number; thumbnailUrl?: string | null }>;
   totalOrdersL12: number;
   lastPurchaseDate: string | null;
 }
@@ -431,7 +431,7 @@ function WizardHeader({ step, onBack, onExit }: {
           <button onClick={onBack} style={{
             display: "flex", alignItems: "center", gap: S[1],
             border: "none", background: "transparent", cursor: "pointer",
-            fontFamily: T.mono, fontSize: T.sz.md, fontWeight: T.wt.semibold,
+            fontFamily: T.sans, fontSize: T.sz.md, fontWeight: T.wt.semibold,
             color: C.blueDark, padding: `${S[2]}px 0`, minHeight: 44, touchAction: "manipulation",
           }}>
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={C.blueDark} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -443,7 +443,7 @@ function WizardHeader({ step, onBack, onExit }: {
         {inFlow && (
           <button onClick={onExit} style={{
             border: "none", background: "transparent", cursor: "pointer",
-            fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight,
+            fontFamily: T.sans, fontSize: T.sz.sm, color: C.inkLight,
             padding: `${S[2]}px 0`, minHeight: 44, touchAction: "manipulation",
           }}>
             Cancelar
@@ -587,7 +587,7 @@ function CustomerSelectionStep({
         onChange={e => setSearch(e.target.value)}
         style={{
           width: "100%", padding: `${S[2]}px ${S[3]}px`, border: `1px solid ${C.line}`,
-          borderRadius: R.md, fontFamily: T.mono, fontSize: 16, background: C.white,
+          borderRadius: R.md, fontFamily: T.sans, fontSize: 16, background: C.white,
           outline: "none", boxSizing: "border-box", marginBottom: S[3],
         }}
       />
@@ -607,7 +607,7 @@ function CustomerSelectionStep({
             <button key={c.profileId} onClick={() => handleSelectApi(c)} style={{
               display: "block", width: "100%", textAlign: "left", padding: S[3],
               background: C.white, border: `1px solid ${C.line}`, borderRadius: R.md,
-              cursor: "pointer", fontFamily: T.mono,
+              cursor: "pointer", fontFamily: T.sans,
             }}>
               <div style={{ fontWeight: T.wt.semibold, fontSize: T.sz.md, color: C.ink }}>{c.customerName}</div>
               <div style={{ fontSize: T.sz.xs, color: C.inkLight }}>
@@ -633,7 +633,7 @@ function CustomerSelectionStep({
             <button key={c.id} onClick={() => handleSelectLocal(c)} style={{
               display: "block", width: "100%", textAlign: "left", padding: S[3],
               background: C.white, border: `1px solid ${C.line}`, borderRadius: R.md,
-              cursor: "pointer", fontFamily: T.mono,
+              cursor: "pointer", fontFamily: T.sans,
             }}>
               <div style={{ fontWeight: T.wt.semibold, fontSize: T.sz.md, color: C.ink }}>{c.name}</div>
               <div style={{ fontSize: T.sz.xs, color: C.inkLight }}>
@@ -767,11 +767,28 @@ function CustomerContextStep({
             <DetailSection title="Top productos del cliente">
               {customerContext.topProductsByUnits.slice(0, 5).map((p, i) => (
                 <div key={p.referenceCode} style={{
-                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                  display: "flex", alignItems: "center", gap: S[2],
                   padding: `${S[1]}px 0`,
                   borderBottom: i < Math.min(customerContext.topProductsByUnits.length - 1, 4) ? `1px solid ${C.lineSubtle}` : undefined,
                   fontSize: T.sz.sm,
                 }}>
+                  <div style={{
+                    width: 32, height: 32, borderRadius: R.xs, flexShrink: 0,
+                    background: C.surfaceAlt, border: `1px solid ${C.line}`,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    overflow: "hidden",
+                  }}>
+                    {p.thumbnailUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={p.thumbnailUrl} alt="" loading="lazy" style={{
+                        width: 32, height: 32, objectFit: "cover", display: "block",
+                      }} />
+                    ) : (
+                      <span style={{ fontSize: 9, color: C.inkFaint, fontWeight: T.wt.medium }}>
+                        {p.referenceCode.replace(/[^A-Z0-9]/gi, "").slice(0, 2).toUpperCase()}
+                      </span>
+                    )}
+                  </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: T.wt.medium, color: C.ink }}>{p.referenceCode}</div>
                     <div style={{ color: C.inkLight, fontSize: T.sz.xs, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -779,7 +796,7 @@ function CustomerContextStep({
                     </div>
                   </div>
                   <div style={{ textAlign: "right", flexShrink: 0, marginLeft: S[2] }}>
-                    <span style={{ fontWeight: T.wt.semibold }}>{p.totalUnits} uds</span>
+                    <span style={{ fontWeight: T.wt.semibold, fontVariantNumeric: "tabular-nums" }}>{p.totalUnits} uds</span>
                   </div>
                 </div>
               ))}
@@ -790,7 +807,7 @@ function CustomerContextStep({
 
       <button onClick={onContinue} style={{
         width: "100%", padding: `${S[3]}px`, background: C.blueDark, color: C.white,
-        border: "none", borderRadius: R.md, fontFamily: T.mono, fontSize: T.sz.md,
+        border: "none", borderRadius: R.md, fontFamily: T.sans, fontSize: T.sz.md,
         fontWeight: T.wt.semibold, cursor: "pointer", marginTop: S[2],
       }}>
         Continuar a productos
@@ -888,7 +905,7 @@ function ProductSearchStep({
         onChange={e => setQuery(e.target.value)}
         style={{
           width: "100%", padding: `${S[2]}px ${S[3]}px`, border: `1px solid ${C.line}`,
-          borderRadius: R.md, fontFamily: T.mono, fontSize: 16, background: C.white,
+          borderRadius: R.md, fontFamily: T.sans, fontSize: 16, background: C.white,
           outline: "none", boxSizing: "border-box", marginBottom: S[3],
         }}
       />
@@ -925,13 +942,13 @@ function ProductSearchStep({
           left: "50%", transform: "translateX(-50%)",
           width: "calc(100% - 32px)", maxWidth: 398, minHeight: 52,
           padding: `${S[3]}px ${S[4]}px`, background: C.blueDark, color: C.white,
-          border: "none", borderRadius: 16, fontFamily: T.mono, fontSize: T.sz.md,
+          border: "none", borderRadius: 16, fontFamily: T.sans, fontSize: T.sz.md,
           fontWeight: T.wt.bold, cursor: "pointer", boxShadow: "0 10px 26px rgba(0,74,173,0.4)",
           display: "flex", justifyContent: "space-between", alignItems: "center",
           zIndex: 95, touchAction: "manipulation",
         }}>
           <span>Ver carrito ({cartCount})</span>
-          <span>{fmtCOP(cartTotal)}</span>
+          <span style={{ fontVariantNumeric: "tabular-nums" }}>{fmtCOP(cartTotal)}</span>
         </button>
       )}
     </div>
@@ -976,15 +993,24 @@ function ProductCard({
       <button onClick={onExpand} disabled={!sellable} style={{
         display: "flex", width: "100%", textAlign: "left", padding: S[3],
         border: "none", background: "transparent", cursor: sellable ? "pointer" : "default",
-        fontFamily: T.mono, gap: S[3], alignItems: "center", minHeight: 72,
+        fontFamily: T.sans, gap: S[3], alignItems: "center", minHeight: 72,
         opacity: sellable ? 1 : 0.5, touchAction: "manipulation",
       }}>
-        {product.thumbnailUrl && (
-          <img src={product.thumbnailUrl} alt="" loading="lazy" style={{
-            width: 56, height: 56, objectFit: "cover", borderRadius: 12, flexShrink: 0,
-            background: C.surfaceAlt,
-          }} />
-        )}
+        <div style={{
+          width: 56, height: 56, borderRadius: 12, flexShrink: 0,
+          background: C.surfaceAlt, overflow: "hidden",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          {product.thumbnailUrl ? (
+            <img src={product.thumbnailUrl} alt="" loading="lazy" style={{
+              width: 56, height: 56, objectFit: "cover", display: "block",
+            }} />
+          ) : (
+            <span style={{ fontSize: T.sz.xs, color: C.inkFaint, fontWeight: T.wt.medium }}>
+              {product.referenceCode.replace(/[^A-Z0-9]/gi, "").slice(0, 2).toUpperCase()}
+            </span>
+          )}
+        </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: T.wt.semibold, fontSize: T.sz.md, color: C.ink }}>
             {product.referenceCode}
@@ -1115,7 +1141,7 @@ function VariantGrid({
       {/* Mode toggle */}
       <div style={{ display: "flex", gap: 0, marginBottom: S[3], borderRadius: R.md, overflow: "hidden", border: `1px solid ${C.line}` }}>
         <button onClick={() => setMode("auto")} style={{
-          flex: 1, padding: `${S[2]}px 0`, fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
+          flex: 1, padding: `${S[2]}px 0`, fontFamily: T.sans, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
           border: "none", cursor: "pointer",
           background: mode === "auto" ? C.blueDark : C.white,
           color: mode === "auto" ? C.white : C.inkMid,
@@ -1123,7 +1149,7 @@ function VariantGrid({
           Surtido automatico
         </button>
         <button onClick={() => setMode("manual")} style={{
-          flex: 1, padding: `${S[2]}px 0`, fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
+          flex: 1, padding: `${S[2]}px 0`, fontFamily: T.sans, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
           border: "none", borderLeft: `1px solid ${C.line}`, cursor: "pointer",
           background: mode === "manual" ? C.blueDark : C.white,
           color: mode === "manual" ? C.white : C.inkMid,
@@ -1147,7 +1173,7 @@ function VariantGrid({
               placeholder="Cantidad"
               style={{
                 flex: 1, padding: `${S[2]}px ${S[3]}px`, border: `1px solid ${C.line}`,
-                borderRadius: R.md, fontFamily: T.mono, fontSize: 16, background: C.white,
+                borderRadius: R.md, fontFamily: T.sans, fontSize: 16, background: C.white,
                 outline: "none", boxSizing: "border-box", textAlign: "center",
               }}
             />
@@ -1155,7 +1181,7 @@ function VariantGrid({
               onClick={handleAutoDistribute}
               disabled={autoQty <= 0 || distributing}
               style={{
-                padding: `${S[2]}px ${S[3]}px`, fontFamily: T.mono, fontSize: T.sz.sm,
+                padding: `${S[2]}px ${S[3]}px`, fontFamily: T.sans, fontSize: T.sz.sm,
                 fontWeight: T.wt.semibold, border: "none", borderRadius: R.md, cursor: autoQty > 0 && !distributing ? "pointer" : "default",
                 background: autoQty > 0 && !distributing ? C.blueDark : C.surfaceAlt,
                 color: autoQty > 0 && !distributing ? C.white : C.inkLight,
@@ -1171,7 +1197,7 @@ function VariantGrid({
             <div style={{ marginBottom: S[3] }}>
               <div style={{
                 padding: `${S[1]}px ${S[2]}px`, marginBottom: S[2], borderRadius: R.sm,
-                fontFamily: T.mono, fontSize: T.sz.xs,
+                fontFamily: T.sans, fontSize: T.sz.xs,
                 background: proposal.fulfillable ? `${C.green}10` : `${C.amber}10`,
                 color: proposal.fulfillable ? C.green : C.amberDark,
                 border: `1px solid ${proposal.fulfillable ? C.green : C.amber}20`,
@@ -1185,7 +1211,7 @@ function VariantGrid({
                   <div key={l.variantId} style={{
                     display: "flex", justifyContent: "space-between", alignItems: "center",
                     padding: `${S[1]}px ${S[2]}px`, background: C.surfaceAlt, borderRadius: R.sm,
-                    fontFamily: T.mono, fontSize: T.sz.xs,
+                    fontFamily: T.sans, fontSize: T.sz.xs,
                   }}>
                     <span style={{ fontWeight: T.wt.semibold, color: C.ink }}>
                       {l.size}{l.color ? `/${l.color}` : ""}
@@ -1200,7 +1226,7 @@ function VariantGrid({
 
               {proposal.unallocatedUnits > 0 && (
                 <div style={{
-                  fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.amberDark,
+                  fontFamily: T.sans, fontSize: T.sz["2xs"], color: C.amberDark,
                   marginTop: S[1], padding: `${S[1]}px ${S[2]}px`,
                 }}>
                   {proposal.unallocatedUnits} uds sin asignar por inventario insuficiente
@@ -1213,7 +1239,7 @@ function VariantGrid({
                 style={{
                   width: "100%", marginTop: S[3], padding: `${S[3]}px 0`,
                   background: C.blueDark, color: C.white, border: "none",
-                  borderRadius: R.md, fontFamily: T.mono, fontSize: T.sz.md,
+                  borderRadius: R.md, fontFamily: T.sans, fontSize: T.sz.md,
                   fontWeight: T.wt.bold, cursor: "pointer",
                 }}
               >
@@ -1243,7 +1269,7 @@ function VariantGrid({
                   style={{
                     padding: `${S[1]}px ${S[2]}px`, fontSize: T.sz.xs,
                     border: `1px solid ${isSelected ? C.blueDark : C.line}`,
-                    borderRadius: R.sm, fontFamily: T.mono, cursor: isOut ? "default" : "pointer",
+                    borderRadius: R.sm, fontFamily: T.sans, cursor: isOut ? "default" : "pointer",
                     background: isSelected ? C.blueLight : isOut ? C.surfaceAlt : C.white,
                     color: isOut ? C.inkLight : isSelected ? C.blueDark : C.ink,
                     opacity: isOut ? 0.5 : 1,
@@ -1261,27 +1287,27 @@ function VariantGrid({
               <div style={{ display: "flex", alignItems: "center", border: `1px solid ${C.line}`, borderRadius: R.md }}>
                 <button onClick={() => setQuantity(q => Math.max(1, q - 1))} style={{
                   width: 32, height: 32, border: "none", background: "transparent",
-                  cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.lg, color: C.ink,
+                  cursor: "pointer", fontFamily: T.sans, fontSize: T.sz.lg, color: C.ink,
                 }}>-</button>
                 <input
                   type="number"
                   value={quantity}
                   onChange={e => { const n = parseInt(e.target.value); if (n > 0) setQuantity(n); }}
                   style={{
-                    width: 40, textAlign: "center", border: "none", fontFamily: T.mono,
+                    width: 40, textAlign: "center", border: "none", fontFamily: T.sans,
                     fontSize: 16, outline: "none", background: "transparent",
                   }}
                 />
                 <button onClick={() => setQuantity(q => q + 1)} style={{
                   width: 32, height: 32, border: "none", background: "transparent",
-                  cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.lg, color: C.ink,
+                  cursor: "pointer", fontFamily: T.sans, fontSize: T.sz.lg, color: C.ink,
                 }}>+</button>
               </div>
               <button
                 onClick={() => { onAdd(selected, quantity); setSelectedVariant(null); setQuantity(1); }}
                 style={{
                   flex: 1, padding: `${S[2]}px ${S[3]}px`, background: C.blueDark, color: C.white,
-                  border: "none", borderRadius: R.md, fontFamily: T.mono, fontSize: T.sz.sm,
+                  border: "none", borderRadius: R.md, fontFamily: T.sans, fontSize: T.sz.sm,
                   fontWeight: T.wt.semibold, cursor: "pointer",
                 }}
               >
@@ -1322,7 +1348,7 @@ function CartStep({
         </div>
         <button onClick={onBack} style={{
           padding: `${S[2]}px ${S[4]}px`, background: C.blueDark, color: C.white,
-          border: "none", borderRadius: R.md, fontFamily: T.mono, fontSize: T.sz.md,
+          border: "none", borderRadius: R.md, fontFamily: T.sans, fontSize: T.sz.md,
           cursor: "pointer",
         }}>
           Agregar productos
@@ -1340,7 +1366,7 @@ function CartStep({
         fontSize: T.sz.sm,
       }}>
         <span>{cart.length} ref \u00B7 {cartUnits} uds</span>
-        <span style={{ fontWeight: T.wt.bold }}>{fmtCOP(cartTotal)}</span>
+        <span style={{ fontWeight: T.wt.bold, fontVariantNumeric: "tabular-nums" }}>{fmtCOP(cartTotal)}</span>
       </div>
 
       {/* Lines */}
@@ -1351,11 +1377,21 @@ function CartStep({
             borderRadius: R.lg,
           }}>
             <div style={{ display: "flex", gap: S[2], marginBottom: S[2] }}>
-              {line.thumbnailUrl && (
-                <img src={line.thumbnailUrl} alt="" style={{
-                  width: 40, height: 40, objectFit: "cover", borderRadius: R.sm, flexShrink: 0,
-                }} />
-              )}
+              <div style={{
+                width: 40, height: 40, borderRadius: R.sm, flexShrink: 0,
+                background: C.surfaceAlt, overflow: "hidden",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                {line.thumbnailUrl ? (
+                  <img src={line.thumbnailUrl} alt="" style={{
+                    width: 40, height: 40, objectFit: "cover", display: "block",
+                  }} />
+                ) : (
+                  <span style={{ fontSize: 9, color: C.inkFaint, fontWeight: T.wt.medium }}>
+                    {line.referenceCode.replace(/[^A-Z0-9]/gi, "").slice(0, 2).toUpperCase()}
+                  </span>
+                )}
+              </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: T.wt.semibold, fontSize: T.sz.sm, color: C.ink }}>
                   {line.referenceCode}
@@ -1375,18 +1411,18 @@ function CartStep({
               <div style={{ display: "flex", alignItems: "center", border: `1px solid ${C.line}`, borderRadius: R.md }}>
                 <button onClick={() => onUpdateQuantity(line.id, line.quantity - 1)} disabled={line.quantity <= 1} style={{
                   width: 28, height: 28, border: "none", background: "transparent",
-                  cursor: line.quantity > 1 ? "pointer" : "default", fontFamily: T.mono,
+                  cursor: line.quantity > 1 ? "pointer" : "default", fontFamily: T.sans,
                   fontSize: T.sz.md, color: line.quantity > 1 ? C.ink : C.inkLight,
                 }}>-</button>
-                <span style={{ width: 32, textAlign: "center", fontFamily: T.mono, fontSize: T.sz.sm }}>
+                <span style={{ width: 32, textAlign: "center", fontFamily: T.sans, fontSize: T.sz.sm }}>
                   {line.quantity}
                 </span>
                 <button onClick={() => onUpdateQuantity(line.id, line.quantity + 1)} style={{
                   width: 28, height: 28, border: "none", background: "transparent",
-                  cursor: "pointer", fontFamily: T.mono, fontSize: T.sz.md, color: C.ink,
+                  cursor: "pointer", fontFamily: T.sans, fontSize: T.sz.md, color: C.ink,
                 }}>+</button>
               </div>
-              <span style={{ fontWeight: T.wt.semibold, fontSize: T.sz.sm }}>
+              <span style={{ fontWeight: T.wt.semibold, fontSize: T.sz.sm, fontVariantNumeric: "tabular-nums" }}>
                 {fmtCOP(line.lineTotal)}
               </span>
               {line.availableUnits !== null && line.quantity > line.availableUnits && (
@@ -1403,14 +1439,14 @@ function CartStep({
       <div style={{ display: "flex", gap: S[2] }}>
         <button onClick={onBack} style={{
           flex: 1, padding: `${S[3]}px`, background: C.white, color: C.blueDark,
-          border: `1px solid ${C.blueDark}`, borderRadius: R.md, fontFamily: T.mono,
+          border: `1px solid ${C.blueDark}`, borderRadius: R.md, fontFamily: T.sans,
           fontSize: T.sz.md, cursor: "pointer",
         }}>
           + Productos
         </button>
         <button onClick={onReview} style={{
           flex: 1, padding: `${S[3]}px`, background: C.blueDark, color: C.white,
-          border: "none", borderRadius: R.md, fontFamily: T.mono, fontSize: T.sz.md,
+          border: "none", borderRadius: R.md, fontFamily: T.sans, fontSize: T.sz.md,
           fontWeight: T.wt.semibold, cursor: "pointer",
         }}>
           Revisar pedido
@@ -1477,7 +1513,7 @@ function ReviewStep({
               <span style={{ fontWeight: T.wt.medium }}>{line.referenceCode}</span>
               <span style={{ color: C.inkLight }}> {line.size}/{line.color} x{line.quantity}</span>
             </div>
-            <span style={{ fontWeight: T.wt.semibold, flexShrink: 0 }}>{fmtCOP(line.lineTotal)}</span>
+            <span style={{ fontWeight: T.wt.semibold, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{fmtCOP(line.lineTotal)}</span>
           </div>
         ))}
         <div style={{
@@ -1486,7 +1522,7 @@ function ReviewStep({
           fontSize: T.sz.md, fontWeight: T.wt.bold,
         }}>
           <span>Total</span>
-          <span>{fmtCOP(cartTotal)}</span>
+          <span style={{ fontVariantNumeric: "tabular-nums" }}>{fmtCOP(cartTotal)}</span>
         </div>
       </DetailSection>
 
@@ -1499,7 +1535,7 @@ function ReviewStep({
           rows={3}
           style={{
             width: "100%", padding: S[2], border: `1px solid ${C.line}`,
-            borderRadius: R.sm, fontFamily: T.mono, fontSize: 16,
+            borderRadius: R.sm, fontFamily: T.sans, fontSize: 16,
             resize: "vertical", outline: "none", boxSizing: "border-box",
           }}
         />
@@ -1509,14 +1545,14 @@ function ReviewStep({
       <div style={{ display: "flex", gap: S[2], marginTop: S[2] }}>
         <button onClick={onBack} style={{
           flex: 1, minHeight: 52, padding: `${S[3]}px`, background: C.white, color: C.inkMid,
-          border: `1.5px solid ${C.line}`, borderRadius: 14, fontFamily: T.mono,
+          border: `1.5px solid ${C.line}`, borderRadius: 14, fontFamily: T.sans,
           fontSize: T.sz.md, fontWeight: T.wt.semibold, cursor: "pointer", touchAction: "manipulation",
         }}>
           Editar
         </button>
         <button onClick={onSubmit} style={{
           flex: 2, minHeight: 52, padding: `${S[3]}px`, background: C.blueDark, color: C.white,
-          border: "none", borderRadius: 14, fontFamily: T.mono, fontSize: T.sz.lg,
+          border: "none", borderRadius: 14, fontFamily: T.sans, fontSize: T.sz.lg,
           fontWeight: T.wt.bold, cursor: "pointer", boxShadow: "0 8px 22px rgba(0,74,173,0.3)",
           touchAction: "manipulation",
         }}>
@@ -1582,7 +1618,7 @@ function ResultStep({
       )}
       <button onClick={onDone} style={{
         minHeight: 52, padding: `${S[3]}px ${S[6]}px`, background: C.blueDark, color: C.white,
-        border: "none", borderRadius: 14, fontFamily: T.mono, fontSize: T.sz.lg,
+        border: "none", borderRadius: 14, fontFamily: T.sans, fontSize: T.sz.lg,
         fontWeight: T.wt.semibold, cursor: "pointer", touchAction: "manipulation",
         boxShadow: "0 8px 22px rgba(0,74,173,0.3)",
       }}>

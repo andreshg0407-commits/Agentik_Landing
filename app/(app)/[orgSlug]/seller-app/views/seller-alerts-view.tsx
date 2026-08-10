@@ -240,7 +240,7 @@ function AlertDetailCard({ item, onAction }: { item: FrontlineAttentionItem; onA
           )}
           {isWithdrawal && (
             <div style={{ fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: SEV_TEXT[item.severity], marginTop: S[1] }}>
-              Retira esta muestra de tu maleta
+              Retira esta muestra de tu portafolio
             </div>
           )}
           {/* Deep link CTA */}
@@ -251,7 +251,7 @@ function AlertDetailCard({ item, onAction }: { item: FrontlineAttentionItem; onA
                 marginTop: S[2], padding: `${S[2]}px ${S[3]}px`, minHeight: 38,
                 background: "rgba(255,255,255,0.8)", border: `1px solid ${SEV_BORDER[item.severity]}`,
                 borderRadius: 12, fontSize: T.sz.sm, fontWeight: T.wt.semibold,
-                color: SEV_TEXT[item.severity], cursor: "pointer", fontFamily: T.mono,
+                color: SEV_TEXT[item.severity], cursor: "pointer", fontFamily: T.sans,
                 display: "inline-flex", alignItems: "center", gap: 5, touchAction: "manipulation",
               }}
             >

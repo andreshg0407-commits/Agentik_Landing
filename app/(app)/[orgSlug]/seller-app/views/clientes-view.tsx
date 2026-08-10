@@ -185,7 +185,7 @@ function CustomerCard({ customer, isInactive, isTop, showSales, inactiveInfo, on
       display: "flex", alignItems: "flex-start", gap: S[3], width: "100%",
       textAlign: "left", padding: S[3],
       border: `1px solid ${hasOverdue ? C.redBorder : isInactive ? C.amberBorder : C.line}`,
-      cursor: "pointer", fontFamily: T.mono, minHeight: 76, touchAction: "manipulation",
+      cursor: "pointer", fontFamily: T.sans, minHeight: 76, touchAction: "manipulation",
     }}>
       <span aria-hidden style={{
         width: 42, height: 42, borderRadius: 13, flexShrink: 0,
@@ -315,7 +315,7 @@ export function ClienteDetailView({
     <div style={{ padding: S[4] }}>
       <button onClick={onBack} style={{
         display: "flex", alignItems: "center", gap: S[1], border: "none",
-        background: "transparent", cursor: "pointer", fontFamily: T.mono,
+        background: "transparent", cursor: "pointer", fontFamily: T.sans,
         fontSize: T.sz.md, fontWeight: T.wt.semibold, color: C.blueDark,
         padding: `${S[2]}px 0`, minHeight: 44, marginBottom: S[1], touchAction: "manipulation",
       }}>
@@ -325,7 +325,7 @@ export function ClienteDetailView({
       {/* Identidad / contacto */}
       <h2 style={{
         fontSize: T.sz.xl, fontWeight: T.wt.semibold, color: C.ink,
-        margin: `0 0 ${S[1]}px`, fontFamily: T.mono,
+        margin: `0 0 ${S[1]}px`, fontFamily: T.sans,
       }}>
         {customer?.name ?? "Cliente"}
       </h2>
@@ -452,18 +452,34 @@ export function ClienteDetailView({
             <DetailSection title="Top productos (unidades)">
               {context.topProductsByUnits.slice(0, 5).map((p, i) => (
                 <div key={p.referenceCode} style={{
-                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                  display: "flex", alignItems: "center", gap: S[2],
                   padding: `${S[1]}px 0`,
                   borderBottom: i < 4 ? `1px solid ${C.lineSubtle}` : undefined,
                   fontSize: T.sz.sm,
                 }}>
+                  <div style={{
+                    width: 32, height: 32, borderRadius: 8, flexShrink: 0,
+                    background: C.surfaceAlt, overflow: "hidden",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>
+                    {p.thumbnailUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={p.thumbnailUrl} alt="" loading="lazy" style={{
+                        width: 32, height: 32, objectFit: "cover", display: "block",
+                      }} />
+                    ) : (
+                      <span style={{ fontSize: 10, color: C.inkFaint, fontWeight: T.wt.medium }}>
+                        {p.referenceCode.replace(/[^A-Z0-9]/gi, "").slice(0, 2).toUpperCase()}
+                      </span>
+                    )}
+                  </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: T.wt.medium, color: C.ink }}>{p.referenceCode}</div>
                     <div style={{ color: C.inkLight, fontSize: T.sz.xs, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {p.description}
                     </div>
                   </div>
-                  <div style={{ textAlign: "right", flexShrink: 0, marginLeft: S[2] }}>
+                  <div style={{ textAlign: "right", flexShrink: 0, marginLeft: S[2], fontVariantNumeric: "tabular-nums" }}>
                     <div style={{ fontWeight: T.wt.semibold }}>{p.totalUnits} uds</div>
                     <div style={{ fontSize: T.sz.xs, color: C.inkLight }}>{p.purchaseCount} pedidos</div>
                   </div>
