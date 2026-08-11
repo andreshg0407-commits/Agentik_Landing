@@ -332,6 +332,7 @@ model Organization {
   scheduledReports    ScheduledReport[]
   budgets             Budget[]
   tenantModules       TenantModule[]
+  commercialAgreements TenantCommercialAgreement[]
   whatsAppConfig          WhatsAppConfig?
   whatsAppConversations   WhatsAppConversation[]
   whatsAppContactMemories WhatsAppContactMemory[]
@@ -671,6 +672,81 @@ model TenantModuleEntitlementPeriod {
 
   @@index([tenantModuleId, effectiveFrom])
   @@index([tenantModuleId, effectiveTo])
+}
+
+/// Tenant-level commercial agreement (custom bundle, negotiated contract).
+/// Answers "what does this tenant pay?" — NOT "can they access a module?"
+/// (access authority remains TenantModule.enabled).
+///
+/// HISTORY LAW: Agreements are effective-dated and never destructively deleted.
+/// Changing terms = set old agreement to SUPERSEDED + create new one.
+/// Historical billing previews remain reproducible by querying date overlap.
+///
+/// Sprint: AGENTIK-CUSTOM-COMMERCIAL-AGREEMENTS-01
+model TenantCommercialAgreement {
+  id               String   @id @default(cuid())
+  organizationId   String
+  /// Agreement type: CUSTOM_BUNDLE
+  agreementType    String
+  /// Fixed monthly price in integer cents.
+  monthlyPriceCents Int
+  /// ISO 4217 currency code (e.g. "USD").
+  currency         String
+  effectiveFrom    DateTime
+  /// null = indefinite (current agreement).
+  effectiveTo      DateTime?
+  /// ACTIVE | EXPIRED | SUPERSEDED | DRAFT
+  status           String   @default("ACTIVE")
+  /// Free-text admin note.
+  note             String?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  modules     TenantCommercialAgreementModule[]
+  usageLimits TenantCommercialAgreementUsageLimit[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, status])
+  @@index([organizationId, effectiveFrom])
+}
+
+/// Explicit module membership in a commercial agreement.
+/// Each row = "this module's billing charge is covered by this agreement."
+/// NOT an entitlement grant — TenantModule.enabled remains separate authority.
+model TenantCommercialAgreementModule {
+  id          String @id @default(cuid())
+  agreementId String
+  /// Canonical module key — see ModuleKey in lib/tenant/modules.ts
+  moduleKey   String
+
+  agreement TenantCommercialAgreement @relation(fields: [agreementId], references: [id], onDelete: Cascade)
+
+  @@unique([agreementId, moduleKey])
+  @@index([agreementId])
+}
+
+/// Usage limit within a commercial agreement.
+/// Defines included consumption quantities per metric.
+model TenantCommercialAgreementUsageLimit {
+  id               String @id @default(cuid())
+  agreementId      String
+  /// Metric key: ai_credits_monthly, whatsapp_messages_monthly, etc.
+  metricKey        String
+  /// Included quantity (e.g. 50000 credits, 5000 messages).
+  includedQuantity Int
+  /// HARD_CAP | SOFT_CAP | ADVISORY
+  policy           String @default("SOFT_CAP")
+  /// Overage price per unit in integer cents. null = no overage pricing.
+  overagePriceCents Int?
+  /// Currency for overage pricing (e.g. "USD"). null if no overage.
+  overageCurrency   String?
+
+  agreement TenantCommercialAgreement @relation(fields: [agreementId], references: [id], onDelete: Cascade)
+
+  @@unique([agreementId, metricKey])
+  @@index([agreementId])
 }
 
 // ── Tenant Group + Onboarding + Marketing Config ──────────────────────────────

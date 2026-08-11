@@ -14,6 +14,7 @@ import { getCurrentUser } from "@/lib/auth/auth";
 import { MembershipStatus } from "@prisma/client";
 import { getEntitlements, activateModule, deactivateModule, updateModulePrice } from "@/lib/tenant/module-entitlements";
 import { buildPreviewFromEntitlements } from "@/lib/tenant/billing-preview";
+import { getAgreementForMonth } from "@/lib/tenant/commercial-agreement-service";
 import type { ModuleKey } from "@/lib/tenant/modules";
 import { MODULE_KEYS } from "@/lib/tenant/modules";
 
@@ -51,8 +52,11 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
   }
 
   const period = req.nextUrl.searchParams.get("period") ?? undefined;
-  const entitlements = await getEntitlements(ctx.orgId);
-  const billingPreview = buildPreviewFromEntitlements(ctx.orgId, entitlements, period);
+  const [entitlements, agreement] = await Promise.all([
+    getEntitlements(ctx.orgId),
+    getAgreementForMonth(ctx.orgId, period ?? `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`),
+  ]);
+  const billingPreview = buildPreviewFromEntitlements(ctx.orgId, entitlements, period, agreement);
 
   return NextResponse.json({ entitlements, billingPreview });
 }

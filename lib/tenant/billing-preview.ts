@@ -34,6 +34,8 @@ import {
   type EntitlementPeriod,
   type ModuleEntitlement,
 } from "./module-entitlements";
+import type { CommercialAgreementFull } from "./commercial-agreement-types";
+import { getAgreementForMonth } from "./commercial-agreement-service";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -46,6 +48,16 @@ export interface BillingLineItem {
   commercialTermEffectiveTo:   string | null;
   entitlementEffectiveFrom:    string;
   entitlementEffectiveTo:      string | null;
+}
+
+/** Bundle line item — emitted ONCE when a CUSTOM_BUNDLE agreement is active. */
+export interface BundleBillingLineItem {
+  agreementId:        string;
+  agreementType:      string;
+  monthlyPriceCents:  number;
+  currency:           string;
+  includedModuleKeys: ModuleKey[];
+  note:               string | null;
 }
 
 export interface CurrencySubtotal {
@@ -64,6 +76,8 @@ export interface BillingPreview {
   periodEnd:         string;
   /** Line items for each billable module in this period. */
   lineItems:         BillingLineItem[];
+  /** Bundle line item — present when CUSTOM_BUNDLE is active for this period. */
+  bundleLineItem:    BundleBillingLineItem | null;
   /** Subtotals grouped by currency. Never sums across currencies. */
   subtotals:         CurrencySubtotal[];
   /** True if line items span more than one currency. */
@@ -143,19 +157,39 @@ export async function generateBillingPreview(
   organizationId: string,
   period?: string,
 ): Promise<BillingPreview> {
-  const entitlements = await getEntitlements(organizationId);
-  return buildPreviewFromEntitlements(organizationId, entitlements, period);
+  const now = new Date();
+  const periodStr = period ?? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
+  const [entitlements, agreement] = await Promise.all([
+    getEntitlements(organizationId),
+    getAgreementForMonth(organizationId, periodStr),
+  ]);
+
+  return buildPreviewFromEntitlements(organizationId, entitlements, periodStr, agreement);
 }
 
 /**
  * Pure function: builds preview from already-loaded entitlements.
  *
  * Uses explicit month-boundary overlap — NO mid-month heuristic.
+ *
+ * BUNDLE BILLING PRECEDENCE (Sprint AGENTIK-CUSTOM-COMMERCIAL-AGREEMENTS-01):
+ *   1. If a CUSTOM_BUNDLE agreement overlaps this period:
+ *      - Emit ONE bundleLineItem with the agreement's fixed monthly price.
+ *      - SUPPRESS individual charges for module keys covered by the bundle.
+ *      - Individually bill active modules OUTSIDE the bundle normally.
+ *   2. If no agreement: sum individual TenantModuleCommercialTerm prices.
+ *
+ * CRITICAL: Bundle-covered module commercial terms are NEVER mutated.
+ * The individual TenantModuleCommercialTerm retains its real price.
+ * Suppression happens only in billing preview output — not in data.
+ * BUNDLE_MODULE_PRICE_MUTATED = false (enforced by design).
  */
 export function buildPreviewFromEntitlements(
   organizationId: string,
   entitlements: ModuleEntitlement[],
   period?: string,
+  agreement?: CommercialAgreementFull | null,
 ): BillingPreview {
   const now = new Date();
   const periodStr = period ?? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -166,11 +200,32 @@ export function buildPreviewFromEntitlements(
   const periodStart = new Date(year, month, 1);
   const periodEnd = new Date(year, month + 1, 1);
 
+  // Determine which modules are covered by an active bundle agreement
+  const coveredByBundle = new Set<string>();
+  let bundleLineItem: BundleBillingLineItem | null = null;
+
+  if (agreement && agreement.agreementType === "CUSTOM_BUNDLE") {
+    for (const m of agreement.modules) {
+      coveredByBundle.add(m.moduleKey);
+    }
+    bundleLineItem = {
+      agreementId:        agreement.id,
+      agreementType:      agreement.agreementType,
+      monthlyPriceCents:  agreement.monthlyPriceCents,
+      currency:           agreement.currency,
+      includedModuleKeys: agreement.modules.map(m => m.moduleKey as ModuleKey),
+      note:               agreement.note,
+    };
+  }
+
   const lineItems: BillingLineItem[] = [];
 
   for (const ent of entitlements) {
     const catalogEntry = getModuleCatalogEntry(ent.moduleKey);
     if (!catalogEntry || !catalogEntry.sellable) continue;
+
+    // Skip individual billing for modules covered by the bundle
+    if (coveredByBundle.has(ent.moduleKey)) continue;
 
     // Was there an active entitlement period overlapping this month?
     const activePeriod = findPeriodForMonth(ent.entitlementPeriods, periodStart, periodEnd);
@@ -194,6 +249,16 @@ export function buildPreviewFromEntitlements(
 
   // Group subtotals by currency — NEVER sum across currencies
   const byCurrency = new Map<string, { total: number; count: number }>();
+
+  // Include bundle price in subtotals
+  if (bundleLineItem) {
+    const existing = byCurrency.get(bundleLineItem.currency) ?? { total: 0, count: 0 };
+    existing.total += bundleLineItem.monthlyPriceCents;
+    existing.count += 1;
+    byCurrency.set(bundleLineItem.currency, existing);
+  }
+
+  // Include individual (non-covered) line items
   for (const item of lineItems) {
     const existing = byCurrency.get(item.currency) ?? { total: 0, count: 0 };
     existing.total += item.monthlyPriceCents;
@@ -210,7 +275,9 @@ export function buildPreviewFromEntitlements(
     });
   }
 
-  const currencies = new Set(lineItems.map(i => i.currency));
+  const allCurrencies = new Set<string>();
+  if (bundleLineItem) allCurrencies.add(bundleLineItem.currency);
+  for (const item of lineItems) allCurrencies.add(item.currency);
 
   return {
     organizationId,
@@ -218,9 +285,10 @@ export function buildPreviewFromEntitlements(
     periodStart:        periodStart.toISOString(),
     periodEnd:          periodEnd.toISOString(),
     lineItems,
+    bundleLineItem,
     subtotals,
-    hasMixedCurrencies: currencies.size > 1,
-    activeModuleCount:  lineItems.length,
+    hasMixedCurrencies: allCurrencies.size > 1,
+    activeModuleCount:  lineItems.length + (bundleLineItem ? bundleLineItem.includedModuleKeys.length : 0),
   };
 }
 
