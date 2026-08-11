@@ -23,7 +23,7 @@
  */
 
 import { NextResponse }                  from "next/server";
-import { requireOrgAccess }              from "@/lib/auth/org-access";
+import { requireCommercialAccess }       from "@/lib/auth/org-access";
 import {
   ingestOrderLine,
   ingestOrderLineBatch,
@@ -38,7 +38,7 @@ export async function POST(
   { params }: { params: { orgSlug: string } },
 ) {
   try {
-    const { user, organization } = await requireOrgAccess(params.orgSlug);
+    const { user, organization } = await requireCommercialAccess(params.orgSlug);
 
     // Seller scope enforcement: inventory ingestion is admin-only
     const sellerIdentity = await resolveCurrentSeller({ organizationId: organization.id, userId: user.id });

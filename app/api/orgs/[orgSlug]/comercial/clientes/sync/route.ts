@@ -7,7 +7,7 @@
  * Sprint: AGENTIK-CUSTOMERS-SAG-MASTER-DATA-INTEGRATION-01
  */
 
-import { requireOrgAccess } from "@/lib/auth/org-access";
+import { requireCommercialAccess } from "@/lib/auth/org-access";
 import { syncSagCustomerMaster } from "@/lib/comercial/clientes/sag-customer-master-sync";
 import { NextResponse } from "next/server";
 
@@ -16,7 +16,7 @@ export async function POST(
   { params }: { params: Promise<{ orgSlug: string }> },
 ) {
   const { orgSlug } = await params;
-  const { organization, membership } = await requireOrgAccess(orgSlug);
+  const { organization, membership } = await requireCommercialAccess(orgSlug);
 
   // Restrict sync to ORG_ADMIN or SUPER_ADMIN
   if (membership.role !== "ORG_ADMIN" && membership.role !== "SUPER_ADMIN") {

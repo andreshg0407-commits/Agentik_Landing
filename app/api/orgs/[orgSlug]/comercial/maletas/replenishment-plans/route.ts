@@ -9,7 +9,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { requireOrgAccess } from "@/lib/auth/org-access";
+import { requireCommercialAccess } from "@/lib/auth/org-access";
 import {
   listReplenishmentPlans,
   getActiveDraftPlan,
@@ -28,7 +28,7 @@ export async function GET(
   { params }: { params: { orgSlug: string } },
 ) {
   try {
-    const { user, organization } = await requireOrgAccess(params.orgSlug);
+    const { user, organization } = await requireCommercialAccess(params.orgSlug);
 
     // Replenishment plans are admin-only
     const sellerIdentity = await resolveCurrentSeller({ organizationId: organization.id, userId: user.id });
@@ -54,7 +54,7 @@ export async function POST(
   { params }: { params: { orgSlug: string } },
 ) {
   try {
-    const { organization, user } = await requireOrgAccess(params.orgSlug);
+    const { organization, user } = await requireCommercialAccess(params.orgSlug);
 
     // Replenishment plans are admin-only
     const sellerIdentityPost = await resolveCurrentSeller({ organizationId: organization.id, userId: user.id });

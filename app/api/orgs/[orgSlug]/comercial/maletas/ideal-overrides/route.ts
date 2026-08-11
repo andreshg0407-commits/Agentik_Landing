@@ -11,7 +11,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { requireOrgAccess } from "@/lib/auth/org-access";
+import { requireCommercialAccess } from "@/lib/auth/org-access";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -23,7 +23,7 @@ export async function GET(
   { params }: { params: { orgSlug: string } },
 ) {
   try {
-    const { organization } = await requireOrgAccess(params.orgSlug);
+    const { organization } = await requireCommercialAccess(params.orgSlug);
     const overrides = await db.assortmentIdealOverride.findMany({
       where: { organizationId: organization.id },
       select: {
@@ -50,7 +50,7 @@ export async function POST(
   { params }: { params: { orgSlug: string } },
 ) {
   try {
-    const { organization, user } = await requireOrgAccess(params.orgSlug);
+    const { organization, user } = await requireCommercialAccess(params.orgSlug);
     const body = await req.json();
     const { catalogId, groupCode, subgroupCode, idealUnits } = body;
 
@@ -104,7 +104,7 @@ export async function DELETE(
   { params }: { params: { orgSlug: string } },
 ) {
   try {
-    const { organization } = await requireOrgAccess(params.orgSlug);
+    const { organization } = await requireCommercialAccess(params.orgSlug);
     const body = await req.json();
     const { catalogId, groupCode, subgroupCode } = body;
 

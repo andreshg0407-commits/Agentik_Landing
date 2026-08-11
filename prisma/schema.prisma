@@ -621,11 +621,56 @@ model TenantModule {
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
+  commercialTerms TenantModuleCommercialTerm[]
+  entitlementPeriods TenantModuleEntitlementPeriod[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([organizationId, moduleKey])
   @@index([organizationId, enabled])
+}
+
+/// Per-module commercial pricing term with non-overlapping effective periods.
+/// Price updates create new rows; historical rows are never overwritten.
+/// monthlyPriceCents is integer cents. currency is ISO 4217 (e.g. "COP", "USD").
+model TenantModuleCommercialTerm {
+  id               String   @id @default(cuid())
+  tenantModuleId   String
+  /// Monthly price in integer cents. NOT nullable — explicit when billing is enabled.
+  monthlyPriceCents Int
+  /// ISO 4217 currency code (e.g. "COP", "USD").
+  currency         String
+  effectiveFrom    DateTime
+  /// null = indefinite (current term).
+  effectiveTo      DateTime?
+  /// Free-text admin note.
+  note             String?
+
+  tenantModule TenantModule @relation(fields: [tenantModuleId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantModuleId, effectiveFrom])
+  @@index([tenantModuleId, effectiveTo])
+}
+
+/// Tracks when a module was activated/deactivated for billing history.
+/// Activation opens a period. Deactivation closes it. Reactivation opens a new one.
+model TenantModuleEntitlementPeriod {
+  id             String    @id @default(cuid())
+  tenantModuleId String
+  effectiveFrom  DateTime
+  /// null = currently active.
+  effectiveTo    DateTime?
+
+  tenantModule TenantModule @relation(fields: [tenantModuleId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantModuleId, effectiveFrom])
+  @@index([tenantModuleId, effectiveTo])
 }
 
 // ── Tenant Group + Onboarding + Marketing Config ──────────────────────────────

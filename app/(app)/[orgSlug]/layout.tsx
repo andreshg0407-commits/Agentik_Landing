@@ -2,7 +2,7 @@ import { headers }    from "next/headers";
 import { redirect }  from "next/navigation";
 import { requireTenant }                          from "@/lib/tenant";
 import { getEnabledModules, resolveModuleForPath } from "@/lib/tenant/modules";
-import { filterModulesByRole, isInternalRole }    from "@/lib/auth/module-access";
+import { filterModulesByRole, isInternalRole, getModulesForRole } from "@/lib/auth/module-access";
 import RightOpsRail                               from "@/components/layout/right-ops-rail";
 import { TenantSwitcher }                         from "@/components/layout/tenant-switcher";
 import { C }                                      from "@/lib/ui/tokens";
@@ -64,8 +64,13 @@ export default async function OrgLayout({
 
   const orgMods = await getEnabledModules(ctx.orgId);
 
-  // Intersect org-level feature flags with role-based visibility
-  const mods = filterModulesByRole(orgMods, ctx.role);
+  // SUPER_ADMIN BYPASS: sees all role-permitted modules regardless of tenant
+  // entitlements. This is a read-only visibility override — no TenantModule rows,
+  // commercial terms, or billing periods are created. Tenant truth is unchanged.
+  // ORG_ADMIN/MANAGER: only see the intersection of org-entitled + role-permitted.
+  const mods = ctx.role === "SUPER_ADMIN"
+    ? getModulesForRole(ctx.role)
+    : filterModulesByRole(orgMods, ctx.role);
 
   // Capability flags
   const showInternal    = isInternalRole(ctx.role);

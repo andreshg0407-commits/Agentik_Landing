@@ -8,6 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { requireCommercialAccess } from "@/lib/auth/org-access";
 import {
   importSagOrder,
   importSagOrderBatch,
@@ -20,6 +21,7 @@ export async function POST(
   { params }: { params: Promise<{ orgSlug: string }> },
 ) {
   const { orgSlug } = await params;
+  await requireCommercialAccess(orgSlug);
 
   try {
     const body = await request.json();

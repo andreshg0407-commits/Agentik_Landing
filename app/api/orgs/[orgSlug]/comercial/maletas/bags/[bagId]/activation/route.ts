@@ -8,7 +8,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { requireOrgAccess } from "@/lib/auth/org-access";
+import { requireCommercialAccess } from "@/lib/auth/org-access";
 import { setVendorActivation } from "@/lib/comercial/maletas/vendor-bag-ideal-route-service";
 
 export const runtime = "nodejs";
@@ -18,7 +18,7 @@ export async function POST(
   { params }: { params: { orgSlug: string; bagId: string } },
 ) {
   try {
-    const { organization } = await requireOrgAccess(params.orgSlug);
+    const { organization } = await requireCommercialAccess(params.orgSlug);
     const body = await req.json();
     const active = Boolean(body.active);
 

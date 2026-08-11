@@ -16,7 +16,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { requireOrgAccess } from "@/lib/auth/org-access";
+import { requireCommercialAccess } from "@/lib/auth/org-access";
 import {
   getStoreDetail,
   getStoreSummary,
@@ -99,7 +99,7 @@ export async function POST(
   { params }: { params: Promise<{ orgSlug: string }> },
 ) {
   const { orgSlug } = await params;
-  const { organization, membership, user } = await requireOrgAccess(orgSlug);
+  const { organization, membership, user } = await requireCommercialAccess(orgSlug);
   const orgId = organization.id;
 
   const body = await req.json();

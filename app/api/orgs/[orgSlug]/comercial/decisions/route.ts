@@ -12,7 +12,7 @@
  * Sprint: COMMERCIAL-DATA-CONNECTIVITY-01 (P0-001d)
  */
 
-import { requireOrgAccess } from "@/lib/auth/org-access";
+import { requireCommercialAccess } from "@/lib/auth/org-access";
 import { NextResponse } from "next/server";
 
 // ── Data loaders ──────────────────────────────────────────────────────────────
@@ -78,7 +78,7 @@ export async function GET(
   { params }: { params: Promise<{ orgSlug: string }> },
 ) {
   const { orgSlug } = await params;
-  const { organization } = await requireOrgAccess(orgSlug);
+  const { organization } = await requireCommercialAccess(orgSlug);
   const orgId = organization.id;
 
   const url = new URL(req.url);

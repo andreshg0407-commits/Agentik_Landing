@@ -11,7 +11,7 @@
  * Requires SUPER_ADMIN. Read-only. No mutations.
  */
 
-import { requireOrgAccess } from "@/lib/auth/org-access";
+import { requireCommercialAccess } from "@/lib/auth/org-access";
 import { consultaSagJson } from "@/lib/connectors/pya/client";
 import { getSagConnection, describeSagConnection } from "@/lib/connectors/pya/sag-source-router";
 import type { SagSource } from "@/lib/connectors/pya/sag-source-router";
@@ -22,7 +22,7 @@ export async function POST(
   { params }: { params: Promise<{ orgSlug: string }> },
 ) {
   const { orgSlug } = await params;
-  const { membership } = await requireOrgAccess(orgSlug);
+  const { membership } = await requireCommercialAccess(orgSlug);
 
   if (membership.role !== "SUPER_ADMIN") {
     return NextResponse.json(

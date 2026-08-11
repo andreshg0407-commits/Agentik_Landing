@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { requireOrgAccess } from "@/lib/auth/org-access";
+import { requireCommercialAccess } from "@/lib/auth/org-access";
 import { buildDemandSnapshot } from "@/lib/comercial/demand/demand-engine";
 import { getVariantDemandMetrics } from "@/lib/comercial/demand/variant-demand-analytics";
 import { buildCoverageSummary } from "@/lib/comercial/demand/inventory-coverage-engine";
@@ -22,7 +22,7 @@ export async function POST(
   { params }: { params: Promise<{ orgSlug: string }> },
 ) {
   const { orgSlug } = await params;
-  const { organization } = await requireOrgAccess(orgSlug);
+  const { organization } = await requireCommercialAccess(orgSlug);
   const orgId = organization.id;
 
   const body = await req.json();

@@ -15,7 +15,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { requireOrgAccess } from "@/lib/auth/org-access";
+import { requireCommercialAccess } from "@/lib/auth/org-access";
 import { loadProductDetail } from "@/lib/inventory/product-detail-loader";
 
 export const runtime = "nodejs";
@@ -25,7 +25,7 @@ export async function GET(
   { params }: { params: { orgSlug: string } },
 ) {
   try {
-    const { organization } = await requireOrgAccess(params.orgSlug);
+    const { organization } = await requireCommercialAccess(params.orgSlug);
     const { searchParams } = new URL(req.url);
     const reference = searchParams.get("reference");
 

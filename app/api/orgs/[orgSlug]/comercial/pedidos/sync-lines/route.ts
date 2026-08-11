@@ -10,7 +10,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { requireCommercialAccess } from "@/lib/auth/org-access";
 import {
   syncQuoteLines,
   getCrmConnectorConfig,
@@ -21,18 +21,10 @@ export async function POST(
   { params }: { params: Promise<{ orgSlug: string }> },
 ) {
   const { orgSlug } = await params;
-
-  // Resolve org
-  const org = await prisma.organization.findFirst({
-    where: { slug: orgSlug },
-    select: { id: true },
-  });
-  if (!org) {
-    return NextResponse.json({ error: "Organization not found" }, { status: 404 });
-  }
+  const { organization } = await requireCommercialAccess(orgSlug);
 
   // Get CRM connector config
-  const config = await getCrmConnectorConfig(org.id);
+  const config = await getCrmConnectorConfig(organization.id);
   if (!config) {
     return NextResponse.json(
       { error: "No CRM connector configured for this organization" },
@@ -52,7 +44,7 @@ export async function POST(
   const maxQuotes   = typeof body.maxQuotes === "number" ? body.maxQuotes : undefined;
 
   // Run sync
-  const { metrics, results } = await syncQuoteLines(org.id, config, {
+  const { metrics, results } = await syncQuoteLines(organization.id, config, {
     forceResync,
     maxQuotes,
   });

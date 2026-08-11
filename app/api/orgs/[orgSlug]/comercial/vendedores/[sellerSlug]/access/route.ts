@@ -13,7 +13,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { requireOrgAccess } from "@/lib/auth/org-access";
+import { requireCommercialAccess } from "@/lib/auth/org-access";
 import { resolveCurrentSeller, deriveSellerScope } from "@/lib/comercial/frontline/seller-user-mapping";
 import { buildSellerDirectory } from "@/lib/comercial/foundation/seller-directory";
 import { lookupSellerTerceroId } from "@/lib/comercial/frontline/seller-tercero-mapping";
@@ -38,7 +38,7 @@ export async function GET(
 ) {
   try {
     const { orgSlug, sellerSlug } = await params;
-    const { user, organization, membership } = await requireOrgAccess(orgSlug);
+    const { user, organization, membership } = await requireCommercialAccess(orgSlug);
 
     if (!ADMIN_ROLES.has(membership.role)) {
       return NextResponse.json({ ok: false, error: "No autorizado" }, { status: 403 });
@@ -61,7 +61,7 @@ export async function POST(
 ) {
   try {
     const { orgSlug, sellerSlug } = await params;
-    const { user, organization, membership } = await requireOrgAccess(orgSlug);
+    const { user, organization, membership } = await requireCommercialAccess(orgSlug);
 
     // Admin gate
     if (!ADMIN_ROLES.has(membership.role)) {

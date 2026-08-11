@@ -13,7 +13,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { requireOrgAccess } from "@/lib/auth/org-access";
+import { requireCommercialAccess } from "@/lib/auth/org-access";
 import { getActiveInventoryForSalesPortfolio } from "@/lib/inventory/inventory-portfolio-loader";
 import { resolveCurrentSeller, deriveSellerScope } from "@/lib/comercial/frontline/seller-user-mapping";
 
@@ -24,7 +24,7 @@ export async function GET(
   { params }: { params: { orgSlug: string } },
 ) {
   try {
-    const { user, organization } = await requireOrgAccess(params.orgSlug);
+    const { user, organization } = await requireCommercialAccess(params.orgSlug);
 
     // Portfolio inventory construction is admin-only
     const sellerIdentity = await resolveCurrentSeller({ organizationId: organization.id, userId: user.id });

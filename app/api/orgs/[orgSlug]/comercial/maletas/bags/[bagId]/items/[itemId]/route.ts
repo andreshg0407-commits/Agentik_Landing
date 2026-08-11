@@ -13,7 +13,7 @@
  */
 
 import { NextResponse }                from "next/server";
-import { requireOrgAccess }            from "@/lib/auth/org-access";
+import { requireCommercialAccess }     from "@/lib/auth/org-access";
 import {
   updateItemAssignedQty,
   pauseItem,
@@ -28,7 +28,7 @@ export async function PATCH(
   { params }: { params: { orgSlug: string; bagId: string; itemId: string } },
 ) {
   try {
-    const { organization } = await requireOrgAccess(params.orgSlug);
+    const { organization } = await requireCommercialAccess(params.orgSlug);
     const body = await req.json() as { action: string; assignedQty?: number };
 
     switch (body.action) {
@@ -88,7 +88,7 @@ export async function DELETE(
   { params }: { params: { orgSlug: string; bagId: string; itemId: string } },
 ) {
   try {
-    const { organization } = await requireOrgAccess(params.orgSlug);
+    const { organization } = await requireCommercialAccess(params.orgSlug);
     await removeItem(organization.id, params.itemId);
     return NextResponse.json({ ok: true });
   } catch (err) {

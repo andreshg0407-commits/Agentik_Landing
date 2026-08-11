@@ -11,7 +11,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { requireOrgAccess } from "@/lib/auth/org-access";
+import { requireCommercialAccess } from "@/lib/auth/org-access";
 import {
   listIdealRouteRules,
   upsertIdealRouteRule,
@@ -25,7 +25,7 @@ export async function GET(
   { params }: { params: { orgSlug: string; bagId: string } },
 ) {
   try {
-    const { organization } = await requireOrgAccess(params.orgSlug);
+    const { organization } = await requireCommercialAccess(params.orgSlug);
     const [rules, catalog] = await Promise.all([
       listIdealRouteRules(organization.id, params.bagId),
       loadCatalogSubgroups(organization.id),
@@ -43,7 +43,7 @@ export async function POST(
   { params }: { params: { orgSlug: string; bagId: string } },
 ) {
   try {
-    const { organization } = await requireOrgAccess(params.orgSlug);
+    const { organization } = await requireCommercialAccess(params.orgSlug);
     const body = await req.json() as {
       line?: string;
       subgrupoSag?: string;

@@ -8,7 +8,7 @@
  */
 
 import { NextResponse }         from "next/server";
-import { requireOrgAccess }     from "@/lib/auth/org-access";
+import { requireCommercialAccess } from "@/lib/auth/org-access";
 import { addItemToBag }         from "@/lib/comercial/maletas/vendor-bag-repository";
 import type { CreateItemInput } from "@/lib/comercial/maletas/vendor-bag-repository";
 
@@ -19,7 +19,7 @@ export async function POST(
   { params }: { params: { orgSlug: string; bagId: string } },
 ) {
   try {
-    const { organization } = await requireOrgAccess(params.orgSlug);
+    const { organization } = await requireCommercialAccess(params.orgSlug);
     const body = await req.json() as CreateItemInput;
 
     if (!body.reference || typeof body.assignedQty !== "number") {

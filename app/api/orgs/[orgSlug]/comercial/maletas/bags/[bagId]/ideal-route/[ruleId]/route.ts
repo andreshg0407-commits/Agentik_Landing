@@ -7,7 +7,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { requireOrgAccess } from "@/lib/auth/org-access";
+import { requireCommercialAccess } from "@/lib/auth/org-access";
 import { deactivateIdealRouteRule } from "@/lib/comercial/maletas/vendor-bag-ideal-route-service";
 
 export const runtime = "nodejs";
@@ -17,7 +17,7 @@ export async function DELETE(
   { params }: { params: { orgSlug: string; bagId: string; ruleId: string } },
 ) {
   try {
-    const { organization } = await requireOrgAccess(params.orgSlug);
+    const { organization } = await requireCommercialAccess(params.orgSlug);
     const deactivated = await deactivateIdealRouteRule(organization.id, params.bagId, params.ruleId);
     if (!deactivated) {
       return NextResponse.json({ ok: false, error: "Rule not found" }, { status: 404 });

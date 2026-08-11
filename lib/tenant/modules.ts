@@ -3,11 +3,16 @@
  *
  * Per-org module feature flags backed by TenantModule in Prisma.
  *
+ * Sprint: AGENTIK-TENANT-MODULE-ENTITLEMENTS-BILLING-01
+ *
  * Design:
- *   - Open by default: no rows in TenantModule = all modules enabled.
- *   - Only explicit `enabled: false` rows disable a module.
- *   - Safe to call from layout (server component); results are not cached
- *     at module level so Next.js request-level deduplication applies.
+ *   - CLOSED BY DEFAULT: missing TenantModule row = NOT ENABLED.
+ *   - Only an explicit `enabled: true` row enables a module.
+ *   - SUPER_ADMIN internal access is a separate bypass handled by
+ *     filterModulesByRole() in module-access.ts — it does NOT convert
+ *     missing tenant entitlements into tenant access.
+ *
+ * TENANT_MISSING_ENTITLEMENT_BEHAVIOR = DENY
  *
  * Usage:
  *   const mods = await getEnabledModules(orgId);
@@ -69,6 +74,10 @@ export const ROUTE_MODULE_MAP: ReadonlyArray<[string, ModuleKey]> = [
   ["sag",           "integrations"],
   ["settings",      "settings"],
   ["whatsapp",      "whatsapp"],
+  // ── Comercial subpaths → gated by "sales" module key ────────────────────────
+  ["comercial",     "sales"],
+  // ── Producción domain → separate product, gated by "production" module key ──
+  ["produccion",    "production"],
 ] as const;
 
 /**
@@ -155,24 +164,19 @@ export const MODULE_KEYS = [
 
 export type ModuleKey = (typeof MODULE_KEYS)[number];
 
+// ── Internal-only module keys (never gated by tenant entitlements) ──────────
+
 /**
- * Modules that are OPT-IN only — they must be explicitly enabled via
- * setModuleEnabled(..., true) before appearing in getEnabledModules().
+ * Modules that are INTERNAL to the Agentik platform.
+ * These are NOT tenant-contracted modules — they are infrastructure/admin
+ * modules that SUPER_ADMIN and AGENTIK_ADMIN access independently of
+ * tenant entitlements.
  *
- * Rationale: unlike legacy open-by-default modules, new channel modules
- * (WhatsApp, etc.) require deliberate activation per tenant so they don't
- * silently appear for existing orgs that predate the feature.
+ * The tenant entitlement system does NOT gate these — role-based access
+ * in module-access.ts handles them exclusively.
  */
-const OPT_IN_MODULES = new Set<ModuleKey>([
-  // Channel modules
-  "whatsapp",
-  // Operaciones sub-modules
-  "inventory", "production", "purchases", "dispatch",
-  // Workforce — GOCEN integration incomplete; must be explicitly activated per tenant
-  "workforce",
-  // IA Empresarial client layer
-  "copilot", "strategic_memory", "prompts", "playbooks", "ai_lab",
-  // Platform admin
+const INTERNAL_MODULE_KEYS = new Set<ModuleKey>([
+  "agentik", "runs", "events", "agents", "integrations", "settings",
   "tenants_admin", "plans_admin", "feature_flags_admin",
 ]);
 
@@ -181,9 +185,14 @@ const OPT_IN_MODULES = new Set<ModuleKey>([
 /**
  * Returns the set of enabled module keys for an organization.
  *
- * Semantics: if no TenantModule rows exist for the org, ALL modules are enabled
- * (open-by-default for existing tenants that predate this feature).
- * A module is disabled only when a row with `enabled: false` exists.
+ * TENANT_MISSING_ENTITLEMENT_BEHAVIOR = DENY
+ *
+ * Semantics:
+ *   - CLOSED BY DEFAULT: a module is only enabled when a TenantModule row
+ *     with `enabled: true` exists for that org.
+ *   - Missing row = NOT ENABLED (denied).
+ *   - Internal/platform modules are always included — they are gated by
+ *     role permissions in module-access.ts, not by tenant entitlements.
  *
  * @param organizationId  The org's DB id (not slug).
  */
@@ -199,13 +208,13 @@ export async function getEnabledModules(
 
   return new Set(
     MODULE_KEYS.filter(k => {
-      if (OPT_IN_MODULES.has(k)) {
-        // Opt-in modules are only enabled when an explicit enabled=true row exists.
-        // They are NEVER on by default — existing tenants must opt in.
-        return rowMap.get(k) === true;
-      }
-      // Legacy open-by-default: enabled unless an explicit enabled=false row exists.
-      return rowMap.get(k) !== false;
+      // Internal modules are never gated by tenant entitlements.
+      // Their visibility is controlled exclusively by role permissions.
+      if (INTERNAL_MODULE_KEYS.has(k)) return true;
+
+      // Tenant-contracted modules: CLOSED BY DEFAULT.
+      // Only enabled when an explicit enabled=true row exists.
+      return rowMap.get(k) === true;
     }),
   );
 }

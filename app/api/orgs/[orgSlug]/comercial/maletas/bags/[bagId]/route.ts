@@ -10,7 +10,7 @@
  */
 
 import { NextResponse }            from "next/server";
-import { requireOrgAccess }        from "@/lib/auth/org-access";
+import { requireCommercialAccess } from "@/lib/auth/org-access";
 import { getBag, updateBagStatus } from "@/lib/comercial/maletas/vendor-bag-repository";
 import { resolveCurrentSeller, deriveSellerScope } from "@/lib/comercial/frontline/seller-user-mapping";
 
@@ -21,7 +21,7 @@ export async function GET(
   { params }: { params: { orgSlug: string; bagId: string } },
 ) {
   try {
-    const { user, organization } = await requireOrgAccess(params.orgSlug);
+    const { user, organization } = await requireCommercialAccess(params.orgSlug);
     const bag = await getBag(organization.id, params.bagId);
     if (!bag) return NextResponse.json({ ok: false, error: "Bag not found" }, { status: 404 });
 
@@ -47,7 +47,7 @@ export async function PATCH(
   { params }: { params: { orgSlug: string; bagId: string } },
 ) {
   try {
-    const { user, organization } = await requireOrgAccess(params.orgSlug);
+    const { user, organization } = await requireCommercialAccess(params.orgSlug);
     // Bag status changes are admin-only
     const sellerIdentity = await resolveCurrentSeller({ organizationId: organization.id, userId: user.id });
     const scope = deriveSellerScope(sellerIdentity);

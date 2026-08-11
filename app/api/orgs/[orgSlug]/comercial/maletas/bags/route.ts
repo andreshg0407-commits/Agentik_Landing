@@ -14,7 +14,7 @@
  */
 
 import { NextResponse }         from "next/server";
-import { requireOrgAccess }     from "@/lib/auth/org-access";
+import { requireCommercialAccess } from "@/lib/auth/org-access";
 import { listBags, createBag }  from "@/lib/comercial/maletas/vendor-bag-repository";
 import type { CreateBagInput }  from "@/lib/comercial/maletas/vendor-bag-repository";
 import { resolveCurrentSeller, deriveSellerScope } from "@/lib/comercial/frontline/seller-user-mapping";
@@ -26,7 +26,7 @@ export async function GET(
   { params }: { params: { orgSlug: string } },
 ) {
   try {
-    const { user, organization } = await requireOrgAccess(params.orgSlug);
+    const { user, organization } = await requireCommercialAccess(params.orgSlug);
     const { searchParams } = new URL(req.url);
     let salesRepId = searchParams.get("salesRepId") ?? undefined;
 
@@ -52,7 +52,7 @@ export async function POST(
   { params }: { params: { orgSlug: string } },
 ) {
   try {
-    const { user, organization } = await requireOrgAccess(params.orgSlug);
+    const { user, organization } = await requireCommercialAccess(params.orgSlug);
     // Bag creation is admin-only — sellers don't create bags
     const sellerIdentity = await resolveCurrentSeller({ organizationId: organization.id, userId: user.id });
     const scope = deriveSellerScope(sellerIdentity);

@@ -25,7 +25,7 @@
  */
 
 import { NextResponse }                  from "next/server";
-import { requireOrgAccess }              from "@/lib/auth/org-access";
+import { requireCommercialAccess }       from "@/lib/auth/org-access";
 import { prisma }                        from "@/lib/prisma";
 import { loadLatestCCSBatch }            from "@/lib/commercial-intelligence/ccs-reader";
 import { mapSagInventoryToOperational }  from "@/lib/operational-inventory/sag-to-operational-mapper";
@@ -44,7 +44,7 @@ export async function GET(
   { params }: { params: { orgSlug: string } },
 ) {
   try {
-    const { organization } = await requireOrgAccess(params.orgSlug);
+    const { organization } = await requireCommercialAccess(params.orgSlug);
     const orgId = organization.id;
 
     // ── 1. Load latest coverage snapshot ─────────────────────────────────────
