@@ -13,6 +13,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { signOut } from "next-auth/react";
 import { C, T, S, R, E } from "@/lib/ui/tokens";
 import type { SellerIdentityProps } from "./seller-app-shared";
 import { fmtCOP } from "./seller-app-shared";
@@ -278,6 +279,37 @@ export function PerfilView({
       </div>
       <div style={{ fontSize: T.sz.xs, color: C.inkFaint, lineHeight: 1.6, marginTop: S[2] }}>
         Anticipos se activarán cuando la vista contable (cuenta 133010) esté disponible.
+      </div>
+
+      {/* Logout — separated from profile content */}
+      <div style={{ marginTop: S[6], paddingTop: S[4], borderTop: `1px solid ${C.line}` }}>
+        <button
+          onClick={() => {
+            if (window.confirm("¿Desea cerrar sesión?")) {
+              signOut({ callbackUrl: "/login" });
+            }
+          }}
+          style={{
+            width: "100%",
+            padding: `${S[3]}px ${S[4]}px`,
+            border: `1px solid ${C.line}`,
+            borderRadius: R.md,
+            background: C.white,
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: S[2],
+            fontFamily: T.sans,
+            fontSize: T.sz.md,
+            fontWeight: T.wt.semibold,
+            color: C.redDark,
+            touchAction: "manipulation",
+          }}
+        >
+          <SellerIcon name="logout" size={18} color={C.redDark} />
+          Cerrar sesión
+        </button>
       </div>
     </div>
   );
