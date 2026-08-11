@@ -34,7 +34,7 @@ export default async function SellerAppPage({
   params: Promise<{ orgSlug: string }>;
 }) {
   const { orgSlug } = await params;
-  const { user, organization, membership } = await requireOrgAccess(orgSlug);
+  const { user, organization, membership } = await requireOrgAccess(orgSlug, { allowProvisionedSeller: true });
 
   // Resolve seller identity
   const sellerIdentity = await resolveCurrentSeller({
