@@ -41,6 +41,10 @@ import {
   type DomainDef,
   type NavItem,
 } from "@/components/shell/module-nav-config";
+import {
+  ExecutiveMobileHeader,
+  CopilotSphere,
+} from "@/components/shell/executive-mobile-chrome";
 
 // ── Domain icon registry — resolves iconKey → lucide component ────────────────
 // Client-side only: icons are React components and cannot cross the RSC boundary.
@@ -89,6 +93,8 @@ export interface WorkspaceShellClientProps {
   railContent:  ReactNode;
   isBlocked:    boolean;
   children:     ReactNode;
+  /** When set, hides desktop chrome on <=1024px and shows mobile header + copilot sphere. */
+  mobileShell?: { orgSlug: string; orgName: string } | null;
 }
 
 // ── Shell ──────────────────────────────────────────────────────────────────────
@@ -100,6 +106,7 @@ export function WorkspaceShellClient({
   railContent,
   isBlocked,
   children,
+  mobileShell,
 }: WorkspaceShellClientProps) {
   const pathname = usePathname();
 
@@ -124,105 +131,130 @@ export function WorkspaceShellClient({
     }
   }
 
+  const hasMobile = !!mobileShell;
+
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: "var(--ag-surface, #F7F9FF)" }}>
+    <>
+      <div
+        className={hasMobile ? "ag-shell-root ag-has-mobile" : "ag-shell-root"}
+        style={{ display: "flex", minHeight: "100vh", background: "var(--ag-surface, #F7F9FF)" }}
+      >
 
-      {/* ── 1. System Rail ────────────────────────────────────────────────── */}
-      <PrimaryRail
-        domains={domains}
-        activeDomain={activeDomain}
-        onDomainClick={handleDomainClick}
-      />
+        {/* ── 1. System Rail (desktop only) ────────────────────────────────── */}
+        <div className={hasMobile ? "ag-desktop-only" : undefined}>
+          <PrimaryRail
+            domains={domains}
+            activeDomain={activeDomain}
+            onDomainClick={handleDomainClick}
+          />
+        </div>
 
-      {/* ── 2. Context Sidebar ────────────────────────────────────────────── */}
-      <div style={{
-        width:         ctxCollapsed ? 0 : CTX_W,
-        minWidth:      ctxCollapsed ? 0 : CTX_W,
-        overflow:      "hidden",
-        transition:    TRANSITION,
-        background:    "#ffffff",
-        // Right edge separates sidebar from canvas; left edge echoes the rail's navy cast
-        boxShadow:     "inset -1px 0 0 var(--ag-line, rgba(0,74,173,.12)), inset 4px 0 14px rgba(0,28,70,.05)",
-        display:       "flex",
-        flexDirection: "column",
-      }}>
-        {activeDef && (
-          <ContextPanel
-            domain={activeDef}
-            pathname={pathname}
-            tenantHeader={tenantHeader}
-            roleBadge={roleBadge}
-            onCollapse={() => setCtxCollapsed(true)}
+        {/* ── 2. Context Sidebar (desktop only) ────────────────────────────── */}
+        <div
+          className={hasMobile ? "ag-desktop-only" : undefined}
+          style={{
+            width:         ctxCollapsed ? 0 : CTX_W,
+            minWidth:      ctxCollapsed ? 0 : CTX_W,
+            overflow:      "hidden",
+            transition:    TRANSITION,
+            background:    "#ffffff",
+            boxShadow:     "inset -1px 0 0 var(--ag-line, rgba(0,74,173,.12)), inset 4px 0 14px rgba(0,28,70,.05)",
+            display:       "flex",
+            flexDirection: "column",
+          }}
+        >
+          {activeDef && (
+            <ContextPanel
+              domain={activeDef}
+              pathname={pathname}
+              tenantHeader={tenantHeader}
+              roleBadge={roleBadge}
+              onCollapse={() => setCtxCollapsed(true)}
+            />
+          )}
+        </div>
+
+        {/* ── Mobile header (shown only on <=1024px) ───────────────────────── */}
+        {mobileShell && (
+          <ExecutiveMobileHeader
+            orgSlug={mobileShell.orgSlug}
+            orgName={mobileShell.orgName}
           />
         )}
-      </div>
 
-      {/* ── 3. Operational Canvas ─────────────────────────────────────────── */}
-      <main style={{
-        flex:       "1 1 0",
-        minWidth:   0,
-        padding:    S[6],
-        background: "#ffffff",
-        overflow:   "auto",
-        boxShadow:  "inset 1px 0 0 var(--ag-line-sub, rgba(0,74,173,.04))",
-      }}>
-        {isBlocked ? <BlockedView /> : children}
-      </main>
+        {/* ── 3. Operational Canvas ─────────────────────────────────────────── */}
+        <main
+          className="ag-shell-canvas"
+          style={{
+            flex:       "1 1 0",
+            minWidth:   0,
+            padding:    S[6],
+            background: "#ffffff",
+            overflow:   "auto",
+            boxShadow:  "inset 1px 0 0 var(--ag-line-sub, rgba(0,74,173,.04))",
+          }}
+        >
+          {isBlocked ? <BlockedView /> : children}
+        </main>
 
-      {/* ── 4. Right Ops Rail ─────────────────────────────────────────────── */}
-      <div
-        className="org-rail"
-        style={{
-          width:         railCompact ? RAIL_MIN : RAIL_W,
-          minWidth:      railCompact ? RAIL_MIN : RAIL_W,
-          transition:    TRANSITION,
-          borderLeft:    "1px solid var(--ag-line, rgba(0,74,173,.12))",
-          background:    "var(--ag-surface, #F7F9FF)",
-          display:       "flex",
-          flexDirection: "column",
-          overflow:      "hidden",
-        }}
-      >
-        <div style={{
-          padding:        `${S[2]}px ${S[2]}px`,
-          borderBottom:   "1px solid var(--ag-line, rgba(0,74,173,.12))",
-          display:        "flex",
-          alignItems:     "center",
-          justifyContent: railCompact ? "center" : "flex-end",
-          flexShrink:     0,
-        }}>
-          <button
-            onClick={() => setRailCompact(c => !c)}
-            title={railCompact ? "Expandir panel" : "Contraer panel"}
-            style={{
-              all:            "unset",
-              cursor:         "pointer",
-              width:          24,
-              height:         24,
-              borderRadius:   6,
-              border:         "1px solid var(--ag-line, rgba(0,74,173,.12))",
-              background:     C.white,
-              display:        "flex",
-              alignItems:     "center",
-              justifyContent: "center",
-              fontSize:       10,
-              color:          C.blueDark,
-              flexShrink:     0,
-              transition:     "background 0.12s, border-color 0.12s",
-              boxShadow:      "var(--ag-shadow-sm)",
-            }}
-          >
-            {railCompact ? "›" : "‹"}
-          </button>
-        </div>
-        {!railCompact && (
-          <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
-            {railContent}
+        {/* ── 4. Right Ops Rail (desktop only) ─────────────────────────────── */}
+        <div
+          className={hasMobile ? "org-rail ag-desktop-only" : "org-rail"}
+          style={{
+            width:         railCompact ? RAIL_MIN : RAIL_W,
+            minWidth:      railCompact ? RAIL_MIN : RAIL_W,
+            transition:    TRANSITION,
+            borderLeft:    "1px solid var(--ag-line, rgba(0,74,173,.12))",
+            background:    "var(--ag-surface, #F7F9FF)",
+            display:       "flex",
+            flexDirection: "column",
+            overflow:      "hidden",
+          }}
+        >
+          <div style={{
+            padding:        `${S[2]}px ${S[2]}px`,
+            borderBottom:   "1px solid var(--ag-line, rgba(0,74,173,.12))",
+            display:        "flex",
+            alignItems:     "center",
+            justifyContent: railCompact ? "center" : "flex-end",
+            flexShrink:     0,
+          }}>
+            <button
+              onClick={() => setRailCompact(c => !c)}
+              title={railCompact ? "Expandir panel" : "Contraer panel"}
+              style={{
+                all:            "unset",
+                cursor:         "pointer",
+                width:          24,
+                height:         24,
+                borderRadius:   6,
+                border:         "1px solid var(--ag-line, rgba(0,74,173,.12))",
+                background:     C.white,
+                display:        "flex",
+                alignItems:     "center",
+                justifyContent: "center",
+                fontSize:       10,
+                color:          C.blueDark,
+                flexShrink:     0,
+                transition:     "background 0.12s, border-color 0.12s",
+                boxShadow:      "var(--ag-shadow-sm)",
+              }}
+            >
+              {railCompact ? "›" : "‹"}
+            </button>
           </div>
-        )}
+          {!railCompact && (
+            <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
+              {railContent}
+            </div>
+          )}
+        </div>
+
       </div>
 
-    </div>
+      {/* ── Mobile Copilot Sphere (fixed position) ──────────────────────── */}
+      {mobileShell && <CopilotSphere />}
+    </>
   );
 }
 

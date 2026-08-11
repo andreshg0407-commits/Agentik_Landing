@@ -110,12 +110,34 @@ export default async function OrgLayout({
     return <>{children}</>;
   }
 
+  // ── Executive Mobile Shell ────────────────────────────────────────────────
+  // ORG_ADMIN / MANAGER get a responsive executive presentation on mobile/tablet.
+  // Viewport NEVER grants access — same authorization, different chrome.
+  const EXECUTIVE_MOBILE_ROLES = new Set(["ORG_ADMIN", "MANAGER"]);
+  const enableMobileShell = EXECUTIVE_MOBILE_ROLES.has(ctx.role);
+
+  let mobileShell: { orgSlug: string; orgName: string } | null = null;
+  if (enableMobileShell) {
+    const org = await prisma.organization.findUnique({
+      where: { id: ctx.orgId },
+      select: { name: true },
+    });
+    mobileShell = { orgSlug: ctx.orgSlug, orgName: org?.name ?? ctx.orgSlug };
+  }
+
   return (
     <>
       <style>{`
         .org-rail { display: flex; flex-direction: column; }
         @media (max-width: 1024px) {
           .org-rail { display: none !important; }
+          .ag-has-mobile { flex-direction: column !important; }
+          .ag-has-mobile .ag-desktop-only { display: none !important; }
+          .ag-has-mobile .ag-mobile-only { display: flex !important; }
+          .ag-has-mobile .ag-shell-canvas {
+            padding: 0 !important;
+            box-shadow: none !important;
+          }
         }
       `}</style>
       <WorkspaceShellClient
@@ -137,6 +159,7 @@ export default async function OrgLayout({
           />
         }
         isBlocked={isBlocked}
+        mobileShell={mobileShell}
       >
         {children}
       </WorkspaceShellClient>
