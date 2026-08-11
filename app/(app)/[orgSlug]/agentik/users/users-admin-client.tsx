@@ -138,7 +138,7 @@ export function UsersAdminClient({
         ]}
         title="Usuarios y Membresías"
         subtitle={orgName}
-        status="ready"
+        status="ok"
         statusLabel={`${members.length} miembro${members.length !== 1 ? "s" : ""}`}
       />
 
