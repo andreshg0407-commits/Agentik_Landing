@@ -60,16 +60,44 @@ function LoginForm() {
       redirect: false,
     });
 
-    setLoading(false);
-
     if (result?.error) {
+      setLoading(false);
       setError("Correo o contraseña incorrectos.");
       return;
     }
 
-    // Redirect to the originally requested page (internal only)
+    // Resolve post-login destination server-side.
+    // If a valid internal callback exists, it takes precedence.
+    // Otherwise the resolver determines the correct surface based on
+    // user memberships, role, and seller identity.
     const callbackUrl = sanitizeCallbackUrl(searchParams.get("callbackUrl"));
-    router.push(callbackUrl);
+    try {
+      const params = new URLSearchParams();
+      if (callbackUrl && callbackUrl !== "/") {
+        params.set("callbackUrl", callbackUrl);
+      }
+      const qs = params.toString();
+      const res = await fetch(`/api/auth/post-login-destination${qs ? `?${qs}` : ""}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.destination && data.destination !== "/login") {
+          router.push(data.destination);
+          return;
+        }
+      }
+    } catch {
+      // Resolver failed — fall through to callback or org root
+    }
+
+    // Fallback: use callback if it's not the public landing
+    if (callbackUrl && callbackUrl !== "/") {
+      router.push(callbackUrl);
+      return;
+    }
+
+    // Last resort: org selector (server-side resolution for single/multi org)
+    // Never default to public landing for authenticated users.
+    router.push("/select-org");
   }
 
   const labelStyle: React.CSSProperties = {

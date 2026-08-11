@@ -10,7 +10,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 // Routes that do NOT require authentication
-const PUBLIC_PATHS = new Set(["/", "/login", "/privacy", "/unauthorized", "/terms"]);
+const PUBLIC_PATHS = new Set(["/", "/login", "/login/setup", "/privacy", "/unauthorized", "/terms"]);
 
 // Path prefixes that do NOT require authentication
 const PUBLIC_PREFIXES = ["/api/", "/c/", "/control-center", "/publish", "/review", "/sandbox-"];
