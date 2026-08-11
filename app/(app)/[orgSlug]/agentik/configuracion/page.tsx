@@ -21,11 +21,11 @@ import { OperationalWorkspaceHeader } from "@/components/workspace/operational-w
 // ── Tenant section items ───────────────────────────────────────────────────────
 
 const TENANT_SECTIONS = [
-  { label: "General",          desc: "Branding, idioma, zona horaria, moneda" },
-  { label: "Usuarios y Roles", desc: "Miembros de la organización y permisos"  },
-  { label: "Módulos Activos",  desc: "Módulos habilitados para este tenant"    },
-  { label: "Integraciones",    desc: "Conexiones propias del cliente"          },
-  { label: "Agentes IA",       desc: "Preferencias básicas de agentes"         },
+  { label: "General",          desc: "Branding, idioma, zona horaria, moneda", href: null },
+  { label: "Usuarios y Roles", desc: "Miembros de la organización y permisos", href: "users" },
+  { label: "Módulos Activos",  desc: "Módulos habilitados para este tenant",   href: "tenant-modules" },
+  { label: "Integraciones",    desc: "Conexiones propias del cliente",         href: null },
+  { label: "Agentes IA",       desc: "Preferencias básicas de agentes",        href: null },
 ];
 
 // ── Platform section items ─────────────────────────────────────────────────────
@@ -120,41 +120,51 @@ export default async function ConfiguracionPage({
 
           {/* Sections list */}
           <div style={{ padding: `${S[2]}px 0` }}>
-            {TENANT_SECTIONS.map(section => (
-              <div key={section.label} style={{
-                display:     "flex",
-                alignItems:  "center",
-                gap:         S[3],
-                padding:     `${S[2]}px ${S[5]}px`,
-              }}>
-                <span style={{
-                  width:        5,
-                  height:       5,
-                  borderRadius: "50%",
-                  background:   C.lineSubtle,
-                  border:       `1px solid ${C.line}`,
-                  display:      "inline-block",
-                  flexShrink:   0,
-                }} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    fontFamily:  T.mono,
-                    fontSize:    T.sz.xs,
-                    fontWeight:  T.wt.medium,
-                    color:       C.inkMid,
-                  }}>
-                    {section.label}
-                  </div>
-                  <div style={{
-                    fontFamily: T.mono,
-                    fontSize:   T.sz["2xs"],
-                    color:      C.inkFaint,
-                  }}>
-                    {section.desc}
+            {TENANT_SECTIONS.map(section => {
+              const content = (
+                <div style={{
+                  display:     "flex",
+                  alignItems:  "center",
+                  gap:         S[3],
+                  padding:     `${S[2]}px ${S[5]}px`,
+                  cursor:      section.href ? "pointer" : "default",
+                }}>
+                  <span style={{
+                    width:        5,
+                    height:       5,
+                    borderRadius: "50%",
+                    background:   section.href ? C.blueDark : C.lineSubtle,
+                    border:       `1px solid ${section.href ? C.blueDark : C.line}`,
+                    display:      "inline-block",
+                    flexShrink:   0,
+                  }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontFamily:  T.mono,
+                      fontSize:    T.sz.xs,
+                      fontWeight:  T.wt.medium,
+                      color:       section.href ? C.ink : C.inkMid,
+                    }}>
+                      {section.label}
+                    </div>
+                    <div style={{
+                      fontFamily: T.mono,
+                      fontSize:   T.sz["2xs"],
+                      color:      C.inkFaint,
+                    }}>
+                      {section.desc}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+              return section.href ? (
+                <Link key={section.label} href={`/${orgSlug}/agentik/${section.href}`} style={{ textDecoration: "none" }}>
+                  {content}
+                </Link>
+              ) : (
+                <div key={section.label}>{content}</div>
+              );
+            })}
           </div>
 
           {/* Footer */}
