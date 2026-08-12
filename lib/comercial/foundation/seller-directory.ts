@@ -154,11 +154,30 @@ export async function buildSellerDirectory(
 
 /**
  * Get a single seller by slug.
+ *
+ * FAIL-CLOSED: If multiple seller names normalize to the same slug,
+ * returns null instead of arbitrarily selecting the first match.
+ * This prevents silent identity ambiguity.
+ *
+ * SELLER_IDENTITY_STATUS = IDENTITY_UNSTABLE — seller slugs are
+ * name-derived and mutable. Universal immutable Seller identity
+ * is BLOCKED_BY_MISSING_CANONICAL_CONTRACT.
  */
 export async function getSellerBySlug(
   organizationId: string,
   slug: string,
 ): Promise<CommercialSeller | null> {
   const directory = await buildSellerDirectory(organizationId);
-  return directory.sellers.find(s => s.sellerSlug === slug) ?? null;
+  const matches = directory.sellers.filter(s => s.sellerSlug === slug);
+
+  if (matches.length === 0) return null;
+
+  if (matches.length > 1) {
+    console.error(
+      `[SELLER] getSellerBySlug: AMBIGUOUS slug "${slug}" matches ${matches.length} sellers: ${matches.map(m => m.sellerName).join(", ")}. Fail closed — returning null.`,
+    );
+    return null;
+  }
+
+  return matches[0];
 }

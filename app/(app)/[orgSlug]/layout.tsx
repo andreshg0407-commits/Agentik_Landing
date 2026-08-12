@@ -110,6 +110,14 @@ export default async function OrgLayout({
     return <>{children}</>;
   }
 
+  // ── Manager App shell bypass ──────────────────────────────────────────────
+  // /[orgSlug]/manager is a dedicated mobile-first manager surface.
+  // Own shell, own layout. Authorization handled by manager/layout.tsx.
+  const isManagerApp = pathname.includes(`/${ctx.orgSlug}/manager`);
+  if (isManagerApp) {
+    return <>{children}</>;
+  }
+
   // ── Executive Mobile Shell ────────────────────────────────────────────────
   // ORG_ADMIN / MANAGER get a responsive executive presentation on mobile/tablet.
   // Viewport NEVER grants access — same authorization, different chrome.

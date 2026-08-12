@@ -18,6 +18,7 @@
  * Device does NOT change authorization or module visibility.
  */
 
+import { headers }       from "next/headers";
 import { redirect }      from "next/navigation";
 import { requireTenant } from "@/lib/tenant";
 import { prisma }        from "@/lib/prisma";
@@ -27,6 +28,8 @@ import { buildNavDomains }                      from "@/components/shell/module-
 import { EnterpriseLauncherClient }             from "./enterprise-launcher-client";
 
 const SELLER_ROLES = new Set(["OPERATOR", "VIEWER"]);
+const MANAGER_MOBILE_ROLES = new Set(["ORG_ADMIN", "MANAGER"]);
+const MOBILE_TABLET_RE = /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini|Mobile|Tablet/i;
 
 export default async function OrgRootPage({
   params,
@@ -45,6 +48,16 @@ export default async function OrgRootPage({
     const perms = membership?.permissionsJson as Record<string, unknown> | null;
     if (perms?.sellerSlug) {
       redirect(`/${orgSlug}/seller-app`);
+    }
+  }
+
+  // ── Manager App redirect (mobile/tablet ORG_ADMIN/MANAGER) ─────────────────
+  // Viewport determines WHICH presentation — never grants access.
+  if (MANAGER_MOBILE_ROLES.has(ctx.role)) {
+    const headersList = await headers();
+    const ua = headersList.get("user-agent") ?? "";
+    if (MOBILE_TABLET_RE.test(ua)) {
+      redirect(`/${orgSlug}/manager`);
     }
   }
 
