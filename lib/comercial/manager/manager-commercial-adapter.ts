@@ -48,12 +48,16 @@ const MESES = [
   "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
 ];
 
+const DIAS = [
+  "Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado",
+];
+
 function currentDateLabel(): string {
   const d = new Date();
+  const dayName = DIAS[d.getDay()];
   const day = d.getDate();
   const month = MESES[d.getMonth()];
-  const year = d.getFullYear();
-  return `${day} de ${month} ${year}`;
+  return `${dayName}, ${day} de ${month}`;
 }
 
 function greeting(): string {
@@ -64,9 +68,12 @@ function greeting(): string {
 }
 
 function fmtCOP(n: number): string {
-  if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(1)}B`;
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `$${Math.round(n / 1_000)}K`;
+  if (n >= 1_000_000_000) {
+    const m = Math.round(n / 1_000_000);
+    return `$${m.toLocaleString("es-CO")} M`;
+  }
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)} M`;
+  if (n >= 1_000) return `$${Math.round(n / 1_000).toLocaleString("es-CO")} K`;
   return `$${n.toLocaleString("es-CO")}`;
 }
 
@@ -111,6 +118,7 @@ export function buildSourceAvailability(
 
 export function assembleManagerHomePA(input: {
   orgName: string;
+  userName?: string | null;
   snapshot: ControlComercialSnapshot;
   attention: ManagerAttentionItem[];
   sourceAvailability?: SourceAvailability[];
@@ -162,7 +170,7 @@ export function assembleManagerHomePA(input: {
   } else {
     executiveState = {
       state: "STABLE",
-      reason: "Todas las fuentes activas, frescas y sin alertas pendientes",
+      reason: `${certifiedCount} fuentes activas`,
       participatingSources: totalSources,
       certifiedSources: certifiedCount,
       unresolvedAttentionCount: 0,
@@ -172,6 +180,7 @@ export function assembleManagerHomePA(input: {
 
   return {
     orgName,
+    userName: input.userName ?? null,
     greeting: greeting(),
     currentDate: currentDateLabel(),
     executiveState,

@@ -14,12 +14,19 @@
 
 import { redirect } from "next/navigation";
 import { requireOrgAccess } from "@/lib/auth/org-access";
+import { getCurrentUser } from "@/lib/auth/auth";
 import { getEnabledModules } from "@/lib/tenant/modules";
 import { filterModulesByRole } from "@/lib/auth/module-access";
 import { MANAGER_MODULE_DEFS } from "@/lib/comercial/manager/manager-commercial-adapter";
 import { ManagerAppShell, type ManagerModule } from "./manager-app-shell";
 
 const MANAGER_ROLES = new Set(["ORG_ADMIN", "MANAGER"]);
+
+/** Role display labels for the drawer user card. */
+const ROLE_LABELS: Record<string, string> = {
+  ORG_ADMIN: "Administrador",
+  MANAGER:   "Gerente",
+};
 
 export default async function ManagerLayout({
   children,
@@ -34,6 +41,10 @@ export default async function ManagerLayout({
   if (!MANAGER_ROLES.has(membership.role)) {
     redirect(`/${orgSlug}`);
   }
+
+  const user = await getCurrentUser();
+  const userName = user?.name ?? null;
+  const userRole = ROLE_LABELS[membership.role] ?? membership.role;
 
   // Build entitled + permitted module list for hamburger (from canonical single source)
   const orgMods = await getEnabledModules(organization.id);
@@ -51,6 +62,8 @@ export default async function ManagerLayout({
     <ManagerAppShell
       orgSlug={orgSlug}
       orgName={organization.name}
+      userName={userName}
+      userRole={userRole}
       modules={modules}
     >
       {children}

@@ -10,9 +10,12 @@ import type { ManagerVendedoresPA, ManagerSellerCard } from "@/lib/comercial/man
 import { ManagerSurfaceClient, type SurfaceListItem } from "../manager-surface-client";
 
 function fmtCOP(n: number): string {
-  if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(1)}B`;
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `$${Math.round(n / 1_000)}K`;
+  if (n >= 1_000_000_000) {
+    const m = Math.round(n / 1_000_000);
+    return `$${m.toLocaleString("es-CO")} M`;
+  }
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)} M`;
+  if (n >= 1_000) return `$${Math.round(n / 1_000).toLocaleString("es-CO")} K`;
   return `$${n.toLocaleString("es-CO")}`;
 }
 

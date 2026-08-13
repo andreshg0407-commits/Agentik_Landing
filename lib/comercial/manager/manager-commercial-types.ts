@@ -54,6 +54,7 @@ export interface ManagerAttentionItem {
 
 export interface ManagerHomePA {
   orgName: string;
+  userName: string | null;
   greeting: string;
   currentDate: string;
   executiveState: ManagerExecutiveStatePA;

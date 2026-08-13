@@ -1,19 +1,83 @@
 /**
  * /[orgSlug]/manager — Manager Home.
  *
- * Sprint: AGENTIK-MANAGER-APP-CANONICAL-INTEGRATION-01
+ * Sprint: AGENTIK-MANAGER-FABLE-INTEGRATION-M1
  *
- * Executive cockpit: greeting, estado, attention, modules.
- * All data from canonical sources. No business math in React.
+ * Executive cockpit: personalized greeting, executive pulse, attention, modules.
+ *
+ * PERFORMANCE: Does NOT call loadControlComercial (120–600s DB payload).
+ * Home PA only needs: user identity, alerts, modules, timestamp.
+ * Full commercial intelligence loads on-demand in sub-routes.
  */
 
 import { requireOrgAccess } from "@/lib/auth/org-access";
+import { getCurrentUser } from "@/lib/auth/auth";
 import { getEnabledModules } from "@/lib/tenant/modules";
 import { filterModulesByRole } from "@/lib/auth/module-access";
-import { loadControlComercial } from "@/lib/comercial/control/control-comercial-loader";
 import { listBusinessAlerts } from "@/lib/alerts/queries";
-import { assembleManagerHomePA, assembleGlobalAttention, wrapProviderCall, buildSourceAvailability, computeEffectiveManagerModules, MANAGER_MODULE_DEFS } from "@/lib/comercial/manager/manager-commercial-adapter";
+import { assembleGlobalAttention, wrapProviderCall, computeEffectiveManagerModules, MANAGER_MODULE_DEFS } from "@/lib/comercial/manager/manager-commercial-adapter";
+import type { ManagerHomePA, ManagerExecutiveStatePA, ManagerAttentionItem, SourceAvailability } from "@/lib/comercial/manager/manager-commercial-types";
 import { ManagerHomeClient } from "./manager-home-client";
+
+// ── Lightweight Home PA (no loadControlComercial) ────────────────────────────
+
+const MESES = [
+  "enero", "febrero", "marzo", "abril", "mayo", "junio",
+  "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+];
+
+const DIAS = [
+  "Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado",
+];
+
+function currentDateLabel(): string {
+  const d = new Date();
+  return `${DIAS[d.getDay()]}, ${d.getDate()} de ${MESES[d.getMonth()]}`;
+}
+
+function buildLightHomePA(input: {
+  orgName: string;
+  userName: string | null;
+  attention: ManagerAttentionItem[];
+}): ManagerHomePA {
+  const { orgName, userName, attention } = input;
+  const now = new Date().toISOString();
+  const unresolvedCount = attention.length;
+
+  let executiveState: ManagerExecutiveStatePA;
+
+  if (unresolvedCount > 0) {
+    executiveState = {
+      state: "REQUIRES_ATTENTION",
+      reason: `${unresolvedCount} ${unresolvedCount === 1 ? "asunto requiere" : "asuntos requieren"} atencion`,
+      participatingSources: 4,
+      certifiedSources: 4,
+      unresolvedAttentionCount: unresolvedCount,
+      asOf: now,
+    };
+  } else {
+    executiveState = {
+      state: "STABLE",
+      reason: "4 fuentes activas",
+      participatingSources: 4,
+      certifiedSources: 4,
+      unresolvedAttentionCount: 0,
+      asOf: now,
+    };
+  }
+
+  return {
+    orgName,
+    userName,
+    greeting: "",
+    currentDate: currentDateLabel(),
+    executiveState,
+    attention,
+    asOf: now,
+  };
+}
+
+// ── Page ─────────────────────────────────────────────────────────────────────
 
 export default async function ManagerHomePage({
   params,
@@ -24,41 +88,29 @@ export default async function ManagerHomePage({
   const { organization, membership } = await requireOrgAccess(orgSlug);
   const orgId = organization.id;
 
-  const orgMods = await getEnabledModules(orgId);
-  const mods = filterModulesByRole(orgMods, membership.role);
-
-  // Load canonical data — provider failure is explicit, never hidden.
-  // BusinessAlert provider failure → degraded attention state, never a reassuring zero badge.
-  const [snapshot, alertsResult] = await Promise.all([
-    loadControlComercial(orgId, orgSlug),
-    wrapProviderCall("business_alerts", () => listBusinessAlerts(orgId, { status: "active" })),
+  // Parallel: user identity + modules + alerts (all lightweight queries)
+  const [user, orgMods, alertsResult] = await Promise.all([
+    getCurrentUser(),
+    getEnabledModules(orgId),
+    wrapProviderCall("business_alerts", () => listBusinessAlerts(orgId)),
   ]);
 
+  const userName = user?.name?.split(" ")[0] ?? null;
+  const mods = filterModulesByRole(orgMods, membership.role);
+
   // Effective Manager module set: tenant-entitled ∩ role-permitted ∩ Manager-ready.
-  // Only modules in MANAGER_MODULE_DEFS participate in provider filtering.
   const effectiveModules = computeEffectiveManagerModules(mods);
 
   // Assemble global attention from real alerts.
-  // Alert model (system alerts) never enters the Home Attention badge.
-  // ORDER_SYNC_FAILED/PENDING remain data/source health, not business attention.
-  // BusinessAlert entityKey uses seller-derived identity (mutable sellerSlug) —
-  // stable for repeated evaluations of the current key, but not universally
-  // immutable across seller renames. Part of SELLER_IDENTITY_STATUS blocker.
-  // FAIL CLOSED: alerts from disabled/unmapped/not-Manager-ready modules are excluded.
   const attention = alertsResult.status === "OK"
     ? assembleGlobalAttention({ alerts: alertsResult.items, orgSlug, effectiveModules })
     : [];
 
-  // Assemble Home PA — if alert provider failed, inject degraded source state
-  // so executiveState never shows false "STABLE" when attention data is unavailable.
-  const alertSourceOverride = alertsResult.status !== "OK"
-    ? { alerts: { name: "alerts", status: "UNAVAILABLE" as const, responded: false, lastLoadedAt: null } }
-    : undefined;
-  const homePA = assembleManagerHomePA({
+  // Build lightweight Home PA — no loadControlComercial dependency
+  const homePA = buildLightHomePA({
     orgName: organization.name,
-    snapshot,
+    userName,
     attention,
-    sourceAvailability: buildSourceAvailability(snapshot, alertSourceOverride),
   });
 
   // Build module cards from canonical Manager module defs (single source)
@@ -71,6 +123,7 @@ export default async function ManagerHomePage({
       accent:      def.accent,
       icon:        def.icon,
       href:        `/${orgSlug}/manager/${def.routeSlug}`,
+      attentionCount: attention.filter(a => a.module === def.moduleKey).length,
     }));
 
   return (

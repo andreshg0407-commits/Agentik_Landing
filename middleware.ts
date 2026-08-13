@@ -58,6 +58,6 @@ export function middleware(request: NextRequest) {
 export const config = {
   // Run on all app routes — skip static assets and Next internals
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|public/).*)",
+    "/((?!_next/static|_next/image|favicon\\.ico|agentik-.*\\.png|agentik-.*\\.svg|.*\\.ico).*)",
   ],
 };

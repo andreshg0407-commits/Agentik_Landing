@@ -130,7 +130,19 @@ function LoginForm() {
           boxShadow: "0 10px 34px rgba(0,0,0,0.22)", marginBottom: 22,
         }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/agentik-logo.png" alt="Agentik Enterprise AI" style={{ height: 92, width: "auto", display: "block" }} />
+          <img
+            src="/agentik-logo.png"
+            alt="Agentik Enterprise AI"
+            style={{ height: 92, width: "auto", display: "block" }}
+            onError={(e) => {
+              const img = e.target as HTMLImageElement;
+              img.style.display = "none";
+              const fallback = document.createElement("span");
+              fallback.textContent = "Agentik";
+              fallback.style.cssText = "font-size:28px;font-weight:800;color:#004AAD;letter-spacing:-0.03em;";
+              img.parentElement?.appendChild(fallback);
+            }}
+          />
         </div>
 
         {/* Mensaje orientado a venta — genérico (§5) */}
@@ -138,19 +150,19 @@ function LoginForm() {
           alignSelf: "flex-start", fontSize: 12, fontWeight: 700, letterSpacing: "0.22em",
           color: "rgba(255,255,255,0.75)", textTransform: "uppercase", marginBottom: 8,
         }}>
-          Agentik · Ventas
+          Agentik Enterprise
         </div>
         <h1 style={{
           alignSelf: "flex-start", margin: 0, color: "#fff",
           fontSize: 32, lineHeight: 1.15, fontWeight: 800, letterSpacing: "-0.5px",
         }}>
-          Listo para vender.
+          Bienvenido
         </h1>
         <p style={{
           alignSelf: "flex-start", margin: "10px 0 24px", color: "rgba(255,255,255,0.82)",
           fontSize: 15, lineHeight: 1.55, maxWidth: 320,
         }}>
-          Ingresa para ver tus clientes y registrar los pedidos del día.
+          Ingresa para continuar a tu espacio de trabajo.
         </p>
 
         {/* Form card — MISMA autenticación existente */}
