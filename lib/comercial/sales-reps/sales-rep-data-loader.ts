@@ -16,6 +16,9 @@
  */
 
 import { prisma } from "@/lib/prisma";
+import { isReceivableDataCertified, warmTruthStatusCache } from "@/lib/comercial/frontline/receivable-truth-status";
+import { fetchCertifiedArSnapshot } from "@/lib/comercial/frontline/canonical-ar-service";
+import type { CertifiedCustomerReceivableSnapshot } from "@/lib/comercial/frontline/canonical-ar-types";
 import type {
   SalesRepPolicyContext,
   CustomerInput,
@@ -49,6 +52,8 @@ export async function loadSalesRepData(
   orgId: string,
   sellerSlug: string,
 ): Promise<SalesRepLoaderResult> {
+  await warmTruthStatusCache();
+
   // 1. Find the seller profile from CustomerProfile (sellers are tracked by sellerSlug)
   const sellerProfiles = await db.customerProfile.findMany({
     where: { organizationId: orgId, sellerSlug },
@@ -107,6 +112,7 @@ async function loadCustomers(
       id: true,
       name: true,
       nit: true,
+      sagTerceroId: true,
       lastPurchaseAt: true,
       totalReceivable: true,
       overdueReceivable: true,
@@ -115,10 +121,49 @@ async function loadCustomers(
   });
 
   const results: CustomerInput[] = [];
+  const isCertified = isReceivableDataCertified(orgId);
+
+  // AGENTIK-RECEIVABLES-AR-TRUTH-01: pre-load SAG snapshot for CERTIFIED tenants
+  let sagCustomerMap: Map<number, CertifiedCustomerReceivableSnapshot> | null = null;
+  if (isCertified) {
+    const arResult = await fetchCertifiedArSnapshot();
+    if (arResult.ok) {
+      sagCustomerMap = new Map();
+      for (const c of arResult.snapshot.customers) {
+        sagCustomerMap.set(c.clienteId, c);
+      }
+    }
+  }
 
   for (const p of profiles) {
     // Get receivable details for this customer
-    const receivableData = await loadCustomerReceivables(orgId, p.nit);
+    let receivableData: CustomerInput["receivables"] = null;
+    if (isCertified) {
+      // CERTIFIED tenant: SAG is the ONLY source. NEVER fall back to Prisma.
+      // If sagCustomerMap is null (SAG unavailable), receivableData stays null.
+      // If sagTerceroId is missing, receivableData stays null.
+      // Both are safer than showing Prisma phantom data.
+      if (sagCustomerMap) {
+        const terceroId = p.sagTerceroId as number | null;
+        if (terceroId) {
+          const sagCust = sagCustomerMap.get(terceroId);
+          if (sagCust && sagCust.totalPendiente > 0) {
+            receivableData = {
+              totalBalance: sagCust.totalPendiente,
+              overdueBalance: sagCust.totalVencido,
+              maxDaysPastDue: sagCust.maxDiasMora,
+              oldestOverdueDocument: sagCust.documents.find(d => (d.diasMora ?? 0) > 0)?.documento ?? null,
+              oldestOverdueAmount: sagCust.documents.find(d => (d.diasMora ?? 0) > 0)?.valorDocumento ?? 0,
+              overdueDocumentCount: sagCust.overdueDocumentCount,
+              dataStatus: "AVAILABLE" as const,
+            };
+          }
+        }
+      }
+    } else {
+      // UNVERIFIED tenant: Prisma is the legitimate source
+      receivableData = await loadCustomerReceivables(orgId, p.nit);
+    }
 
     // Count orders for this customer
     const orderCount = p.nit

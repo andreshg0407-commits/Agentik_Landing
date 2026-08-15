@@ -5,7 +5,7 @@
  * Shared types for Vendedor 360 (importable from client components).
  */
 
-export type Vendedor360BlockState = "disponible" | "no_disponible" | "provisional_sag" | "pendiente_pya";
+export type Vendedor360BlockState = "disponible" | "no_disponible" | "provisional_sag" | "certificado_sag" | "pendiente_pya";
 
 export interface Vendedor360Identity {
   sellerName: string;

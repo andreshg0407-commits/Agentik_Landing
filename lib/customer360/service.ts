@@ -12,6 +12,8 @@
 
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
+import { isReceivableDataCertified, warmTruthStatusCache } from "@/lib/comercial/frontline/receivable-truth-status";
+import { fetchCustomerArWithStatus } from "@/lib/comercial/frontline/canonical-ar-service";
 
 // ── Local type mirrors for new Prisma models ──────────────────────────────────
 // These mirror the schema exactly so callers get full type-safety even before
@@ -596,6 +598,107 @@ export async function getCustomer360(
     : 100;
   const remisionPendingCount = Number(remisionRow?.count ?? 0);
 
+  // AGENTIK-RECEIVABLES-AR-TRUTH-01: for CERTIFIED tenants, NEVER use Prisma
+  // CustomerReceivable as cartera source. SAG is the only authority.
+  await warmTruthStatusCache();
+  const isCertifiedTenant = isReceivableDataCertified(organizationId);
+
+  // Default: Prisma data (only used for UNVERIFIED tenants)
+  let receivablesBlock: {
+    total: number; overdue: number; current: number; maxDpd: number;
+    byBucket: typeof receivableBucketFormatted;
+    documents: CustomerReceivable_type[];
+    totalOpenCount: number;
+  };
+
+  if (isCertifiedTenant) {
+    // CERTIFIED tenant: SAG is the ONLY source. Prisma data is phantom.
+    // Three possible outcomes:
+    //   1. SAG HAS_OPEN_AR → use SAG documents
+    //   2. SAG CERTIFIED_ZERO → zeros (customer fully paid)
+    //   3. SAG_UNAVAILABLE / IDENTITY_UNKNOWN / no sagTerceroId → empty (NOT Prisma)
+    const emptyBlock = {
+      total: 0, overdue: 0, current: 0, maxDpd: 0,
+      byBucket: [] as typeof receivableBucketFormatted,
+      documents: [] as CustomerReceivable_type[],
+      totalOpenCount: 0,
+    };
+
+    if (!profile.sagTerceroId) {
+      // No SAG identity → cannot certify. Show empty, not Prisma phantom.
+      receivablesBlock = emptyBlock;
+    } else {
+      const arResult = await fetchCustomerArWithStatus(profile.sagTerceroId);
+      if (arResult.status === "HAS_OPEN_AR") {
+        const snap = arResult.snapshot;
+        // Map SAG documents to CustomerReceivable_type shape
+        const sagDocs: CustomerReceivable_type[] = snap.documents.map(d => ({
+          id: d.documento,
+          organizationId,
+          customerId,
+          erpId: null,
+          invoiceNumber: d.documento,
+          invoiceDate: d.fechaDocumento,
+          dueDate: d.fechaVencimiento ?? d.fechaDocumento,
+          originalAmount: d.valorDocumento,
+          paidAmount: d.valorDocumento - d.saldoPendiente,
+          balanceDue: d.saldoPendiente,
+          currency: "COP",
+          paidAt: null,
+          daysOverdue: d.diasMora ?? 0,
+          status: d.saldoPendiente <= 0 ? "PAID" : (d.diasMora ?? 0) > 0 ? "OVERDUE" : "OPEN",
+          agingBucket: (d.diasMora ?? 0) <= 0 ? "CURRENT"
+            : (d.diasMora ?? 0) <= 30 ? "1-30"
+            : (d.diasMora ?? 0) <= 60 ? "31-60"
+            : (d.diasMora ?? 0) <= 90 ? "61-90"
+            : "90+",
+          customerNit: null,
+          customerName: d.clienteName,
+          rawErpJson: null,
+          syncedAt: new Date(),
+          appliedDocuments: [],
+          appliedTotal: d.valorDocumento - d.saldoPendiente,
+          remainingBalance: d.saldoPendiente,
+          recoStatus: "SIN_SOPORTE" as const,
+        }));
+        // Build aging buckets from SAG
+        const sagBuckets: Record<string, { amount: number; count: number }> = {};
+        for (const d of sagDocs) {
+          const b = d.agingBucket as string;
+          const entry = sagBuckets[b] ?? { amount: 0, count: 0 };
+          entry.amount += d.balanceDue;
+          entry.count++;
+          sagBuckets[b] = entry;
+        }
+        receivablesBlock = {
+          total: snap.totalPendiente,
+          overdue: snap.totalVencido,
+          current: snap.totalVigente,
+          maxDpd: snap.maxDiasMora,
+          byBucket: Object.entries(sagBuckets).map(([bucket, v]) => ({
+            bucket, amount: v.amount, count: v.count,
+          })),
+          documents: sagDocs.filter(d => d.balanceDue > 0).slice(0, 20),
+          totalOpenCount: snap.documentCount,
+        };
+      } else {
+        // CERTIFIED_ZERO, SAG_UNAVAILABLE, IDENTITY_UNKNOWN → empty, NEVER Prisma
+        receivablesBlock = emptyBlock;
+      }
+    }
+  } else {
+    // UNVERIFIED tenant: Prisma is the legitimate source
+    receivablesBlock = {
+      total: totalReceivable,
+      overdue: overdueReceivable,
+      current: currentReceivable,
+      maxDpd,
+      byBucket: receivableBucketFormatted,
+      documents: allReceivableDocs,
+      totalOpenCount: totalOpenCount as number,
+    };
+  }
+
   return {
     profile,
     salesSummary: {
@@ -617,15 +720,7 @@ export async function getCustomer360(
         hasSourceData: totalSourceL12 > 0,
       },
     },
-    receivables: {
-      total: totalReceivable,
-      overdue: overdueReceivable,
-      current: currentReceivable,
-      maxDpd,
-      byBucket: receivableBucketFormatted,
-      documents: allReceivableDocs,
-      totalOpenCount: totalOpenCount as number,
-    },
+    receivables: receivablesBlock,
     opportunities: opportunities as CRMOpportunity_type[],
     recentActivities: recentActivities as CRMActivity_type[],
     quotes: quotes as CRMQuote_type[],

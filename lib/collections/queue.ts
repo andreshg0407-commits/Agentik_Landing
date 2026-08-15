@@ -30,6 +30,8 @@ import { prisma }                        from "@/lib/prisma";
 import type { FiscalWindow }             from "@/lib/finance/fiscal-window";
 import { isCarryOver as checkCarryOver } from "@/lib/finance/fiscal-window";
 import { suggestAction }                from "./suggest-action";
+import { isReceivableDataCertified, warmTruthStatusCache } from "@/lib/comercial/frontline/receivable-truth-status";
+import { fetchCertifiedArSnapshot } from "@/lib/comercial/frontline/canonical-ar-service";
 import type {
   CollectionChannel,
   CollectionPriority,
@@ -140,6 +142,12 @@ export async function getCollectionsQueue(
 ): Promise<CollectionsQueueRow[]> {
   const db = prisma as any;
 
+  // ── AGENTIK-RECEIVABLES-AR-TRUTH-01: SAG path for CERTIFIED tenants ──────
+  await warmTruthStatusCache();
+  if (isReceivableDataCertified(organizationId)) {
+    return getCollectionsQueueFromSag(organizationId, limit, window);
+  }
+
   // ── Windowed path: query CustomerReceivable with date filter ───────────────
   if (window && window.mode !== "full_history") {
     const dateSql = buildRxDateSql(window);
@@ -239,6 +247,69 @@ export async function getCollectionsQueue(
       overdueRatio:      ovRatio,
       suggestedAction:   suggestAction(dpd, ovRatio),
       isCarryOver:       window ? checkCarryOver(r.lastPurchaseAt, window) : false,
+    };
+  });
+}
+
+// ── SAG-certified collections queue ──────────────────────────────────────────
+
+async function getCollectionsQueueFromSag(
+  organizationId: string,
+  limit: number,
+  window?: FiscalWindow,
+): Promise<CollectionsQueueRow[]> {
+  const db = prisma as any;
+  const arResult = await fetchCertifiedArSnapshot();
+  if (!arResult.ok) return [];
+
+  const snap = arResult.snapshot;
+  const overdueCustomers = snap.customers
+    .filter(c => c.totalVencido > 0)
+    .sort((a, b) => b.totalVencido - a.totalVencido)
+    .slice(0, limit);
+
+  if (overdueCustomers.length === 0) return [];
+
+  // Enrich with CustomerProfile slugs, cities, sellerNames
+  const terceroIds = overdueCustomers.map(c => c.clienteId);
+  const profileMap = new Map<number, { slug: string; city: string | null; sellerName: string | null; lastPurchaseAt: Date | null }>();
+  try {
+    const profiles = await db.customerProfile.findMany({
+      where: { organizationId, sagTerceroId: { in: terceroIds } },
+      select: { sagTerceroId: true, slug: true, city: true, sellerName: true, lastPurchaseAt: true },
+    });
+    for (const p of profiles) {
+      if (p.sagTerceroId) {
+        profileMap.set(p.sagTerceroId, {
+          slug: p.slug ?? "",
+          city: p.city ?? null,
+          sellerName: p.sellerName ?? null,
+          lastPurchaseAt: p.lastPurchaseAt ?? null,
+        });
+      }
+    }
+  } catch { /* Graceful */ }
+
+  return overdueCustomers.map(c => {
+    const prof = profileMap.get(c.clienteId);
+    const ov = c.totalVencido;
+    const tot = c.totalPendiente;
+    const dpd = c.maxDiasMora;
+    const ovRatio = tot > 0 ? (ov / tot) * 100 : 0;
+    return {
+      slug:              prof?.slug ?? c.clienteName.toLowerCase().replace(/\s+/g, "-"),
+      name:              c.clienteName,
+      nit:               c.nit != null ? String(c.nit) : null,
+      city:              prof?.city ?? null,
+      sellerName:        prof?.sellerName ?? null,
+      overdueReceivable: ov,
+      totalReceivable:   tot,
+      maxDpd:            dpd,
+      riskScore:         null,
+      riskTier:          riskTier(dpd, ovRatio),
+      overdueRatio:      ovRatio,
+      suggestedAction:   suggestAction(dpd, ovRatio),
+      isCarryOver:       window ? checkCarryOver(prof?.lastPurchaseAt ?? null, window) : false,
     };
   });
 }

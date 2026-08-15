@@ -20,6 +20,8 @@
 
 import "server-only";
 import { prisma } from "@/lib/prisma";
+import { isReceivableDataCertified, warmTruthStatusCache } from "@/lib/comercial/frontline/receivable-truth-status";
+import { fetchCertifiedArSnapshot } from "@/lib/comercial/frontline/canonical-ar-service";
 
 // ── Decision engine integration (COMMERCIAL-DATA-CONNECTIVITY-01) ────────────
 import { loadImportReferenceInputs, buildImportPolicyContext } from "@/lib/comercial/importaciones/import-data-loader";
@@ -200,6 +202,8 @@ export async function loadControlComercial(
   orgSlug: string,
 ): Promise<ControlComercialSnapshot> {
   const db = prisma as any;
+  await warmTruthStatusCache();
+  const isCertified = isReceivableDataCertified(organizationId);
   const today = startOfToday();
   const weekStart = startOfWeek();
   const monthStart = startOfMonth();
@@ -338,26 +342,71 @@ export async function loadControlComercial(
   } catch { /* Graceful */ }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // 4. CARTERA (CustomerReceivable)
+  // 4. CARTERA — SAG (CERTIFIED) or Prisma (UNVERIFIED)
   // ═══════════════════════════════════════════════════════════════════════════
   let carteraTotal = 0, carteraVencida = 0;
   const carteraPorCliente = new Map<string, number>();
-  try {
-    const allRec = await db.customerReceivable.findMany({
-      where: { organizationId, balanceDue: { gt: 0 } },
-      select: { customerId: true, balanceDue: true, daysOverdue: true },
-    });
-    for (const r of allRec) {
-      const bal = Number(r.balanceDue) || 0;
-      carteraTotal += bal;
-      if ((r.daysOverdue ?? 0) > 0) {
-        carteraVencida += bal;
+
+  // SAG snapshot (cached for top moroso below)
+  let sagTopMorosoName: string | null = null;
+  let sagTopMorosoMonto = 0;
+
+  if (isCertified) {
+    // AGENTIK-RECEIVABLES-AR-TRUTH-01: SAG vw_agentik_cartera
+    const arResult = await fetchCertifiedArSnapshot();
+    if (arResult.ok) {
+      const snap = arResult.snapshot;
+      carteraTotal = snap.totalOpenAr;
+      carteraVencida = snap.totalOverdueAr;
+      // Map SAG clienteId (sagTerceroId) → CustomerProfile.id for downstream
+      // vendor/geo enrichment that uses customerId as key.
+      const terceroIds = snap.customers.filter(c => c.totalVencido > 0).map(c => c.clienteId);
+      const terceroToProfileId = new Map<number, string>();
+      if (terceroIds.length > 0) {
+        try {
+          const profs = await db.customerProfile.findMany({
+            where: { organizationId, sagTerceroId: { in: terceroIds } },
+            select: { id: true, sagTerceroId: true },
+          });
+          for (const p of profs) {
+            if (p.sagTerceroId) terceroToProfileId.set(p.sagTerceroId, p.id);
+          }
+        } catch { /* Graceful */ }
       }
-      if (r.customerId) {
-        carteraPorCliente.set(r.customerId, (carteraPorCliente.get(r.customerId) ?? 0) + bal);
+      for (const c of snap.customers) {
+        if (c.totalVencido > 0) {
+          const profileId = terceroToProfileId.get(c.clienteId) ?? c.clienteName;
+          carteraPorCliente.set(profileId, (carteraPorCliente.get(profileId) ?? 0) + c.totalVencido);
+        }
+      }
+      // Cache top moroso from SAG (avoid second fetch)
+      const topSag = [...snap.customers]
+        .filter(c => c.totalVencido > 0)
+        .sort((a, b) => b.totalVencido - a.totalVencido)[0];
+      if (topSag) {
+        sagTopMorosoName = topSag.clienteName;
+        sagTopMorosoMonto = topSag.totalVencido;
       }
     }
-  } catch { /* Graceful */ }
+  } else {
+    // UNVERIFIED path: Prisma CustomerReceivable (legacy)
+    try {
+      const allRec = await db.customerReceivable.findMany({
+        where: { organizationId, balanceDue: { gt: 0 } },
+        select: { customerId: true, balanceDue: true, daysOverdue: true },
+      });
+      for (const r of allRec) {
+        const bal = Number(r.balanceDue) || 0;
+        carteraTotal += bal;
+        if ((r.daysOverdue ?? 0) > 0) {
+          carteraVencida += bal;
+        }
+        if (r.customerId) {
+          carteraPorCliente.set(r.customerId, (carteraPorCliente.get(r.customerId) ?? 0) + bal);
+        }
+      }
+    } catch { /* Graceful */ }
+  }
 
   const clientesConMora = carteraPorCliente.size;
   const pctVencida = carteraTotal > 0 ? Math.round((carteraVencida / carteraTotal) * 100) : 0;
@@ -365,7 +414,10 @@ export async function loadControlComercial(
   // Top moroso
   let topMorosoName: string | null = null;
   let topMorosoMonto = 0;
-  if (carteraPorCliente.size > 0) {
+  if (isCertified) {
+    topMorosoName = sagTopMorosoName;
+    topMorosoMonto = sagTopMorosoMonto;
+  } else if (carteraPorCliente.size > 0) {
     const sorted = [...carteraPorCliente.entries()].sort((a, b) => b[1] - a[1]);
     const topId = sorted[0][0];
     topMorosoMonto = sorted[0][1];

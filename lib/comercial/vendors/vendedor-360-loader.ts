@@ -19,6 +19,9 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { resolveCity } from "@/lib/comercial/clientes/city-resolver";
+import { isReceivableDataCertified, warmTruthStatusCache } from "@/lib/comercial/frontline/receivable-truth-status";
+import { fetchCertifiedArSnapshot } from "@/lib/comercial/frontline/canonical-ar-service";
+import type { CertifiedCustomerReceivableSnapshot } from "@/lib/comercial/frontline/canonical-ar-types";
 import type {
   Vendedor360Data,
   Vendedor360Identity,
@@ -53,6 +56,7 @@ export async function loadVendedor360(
 ): Promise<Vendedor360Data | null> {
   const db = prisma as any;
   const t0 = performance.now();
+  await warmTruthStatusCache();
 
   // ── Phase 1: Load all CRM quotes for this seller ────────────────────────────
   const quotes = await db.cRMQuote.findMany({
@@ -153,6 +157,7 @@ export async function loadVendedor360(
           lastPurchaseAt: true,
           nit: true,
           crmId: true,
+          sagTerceroId: true,
         },
       })
     : [];
@@ -169,36 +174,65 @@ export async function loadVendedor360(
 
   // ── Phase 3: Cartera + SAG orders (depend on profiles) ──────────────────────
 
-  const [receivables, sagOrders] = await Promise.all([
-    // Cartera by customer IDs
-    profileIds.length > 0
-      ? db.customerReceivable.findMany({
+  // AGENTIK-RECEIVABLES-AR-TRUTH-01: SAG path for CERTIFIED tenants
+  let receivables: any[] = [];
+  const isCertified = isReceivableDataCertified(organizationId);
+
+  const sagOrdersPromise = nits.length > 0
+    ? db.customerOrderRecord.findMany({
+        where: { organizationId, customerNit: { in: nits } },
+        select: {
+          id: true, orderNumber: true, orderDate: true,
+          amount: true, status: true, customerName: true,
+        },
+        orderBy: { orderDate: "desc" },
+        take: 50,
+      })
+    : Promise.resolve([]);
+
+  if (isCertified) {
+    // Build SAG-sourced receivables shaped like Prisma output for downstream compat
+    const arResult = await fetchCertifiedArSnapshot();
+    if (arResult.ok) {
+      const sagCustomerMap = new Map<number, CertifiedCustomerReceivableSnapshot>();
+      for (const c of arResult.snapshot.customers) {
+        sagCustomerMap.set(c.clienteId, c);
+      }
+      // Match profiles to SAG customers via sagTerceroId
+      for (const p of profiles) {
+        const terceroId = p.sagTerceroId as number | null;
+        if (!terceroId) continue;
+        const sagCust = sagCustomerMap.get(terceroId);
+        if (!sagCust || sagCust.totalPendiente <= 0) continue;
+        // Synthesize one receivable entry per profile (aggregate)
+        receivables.push({
+          customerId: p.id,
+          balanceDue: sagCust.totalPendiente,
+          dueDate: sagCust.documents.length > 0
+            ? sagCust.documents.reduce((oldest: Date | null, d) =>
+                d.fechaVencimiento && (!oldest || d.fechaVencimiento < oldest) ? d.fechaVencimiento : oldest,
+              null as Date | null)
+            : null,
+          status: sagCust.totalVencido > 0 ? "OVERDUE" : "OPEN",
+          // Extra fields for cartera section
+          _sagDiasMora: sagCust.maxDiasMora,
+          _sagTotalVencido: sagCust.totalVencido,
+          _sagDocCount: sagCust.documentCount,
+          _sagClienteName: sagCust.clienteName,
+        });
+      }
+    }
+  } else {
+    // UNVERIFIED path: Prisma CustomerReceivable
+    receivables = profileIds.length > 0
+      ? await db.customerReceivable.findMany({
           where: { organizationId, customerId: { in: profileIds } },
-          select: {
-            customerId: true,
-            balanceDue: true,
-            dueDate: true,
-            status: true,
-          },
+          select: { customerId: true, balanceDue: true, dueDate: true, status: true },
         })
-      : Promise.resolve([]),
-    // SAG orders by NIT
-    nits.length > 0
-      ? db.customerOrderRecord.findMany({
-          where: { organizationId, customerNit: { in: nits } },
-          select: {
-            id: true,
-            orderNumber: true,
-            orderDate: true,
-            amount: true,
-            status: true,
-            customerName: true,
-          },
-          orderBy: { orderDate: "desc" },
-          take: 50,
-        })
-      : Promise.resolve([]),
-  ]);
+      : [];
+  }
+
+  const sagOrders = await sagOrdersPromise;
 
   // ── Build clients list ──────────────────────────────────────────────────────
 
@@ -296,13 +330,26 @@ export async function loadVendedor360(
   }
 
   for (const [clientName, data] of carteraGrouped) {
-    const daysOverdue = data.oldestDue
-      ? Math.max(0, Math.round((now - data.oldestDue.getTime()) / (24 * 60 * 60 * 1000)))
-      : 0;
+    // For CERTIFIED: use SAG maxDiasMora directly. For Prisma: compute from oldest due date.
+    let daysOverdue = 0;
+    if (isCertified) {
+      // Find the SAG entry for this client by matching receivables
+      const sagEntry = receivables.find((r: any) => {
+        const prof = profileMap.get(r.customerId);
+        return (prof?.name ?? "Desconocido") === clientName;
+      });
+      daysOverdue = sagEntry?._sagDiasMora ?? 0;
+    } else {
+      daysOverdue = data.oldestDue
+        ? Math.max(0, Math.round((now - data.oldestDue.getTime()) / (24 * 60 * 60 * 1000)))
+        : 0;
+    }
     carteraEntries.push({
       clientName,
       balanceDue: data.balance,
-      documentsCount: data.docs,
+      documentsCount: isCertified
+        ? (receivables.find((r: any) => profileMap.get(r.customerId)?.name === clientName)?._sagDocCount ?? data.docs)
+        : data.docs,
       oldestDueDate: data.oldestDue?.toISOString() ?? null,
       daysOverdue,
     });
@@ -447,7 +494,7 @@ export async function loadVendedor360(
       items: sagOrderItems,
     },
     cartera: {
-      state: totalCartera > 0 ? "provisional_sag" : "no_disponible",
+      state: totalCartera > 0 ? (isCertified ? "certificado_sag" : "provisional_sag") : "no_disponible",
       items: carteraEntries,
       totalBalance: totalCartera,
     },

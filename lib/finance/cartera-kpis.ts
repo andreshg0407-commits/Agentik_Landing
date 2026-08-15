@@ -3,18 +3,14 @@
  *
  * Cartera (accounts receivable) analytics layer — Torre de Control.
  *
- * Delega toda la lógica de datos a getReceivablesSnapshot() que es la
- * fuente de verdad única de cartera.  Este módulo agrega:
+ * AGENTIK-RECEIVABLES-AR-TRUTH-01:
+ *   For CERTIFIED tenants (castillitos), data comes from SAG vw_agentik_cartera.
+ *   For UNVERIFIED tenants, falls back to Prisma CustomerReceivable pipeline.
+ *
+ * Este módulo agrega:
  *   • Enriquecimiento de slug (URL) para top debtors (desde CustomerProfile)
  *   • Cálculo de concentración (share de cartera vencida por cliente)
  *   • Tipos y shape que espera el panel ejecutivo
- *
- * ── Reglas de datos heredadas de receivables-snapshot ────────────────────────
- *
- *   Fuente:    CustomerReceivable (live)
- *   Estatuses: OPEN | PARTIAL | OVERDUE
- *   Vencido:   daysOverdue > 0
- *   Ventana:   fiscal window + carry-over en invoiceDate
  *
  * Exports:
  *   getCarteraKpis(orgId, window?)  → org-level cartera summary + top debtors
@@ -26,6 +22,9 @@ import { Prisma }                    from "@prisma/client";
 import { prisma }                   from "@/lib/prisma";
 import type { FiscalWindow }        from "@/lib/finance/fiscal-window";
 import { getReceivablesSnapshot }   from "@/lib/finance/receivables-snapshot";
+import { isReceivableDataCertified, warmTruthStatusCache } from "@/lib/comercial/frontline/receivable-truth-status";
+import { fetchCertifiedArSnapshot } from "@/lib/comercial/frontline/canonical-ar-service";
+import type { CertifiedArSnapshot, CertifiedCustomerReceivableSnapshot } from "@/lib/comercial/frontline/canonical-ar-types";
 
 // ── Window SQL helper (mirrors buildSqlDateCarryOver in receivables-snapshot) ─
 // Applied to count90Plus, activeDebtors, maxDpd queries so they respect the
@@ -137,6 +136,13 @@ export async function getCarteraKpis(
 ): Promise<CarteraKpis> {
   const db = prisma as any;
 
+  // ── AGENTIK-RECEIVABLES-AR-TRUTH-01: SAG path for CERTIFIED tenants ────
+  await warmTruthStatusCache();
+  if (isReceivableDataCertified(organizationId)) {
+    return getCarteraKpisFromSag(organizationId);
+  }
+
+  // ── UNVERIFIED path: Prisma CustomerReceivable (legacy) ────────────────
   // ── 1. Snapshot canónico de cartera ──────────────────────────────────────
   const snapshot = await getReceivablesSnapshot(organizationId, window, {
     topDebtorsLimit: 5,
@@ -309,6 +315,157 @@ export async function getCarteraKpis(
     totalReceivable:   totalOpenBalance,
     overdueReceivable: overdueBalance,
     overdueRatio,
+    maxDpd,
+    count90Plus,
+    activeDebtors:     overdueClients,
+    totalClients,
+    overdueClients,
+    moraPct,
+    aging,
+    topDebtor,
+    concentrationRisk,
+    top5Debtors,
+  };
+}
+
+// ── SAG-certified path ─────────────────────────────────────────────────────────
+
+/**
+ * Build CarteraKpis from SAG vw_agentik_cartera (CERTIFIED tenants only).
+ * Maps CertifiedArSnapshot → CarteraKpis shape expected by executive panel.
+ */
+async function getCarteraKpisFromSag(
+  organizationId: string,
+): Promise<CarteraKpis> {
+  const db = prisma as any;
+
+  const result = await fetchCertifiedArSnapshot();
+  if (!result.ok) {
+    // SAG unavailable — return empty (do NOT fall back to phantom Prisma data)
+    return {
+      hasData: false, currency: "COP", windowLabel: "SAG no disponible",
+      totalReceivable: 0, overdueReceivable: 0, overdueRatio: 0,
+      maxDpd: 0, count90Plus: 0, activeDebtors: 0,
+      totalClients: 0, overdueClients: 0, moraPct: 0,
+      aging: [
+        { key: "0-30",  amount: 0, count: 0, clients: 0 },
+        { key: "31-60", amount: 0, count: 0, clients: 0 },
+        { key: "61-90", amount: 0, count: 0, clients: 0 },
+        { key: "90+",   amount: 0, count: 0, clients: 0 },
+      ],
+      topDebtor: null, concentrationRisk: 0, top5Debtors: [],
+    };
+  }
+
+  const snap = result.snapshot;
+
+  // ── Map SAG aging bands to CarteraKpis aging buckets ─────────────────────
+  // SAG bands: "CURRENT","1-30","31-60","61-90","91-180","181-365","365+"
+  // KPI buckets: "0-30","31-60","61-90","90+"
+  const sagBandMap: Record<string, string> = {
+    "CURRENT": "0-30", "1-30": "0-30",
+    "31-60": "31-60",
+    "61-90": "61-90",
+    "91-180": "90+", "181-365": "90+", "365+": "90+",
+  };
+  const agingAcc: Record<string, { amount: number; count: number; clients: number }> = {
+    "0-30":  { amount: 0, count: 0, clients: 0 },
+    "31-60": { amount: 0, count: 0, clients: 0 },
+    "61-90": { amount: 0, count: 0, clients: 0 },
+    "90+":   { amount: 0, count: 0, clients: 0 },
+  };
+  for (const band of snap.agingBands) {
+    const key = sagBandMap[band.band] ?? "90+";
+    agingAcc[key].amount += band.totalPending;
+    agingAcc[key].count  += band.docCount;
+    // clients: not available per-band from SAG, compute from customers below
+  }
+
+  // ── Compute client counts per aging bucket from customer-level data ──────
+  const BUCKET_KEYS_SAG = ["0-30", "31-60", "61-90", "90+"] as const;
+  const clientsPerBucket: Record<string, number> = { "0-30": 0, "31-60": 0, "61-90": 0, "90+": 0 };
+  for (const c of snap.customers) {
+    const dpd = c.maxDiasMora;
+    let bucket: string;
+    if (dpd <= 30)      bucket = "0-30";
+    else if (dpd <= 60) bucket = "31-60";
+    else if (dpd <= 90) bucket = "61-90";
+    else                bucket = "90+";
+    clientsPerBucket[bucket]++;
+  }
+  for (const key of BUCKET_KEYS_SAG) {
+    agingAcc[key].clients = clientsPerBucket[key];
+  }
+
+  const aging: AgingBucket[] = BUCKET_KEYS_SAG.map(key => ({
+    key,
+    amount:  agingAcc[key].amount,
+    count:   agingAcc[key].count,
+    clients: agingAcc[key].clients,
+  }));
+
+  // ── Top debtors with profile enrichment ──────────────────────────────────
+  const sortedByOverdue = [...snap.customers]
+    .filter(c => c.totalVencido > 0)
+    .sort((a, b) => b.totalVencido - a.totalVencido);
+  const top5 = sortedByOverdue.slice(0, 5);
+
+  // Enrich with CustomerProfile slugs for navigation
+  const customerNames = top5.map(c => c.clienteName).filter(Boolean);
+  type ProfileEntry = { slug: string | null; id: string; sagTerceroId: number | null };
+  const profileMap = new Map<number, ProfileEntry>();
+  const nameProfileMap = new Map<string, ProfileEntry>();
+
+  if (top5.length > 0) {
+    const terceroIds = top5.map(c => c.clienteId);
+    const profiles = await db.customerProfile.findMany({
+      where: {
+        organizationId,
+        OR: [
+          { sagTerceroId: { in: terceroIds } },
+          ...(customerNames.length > 0 ? [{ name: { in: customerNames } }] : []),
+        ],
+      },
+      select: { id: true, slug: true, sagTerceroId: true, name: true },
+    });
+    for (const p of profiles) {
+      const entry: ProfileEntry = { slug: p.slug ?? null, id: p.id, sagTerceroId: p.sagTerceroId };
+      if (p.sagTerceroId) profileMap.set(p.sagTerceroId, entry);
+      if (p.name) nameProfileMap.set(p.name, entry);
+    }
+  }
+
+  const top5Debtors: TopDebtorRow[] = top5.map(c => {
+    const prof = profileMap.get(c.clienteId) ?? nameProfileMap.get(c.clienteName);
+    return {
+      customerId:        prof?.id ?? null,
+      slug:              prof?.slug ?? null,
+      nit:               c.nit != null ? String(c.nit) : null,
+      name:              c.clienteName,
+      overdueReceivable: c.totalVencido,
+      totalReceivable:   c.totalPendiente,
+      maxDpd:            c.maxDiasMora,
+      share:             snap.totalOverdueAr > 0 ? (c.totalVencido / snap.totalOverdueAr) * 100 : 0,
+    };
+  });
+
+  const count90Plus    = snap.customers.filter(c => c.maxDiasMora > 90).length;
+  const maxDpd         = snap.customers.length > 0
+    ? Math.max(...snap.customers.map(c => c.maxDiasMora))
+    : 0;
+  const overdueClients = snap.totalOverdueCustomers;
+  const totalClients   = snap.totalOpenCustomers;
+  const moraPct        = totalClients > 0 ? (overdueClients / totalClients) * 100 : 0;
+  const topDebtor      = top5Debtors[0] ?? null;
+  const concentrationRisk = topDebtor?.share ?? 0;
+
+  return {
+    hasData:           snap.customers.length > 0,
+    currency:          "COP",
+    windowLabel:       "SAG certificado",
+    totalReceivable:   snap.totalOpenAr,
+    overdueReceivable: snap.totalOverdueAr,
+    overdueRatio:      snap.totalOpenAr > 0 ? (snap.totalOverdueAr / snap.totalOpenAr) * 100 : 0,
     maxDpd,
     count90Plus,
     activeDebtors:     overdueClients,

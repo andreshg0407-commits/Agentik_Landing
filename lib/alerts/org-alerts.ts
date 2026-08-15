@@ -18,8 +18,9 @@
  */
 
 import { prisma } from "@/lib/prisma";
-import { getCarteraKpis } from "@/lib/finance/cartera-kpis";
-import { isReceivableDataCertified } from "@/lib/comercial/frontline/receivable-truth-status";
+import { isReceivableDataCertified, warmTruthStatusCache } from "@/lib/comercial/frontline/receivable-truth-status";
+import { fetchCertifiedArSnapshot } from "@/lib/comercial/frontline/canonical-ar-service";
+import type { CertifiedArSnapshot } from "@/lib/comercial/frontline/canonical-ar-types";
 
 // ─── Thresholds ───────────────────────────────────────────────────────────────
 
@@ -108,82 +109,102 @@ export async function generateCarteraAlerts(
   organizationId: string,
 ): Promise<CarteraAlertSummary> {
   // AGENTIK-RECEIVABLES-SAFETY-LOCK-P0: suppress cartera alerts when
-  // receivable data is not certified. No tenant is certified yet.
-  // organizationId is used as lookup key — returns false for all.
+  // receivable data is not certified. Warm UUID→slug cache so the
+  // truth status registry resolves correctly when called with org UUID.
+  await warmTruthStatusCache();
   if (!isReceivableDataCertified(organizationId)) {
     return { generated: 0, resolved: 0 };
   }
 
-  const kpis = await getCarteraKpis(organizationId);
-
-  if (!kpis.hasData) {
+  // AGENTIK-RECEIVABLES-AR-TRUTH-01: source from SAG vw_agentik_cartera (CERTIFIED),
+  // NOT from Prisma CustomerReceivable (phantom/inflated balances).
+  const result = await fetchCertifiedArSnapshot();
+  if (!result.ok) {
+    // SAG unavailable — do not generate alerts from stale/phantom data
     return { generated: 0, resolved: 0 };
   }
+  const snap = result.snapshot;
+
+  // Derive alert KPIs from certified SAG snapshot
+  const count90Plus = snap.customers.filter(c => c.maxDiasMora > 90).length;
+  const maxDpd = snap.customers.length > 0
+    ? Math.max(...snap.customers.map(c => c.maxDiasMora))
+    : 0;
+
+  // Top debtor by overdue balance
+  const sortedByOverdue = [...snap.customers]
+    .filter(c => c.totalVencido > 0)
+    .sort((a, b) => b.totalVencido - a.totalVencido);
+  const topDebtor = sortedByOverdue[0] ?? null;
+  const topDebtorShare = topDebtor && snap.totalOverdueAr > 0
+    ? (topDebtor.totalVencido / snap.totalOverdueAr) * 100
+    : 0;
 
   // ── Alert 1: +90 DPD customers ────────────────────────────────────────────
   await upsertAlert(organizationId, "cartera.90dpd", {
-    active:   kpis.count90Plus > 0,
-    severity: kpis.count90Plus >= 5 ? "CRITICAL" : "WARNING",
-    title:    `${kpis.count90Plus} cliente${kpis.count90Plus > 1 ? "s" : ""} con mora superior a 90 días`,
+    active:   count90Plus > 0,
+    severity: count90Plus >= 5 ? "CRITICAL" : "WARNING",
+    title:    `${count90Plus} cliente${count90Plus > 1 ? "s" : ""} con mora superior a 90 días`,
     message:
-      `${kpis.count90Plus} cliente${kpis.count90Plus > 1 ? "s tienen" : " tiene"} facturas vencidas ` +
+      `${count90Plus} cliente${count90Plus > 1 ? "s tienen" : " tiene"} facturas vencidas ` +
       `hace más de 90 días. ` +
-      `Cartera vencida total: ${fmtCOP(kpis.overdueReceivable)}. ` +
-      `DPD máximo en la organización: ${kpis.maxDpd} días.`,
+      `Cartera vencida total: ${fmtCOP(snap.totalOverdueAr)} (fuente: SAG certificado). ` +
+      `DPD máximo en la organización: ${maxDpd} días.`,
     metadata: {
-      count90Plus:       kpis.count90Plus,
-      maxDpd:            kpis.maxDpd,
-      overdueReceivable: kpis.overdueReceivable,
+      count90Plus,
+      maxDpd,
+      overdueReceivable: snap.totalOverdueAr,
+      source:            "vw_agentik_cartera",
     },
   });
 
   // ── Alert 2: top debtor ────────────────────────────────────────────────────
   const topDebtorActive =
-    kpis.topDebtor != null &&
-    kpis.topDebtor.overdueReceivable > TOP_DEBTOR_MIN_COP;
+    topDebtor != null &&
+    topDebtor.totalVencido > TOP_DEBTOR_MIN_COP;
 
   await upsertAlert(organizationId, "cartera.top_debtor", {
     active:   topDebtorActive,
-    severity: (kpis.topDebtor?.overdueReceivable ?? 0) > 50_000_000 ? "CRITICAL" : "WARNING",
-    title:    `Mayor deudor: ${kpis.topDebtor?.name ?? "—"} con ${fmtCOP(kpis.topDebtor?.overdueReceivable ?? 0)} vencido`,
+    severity: (topDebtor?.totalVencido ?? 0) > 50_000_000 ? "CRITICAL" : "WARNING",
+    title:    `Mayor deudor: ${topDebtor?.clienteName ?? "—"} con ${fmtCOP(topDebtor?.totalVencido ?? 0)} vencido`,
     message:
-      `${kpis.topDebtor?.name} acumula ${fmtCOP(kpis.topDebtor?.overdueReceivable ?? 0)} en cartera vencida ` +
-      `(${kpis.topDebtor?.share.toFixed(1)}% del total de la organización). ` +
-      `Mora máxima: ${kpis.topDebtor?.maxDpd ?? 0} días. ` +
-      `Iniciar gestión de cobro prioritaria.`,
+      `${topDebtor?.clienteName} acumula ${fmtCOP(topDebtor?.totalVencido ?? 0)} en cartera vencida ` +
+      `(${topDebtorShare.toFixed(1)}% del total de la organización). ` +
+      `Mora máxima: ${topDebtor?.maxDiasMora ?? 0} días. ` +
+      `Fuente: SAG certificado (vw_agentik_cartera).`,
     metadata: {
-      slug:              kpis.topDebtor?.slug,
-      name:              kpis.topDebtor?.name,
-      overdueReceivable: kpis.topDebtor?.overdueReceivable,
-      maxDpd:            kpis.topDebtor?.maxDpd,
-      share:             kpis.topDebtor?.share,
+      name:              topDebtor?.clienteName,
+      overdueReceivable: topDebtor?.totalVencido,
+      maxDpd:            topDebtor?.maxDiasMora,
+      share:             topDebtorShare,
+      source:            "vw_agentik_cartera",
     },
   });
 
   // ── Alert 3: concentration risk ───────────────────────────────────────────
   const concentrationActive =
-    kpis.concentrationRisk > CONCENTRATION_THRESHOLD_PCT &&
-    kpis.overdueReceivable > TOP_DEBTOR_MIN_COP;
+    topDebtorShare > CONCENTRATION_THRESHOLD_PCT &&
+    snap.totalOverdueAr > TOP_DEBTOR_MIN_COP;
 
   await upsertAlert(organizationId, "cartera.concentration", {
     active:   concentrationActive,
-    severity: kpis.concentrationRisk > 40 ? "CRITICAL" : "WARNING",
-    title:    `Riesgo de concentración: ${kpis.topDebtor?.name ?? "—"} representa el ${kpis.concentrationRisk.toFixed(0)}% de la cartera vencida`,
+    severity: topDebtorShare > 40 ? "CRITICAL" : "WARNING",
+    title:    `Riesgo de concentración: ${topDebtor?.clienteName ?? "—"} representa el ${topDebtorShare.toFixed(0)}% de la cartera vencida`,
     message:
-      `Un solo cliente (${kpis.topDebtor?.name}) concentra el ` +
-      `${kpis.concentrationRisk.toFixed(1)}% de toda la cartera vencida de la organización ` +
-      `(${fmtCOP(kpis.topDebtor?.overdueReceivable ?? 0)} de ${fmtCOP(kpis.overdueReceivable)} total). ` +
-      `Riesgo de cartera concentrada — diversificar política de cobro y crédito.`,
+      `Un solo cliente (${topDebtor?.clienteName}) concentra el ` +
+      `${topDebtorShare.toFixed(1)}% de toda la cartera vencida de la organización ` +
+      `(${fmtCOP(topDebtor?.totalVencido ?? 0)} de ${fmtCOP(snap.totalOverdueAr)} total). ` +
+      `Fuente: SAG certificado. Diversificar política de cobro y crédito.`,
     metadata: {
-      topDebtorSlug:     kpis.topDebtor?.slug,
-      topDebtorName:     kpis.topDebtor?.name,
-      concentrationRisk: kpis.concentrationRisk,
-      overdueReceivable: kpis.overdueReceivable,
+      topDebtorName:     topDebtor?.clienteName,
+      concentrationRisk: topDebtorShare,
+      overdueReceivable: snap.totalOverdueAr,
+      source:            "vw_agentik_cartera",
     },
   });
 
   // Count generated (active) vs resolved (inactive)
-  const active3   = [kpis.count90Plus > 0, topDebtorActive, concentrationActive].filter(Boolean).length;
+  const active3   = [count90Plus > 0, topDebtorActive, concentrationActive].filter(Boolean).length;
   const resolved3 = 3 - active3;
 
   return { generated: active3, resolved: resolved3 };
