@@ -166,11 +166,13 @@ export async function createOrgMember(
     return { ok: false, error: "INVALID_INPUT", detail: "Password must be at least 8 characters." };
   }
 
+  const normalizedEmail = input.email.trim().toLowerCase();
+
   // Upsert user (may already exist in another org)
   const user = await prisma.user.upsert({
-    where: { email: input.email },
+    where: { email: normalizedEmail },
     update: { name: input.name },
-    create: { email: input.email, name: input.name },
+    create: { email: normalizedEmail, name: input.name },
   });
 
   // Check if membership already exists in this org
