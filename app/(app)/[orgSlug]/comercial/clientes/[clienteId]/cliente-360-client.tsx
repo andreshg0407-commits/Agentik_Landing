@@ -144,7 +144,7 @@ export function Cliente360Client({ orgSlug, data }: Props) {
     .map(([name, data]) => ({ name, ...data }));
 
   // Header status
-  const headerStatus = receivables.totalOverdue > 0 ? "warning" as const : "ok" as const;
+  const headerStatus = (receivables.totalOverdue ?? 0) > 0 ? "warning" as const : "ok" as const;
   const totalOrders = crmQuotes.items.length + sagOrders.items.length;
 
   return (
@@ -256,8 +256,8 @@ export function Cliente360Client({ orgSlug, data }: Props) {
         />
         <KpiCard
           label="Cartera vencida"
-          textValue={receivables.totalOverdue > 0 ? fmtCurrency(receivables.totalOverdue) : "\u2014"}
-          color={receivables.totalOverdue > 0 ? C.red : undefined}
+          textValue={receivables.truthStatus === "CERTIFIED" && (receivables.totalOverdue ?? 0) > 0 ? fmtCurrency(receivables.totalOverdue!) : "\u2014"}
+          color={receivables.truthStatus === "CERTIFIED" && (receivables.totalOverdue ?? 0) > 0 ? C.red : undefined}
         />
         <KpiCard
           label="Ultima compra"
@@ -318,9 +318,9 @@ export function Cliente360Client({ orgSlug, data }: Props) {
             <>
               {/* Cartera summary strip */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: S[3], marginBottom: S[4] }}>
-                <MiniStat label="Total cartera" value={fmtCurrency(receivables.totalBalance)} />
-                <MiniStat label="Vencida" value={fmtCurrency(receivables.totalOverdue)} color={receivables.totalOverdue > 0 ? C.red : undefined} />
-                <MiniStat label="Facturas abiertas" value={String(receivables.openCount)} />
+                <MiniStat label="Total cartera" value={receivables.totalBalance !== null ? fmtCurrency(receivables.totalBalance) : "\u2014"} />
+                <MiniStat label="Vencida" value={receivables.totalOverdue !== null ? fmtCurrency(receivables.totalOverdue) : "\u2014"} color={(receivables.totalOverdue ?? 0) > 0 ? C.red : undefined} />
+                <MiniStat label="Facturas abiertas" value={receivables.openCount !== null ? String(receivables.openCount) : "\u2014"} />
               </div>
               {/* Receivables table */}
               <div className="ag-op-table" style={{ border: `1px solid ${C.line}`, borderRadius: R.sm, overflow: "hidden" }}>

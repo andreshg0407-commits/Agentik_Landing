@@ -193,8 +193,11 @@ function oppLabel(type: string): string {
 // ── Cartera traffic light (semaforo) ─────────────────────────────────────────
 
 function carteraTrafficLight(receivables: Cliente360Data["receivables"]): { label: string; color: string } {
-  if (receivables.state === "no_disponible" || receivables.totalBalance === 0) {
+  if (receivables.state === "no_disponible" || receivables.totalBalance === null || receivables.totalBalance === 0) {
     return { label: "Sin cartera", color: C.inkGhost };
+  }
+  if (receivables.truthStatus !== "CERTIFIED") {
+    return { label: "Sin certificar", color: C.inkGhost };
   }
   // Check if we have certified overdue data (daysOverdue on individual items)
   const itemsWithDueDate = receivables.items.filter(r => r.dueDate !== null);
@@ -330,7 +333,7 @@ export function ClientesClient({ orgSlug, summary, pageResult, currentFilter, cu
 
   // Drawer severity
   const drawerSeverity = drawerData
-    ? (drawerData.receivables.totalOverdue > 0 ? "warning" as const : "info" as const)
+    ? ((drawerData.receivables.totalOverdue ?? 0) > 0 ? "warning" as const : "info" as const)
     : "info" as const;
 
   return (
@@ -539,7 +542,7 @@ function DrawerContent({
         <DrawerKpi label="Pedidos CRM" value={crmQuotes.items.length} />
         <DrawerKpi label="Pedidos SAG" value={sagOrders.items.length} />
         <DrawerKpi label="Facturas" value={facturaCount} />
-        <DrawerKpi label="Saldo cartera" textValue={receivables.totalBalance > 0 ? fmtCurrency(receivables.totalBalance) : "\u2014"} color={receivables.totalOverdue > 0 ? C.red : undefined} />
+        <DrawerKpi label="Saldo cartera" textValue={receivables.totalBalance !== null && receivables.totalBalance > 0 ? fmtCurrency(receivables.totalBalance) : "\u2014"} color={(receivables.totalOverdue ?? 0) > 0 ? C.red : undefined} />
         <DrawerKpi label="Ultima compra" textValue={fmtDaysAgo(lastActivity)} />
         <DrawerKpi label="Salud cartera" textValue={carteraTrafficLight(receivables).label} color={carteraTrafficLight(receivables).color} />
       </div>
@@ -554,7 +557,7 @@ function DrawerContent({
           let badge: number | null = null;
           if (tab.key === "pedidos") badge = totalOrders || null;
           if (tab.key === "facturas") badge = facturaCount || null;
-          if (tab.key === "cartera" && receivables.openCount > 0) badge = receivables.openCount;
+          if (tab.key === "cartera" && (receivables.openCount ?? 0) > 0) badge = receivables.openCount;
           if (tab.key === "inteligencia" && opportunities.length > 0) badge = opportunities.length;
 
           return (
@@ -784,9 +787,9 @@ function TabCartera({ receivables }: { receivables: Cliente360Data["receivables"
 
       {/* Cartera summary strip */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: S[2] }}>
-        <MiniStat label="Total cartera" value={fmtCurrency(receivables.totalBalance)} />
-        <MiniStat label="Vencida" value={fmtCurrency(receivables.totalOverdue)} color={receivables.totalOverdue > 0 ? C.red : undefined} />
-        <MiniStat label="Facturas abiertas" value={String(receivables.openCount)} />
+        <MiniStat label="Total cartera" value={receivables.totalBalance !== null ? fmtCurrency(receivables.totalBalance) : "\u2014"} />
+        <MiniStat label="Vencida" value={receivables.totalOverdue !== null ? fmtCurrency(receivables.totalOverdue) : "\u2014"} color={(receivables.totalOverdue ?? 0) > 0 ? C.red : undefined} />
+        <MiniStat label="Facturas abiertas" value={receivables.openCount !== null ? String(receivables.openCount) : "\u2014"} />
       </div>
 
       {/* Receivables table */}
@@ -882,7 +885,7 @@ function TabInteligencia({ data }: { data: Cliente360Data }) {
         <SectionLabel label="Rentabilidad" />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[3] }}>
           <FieldRow label="Total facturado" value={totalSales > 0 ? fmtCurrency(totalSales) : null} />
-          <FieldRow label="Saldo cartera" value={receivables.totalBalance > 0 ? fmtCurrency(receivables.totalBalance) : null} />
+          <FieldRow label="Saldo cartera" value={receivables.totalBalance !== null && receivables.totalBalance > 0 ? fmtCurrency(receivables.totalBalance) : null} />
         </div>
       </div>
 
@@ -890,8 +893,8 @@ function TabInteligencia({ data }: { data: Cliente360Data }) {
       <div>
         <SectionLabel label="Riesgo" />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[3] }}>
-          <FieldRow label="Cartera vencida" value={receivables.totalOverdue > 0 ? fmtCurrency(receivables.totalOverdue) : null} color={receivables.totalOverdue > 0 ? C.red : undefined} />
-          <FieldRow label="Facturas abiertas" value={receivables.openCount > 0 ? String(receivables.openCount) : null} />
+          <FieldRow label="Cartera vencida" value={receivables.totalOverdue !== null && receivables.totalOverdue > 0 ? fmtCurrency(receivables.totalOverdue) : null} color={(receivables.totalOverdue ?? 0) > 0 ? C.red : undefined} />
+          <FieldRow label="Facturas abiertas" value={receivables.openCount !== null && receivables.openCount > 0 ? String(receivables.openCount) : null} />
         </div>
       </div>
 
@@ -1043,8 +1046,8 @@ function computeClientScore(data: Cliente360Data): string {
   else if (seller.confidence >= 50) score += 8;
 
   // Receivables health
-  if (receivables.totalOverdue === 0 && receivables.totalBalance > 0) score += 20;
-  else if (receivables.totalOverdue === 0) score += 10;
+  if ((receivables.totalOverdue ?? 0) === 0 && (receivables.totalBalance ?? 0) > 0) score += 20;
+  else if ((receivables.totalOverdue ?? 0) === 0) score += 10;
 
   // Low risk
   const riskOpps = opportunities.filter(o => o.type === "cartera" || o.type === "inactividad");
