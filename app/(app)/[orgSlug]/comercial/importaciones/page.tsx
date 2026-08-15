@@ -8,7 +8,7 @@
  */
 
 import { requireOrgAccess } from "@/lib/auth/org-access";
-import { buildImportSupplyIntelligence } from "@/lib/comercial/importaciones/import-intelligence-service";
+import { getCachedImportIntelligence } from "@/lib/comercial/importaciones/import-intelligence-cache";
 import { ImportacionesClient } from "./importaciones-client";
 
 export default async function ImportacionesPage({
@@ -20,7 +20,8 @@ export default async function ImportacionesPage({
   const { organization } = await requireOrgAccess(orgSlug);
   const orgId            = organization.id;
 
-  const { items, kpis } = await buildImportSupplyIntelligence(orgId);
+  const cached = await getCachedImportIntelligence(orgId);
+  const { items, kpis } = cached.result;
 
   return (
     <ImportacionesClient

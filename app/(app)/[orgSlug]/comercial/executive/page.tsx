@@ -15,7 +15,7 @@
 
 import { requireOrgAccess } from "@/lib/auth/org-access";
 import { loadControlComercial } from "@/lib/comercial/control/control-comercial-loader";
-import { buildImportSupplyIntelligence } from "@/lib/comercial/importaciones/import-intelligence-service";
+import { getCachedImportIntelligence } from "@/lib/comercial/importaciones/import-intelligence-cache";
 import { assembleCommercialExecutivePA } from "@/lib/comercial/executive/commercial-executive-presentation-assembler";
 import { CommercialExecutiveClient } from "./executive-client";
 
@@ -30,7 +30,7 @@ export default async function CommercialExecutivePage({
 
   const [snapshot, importIntelligence] = await Promise.all([
     loadControlComercial(orgId, orgSlug),
-    buildImportSupplyIntelligence(orgId).catch(() => null),
+    getCachedImportIntelligence(orgId).then(c => c.result).catch(() => null),
   ]);
 
   const pa = assembleCommercialExecutivePA({

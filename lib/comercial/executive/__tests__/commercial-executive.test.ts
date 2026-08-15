@@ -172,7 +172,7 @@ describe("B — Desktop regression", () => {
 
   test("Desktop importaciones page still exists unchanged", () => {
     const src = readFile("app/(app)/[orgSlug]/comercial/importaciones/page.tsx");
-    expect(src).toContain("buildImportSupplyIntelligence");
+    expect(src).toContain("getCachedImportIntelligence");
     expect(src).toContain("ImportacionesClient");
   });
 });
@@ -928,7 +928,7 @@ describe("B02-I — Desktop unchanged", () => {
 
   test("importaciones page unchanged", () => {
     const src = readFile("app/(app)/[orgSlug]/comercial/importaciones/page.tsx");
-    expect(src).toContain("buildImportSupplyIntelligence");
+    expect(src).toContain("getCachedImportIntelligence");
   });
 });
 
