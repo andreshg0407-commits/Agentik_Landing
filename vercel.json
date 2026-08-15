@@ -13,6 +13,10 @@
       "schedule": "0 5 * * *"
     },
     {
+      "path": "/api/orgs/castillitos/comercial/importaciones/prewarm",
+      "schedule": "15 5 * * *"
+    },
+    {
       "path": "/api/cron/current-orders-sync",
       "schedule": "30 5 * * *"
     },
