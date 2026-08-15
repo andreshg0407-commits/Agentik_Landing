@@ -37,8 +37,10 @@ export interface OrderAssistantCustomer {
 // ── Credit snapshot ─────────────────────────────────────────────────────────
 
 export interface OrderAssistantCredit {
-  totalReceivable: number;
-  overdueReceivable: number;
+  /** Null when SAG unavailable — do NOT treat as $0 */
+  totalReceivable: number | null;
+  /** Null when SAG unavailable — do NOT treat as $0 */
+  overdueReceivable: number | null;
   maxDaysPastDue: number;
   creditStatus: "approved" | "warning" | "blocked";
   alerts: Array<{

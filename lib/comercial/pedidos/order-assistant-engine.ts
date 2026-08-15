@@ -49,7 +49,7 @@ import {
 export interface PreOrderData {
   customer: OrderAssistantCustomer;
   branches: CustomerBranchInfo[];
-  credit: { totalReceivable: number; overdueReceivable: number; maxDaysPastDue: number };
+  credit: { totalReceivable: number | null; overdueReceivable: number | null; maxDaysPastDue: number };
   recentOrders: OrderAssistantRecentOrder[];
   hasInventory: boolean;
 }
@@ -163,13 +163,13 @@ function buildRecommendedActions(
   if (creditResult.creditStatus === "blocked") {
     actions.push({
       action: `Revisar cartera vencida de ${creditResult.maxDaysPastDue} dias`,
-      rationale: `Monto vencido: $${creditResult.overdueReceivable.toLocaleString()}. Nivel critico.`,
+      rationale: `Monto vencido: $${(creditResult.overdueReceivable ?? 0).toLocaleString()}. Nivel critico.`,
       priority: 95,
     });
   } else if (creditResult.creditStatus === "warning") {
     actions.push({
       action: `Informar al cliente sobre cartera vencida de ${creditResult.maxDaysPastDue} dias`,
-      rationale: `Monto vencido: $${creditResult.overdueReceivable.toLocaleString()}. Alerta informativa.`,
+      rationale: `Monto vencido: $${(creditResult.overdueReceivable ?? 0).toLocaleString()}. Alerta informativa.`,
       priority: 60,
     });
   }

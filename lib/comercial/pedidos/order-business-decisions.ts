@@ -60,7 +60,7 @@ export function buildCreditDecision(
     severity: result.creditStatus === "blocked" ? "critical" : "high",
     priority: result.creditStatus === "blocked" ? "CRITICAL" : "HIGH",
     title: `Cartera ${result.creditStatus}: ${result.customerName}`,
-    summary: `Vencido: $${result.overdueReceivable.toLocaleString()}. Max dias: ${result.maxDaysPastDue}`,
+    summary: `Vencido: $${(result.overdueReceivable ?? 0).toLocaleString()}. Max dias: ${result.maxDaysPastDue}`,
     recommendedAction: result.evidence.recommendedAction,
     status: "pending",
     confidence: result.evidence.confidence,

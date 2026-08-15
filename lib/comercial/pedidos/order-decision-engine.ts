@@ -195,14 +195,14 @@ export function evaluateCustomerCredit(
   if (maxDaysPastDue >= criticalDaysPastDue) {
     creditStatus = "blocked";
     alerts.push({
-      message: `Cartera vencida ${maxDaysPastDue} dias (umbral critico: ${criticalDaysPastDue} dias). Monto vencido: $${overdueReceivable.toLocaleString()}.`,
+      message: `Cartera vencida ${maxDaysPastDue} dias (umbral critico: ${criticalDaysPastDue} dias). Monto vencido: $${(overdueReceivable ?? 0).toLocaleString()}.`,
       severity: "critical",
       daysPastDue: maxDaysPastDue,
     });
   } else if (maxDaysPastDue >= warningDaysPastDue) {
     creditStatus = "warning";
     alerts.push({
-      message: `Cartera vencida ${maxDaysPastDue} dias (umbral: ${warningDaysPastDue} dias). Monto vencido: $${overdueReceivable.toLocaleString()}.`,
+      message: `Cartera vencida ${maxDaysPastDue} dias (umbral: ${warningDaysPastDue} dias). Monto vencido: $${(overdueReceivable ?? 0).toLocaleString()}.`,
       severity: "warning",
       daysPastDue: maxDaysPastDue,
     });
@@ -225,8 +225,8 @@ export function evaluateCustomerCredit(
       `occ-${customerId}`,
       "Validacion Cartera del Cliente",
       creditStatus === "approved"
-        ? `Cliente ${customerName} sin cartera vencida significativa. Cartera total: $${totalReceivable.toLocaleString()}.`
-        : `Cliente ${customerName} con cartera vencida de ${maxDaysPastDue} dias. Monto vencido: $${overdueReceivable.toLocaleString()}.`,
+        ? `Cliente ${customerName} sin cartera vencida significativa. Cartera total: $${(totalReceivable ?? 0).toLocaleString()}.`
+        : `Cliente ${customerName} con cartera vencida de ${maxDaysPastDue} dias. Monto vencido: $${(overdueReceivable ?? 0).toLocaleString()}.`,
       {
         customerId, customerName,
         totalReceivable, overdueReceivable, maxDaysPastDue,

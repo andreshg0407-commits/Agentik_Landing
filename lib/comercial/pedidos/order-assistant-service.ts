@@ -87,10 +87,14 @@ export async function loadOrderAssistant(
     ? Math.max(...receivables.items.map(r => r.daysOverdue))
     : 0;
 
+  // When receivables are UNVERIFIED (SAG unavailable), totals are null.
+  // Passing null (not 0) preserves "unknown" semantics — the order assistant
+  // must not treat SAG-down as "no debt" or generate false credit clearances.
   const credit = {
     totalReceivable: receivables.totalBalance,
     overdueReceivable: receivables.totalOverdue,
     maxDaysPastDue,
+    truthStatus: receivables.truthStatus,
   };
 
   // ── Assemble pre-order data ────────────────────────────────────────────

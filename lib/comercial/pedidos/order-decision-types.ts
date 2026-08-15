@@ -62,8 +62,10 @@ export interface CustomerBranchResult {
 export interface CustomerCreditResult {
   customerId: string;
   customerName: string;
-  totalReceivable: number;
-  overdueReceivable: number;
+  /** Null when SAG unavailable — do NOT treat as $0 */
+  totalReceivable: number | null;
+  /** Null when SAG unavailable — do NOT treat as $0 */
+  overdueReceivable: number | null;
   maxDaysPastDue: number;
   creditStatus: "approved" | "warning" | "blocked";
   alerts: Array<{
@@ -182,8 +184,8 @@ export interface OrderPolicyContext {
   }>;
   /** Customer credit data (from CustomerProfile denormalized fields) */
   credit: {
-    totalReceivable: number;
-    overdueReceivable: number;
+    totalReceivable: number | null;
+    overdueReceivable: number | null;
     maxDaysPastDue: number;
   };
   /** Customer branches (from Customer Domain) */
