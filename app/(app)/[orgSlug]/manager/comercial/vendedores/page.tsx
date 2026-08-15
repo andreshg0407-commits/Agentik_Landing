@@ -1,17 +1,18 @@
 /**
  * /[orgSlug]/manager/comercial/vendedores — Vendedores executive surface.
  *
- * Sprint: AGENTIK-MANAGER-APP-CANONICAL-INTEGRATION-01
- * Consumes seller directory + metrics from canonical foundation.
+ * Sprint: AGENTIK-MANAGER-M2A-P0
+ *
+ * Seller directory + metrics provide both the KPI count and the card list.
+ * The KPI "Vendedores operativos" is derived from the SAME fail-closed
+ * filtered universe (activo + atencion) as the rendered card list.
+ * No loadControlComercial. No separate count query.
  */
 
 import { requireOrgAccess } from "@/lib/auth/org-access";
 import { buildSellerDirectory } from "@/lib/comercial/foundation/seller-directory";
 import { buildSellerMetrics } from "@/lib/comercial/foundation/seller-metrics";
-import { loadControlComercial } from "@/lib/comercial/control/control-comercial-loader";
-import { buildImportSupplyIntelligence } from "@/lib/comercial/importaciones/import-intelligence-service";
-import { assembleCommercialExecutivePA } from "@/lib/comercial/executive/commercial-executive-presentation-assembler";
-import { assembleVendedoresPA } from "@/lib/comercial/manager/manager-commercial-adapter";
+import { assembleVendedoresPAFromNarrow } from "@/lib/comercial/manager/manager-commercial-adapter";
 import { VendedoresSurfaceClient } from "./vendedores-client";
 
 export default async function ManagerVendedoresPage({
@@ -23,14 +24,10 @@ export default async function ManagerVendedoresPage({
   const { organization } = await requireOrgAccess(orgSlug);
   const orgId = organization.id;
 
-  const [directory, metricsReport, snapshot, importIntelligence] = await Promise.all([
+  const [directory, metricsReport] = await Promise.all([
     buildSellerDirectory(orgId),
     buildSellerMetrics(orgId),
-    loadControlComercial(orgId, orgSlug),
-    buildImportSupplyIntelligence(orgId).catch(() => null),
   ]);
-
-  const pa = assembleCommercialExecutivePA({ snapshot, importIntelligence, orgSlug });
 
   // Merge directory + metrics
   const metricsMap = new Map(metricsReport.sellers.map(m => [m.sellerSlug, m]));
@@ -47,7 +44,7 @@ export default async function ManagerVendedoresPage({
     };
   });
 
-  const vendedoresPA = assembleVendedoresPA({ pa, sellers, orgSlug });
+  const vendedoresPA = assembleVendedoresPAFromNarrow({ sellers, orgSlug });
 
   return <VendedoresSurfaceClient vendedoresPA={vendedoresPA} />;
 }

@@ -31,8 +31,16 @@ const DIAS = [
 ];
 
 function currentDateLabel(): string {
-  const d = new Date();
+  // Use Bogota timezone to match client locale (avoids hydration mismatch)
+  const d = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
   return `${DIAS[d.getDay()]}, ${d.getDate()} de ${MESES[d.getMonth()]}`;
+}
+
+function serverGreeting(userName: string | null): string {
+  const d = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
+  const hour = d.getHours();
+  const saludo = (hour >= 5 && hour < 12) ? "Buenos días" : (hour >= 12 && hour < 19) ? "Buenas tardes" : "Buenas noches";
+  return userName ? `${saludo},\n${userName}` : saludo;
 }
 
 function buildLightHomePA(input: {
@@ -112,6 +120,9 @@ export default async function ManagerHomePage({
     userName,
     attention,
   });
+
+  // Server-computed greeting avoids hydration mismatch
+  homePA.greeting = serverGreeting(userName);
 
   // Build module cards from canonical Manager module defs (single source)
   const moduleCards = MANAGER_MODULE_DEFS

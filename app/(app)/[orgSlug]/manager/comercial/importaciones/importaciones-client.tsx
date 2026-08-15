@@ -37,7 +37,7 @@ export function ImportacionesSurfaceClient({
             fontSize:   T.sz.xs,
             color:      "#92400e",
           }}>
-            {importacionesPA.sinFechaCount} {importacionesPA.sinFechaCount === 1 ? "referencia" : "referencias"} sin fecha de actividad de importacion
+            {importacionesPA.sinFechaCount} {importacionesPA.sinFechaCount === 1 ? "referencia" : "referencias"} sin fecha de actividad de importación
           </div>
           <div style={{
             fontFamily: T.mono,
@@ -46,7 +46,7 @@ export function ImportacionesSurfaceClient({
             opacity:    0.7,
             marginTop:  2,
           }}>
-            SIN_FECHA_DE_ACTIVIDAD_IMPORTACION — no clasificadas como baja rotacion
+            Sin fecha de actividad de importación — no clasificadas como baja rotación
           </div>
         </div>
       )}

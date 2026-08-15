@@ -12,6 +12,7 @@
 
 import "server-only";
 import { prisma } from "@/lib/prisma";
+import { getSellerTerceroMapping } from "@/lib/comercial/frontline/seller-tercero-mapping";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -113,7 +114,17 @@ export async function buildSellerDirectory(
     }
   }
 
+  // Exclude sellers that lack a certified SAG commercial identity.
+  // The seller-tercero mapping (CustomerOrderRecord.sellerTerceroId) is
+  // the canonical authority: if a sellerName has no SAG tercero link,
+  // it has no certified commercial identity (e.g. CRM system accounts
+  // like "Administrator" that create quotes programmatically).
+  // This filter uses identity, not name comparison.
+  const terceroMapping = await getSellerTerceroMapping(organizationId);
+  const certifiedSlugs = new Set(terceroMapping.map(e => e.sellerSlug));
+
   const sellers: CommercialSeller[] = [...sellerAgg.entries()]
+    .filter(([, data]) => certifiedSlugs.has(data.slug))
     .sort((a, b) => b[1].count - a[1].count)
     .map(([, data]) => {
       const lastMs = data.lastAt ? new Date(data.lastAt).getTime() : 0;

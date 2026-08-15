@@ -30,13 +30,19 @@ import type {
   ManagerAlertasPA,
   ManagerTareasPA,
   ManagerInformesPA,
+  ManagerClienteDetailPA,
   ManagerTruthState,
   ProviderResult,
   SourceAvailability,
 } from "./manager-commercial-types";
 
+import type { Cliente360Data } from "@/lib/comercial/clientes/cliente-360-loader";
+import { UNVERIFIED_RECEIVABLE_LABEL } from "@/lib/comercial/frontline/receivable-truth-status";
+
 import type { ControlComercialSnapshot } from "@/lib/comercial/control/control-comercial-loader";
 import type { CommercialExecutivePA } from "@/lib/comercial/executive/commercial-executive-types";
+import type { ImportSupplyIntelligenceResult } from "@/lib/comercial/importaciones/import-intelligence-service";
+import { getLowRotationImportedProducts } from "@/lib/comercial/executive/commercial-executive-low-rotation";
 import type { StoreNetworkSnapshot } from "@/lib/comercial/tiendas/store-network-types";
 import { interpret as interpretReportQuery } from "@/lib/reports/interpreter";
 import { isReportFamilyAuthorized, filterReportRows } from "@/lib/reports/report-ownership";
@@ -62,17 +68,16 @@ function currentDateLabel(): string {
 
 function greeting(): string {
   const h = new Date().getHours();
-  if (h < 12) return "Buenos dias";
-  if (h < 18) return "Buenas tardes";
+  if (h >= 5 && h < 12) return "Buenos dias";
+  if (h >= 12 && h < 19) return "Buenas tardes";
   return "Buenas noches";
 }
 
 function fmtCOP(n: number): string {
-  if (n >= 1_000_000_000) {
-    const m = Math.round(n / 1_000_000);
-    return `$${m.toLocaleString("es-CO")} M`;
+  if (n >= 1_000_000) {
+    const m = n / 1_000_000;
+    return `$${m.toLocaleString("es-CO", { minimumFractionDigits: m >= 1000 ? 0 : 1, maximumFractionDigits: m >= 1000 ? 0 : 1 })} M`;
   }
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)} M`;
   if (n >= 1_000) return `$${Math.round(n / 1_000).toLocaleString("es-CO")} K`;
   return `$${n.toLocaleString("es-CO")}`;
 }
@@ -460,7 +465,9 @@ export function assembleGlobalAttention(input: {
     title: string;
     message?: string | null;
     entityType?: string;
+    entityKey?: string;
     entityLabel?: string;
+    payloadJson?: unknown;
     createdAt: Date;
   }>;
   orgSlug: string;
@@ -474,17 +481,89 @@ export function assembleGlobalAttention(input: {
       if (status === "resolved" || status === "acknowledged") return false;
       return isBusinessAlertEnabled(a.module, effectiveModules);
     })
-    .map(a => ({
-      id: a.id,
-      module: a.module ?? a.type ?? "general",
-      severity: mapSeverity(a.severity),
-      title: a.title,
-      detail: a.message ?? "",
-      entityType: a.entityType ?? null,
-      entityLabel: a.entityLabel ?? null,
-      href: `/${orgSlug}/manager/comercial`,
-      asOf: a.createdAt.toISOString(),
-    }));
+    .map(a => {
+      const mod = a.module ?? a.type ?? "general";
+      return {
+        id: a.id,
+        module: mod,
+        moduleLabel: resolveModuleLabel(mod),
+        severity: mapSeverity(a.severity),
+        title: a.title,
+        detail: a.message ?? "",
+        entityType: a.entityType ?? null,
+        entityLabel: a.entityLabel ?? null,
+        href: resolveAttentionHref(orgSlug, a),
+        asOf: a.createdAt.toISOString(),
+      };
+    });
+}
+
+/**
+ * Route attention items to exact Manager-owned entity destinations.
+ *
+ * Resolution order:
+ *   1. Exact entity detail if entityType + identity slug are available
+ *      AND a Manager detail route exists for that entity type.
+ *   2. null — CTA hidden. No generic collection fallback.
+ *
+ * Manager detail routes that exist:
+ *   - /manager/comercial/vendedores/{sellerSlug}
+ *   - /manager/comercial/tiendas/{storeId}
+ *   - /manager/comercial/clientes/{clienteId}
+ *
+ * FAIL CLOSED: unknown entityType or missing identity → null → no CTA.
+ */
+function resolveAttentionHref(
+  orgSlug: string,
+  alert: {
+    module?: string;
+    type?: string;
+    entityType?: string;
+    entityKey?: string;
+    payloadJson?: unknown;
+  },
+): string | null {
+  const base = `/${orgSlug}/manager/comercial`;
+  const payload = (alert.payloadJson ?? {}) as Record<string, unknown>;
+
+  // Seller alerts → exact seller detail
+  if (alert.entityType === "seller") {
+    const slug = (payload.sellerSlug as string) ?? alert.entityKey ?? null;
+    if (slug) return `${base}/vendedores/${slug}`;
+    return null;
+  }
+
+  // Store alerts → exact store detail (storeId = kaNlBodega)
+  if (alert.entityType === "store") {
+    const storeId = (payload.storeId as string) ?? alert.entityKey ?? null;
+    if (storeId) return `${base}/tiendas/${storeId}`;
+    return null;
+  }
+
+  // Customer alerts → exact client detail (clienteId = CustomerProfile.id)
+  // Fail closed: unknown/missing identity → null → no CTA.
+  if (alert.entityType === "customer") {
+    const clienteId = (payload.clienteId as string) ?? (payload.customerId as string) ?? alert.entityKey ?? null;
+    if (clienteId) return `${base}/clientes/${clienteId}`;
+    return null;
+  }
+
+  // Org-level alerts (product_line, organization, opportunity, quote) — no entity detail
+  return null;
+}
+
+/** Canonical module label for Manager attention display. Single source of truth. */
+const MODULE_DISPLAY_LABELS: Record<string, string> = {
+  sales:        "Comercial",
+  crm:          "Clientes",
+  source_aware: "Fuentes de datos",
+  finance:      "Finanzas",
+  collections:  "Cobranza",
+  cartera:      "Cartera",
+};
+
+function resolveModuleLabel(moduleKey: string): string {
+  return MODULE_DISPLAY_LABELS[moduleKey] ?? moduleKey;
 }
 
 function mapSeverity(s: string): "critical" | "warning" | "info" {
@@ -645,7 +724,10 @@ export function assembleVendedoresPA(input: {
   const { pa, sellers, orgSlug } = input;
   const base = `/${orgSlug}/manager/comercial/vendedores`;
 
-  const activeSellers = sellers.filter(s => s.activityStatus !== "inactivo");
+  // Fail-closed: only canonical known operational states pass.
+  // null, empty, unknown, "inactivo" are all excluded.
+  const MANAGER_RELEVANT_STATES = new Set<string>(["activo", "atencion"]);
+  const activeSellers = sellers.filter(s => MANAGER_RELEVANT_STATES.has(s.activityStatus));
 
   return {
     facts: pa.vendedores
@@ -672,6 +754,7 @@ export function assemblePedidosPA(pa: CommercialExecutivePA): ManagerPedidosPA {
   if (!pa.pedidos) {
     return {
       facts: [],
+      periodo: "",
       attentionStatus: "NONE",
       syncState: null,
       asOf: pa.asOf,
@@ -683,8 +766,8 @@ export function assemblePedidosPA(pa: CommercialExecutivePA): ManagerPedidosPA {
     facts: [
       { label: "Pedidos del mes", value: fmtNum(p.pedidosMes), truthState: "CERTIFIED" },
       { label: "Total pedidos", value: fmtNum(p.pedidosTotal), truthState: "CERTIFIED" },
-      { label: "Ticket promedio", value: fmtCOP(p.ticketPromedio), truthState: "CERTIFIED" },
     ],
+    periodo: "",
     attentionStatus: "NONE",
     syncState: null,
     asOf: p.asOf,
@@ -720,18 +803,23 @@ export function assembleTiendasPA(input: {
 
   return {
     facts: [
-      { label: "Tiendas activas", value: fmtNum(storeNodes.length), truthState: "CERTIFIED" },
+      { label: "Tiendas operativas", value: fmtNum(storeNodes.length), truthState: "CERTIFIED" },
       { label: "Referencias agotadas (red)", value: fmtNum(totalOutOfStock), truthState: "CERTIFIED" },
     ],
-    stores: storeInventories.map(si => ({
-      storeId: si.nodeId,
-      storeName: si.nodeName,
-      totalReferences: si.kpis.totalReferences,
-      referencesOutOfStock: si.kpis.referencesOutOfStock,
-      referencesCritical: si.kpis.referencesCritical,
-      sourceStatus: si.sourceStatus,
-      href: `${base}/${si.nodeId}`,
-    })),
+    stores: storeInventories.map(si => {
+      const hasCertifiedData = si.sourceStatus !== "UNAVAILABLE" && si.kpis.totalReferences > 0;
+      return {
+        storeId: si.nodeId,
+        storeName: si.nodeName,
+        totalReferences: si.kpis.totalReferences,
+        referencesOutOfStock: si.kpis.referencesOutOfStock,
+        referencesCritical: si.kpis.referencesCritical,
+        sourceStatus: si.sourceStatus,
+        inventoryTruthState: hasCertifiedData ? "CERTIFIED" as const : "UNAVAILABLE" as const,
+        sourceAsOf: hasCertifiedData ? networkSnapshot.computedAt : null,
+        href: `${base}/${si.nodeId}`,
+      };
+    }),
     attentionStatus: "NONE",
     asOf: networkSnapshot.computedAt,
   };
@@ -755,11 +843,45 @@ export function assembleStoreDetailPA(input: {
       { label: "Referencias totales", value: fmtNum(nodeInv.kpis.totalReferences), truthState: "CERTIFIED" },
       { label: "Unidades disponibles", value: fmtNum(nodeInv.kpis.totalAvailable), truthState: "CERTIFIED" },
       { label: "Referencias agotadas", value: fmtNum(nodeInv.kpis.referencesOutOfStock), truthState: "CERTIFIED" },
-      { label: "Referencias criticas", value: fmtNum(nodeInv.kpis.referencesCritical), truthState: "CERTIFIED" },
+      { label: "Referencias críticas", value: fmtNum(nodeInv.kpis.referencesCritical), truthState: "CERTIFIED" },
     ],
     sourceStatus: nodeInv.sourceStatus,
     attentionStatus: "NONE",
     asOf: networkSnapshot.computedAt,
+  };
+}
+
+// ── Cliente Detail PA ──────────────────────────────────────────────────────
+
+export function assembleManagerClienteDetailPA(data: Cliente360Data): ManagerClienteDetailPA {
+  const p = data.profile;
+  const r = data.receivables;
+
+  return {
+    clienteId: p.id,
+    clienteName: p.name,
+    nit: p.nit ?? null,
+    city: p.city ?? null,
+    department: p.department ?? null,
+    sellerName: data.seller.sellerName ?? null,
+    facts: [
+      { label: "NIT", value: p.nit ?? "\u2014", truthState: (p.nit ? "CERTIFIED" : "SOURCE_UNAVAILABLE") as ManagerTruthState },
+      { label: "Ciudad", value: p.city ?? "\u2014", truthState: (p.city ? "CERTIFIED" : "SOURCE_UNAVAILABLE") as ManagerTruthState },
+      { label: "Vendedor", value: data.seller.sellerName ?? "Sin vendedor asignado", truthState: (data.seller.sellerName ? "CERTIFIED" : "SOURCE_UNAVAILABLE") as ManagerTruthState },
+      // Cartera facts: only show certified SAG values. When UNVERIFIED (SAG
+      // unavailable or no sagTerceroId), show UNVERIFIED_RECEIVABLE_LABEL instead
+      // of Prisma saldo (which has paidAmount always 0 — over-reports everything).
+      ...(r.truthStatus === "CERTIFIED" && r.totalBalance !== null ? [
+        { label: "Saldo cartera", value: fmtCOP(r.totalBalance), truthState: "CERTIFIED" as ManagerTruthState },
+        { label: "Cartera vencida", value: fmtCOP(r.totalOverdue ?? 0), truthState: "CERTIFIED" as ManagerTruthState },
+        { label: "Facturas abiertas", value: fmtNum(r.openCount ?? 0), truthState: "CERTIFIED" as ManagerTruthState },
+      ] : [
+        { label: "Cartera", value: UNVERIFIED_RECEIVABLE_LABEL, truthState: "UNVERIFIED" as ManagerTruthState },
+      ]),
+    ],
+    // Overdue attention ONLY when certified — never show overdue alerts from Prisma data
+    attentionStatus: (r.truthStatus === "CERTIFIED" && r.totalOverdue !== null && r.totalOverdue > 0) ? "HAS_ITEMS" : "NONE",
+    asOf: data.loadedAt,
   };
 }
 
@@ -778,7 +900,7 @@ export function assembleInventarioPA(pa: CommercialExecutivePA): ManagerInventar
   return {
     facts: [
       { label: "Referencias totales", value: fmtNum(inv.refsTotales), truthState: "CERTIFIED" },
-      { label: "Referencias criticas", value: fmtNum(inv.refsCriticas), truthState: "CERTIFIED" },
+      { label: "Referencias críticas", value: fmtNum(inv.refsCriticas), truthState: "CERTIFIED" },
       { label: "Referencias agotadas", value: fmtNum(inv.refsAgotadas), truthState: "CERTIFIED" },
     ],
     attentionStatus: "NONE",
@@ -802,8 +924,9 @@ export function assembleSellerDetailPA(input: {
   } | null;
   sellerTerceroId: string | null;
   maletaSection: ManagerMaletaSection | null;
+  maletaQuerySucceeded: boolean;
 }): ManagerSellerDetailPA {
-  const { seller, metrics, sellerTerceroId, maletaSection } = input;
+  const { seller, metrics, sellerTerceroId, maletaSection, maletaQuerySucceeded } = input;
 
   return {
     sellerId: seller.sellerSlug,
@@ -819,6 +942,7 @@ export function assembleSellerDetailPA(input: {
     commissionTruthState: sellerTerceroId ? "PARTIAL" : "IDENTITY_UNRESOLVED",
     commissionLabel: sellerTerceroId ? null : null,
     maletaSection,
+    maletaQuerySucceeded,
     attentionStatus: "NONE",
     asOf: new Date().toISOString(),
   };
@@ -1098,6 +1222,223 @@ export function filterMixedReportResult(
   return filterReportRows(result, effectiveModules, ALERT_MODULE_OWNER);
 }
 
+// ── Narrow PA assemblers (M2A-P0) ────────────────────────────────────────
+// These bypass the monolithic CommercialExecutivePA and accept narrow loader
+// types directly, eliminating the loadControlComercial dependency.
+
+import type {
+  NarrowVentasData,
+  NarrowPedidosData,
+  NarrowClientesData,
+  NarrowInventarioData,
+  NarrowImportacionesData,
+} from "./manager-narrow-loaders";
+
+export function assembleVentasPAFromNarrow(data: NarrowVentasData): ManagerVentasPA {
+  if (data.ventasMes === 0 && data.ventasSemana === 0 && data.ventasHoy === 0) {
+    return { facts: [], periodo: "", attentionStatus: "NONE", asOf: data.loadedAt };
+  }
+  return {
+    facts: [
+      { label: "Ventas del mes", value: fmtCOP(data.ventasMes), truthState: "CERTIFIED" },
+      { label: "Ventas de la semana", value: fmtCOP(data.ventasSemana), truthState: "CERTIFIED" },
+      { label: "Ventas hoy", value: fmtCOP(data.ventasHoy), truthState: "CERTIFIED" },
+    ],
+    periodo: data.periodoVentas,
+    attentionStatus: "NONE",
+    asOf: data.loadedAt,
+  };
+}
+
+export function assembleClientesPAFromNarrow(data: NarrowClientesData): ManagerClientesPA {
+  return {
+    facts: [
+      { label: "Clientes activos", value: fmtNum(data.clientesActivos), truthState: "CERTIFIED" },
+      { label: "Clientes nuevos este mes", value: fmtNum(data.clientesNuevos), truthState: "CERTIFIED" },
+    ],
+    highlights: data.customerHighlights.slice(0, 5).map(h => ({
+      id: h.id,
+      name: h.name,
+      reason: h.reason,
+      label: h.label,
+      value: typeof h.value === "number" ? fmtCOP(h.value) : String(h.value),
+    })),
+    attentionStatus: "NONE",
+    asOf: data.loadedAt,
+  };
+}
+
+export function assembleVendedoresPAFromNarrow(input: {
+  sellers: Array<{
+    sellerName: string;
+    sellerSlug: string;
+    activityStatus: "activo" | "atencion" | "inactivo";
+    crmQuoteCount: number;
+    customerCount: number;
+    totalCrmAmount: number;
+    daysSinceLastActivity: number | null;
+  }>;
+  orgSlug: string;
+}): ManagerVendedoresPA {
+  const { sellers, orgSlug } = input;
+  const base = `/${orgSlug}/manager/comercial/vendedores`;
+
+  // Fail-closed: only canonical known operational states pass.
+  // null, empty, unknown, "inactivo" are all excluded.
+  // CRITICAL: KPI count and card list share this SAME filtered universe.
+  const MANAGER_RELEVANT_STATES = new Set<string>(["activo", "atencion"]);
+  const activeSellers = sellers.filter(s => MANAGER_RELEVANT_STATES.has(s.activityStatus));
+
+  return {
+    facts: [
+      { label: "Vendedores operativos", value: fmtNum(activeSellers.length), truthState: "CERTIFIED" as ManagerTruthState },
+    ],
+    sellers: activeSellers.map(s => ({
+      sellerId: s.sellerSlug,
+      sellerName: s.sellerName,
+      activityStatus: s.activityStatus,
+      crmQuoteCount: s.crmQuoteCount,
+      customerCount: s.customerCount,
+      totalCrmAmount: s.totalCrmAmount,
+      daysSinceLastActivity: s.daysSinceLastActivity,
+      href: `${base}/${s.sellerSlug}`,
+    })),
+    attentionStatus: "NONE",
+    asOf: new Date().toISOString(),
+  };
+}
+
+export function assemblePedidosPAFromNarrow(data: NarrowPedidosData): ManagerPedidosPA {
+  if (data.pedidosMes === 0 && data.pedidosTotal === 0) {
+    return { facts: [], periodo: "", attentionStatus: "NONE", syncState: null, asOf: data.loadedAt };
+  }
+  // Source: CustomerOrderRecord (canonical SAG orders, CANCELADO excluded).
+  // CRM quotes shown as secondary signal only, never mixed into order totals.
+  const facts: ManagerPedidosPA["facts"] = [
+    { label: `Pedidos del periodo`, value: fmtNum(data.pedidosMes), truthState: "CERTIFIED" },
+    { label: "Total pedidos", value: fmtNum(data.pedidosTotal), truthState: "CERTIFIED" },
+    { label: "Monto del periodo", value: fmtCOP(data.montoMes), truthState: "CERTIFIED" },
+  ];
+  if (data.cotizacionesCrm > 0) {
+    facts.push({ label: "Cotizaciones CRM", value: fmtNum(data.cotizacionesCrm), truthState: "CERTIFIED" });
+  }
+  return {
+    facts,
+    periodo: data.periodoPedidos,
+    attentionStatus: "NONE",
+    syncState: "SYNCED",
+    asOf: data.loadedAt,
+  };
+}
+
+export function assembleInventarioPAFromNarrow(data: NarrowInventarioData): ManagerInventarioPA {
+  if (data.refsTotales === 0) {
+    return { facts: [], attentionStatus: "NONE", asOf: data.loadedAt };
+  }
+  return {
+    facts: [
+      { label: "Referencias totales", value: fmtNum(data.refsTotales), truthState: "CERTIFIED" },
+      { label: "Referencias críticas", value: fmtNum(data.refsCriticas), truthState: "CERTIFIED" },
+      { label: "Referencias agotadas", value: fmtNum(data.refsAgotadas), truthState: "CERTIFIED" },
+    ],
+    attentionStatus: "NONE",
+    asOf: data.loadedAt,
+  };
+}
+
+export function assembleImportacionesPAFromNarrow(
+  importIntelligence: ImportSupplyIntelligenceResult | null,
+): ManagerImportacionesPA {
+  if (!importIntelligence || importIntelligence.items.length === 0) {
+    return {
+      facts: [],
+      lowRotationCount: 0,
+      recompraCount: 0,
+      sinFechaCount: 0,
+      attentionStatus: "NONE",
+      asOf: new Date().toISOString(),
+    };
+  }
+
+  const LOW_ROTATION_MONTHS = 8;
+  const lowRotationItems = getLowRotationImportedProducts(importIntelligence.items, {
+    asOf: new Date(),
+    monthsWithoutActivity: LOW_ROTATION_MONTHS,
+  });
+
+  const lowRotationOnly = lowRotationItems.filter(i => i.rotationStatus === "LOW_ROTATION");
+  const sinFechaCount = lowRotationItems.filter(
+    i => i.rotationStatus === "SIN_FECHA_DE_ACTIVIDAD_IMPORTACION",
+  ).length;
+  const recompraCount = importIntelligence.kpis.comprarAhora;
+
+  return {
+    facts: [
+      { label: "Referencias importadas", value: fmtNum(importIntelligence.items.length), truthState: "CERTIFIED" },
+      { label: "Baja rotación (>8 meses)", value: fmtNum(lowRotationOnly.length), truthState: "CERTIFIED" },
+      { label: "Recompra inmediata", value: fmtNum(recompraCount), truthState: "CERTIFIED" },
+    ],
+    lowRotationCount: lowRotationOnly.length,
+    recompraCount,
+    sinFechaCount,
+    attentionStatus: recompraCount > 0 ? "HAS_ITEMS" : "NONE",
+    asOf: new Date().toISOString(),
+  };
+}
+
+export function assembleImportacionesPAFromNarrowLoader(data: NarrowImportacionesData): ManagerImportacionesPA {
+  const asOf = data.sourceAsOf ?? data.computedAt;
+
+  // FAIL-CLOSED: when no result exists, show no KPIs — never misleading zeros
+  if (data.truthState === "SOURCE_UNAVAILABLE") {
+    return {
+      facts: [
+        { label: "Importaciones", value: "—", truthState: "SOURCE_UNAVAILABLE" },
+      ],
+      lowRotationCount: 0,
+      recompraCount: 0,
+      sinFechaCount: 0,
+      attentionStatus: "NONE",
+      asOf,
+    };
+  }
+
+  // STALE: show last certified KPIs with PARTIAL truthState (data is real but not fresh)
+  const factTruthState = data.truthState === "STALE" ? "PARTIAL" as const : "CERTIFIED" as const;
+
+  if (data.totalRefs === 0) {
+    return { facts: [], lowRotationCount: 0, recompraCount: 0, sinFechaCount: 0, attentionStatus: "NONE", asOf };
+  }
+  return {
+    facts: [
+      { label: "Referencias importadas", value: fmtNum(data.totalRefs), truthState: factTruthState },
+      { label: "Baja rotación (>8 meses)", value: fmtNum(data.lowRotationCount), truthState: factTruthState },
+      { label: "Recompra inmediata", value: fmtNum(data.recompraInmediataCount), truthState: factTruthState },
+    ],
+    lowRotationCount: data.lowRotationCount,
+    recompraCount: data.recompraInmediataCount,
+    sinFechaCount: data.sinFechaCount,
+    attentionStatus: data.recompraInmediataCount > 0 ? "HAS_ITEMS" : "NONE",
+    asOf,
+  };
+}
+
+export function assembleCommercialHubPALightweight(orgSlug: string): ManagerCommercialHubPA {
+  const base = `/${orgSlug}/manager/comercial`;
+
+  const surfaces = [
+    { id: "ventas", label: "Ventas", icon: "Vt", href: `${base}/ventas`, factCount: 0, attentionCount: 0 },
+    { id: "clientes", label: "Clientes", icon: "Cl", href: `${base}/clientes`, factCount: 0, attentionCount: 0 },
+    { id: "vendedores", label: "Vendedores", icon: "Vd", href: `${base}/vendedores`, factCount: 0, attentionCount: 0 },
+    { id: "pedidos", label: "Pedidos", icon: "Pd", href: `${base}/pedidos`, factCount: 0, attentionCount: 0 },
+    { id: "tiendas", label: "Tiendas", icon: "Td", href: `${base}/tiendas`, factCount: 0, attentionCount: 0 },
+    { id: "inventario", label: "Inventario", icon: "In", href: `${base}/inventario`, factCount: 0, attentionCount: 0 },
+    { id: "importaciones", label: "Importaciones", icon: "Im", href: `${base}/importaciones`, factCount: 0, attentionCount: 0 },
+  ];
+
+  return { surfaces, asOf: new Date().toISOString() };
+}
+
 // ── Importaciones PA ──────────────────────────────────────────────────────
 
 export function assembleImportacionesPA(pa: CommercialExecutivePA): ManagerImportacionesPA {
@@ -1110,7 +1451,7 @@ export function assembleImportacionesPA(pa: CommercialExecutivePA): ManagerImpor
   return {
     facts: [
       { label: "Referencias importadas", value: fmtNum(imp.totalRefs), truthState: "CERTIFIED" },
-      { label: "Baja rotacion (>8 meses)", value: fmtNum(imp.refsEnBajaRotacion), truthState: "CERTIFIED" },
+      { label: "Baja rotación (>8 meses)", value: fmtNum(imp.refsEnBajaRotacion), truthState: "CERTIFIED" },
       { label: "Recompra inmediata", value: fmtNum(imp.refsAtencionRecompra), truthState: "CERTIFIED" },
     ],
     lowRotationCount: imp.refsEnBajaRotacion,

@@ -1,18 +1,15 @@
 /**
  * /[orgSlug]/manager/comercial/importaciones — Importaciones executive surface.
  *
- * Sprint: AGENTIK-MANAGER-APP-CANONICAL-INTEGRATION-01
+ * Sprint: AGENTIK-MANAGER-M2A-P0
  *
  * Reuses canonical import intelligence and decision engine.
- * Low rotation uses the locked calendar-month semantics.
- * SIN_FECHA_DE_ACTIVIDAD_IMPORTACION is a separate truth state.
+ * No loadControlComercial — importaciones uses ZERO snapshot fields.
  */
 
 import { requireOrgAccess } from "@/lib/auth/org-access";
-import { loadControlComercial } from "@/lib/comercial/control/control-comercial-loader";
-import { buildImportSupplyIntelligence } from "@/lib/comercial/importaciones/import-intelligence-service";
-import { assembleCommercialExecutivePA } from "@/lib/comercial/executive/commercial-executive-presentation-assembler";
-import { assembleImportacionesPA } from "@/lib/comercial/manager/manager-commercial-adapter";
+import { loadNarrowImportaciones } from "@/lib/comercial/manager/manager-narrow-loaders";
+import { assembleImportacionesPAFromNarrowLoader } from "@/lib/comercial/manager/manager-commercial-adapter";
 import { ImportacionesSurfaceClient } from "./importaciones-client";
 
 export default async function ManagerImportacionesPage({
@@ -22,15 +19,9 @@ export default async function ManagerImportacionesPage({
 }) {
   const { orgSlug } = await params;
   const { organization } = await requireOrgAccess(orgSlug);
-  const orgId = organization.id;
 
-  const [snapshot, importIntelligence] = await Promise.all([
-    loadControlComercial(orgId, orgSlug),
-    buildImportSupplyIntelligence(orgId).catch(() => null),
-  ]);
-
-  const pa = assembleCommercialExecutivePA({ snapshot, importIntelligence, orgSlug });
-  const importacionesPA = assembleImportacionesPA(pa);
+  const narrowData = await loadNarrowImportaciones(organization.id);
+  const importacionesPA = assembleImportacionesPAFromNarrowLoader(narrowData);
 
   return <ImportacionesSurfaceClient importacionesPA={importacionesPA} />;
 }

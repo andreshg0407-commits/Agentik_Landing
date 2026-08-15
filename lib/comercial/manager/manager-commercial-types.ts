@@ -15,6 +15,7 @@
 export type ManagerTruthState =
   | "CERTIFIED"
   | "PARTIAL"
+  | "UNVERIFIED"
   | "IDENTITY_UNRESOLVED"
   | "SOURCE_UNAVAILABLE";
 
@@ -41,6 +42,7 @@ export interface ManagerExecutiveStatePA {
 export interface ManagerAttentionItem {
   id: string;
   module: string;
+  moduleLabel: string;
   severity: "critical" | "warning" | "info";
   title: string;
   detail: string;
@@ -157,6 +159,9 @@ export interface ManagerSellerDetailPA {
   commissionTruthState: ManagerTruthState;
   commissionLabel: string | null;
   maletaSection: ManagerMaletaSection | null;
+  /** True when provider returned successfully — distinguishes "no active bag"
+   *  from "provider failure" so the UI can show a factual empty state. */
+  maletaQuerySucceeded: boolean;
   attentionStatus: ManagerAttentionStatus;
   asOf: string;
 }
@@ -185,6 +190,7 @@ export interface ManagerPedidosFact {
 
 export interface ManagerPedidosPA {
   facts: ManagerPedidosFact[];
+  periodo: string;
   attentionStatus: ManagerAttentionStatus;
   syncState: "SYNCED" | "SYNC_PENDING" | "SYNC_FAILED" | null;
   asOf: string;
@@ -199,6 +205,10 @@ export interface ManagerStoreCard {
   referencesOutOfStock: number;
   referencesCritical: number;
   sourceStatus: string;
+  /** CERTIFIED = data loaded from SAG inventory; UNAVAILABLE = no inventory source responded */
+  inventoryTruthState: "CERTIFIED" | "UNAVAILABLE";
+  /** ISO timestamp of last successful inventory sync, or null if never synced */
+  sourceAsOf: string | null;
   href: string;
 }
 
@@ -222,6 +232,20 @@ export interface ManagerStoreDetailPA {
   storeName: string;
   facts: ManagerTiendasFact[];
   sourceStatus: string;
+  attentionStatus: ManagerAttentionStatus;
+  asOf: string;
+}
+
+// ── Cliente Detail ────────────────────────────────────────────────────────
+
+export interface ManagerClienteDetailPA {
+  clienteId: string;
+  clienteName: string;
+  nit: string | null;
+  city: string | null;
+  department: string | null;
+  sellerName: string | null;
+  facts: Array<{ label: string; value: string; truthState: ManagerTruthState }>;
   attentionStatus: ManagerAttentionStatus;
   asOf: string;
 }

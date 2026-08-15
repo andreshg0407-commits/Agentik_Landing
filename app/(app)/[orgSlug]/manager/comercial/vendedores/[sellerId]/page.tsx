@@ -62,8 +62,12 @@ export default async function ManagerSellerDetailPage({
 
   // Maletas: use provider result. On provider error, maletaSection = null
   // (surface hidden) but failure is logged, not disguised as "no bags".
+  // Only show bags with certified active status — fail closed.
+  const activeBags = bagsResult.status === "OK"
+    ? bagsResult.items.filter(b => b.status === "activa")
+    : [];
   const maletaSection = bagsResult.status === "OK"
-    ? assembleManagerMaletaSection(bagsResult.items)
+    ? assembleManagerMaletaSection(activeBags)
     : null;
 
   const detailPA = assembleSellerDetailPA({
@@ -71,6 +75,7 @@ export default async function ManagerSellerDetailPage({
     metrics,
     sellerTerceroId,
     maletaSection,
+    maletaQuerySucceeded: bagsResult.status === "OK",
   });
 
   return <SellerDetailClient detailPA={detailPA} />;

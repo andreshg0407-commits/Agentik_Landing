@@ -36,6 +36,8 @@ export interface SurfaceListItem {
 
 export interface ManagerSurfaceProps {
   title: string;
+  /** Visible period label. When fallback is active, shows "Ultimo periodo disponible: ..." */
+  subtitle?: string;
   facts: SurfaceFact[];
   attentionStatus: ManagerAttentionStatus;
   listTitle?: string;
@@ -49,6 +51,7 @@ export interface ManagerSurfaceProps {
 
 export function ManagerSurfaceClient({
   title,
+  subtitle,
   facts,
   attentionStatus,
   listTitle,
@@ -64,6 +67,33 @@ export function ManagerSurfaceClient({
       margin:     "0 auto",
       fontFamily: T.sans,
     }}>
+      {/* ── Title ────────────────────────────────────────────────────── */}
+      {title && (
+        <div style={{
+          fontFamily:    T.mono,
+          fontSize:      T.sz.lg,
+          fontWeight:    T.wt.bold,
+          color:         C.ink,
+          marginBottom:  S[3],
+          letterSpacing: "-0.3px",
+        }}>
+          {title}
+        </div>
+      )}
+
+      {/* ── Period subtitle ─────────────────────────────────────────── */}
+      {subtitle && (
+        <div style={{
+          fontFamily:    T.mono,
+          fontSize:      T.sz["2xs"],
+          color:         C.inkLight,
+          marginBottom:  S[3],
+          fontStyle:     "italic",
+        }}>
+          {subtitle}
+        </div>
+      )}
+
       {/* ── Estado ──────────────────────────────────────────────────── */}
       {facts.length > 0 && (
         <div style={{ marginBottom: S[4] }}>
@@ -170,15 +200,18 @@ export function ManagerSurfaceClient({
       )}
 
       {/* ── Freshness ──────────────────────────────────────────────── */}
-      <div style={{
-        fontFamily:    T.mono,
-        fontSize:      T.sz["2xs"],
-        color:         C.inkGhost,
-        letterSpacing: "0.04em",
-        textAlign:     "center" as const,
-        marginTop:     S[3],
-      }}>
-        Datos al {new Date(freshness).toLocaleString("es-CO")}
+      <div
+        suppressHydrationWarning
+        style={{
+          fontFamily:    T.mono,
+          fontSize:      T.sz["2xs"],
+          color:         C.inkGhost,
+          letterSpacing: "0.04em",
+          textAlign:     "center" as const,
+          marginTop:     S[3],
+        }}
+      >
+        {`Datos al ${new Date(freshness).toLocaleString("es-CO", { timeZone: "America/Bogota" })}`}
       </div>
     </div>
   );

@@ -81,7 +81,7 @@ export function SellerDetailClient({ detailPA }: { detailPA: ManagerSellerDetail
       </div>
 
       {/* Maleta section (nested, not standalone) */}
-      {detailPA.maletaSection && (
+      {detailPA.maletaSection ? (
         <div style={{
           padding:      `${S[3]}px ${S[3]}px`,
           background:   "#fff",
@@ -98,7 +98,7 @@ export function SellerDetailClient({ detailPA }: { detailPA: ManagerSellerDetail
             letterSpacing: "0.08em",
             marginBottom:  S[2],
           }}>
-            Maleta — portafolio de muestras
+            Maleta activa
           </div>
           <div style={{ display: "flex", gap: S[4] }}>
             <div>
@@ -115,7 +115,30 @@ export function SellerDetailClient({ detailPA }: { detailPA: ManagerSellerDetail
             </div>
           </div>
         </div>
-      )}
+      ) : detailPA.maletaQuerySucceeded ? (
+        <div style={{
+          padding:      `${S[3]}px ${S[3]}px`,
+          background:   "#fff",
+          border:       `1px solid ${C.line}`,
+          borderRadius: R.md,
+          marginBottom: S[4],
+        }}>
+          <div style={{
+            fontFamily:    T.mono,
+            fontSize:      T.sz["2xs"],
+            fontWeight:    T.wt.semibold,
+            color:         C.inkFaint,
+            textTransform: "uppercase" as const,
+            letterSpacing: "0.08em",
+            marginBottom:  S[2],
+          }}>
+            Maleta
+          </div>
+          <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight }}>
+            No hay una maleta activa certificada
+          </div>
+        </div>
+      ) : null}
     </ManagerSurfaceClient>
   );
 }

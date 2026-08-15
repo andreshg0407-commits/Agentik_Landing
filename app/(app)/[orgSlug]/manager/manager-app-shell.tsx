@@ -21,6 +21,7 @@ import { signOut } from "next-auth/react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import type { ManagerCopilotContext } from "@/lib/comercial/manager/manager-commercial-types";
+import { CopilotSphere } from "@/components/shell/copilot-sphere";
 
 /**
  * AgentikMark — brand mark with CSS fallback so a missing image never
@@ -343,8 +344,10 @@ export function ManagerAppShell({
         {children}
       </main>
 
-      {/* ── Agentik Sphere (persistent copilot orb) ───────────────────── */}
-      <AgentikSphere context={copilotContext} />
+      {/* ── Copilot Sphere (shared glass orb — matches Seller App) ───── */}
+      <div style={{ position: "fixed", bottom: 24, right: 20, zIndex: 50 }}>
+        <CopilotSphere size={58} disabled />
+      </div>
     </div>
   );
 }
@@ -581,58 +584,4 @@ function DrawerItem({ children, icon, onClick }: { children: ReactNode; icon?: R
 
 function DrawerDivider() {
   return <div style={{ height: 1, background: F.line, margin: "6px 20px" }} />;
-}
-
-// ── Agentik Sphere ──────────────────────────────────────────────────────────
-// COPILOT_STATUS = DELIBERATELY_DEFERRED
-// Orb signals Agentik presence with real brand mark. Not wired to Copilot yet.
-
-function AgentikSphere({ context }: { context: ManagerCopilotContext }) {
-  void context;
-
-  return (
-    <div
-      aria-label="Agentik Copilot"
-      style={{
-        position:       "fixed",
-        bottom:         24,
-        right:          20,
-        width:          56,
-        height:         56,
-        borderRadius:   "50%",
-        background:     "linear-gradient(145deg, rgba(0,74,173,0.92) 0%, rgba(30,99,216,0.88) 50%, rgba(79,143,232,0.82) 100%)",
-        boxShadow:      "0 4px 20px rgba(0,74,173,0.25), 0 2px 8px rgba(0,0,0,0.08), inset 0 1px 1px rgba(255,255,255,0.2)",
-        display:        "grid",
-        placeItems:     "center",
-        zIndex:         50,
-        cursor:         "pointer",
-        touchAction:    "manipulation",
-        WebkitTapHighlightColor: "transparent",
-      }}
-    >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src="/agentik-mark.png"
-        alt="Agentik"
-        width={30}
-        height={30}
-        style={{
-          borderRadius: 6,
-          filter: "brightness(1.15) drop-shadow(0 1px 2px rgba(0,0,0,0.1))",
-          position: "relative" as const,
-          zIndex: 1,
-        }}
-        onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-      />
-      <span style={{
-        position: "absolute" as const,
-        fontSize: 18,
-        fontWeight: 800,
-        color: "#fff",
-        lineHeight: 1,
-      }}>
-        A
-      </span>
-    </div>
-  );
 }

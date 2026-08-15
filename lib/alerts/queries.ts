@@ -12,8 +12,10 @@ export interface BusinessAlertRow {
   title:       string;
   message:     string | null;
   entityType:  string;
+  entityKey:   string;
   entityLabel: string;
   period:      string;
+  payloadJson: unknown;
   createdAt:   Date;
   updatedAt:   Date;
 }
@@ -36,8 +38,9 @@ export async function listBusinessAlerts(
       orderBy: [{ severity: "desc" }, { createdAt: "desc" }],
       select: {
         id: true, module: true, type: true, severity: true, status: true,
-        title: true, message: true, entityType: true, entityLabel: true,
-        period: true, createdAt: true, updatedAt: true,
+        title: true, message: true, entityType: true, entityKey: true,
+        entityLabel: true, period: true, payloadJson: true,
+        createdAt: true, updatedAt: true,
       },
     });
   } catch {

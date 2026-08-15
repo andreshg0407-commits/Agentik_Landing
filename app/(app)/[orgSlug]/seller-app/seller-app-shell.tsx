@@ -20,7 +20,8 @@
 import { useState, useCallback, useMemo, useRef } from "react";
 import { C, T, S, R, E } from "@/lib/ui/tokens";
 import type { SellerTab, SellerAppShellProps } from "./views/seller-app-shared";
-import { SellerIcon, CopilotSphere } from "./views/seller-ui-kit";
+import { SellerIcon } from "./views/seller-ui-kit";
+import { CopilotSphere } from "@/components/shell/copilot-sphere";
 import { InicioView } from "./views/inicio-view";
 import { ClientesView, ClienteDetailView } from "./views/clientes-view";
 import { NuevoPedidoView } from "./views/nuevo-pedido-view";

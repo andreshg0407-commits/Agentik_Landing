@@ -340,7 +340,11 @@ describe("20 — Unavailable source names in reason", () => {
 describe("21 — STABLE requires all sources available AND fresh", () => {
   test("STABLE reason confirms freshness", () => {
     const src = readFile(ADAPTER);
-    expect(src).toContain("frescas");
+    // STABLE is only reached when certifiedCount === totalSources AND isFresh.
+    // The stale path produces "datos no frescos (>24h)" reason.
+    // STABLE reason is certifiedCount fuentes activas.
+    expect(src).toContain("fuentes activas");
+    expect(src).toContain("datos no frescos");
   });
 
   test("availability uses SourceAvailability status, not numeric values", () => {
@@ -484,9 +488,12 @@ describe("27 — All three adapters accept ProviderResult", () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe("28 — Copilot: DELIBERATELY_DEFERRED", () => {
-  test("shell contains DELIBERATELY_DEFERRED status", () => {
+  test("shell uses CopilotSphere with disabled flag (DELIBERATELY_DEFERRED equivalent)", () => {
     const src = readFile(SHELL);
-    expect(src).toContain("DELIBERATELY_DEFERRED");
+    // Fable redesign: ManagerCopilotOrb replaced by shared CopilotSphere.
+    // Shell renders <CopilotSphere size={58} disabled /> — disabled = DELIBERATELY_DEFERRED.
+    expect(src).toContain("CopilotSphere");
+    expect(src).toContain("disabled");
   });
 
   test("types export COPILOT_STATUS constant", () => {
@@ -496,17 +503,22 @@ describe("28 — Copilot: DELIBERATELY_DEFERRED", () => {
 });
 
 describe("29 — Copilot: fully non-interactive", () => {
-  test("orb has pointerEvents none", () => {
+  test("orb wrapper has no onClick", () => {
     const src = readFile(SHELL);
-    const orbStart = src.indexOf("function ManagerCopilotOrb");
-    const orbBody = src.substring(orbStart);
-    expect(orbBody).toContain("pointerEvents");
-    expect(orbBody).toContain('"none"');
+    // Fable redesign: orb is CopilotSphere with disabled=true inside a plain div wrapper.
+    // Extract the narrow orb snippet: from "Copilot Sphere" comment to closing </div>.
+    const orbWrapperStart = src.indexOf("Copilot Sphere");
+    const orbWrapperEnd = src.indexOf("</div>", orbWrapperStart);
+    const orbWrapperBody = src.substring(orbWrapperStart, orbWrapperEnd + 6);
+    expect(orbWrapperBody).not.toContain("onClick");
+    expect(orbWrapperBody).not.toContain('role="button"');
+    expect(orbWrapperBody).not.toContain("tabIndex");
   });
 
   test("orb has no onClick, no role=button, no tabIndex", () => {
-    const src = readFile(SHELL);
-    const orbStart = src.indexOf("function ManagerCopilotOrb");
+    // CopilotSphere component is the authoritative orb — check it directly.
+    const src = readFile("components/shell/copilot-sphere.tsx");
+    const orbStart = src.indexOf("export function CopilotSphere");
     const orbBody = src.substring(orbStart);
     expect(orbBody).not.toContain("onClick");
     expect(orbBody).not.toContain('role="button"');
@@ -516,8 +528,9 @@ describe("29 — Copilot: fully non-interactive", () => {
 
 describe("30 — Copilot: no mock experience", () => {
   test("orb has no useState, no chat, no suggestions", () => {
-    const src = readFile(SHELL);
-    const orbStart = src.indexOf("function ManagerCopilotOrb");
+    // CopilotSphere is the authoritative orb implementation.
+    const src = readFile("components/shell/copilot-sphere.tsx");
+    const orbStart = src.indexOf("export function CopilotSphere");
     const orbBody = src.substring(orbStart);
     expect(orbBody).not.toContain("useState");
     expect(orbBody).not.toContain("chat");
@@ -526,8 +539,9 @@ describe("30 — Copilot: no mock experience", () => {
   });
 
   test("orb title indicates deferred state", () => {
-    const src = readFile(SHELL);
-    expect(src).toContain("proximamente");
+    // CopilotSphere uses "próximamente" in aria-label and title when disabled.
+    const src = readFile("components/shell/copilot-sphere.tsx");
+    expect(src).toContain("próximamente");
   });
 });
 

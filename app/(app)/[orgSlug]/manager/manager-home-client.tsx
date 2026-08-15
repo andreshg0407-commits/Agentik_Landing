@@ -10,7 +10,7 @@
  */
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ManagerHomePA, ManagerAttentionItem } from "@/lib/comercial/manager/manager-commercial-types";
 
@@ -83,7 +83,7 @@ function getLocalGreeting(userName: string | null): string {
     hour = parseInt(timeStr, 10);
   }
 
-  const saludo = hour < 12 ? "Buenos días" : hour < 19 ? "Buenas tardes" : "Buenas noches";
+  const saludo = (hour >= 5 && hour < 12) ? "Buenos días" : (hour >= 12 && hour < 19) ? "Buenas tardes" : "Buenas noches";
   return userName ? `${saludo},\n${userName}` : saludo;
 }
 
@@ -101,10 +101,9 @@ export function ManagerHomeClient({
   const router = useRouter();
   const [expandedMod, setExpandedMod] = useState<string | null>(null);
 
-  const clientGreeting = useMemo(
-    () => getLocalGreeting(homePA.userName),
-    [homePA.userName],
-  );
+  // Use server-computed greeting to avoid hydration mismatch (#425/#422).
+  // Falls back to client greeting only if server didn't provide one.
+  const clientGreeting = homePA.greeting || getLocalGreeting(homePA.userName);
 
   const attentionCount = homePA.attention.length;
 
@@ -136,94 +135,6 @@ export function ManagerHomeClient({
       }}>
         {clientGreeting}
       </h1>
-
-      {/* ── Executive Pulse Card ─────────────────────────────────────────── */}
-      <div style={{
-        marginTop:    20,
-        background:   F.bg,
-        border:       `1px solid ${F.line}`,
-        borderRadius: F.rXl,
-        boxShadow:    F.sh,
-        overflow:     "hidden",
-      }}>
-        <div style={{
-          padding:      "18px 18px 16px",
-          background:   "linear-gradient(150deg,#F2F6FE,#FFFFFF 70%)",
-          borderBottom: `1px solid ${F.line}`,
-        }}>
-          <div style={{
-            fontSize:      11.5,
-            fontWeight:    750,
-            letterSpacing: "0.11em",
-            textTransform: "uppercase" as const,
-            color:         F.ink400,
-          }}>
-            Tu empresa hoy
-          </div>
-          {attentionCount > 0 ? (
-            <div style={{
-              marginTop:  9,
-              display:    "flex",
-              alignItems: "center",
-              gap:        10,
-            }}>
-              <div style={{
-                width:          34,
-                height:         34,
-                borderRadius:   11,
-                background:     F.warnBg,
-                color:          F.warn,
-                display:        "grid",
-                placeItems:     "center",
-                flexShrink:     0,
-              }}>
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-              </div>
-              <div style={{
-                fontSize:      17,
-                fontWeight:    750,
-                letterSpacing: "-0.02em",
-                lineHeight:    1.25,
-              }}>
-                {attentionCount} {attentionCount === 1 ? "tema requiere" : "temas requieren"} atención
-              </div>
-            </div>
-          ) : homePA.executiveState.state === "DATA_INCOMPLETE" ? (
-            <div style={{
-              marginTop:     9,
-              fontSize:      14,
-              fontWeight:    600,
-              color:         F.ink500,
-              lineHeight:    1.35,
-            }}>
-              {homePA.executiveState.reason}
-            </div>
-          ) : (
-            <div style={{
-              marginTop:     9,
-              fontSize:      14,
-              fontWeight:    600,
-              color:         F.ok,
-              lineHeight:    1.35,
-            }}>
-              Sin asuntos pendientes
-            </div>
-          )}
-        </div>
-        <div style={{
-          padding:     "11px 18px",
-          borderTop:   `1px solid ${F.line}`,
-          fontSize:    11.5,
-          color:       F.ink400,
-          display:     "flex",
-          alignItems:  "center",
-          gap:         6,
-          fontWeight:  500,
-        }}>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-          Actualizado {new Date(homePA.asOf).toLocaleTimeString("es-CO", { hour: "numeric", minute: "2-digit", hour12: true })}
-        </div>
-      </div>
 
       {/* ── Attention Section (up to 3 cards, overflow link) ──────────── */}
       {attentionCount > 0 && (
@@ -273,19 +184,6 @@ export function ManagerHomeClient({
                 onNavigate={(href) => router.push(href)}
               />
             ))}
-          </div>
-          <div style={{
-            marginTop:    12,
-            fontSize:     11,
-            lineHeight:   1.5,
-            color:        F.ink400,
-            background:   F.bgSoft,
-            border:       `1px dashed ${F.ink200}`,
-            borderRadius: 12,
-            padding:      "10px 12px",
-          }}>
-            Los próximos módulos aparecerán aquí como nuevas carpetas cuando su entitlement
-            esté activo y tengan hechos manager-grade.
           </div>
         </>
       )}
@@ -390,7 +288,7 @@ function AttentionCard({ item, onTap }: { item: ManagerAttentionItem; onTap: () 
           color:         F.ink400,
           letterSpacing: "0.02em",
         }}>
-          {item.module === "sales" ? "Comercial" : item.module}
+          {item.moduleLabel}
         </div>
         <div style={{
           fontSize:      14.5,

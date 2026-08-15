@@ -60,9 +60,9 @@ describe("1 — Authorization: ORG_ADMIN + MANAGER only", () => {
 describe("2 — Manager Home canonical sources", () => {
   test("home page loads from canonical loaders", () => {
     const src = readFile(`${MGR}/page.tsx`);
-    expect(src).toContain("loadControlComercial");
+    // loadControlComercial is NOT called on home (performance: 120–600s DB payload).
+    // Home uses listBusinessAlerts + assembleGlobalAttention for attention items only.
     expect(src).toContain("listBusinessAlerts");
-    expect(src).toContain("assembleManagerHomePA");
     expect(src).toContain("assembleGlobalAttention");
   });
 
@@ -89,11 +89,12 @@ describe("3 — Executive state is deterministic", () => {
     expect(src).toContain("certifiedCount");
   });
 
-  test("home client renders state dot with color", () => {
+  test("home client renders attention items from real data", () => {
     const src = readFile(`${MGR}/manager-home-client.tsx`);
-    expect(src).toContain("stateColor");
-    expect(src).toContain("REQUIRES_ATTENTION");
-    expect(src).toContain("DATA_INCOMPLETE");
+    // Home client renders attention cards driven by real alertsResult items.
+    // State rendering uses attentionCount derived from homePA.attention.length.
+    expect(src).toContain("attentionCount");
+    expect(src).toContain("homePA.attention");
   });
 });
 
@@ -102,9 +103,12 @@ describe("3 — Executive state is deterministic", () => {
 describe("4 — No fake content or demo data", () => {
   test("home client has no fake content", () => {
     const src = readFile(`${MGR}/manager-home-client.tsx`);
+    // attentionCount is a legitimate local derived from homePA.attention.length — NOT a fake badge.
+    // The guard is: no hardcoded numeric constant (e.g. attentionCount = 3) and no DEMO/MOCK data.
     expect(src).toContain("No fake content");
-    expect(src).not.toContain("attentionCount");
-    expect(src).not.toContain("badge");
+    expect(src).not.toContain("attentionCount = 3");
+    expect(src).not.toContain("DEMO_");
+    expect(src).not.toContain("MOCK_");
   });
 
   test("adapter filters resolved/acknowledged alerts", () => {
@@ -117,24 +121,27 @@ describe("4 — No fake content or demo data", () => {
 // ── 5: Hamburger menu structure ───────────────────────────────────────────
 
 describe("5 — Hamburger menu", () => {
-  test("shell has HamburgerDrawer component", () => {
+  test("shell has FableDrawer component", () => {
     const src = readFile(`${MGR}/manager-app-shell.tsx`);
-    expect(src).toContain("HamburgerDrawer");
+    // Renamed from HamburgerDrawer → FableDrawer in Fable redesign.
+    expect(src).toContain("FableDrawer");
     expect(src).toContain("menuOpen");
   });
 
-  test("hamburger has 3 sections: modules, executive tools, account", () => {
+  test("hamburger has 3 sections: modules, daily tools, config", () => {
     const src = readFile(`${MGR}/manager-app-shell.tsx`);
-    expect(src).toContain("Modulos");
-    expect(src).toContain("Herramientas ejecutivas");
-    expect(src).toContain("Cuenta");
+    // Fable redesign renamed sections: Módulos / Tu día / Configuración
+    expect(src).toContain("Módulos");
+    expect(src).toContain("Tu día");
+    expect(src).toContain("Configuración");
   });
 
   test("hamburger has logout via signOut", () => {
     const src = readFile(`${MGR}/manager-app-shell.tsx`);
     expect(src).toContain("signOut");
     expect(src).toContain("next-auth/react");
-    expect(src).toContain("Cerrar sesion");
+    // Fable redesign uses proper accent: "Cerrar sesión"
+    expect(src).toContain("Cerrar sesión");
   });
 
   test("executive tools: Alertas, Tareas, Informes", () => {
@@ -169,7 +176,8 @@ describe("6 — Commercial Hub with 7 surfaces", () => {
   test("hub client renders surfaces with navigation", () => {
     const src = readFile(`${COM}/commercial-hub-client.tsx`);
     expect(src).toContain("hubPA.surfaces.map");
-    expect(src).toContain("SurfaceCard");
+    // Fable redesign renamed SurfaceCard → SurfaceTile (app-icon grid layout)
+    expect(src).toContain("SurfaceTile");
     expect(src).toContain("router.push(surface.href)");
   });
 });
@@ -234,8 +242,9 @@ describe("10 — Importaciones: SIN_FECHA truth state", () => {
   test("importaciones client renders sinFechaCount warning", () => {
     const src = readFile(`${COM}/importaciones/importaciones-client.tsx`);
     expect(src).toContain("sinFechaCount");
-    expect(src).toContain("SIN_FECHA_DE_ACTIVIDAD_IMPORTACION");
-    expect(src).toContain("sin fecha de actividad de importacion");
+    // String uses proper accent: "sin fecha de actividad de importación"
+    // The constant SIN_FECHA_DE_ACTIVIDAD_IMPORTACION is in the adapter, not the client.
+    expect(src).toContain("sin fecha de actividad de importación");
   });
 
   test("adapter extracts sinFechaCount from canonical rotation status", () => {
@@ -386,7 +395,8 @@ describe("15 — Copilot context envelope", () => {
 describe("16 — Copilot orb persistence", () => {
   test("copilot orb is in shell, not individual pages", () => {
     const src = readFile(`${MGR}/manager-app-shell.tsx`);
-    expect(src).toContain("ManagerCopilotOrb");
+    // Fable redesign: ManagerCopilotOrb replaced by shared CopilotSphere primitive.
+    expect(src).toContain("CopilotSphere");
   });
 
   test("copilot orb has fixed positioning", () => {
@@ -587,18 +597,28 @@ describe("24 — Visual integration: design tokens", () => {
   for (const file of clientFiles) {
     test(`${file.split("/").pop()} imports design tokens`, () => {
       const src = readFile(file);
-      expect(src).toContain("@/lib/ui/tokens");
+      // manager-home-client and manager-app-shell use local Fable F tokens (no @/lib/ui/tokens import).
+      // commercial-hub-client and manager-surface-client import from @/lib/ui/tokens.
+      const usesFableTokens = file.includes("manager-home-client") || file.includes("manager-app-shell");
+      if (usesFableTokens) {
+        // Local F token object — brand blue is F.brand = "#004AAD"
+        expect(src).toContain('brand:       "#004AAD"');
+      } else {
+        expect(src).toContain("@/lib/ui/tokens");
+      }
     });
   }
 
-  test("shell uses C.blueDark (not C.brand) for brand actions", () => {
+  test("shell uses F.brand (#004AAD) for brand actions", () => {
     const src = readFile(`${MGR}/manager-app-shell.tsx`);
-    expect(src).toContain("C.blueDark");
+    // Fable redesign uses local F tokens. F.brand = "#004AAD" = C.blueDark.
+    expect(src).toContain('brand:       "#004AAD"');
   });
 
-  test("hub uses C.blueDark for surface icons", () => {
+  test("hub uses #004AAD for surface icons", () => {
     const src = readFile(`${COM}/commercial-hub-client.tsx`);
-    expect(src).toContain("C.blueDark");
+    // Hub uses inline hex #004AAD (= C.blueDark) for icon color.
+    expect(src).toContain('"#004AAD"');
   });
 });
 

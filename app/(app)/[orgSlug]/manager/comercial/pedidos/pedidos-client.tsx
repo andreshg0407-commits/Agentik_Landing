@@ -14,6 +14,7 @@ export function PedidosSurfaceClient({ pedidosPA }: { pedidosPA: ManagerPedidosP
   return (
     <ManagerSurfaceClient
       title="Pedidos"
+      subtitle={pedidosPA.periodo || undefined}
       facts={pedidosPA.facts}
       attentionStatus={pedidosPA.attentionStatus}
       freshness={pedidosPA.asOf}
