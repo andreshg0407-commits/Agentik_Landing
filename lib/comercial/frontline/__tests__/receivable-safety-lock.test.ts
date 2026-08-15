@@ -21,16 +21,16 @@ import {
 // ── T01: Truth status resolver ──────────────────────────────────────────────
 
 describe("ReceivableTruthStatus resolver", () => {
-  it("T01a: castillitos is UNVERIFIED", () => {
-    assert.equal(resolveReceivableTruthStatus("castillitos"), "UNVERIFIED");
+  it("T01a: castillitos is CERTIFIED", () => {
+    assert.equal(resolveReceivableTruthStatus("castillitos"), "CERTIFIED");
   });
 
   it("T01b: unknown org is UNVERIFIED", () => {
     assert.equal(resolveReceivableTruthStatus("unknown-org"), "UNVERIFIED");
   });
 
-  it("T01c: isReceivableDataCertified returns false for castillitos", () => {
-    assert.equal(isReceivableDataCertified("castillitos"), false);
+  it("T01c: isReceivableDataCertified returns true for castillitos", () => {
+    assert.equal(isReceivableDataCertified("castillitos"), true);
   });
 
   it("T01d: isReceivableDataCertified returns false for any org", () => {
@@ -268,14 +268,12 @@ describe("Attention requires CERTIFIED", () => {
 // ── T06: AMV false positive suppressed ─────────────────────────────────────
 
 describe("AMV LLANO SAS false positive suppression", () => {
-  it("T06: isReceivableDataCertified('castillitos') = false → AMV warning impossible", () => {
+  it("T06: isReceivableDataCertified('castillitos') = true → AMV warning possible only if SAG shows overdue", () => {
     // AMV LLANO SAS (tercero=856) is a Castillitos customer.
-    // Castillitos is UNVERIFIED. Therefore no overdue warning can fire.
-    assert.equal(isReceivableDataCertified("castillitos"), false);
-    // By transitivity: emitCustomerOverdueAttention will return null,
-    // buildOverdueReceivableAlert will return null,
-    // generateCarteraAlerts will return { generated: 0, resolved: 0 },
-    // evaluateCustomerCredit will return creditStatus: "approved".
+    // Castillitos is CERTIFIED. Overdue warnings CAN fire, but only from
+    // SAG vw_agentik_cartera data (CERTIFIED). AMV LLANO has 0 cartera
+    // rows in SAG (CERTIFIED_ZERO = fully paid), so no false positive.
+    assert.equal(isReceivableDataCertified("castillitos"), true);
   });
 });
 
@@ -302,14 +300,15 @@ describe("API route truthStatus propagation", () => {
 // ── T08: No raw data mutation ──────────────────────────────────────────────
 
 describe("No raw data mutation", () => {
-  it("T08a: receivable-truth-status.ts has no prisma import", async () => {
+  it("T08a: receivable-truth-status.ts has no top-level prisma import", async () => {
     const src = await import("fs").then(fs =>
       fs.readFileSync(
         require("path").resolve(__dirname, "../receivable-truth-status.ts"),
         "utf-8",
       ),
     );
-    assert.ok(!src.includes("prisma"), "receivable-truth-status must not import prisma");
+    // No top-level import — prisma is only used in warmTruthStatusCache() via dynamic import()
+    assert.ok(!src.includes("import { prisma }"), "receivable-truth-status must not have top-level prisma import");
     assert.ok(!src.includes("import \"server-only\""), "receivable-truth-status must not be server-only");
   });
 

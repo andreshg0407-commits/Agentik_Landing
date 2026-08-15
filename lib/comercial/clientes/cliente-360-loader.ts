@@ -26,6 +26,9 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { resolveCity, resolveCrmCity } from "./city-resolver";
 import { getCustomerPrimarySeller } from "@/lib/comercial/foundation/client-seller-linker";
+import { fetchCustomerArWithStatus } from "@/lib/comercial/frontline/canonical-ar-service";
+import type { ReceivableTruthStatus } from "@/lib/comercial/frontline/receivable-truth-status";
+import { UNVERIFIED_RECEIVABLE_LABEL } from "@/lib/comercial/frontline/receivable-truth-status";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -129,9 +132,13 @@ export interface Cliente360Data {
   receivables: {
     state: BlockState;
     items: Cliente360Receivable[];
-    totalBalance: number;
-    totalOverdue: number;
-    openCount: number;
+    /** Null when SAG unavailable — do NOT show Prisma saldo (paidAmount always 0) */
+    totalBalance: number | null;
+    /** Null when SAG unavailable — do NOT show Prisma saldo */
+    totalOverdue: number | null;
+    /** Null when SAG unavailable */
+    openCount: number | null;
+    truthStatus: ReceivableTruthStatus;
   };
   sales: { state: BlockState; items: Cliente360SaleRecord[] };
   collections: { state: BlockState; items: Cliente360CollectionRecord[] };
@@ -155,9 +162,20 @@ export async function loadCliente360(
   const t0 = performance.now();
   const timing: Record<string, string> = {};
 
+  // ── Resolve clienteId: may be UUID (id) or slug (from alerts entityKey) ───
+  let resolvedId = clienteId;
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clienteId);
+  if (!isUuid) {
+    const bySlug = await db.customerProfile.findFirst({
+      where: { slug: clienteId, organizationId },
+      select: { id: true },
+    });
+    if (bySlug) resolvedId = bySlug.id;
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // Phase 1: parallel — profile + seller + receivables + collections
-  // These 4 queries are independent (all use orgId + clienteId, no cross-deps)
+  // These 4 queries are independent (all use orgId + resolvedId, no cross-deps)
   // ═══════════════════════════════════════════════════════════════════════════
 
   const tP1 = performance.now();
@@ -167,7 +185,7 @@ export async function loadCliente360(
     (async () => {
       const t = performance.now();
       const r = await prisma.customerProfile.findFirst({
-        where: { id: clienteId, organizationId },
+        where: { id: resolvedId, organizationId },
         select: {
           id: true, name: true, legalName: true, nit: true, erpId: true,
           city: true, department: true, status: true,
@@ -185,7 +203,7 @@ export async function loadCliente360(
     // 2. Seller (from CRM quote history)
     (async () => {
       const t = performance.now();
-      const r = await getCustomerPrimarySeller(organizationId, clienteId);
+      const r = await getCustomerPrimarySeller(organizationId, resolvedId);
       timing.seller = ms(t);
       return r;
     })(),
@@ -194,7 +212,7 @@ export async function loadCliente360(
     (async () => {
       const t = performance.now();
       const r = await db.customerReceivable.findMany({
-        where: { organizationId, customerId: clienteId },
+        where: { organizationId, customerId: resolvedId },
         select: {
           id: true, erpId: true, originalAmount: true, paidAmount: true,
           balanceDue: true, invoiceDate: true, dueDate: true,
@@ -211,7 +229,7 @@ export async function loadCliente360(
     (async () => {
       const t = performance.now();
       const r = await db.collectionRecord.findMany({
-        where: { organizationId, customerId: clienteId },
+        where: { organizationId, customerId: resolvedId },
         select: {
           id: true, documentNumber: true, collectionDate: true,
           amount: true, appliedStatus: true,
@@ -364,11 +382,48 @@ export async function loadCliente360(
     status: r.status,
   }));
 
-  const totalBalance = receivableItems.reduce((s, r) => s + r.balanceDue, 0);
-  const totalOverdue = receivableItems
-    .filter(r => r.daysOverdue > 0)
-    .reduce((s, r) => s + r.balanceDue, 0);
-  const openCount = receivableItems.filter(r => r.status === "OPEN" || r.status === "PARTIAL").length;
+  // ── Canonical AR from SAG (CERTIFIED) — overrides Prisma legacy totals ──
+  // CustomerReceivable.paidAmount is always 0 (legacy bug), so balanceDue
+  // over-reports. When sagTerceroId exists, fetch certified SALDO_PENDIENTE
+  // from vw_agentik_cartera which includes all applied collections.
+  let totalBalance: number | null;
+  let totalOverdue: number | null;
+  let openCount: number | null;
+  let receivableTruthStatus: ReceivableTruthStatus = "UNVERIFIED";
+
+  if (p.sagTerceroId != null && p.sagTerceroId > 0) {
+    const tAr = performance.now();
+    const arResult = await fetchCustomerArWithStatus(p.sagTerceroId);
+    timing.canonicalAr = ms(tAr);
+
+    if (arResult.status === "CERTIFIED_ZERO") {
+      totalBalance = 0;
+      totalOverdue = 0;
+      openCount = 0;
+      receivableTruthStatus = "CERTIFIED";
+    } else if (arResult.status === "HAS_OPEN_AR") {
+      totalBalance = arResult.snapshot.totalPendiente;
+      totalOverdue = arResult.snapshot.totalVencido;
+      openCount = arResult.snapshot.documentCount;
+      receivableTruthStatus = "CERTIFIED";
+    } else {
+      // SAG_UNAVAILABLE or IDENTITY_UNKNOWN — do NOT show Prisma saldo.
+      // CustomerReceivable.paidAmount is always 0 (legacy bug), so Prisma
+      // balanceDue over-reports. Showing it would present uncertified financial
+      // data as fact. Instead: null totals + UNVERIFIED status, and the Manager
+      // adapter renders "Cartera no disponible" or UNVERIFIED_RECEIVABLE_LABEL.
+      totalBalance = null;
+      totalOverdue = null;
+      openCount = null;
+      // receivableTruthStatus stays "UNVERIFIED"
+    }
+  } else {
+    // No SAG identity — cannot certify cartera. Do NOT show Prisma saldo.
+    totalBalance = null;
+    totalOverdue = null;
+    openCount = null;
+    // receivableTruthStatus stays "UNVERIFIED"
+  }
 
   const salesItems: Cliente360SaleRecord[] = salesRaw.map((s: any) => ({
     id: s.id,
@@ -408,11 +463,12 @@ export async function loadCliente360(
       items: sagOrders,
     },
     receivables: {
-      state: receivableItems.length > 0 ? "disponible" : "no_disponible",
+      state: receivableItems.length > 0 || receivableTruthStatus === "CERTIFIED" ? "disponible" : "no_disponible",
       items: receivableItems,
       totalBalance,
       totalOverdue,
       openCount,
+      truthStatus: receivableTruthStatus,
     },
     sales: {
       state: salesItems.length > 0 ? "disponible" : "no_disponible",

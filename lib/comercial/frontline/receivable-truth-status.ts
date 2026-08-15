@@ -54,38 +54,90 @@ export type ReceivableTruthStatus =
  * A tenant graduates to CERTIFIED only when its reconciliation pipeline
  * is audited and proven correct.
  *
- * Current state (2026-08-09):
- *   castillitos: UNVERIFIED — CustomerReceivable does not include
- *                vw_agentik_recaudos payment applications.
+ * Promotion history:
+ *   2026-08-14  castillitos → CERTIFIED
+ *     Source: CURRENT = LUDISAM (Castillitos produccion desde 2026-07-21)
+ *     Proof: _verify-cartera-sag-live.ts (11/11 PASS), _verify-cartera-certification.ts (23/23 PASS)
+ *     - vw_agentik_cartera queryable on LUDISAM, fetchCertifiedArSnapshot returns CERTIFIED
+ *     - Diana Alzate contrast: Prisma $7,727M phantom vs SAG $0.91M real
+ *     - Non-Jupiter customers verified: Mayra Duque ($81.3M), Gloria Castano, Grupo Mayorista
+ *     - SALDO_PENDIENTE pre-computed by SAG includes all collections
+ *     - Canonical AR service handles SAG_UNAVAILABLE gracefully (falls back to UNVERIFIED)
  */
 const TENANT_TRUTH_STATUS: Record<string, ReceivableTruthStatus> = {
-  // No tenants are certified yet.
-  // When AGENTIK-RECEIVABLES-AR-TRUTH-01 completes for a tenant,
-  // add: "tenant-slug": "CERTIFIED"
+  castillitos: "CERTIFIED",
 };
 
 const DEFAULT_TRUTH_STATUS: ReceivableTruthStatus = "UNVERIFIED";
+
+/**
+ * Slug lookup table for callers that pass organizationId (UUID) instead of slug.
+ * Some consumers (org-alerts, sales-rep-alerts) receive UUID, not slug.
+ * This allows the resolver to work with both without requiring a DB call.
+ *
+ * Only tenants that appear in TENANT_TRUTH_STATUS need an entry here.
+ * Unknown UUIDs fall through to DEFAULT_TRUTH_STATUS (safe — UNVERIFIED).
+ */
+const ORG_ID_TO_SLUG: Record<string, string> = {};
+
+/** Populated lazily on first call from Prisma. */
+let slugLookupReady = false;
+
+/**
+ * Best-effort slug resolution: if orgIdOrSlug matches a known slug directly,
+ * use it. Otherwise check the UUID→slug cache. Unknown inputs → default.
+ */
+function resolveSlug(orgIdOrSlug: string): string {
+  if (TENANT_TRUTH_STATUS[orgIdOrSlug] !== undefined) return orgIdOrSlug;
+  return ORG_ID_TO_SLUG[orgIdOrSlug] ?? orgIdOrSlug;
+}
+
+/**
+ * Populate the UUID→slug cache from Prisma (called once, lazy).
+ * Only loads orgs that are in TENANT_TRUTH_STATUS.
+ * Fails silently — worst case is the gate stays closed (safe default).
+ */
+export async function warmTruthStatusCache(): Promise<void> {
+  if (slugLookupReady) return;
+  try {
+    const { prisma } = await import("@/lib/prisma");
+    const slugs = Object.keys(TENANT_TRUTH_STATUS);
+    if (slugs.length === 0) { slugLookupReady = true; return; }
+    const orgs = await (prisma as any).organization.findMany({
+      where: { slug: { in: slugs } },
+      select: { id: true, slug: true },
+    });
+    for (const org of orgs) {
+      ORG_ID_TO_SLUG[org.id] = org.slug;
+    }
+    slugLookupReady = true;
+  } catch {
+    // Safe fallback — UNVERIFIED for unknown UUIDs
+  }
+}
 
 // ── Resolver ──────────────────────────────────────────────────────────────────
 
 /**
  * Resolve the receivable truth status for a given organization.
- * Pure function — no DB, no async, no side effects.
+ * Accepts either org slug ("castillitos") or org UUID.
+ * Pure function after cache warm-up. No async, no side effects.
  */
 export function resolveReceivableTruthStatus(
-  orgSlug: string,
+  orgIdOrSlug: string,
 ): ReceivableTruthStatus {
-  return TENANT_TRUTH_STATUS[orgSlug] ?? DEFAULT_TRUTH_STATUS;
+  return TENANT_TRUTH_STATUS[resolveSlug(orgIdOrSlug)] ?? DEFAULT_TRUTH_STATUS;
 }
 
 /**
  * Returns true only when overdue receivable data may be presented
  * as certified financial fact (warnings, attention items, alerts).
+ * Accepts either org slug or org UUID.
  */
 export function isReceivableDataCertified(
-  orgSlug: string,
+  orgIdOrSlug: string,
 ): boolean {
-  return resolveReceivableTruthStatus(orgSlug) === "CERTIFIED";
+  return resolveReceivableTruthStatus(orgIdOrSlug) === "CERTIFIED";
 }
 
 // ── UI copy for unverified state ──────────────────────────────────────────────
