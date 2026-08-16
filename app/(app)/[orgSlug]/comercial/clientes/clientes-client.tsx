@@ -19,6 +19,7 @@ import { EmptyOperationalState, WorkspaceSection } from "@/components/shell/oper
 import { OperationalSideDrawer } from "@/components/workspace/operational-side-drawer";
 import type { ClientesSummary, ClienteRow, ClientesPageResult } from "@/lib/comercial/clientes/client-loader";
 import type { Cliente360Data } from "@/lib/comercial/clientes/cliente-360-loader";
+import { UNVERIFIED_RECEIVABLE_LABEL } from "@/lib/comercial/frontline/receivable-truth-status";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -232,11 +233,13 @@ interface Props {
   pageResult: ClientesPageResult;
   currentFilter: FilterKey;
   currentSearch: string;
+  /** When false, all receivable amounts in table rows and KPIs are suppressed */
+  arCertified: boolean;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export function ClientesClient({ orgSlug, summary, pageResult, currentFilter, currentSearch }: Props) {
+export function ClientesClient({ orgSlug, summary, pageResult, currentFilter, currentSearch, arCertified }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const [searchInput, setSearchInput] = useState(currentSearch);
@@ -361,7 +364,7 @@ export function ClientesClient({ orgSlug, summary, pageResult, currentFilter, cu
             <ListKpiCard label="Total" value={summary.total} />
             <ListKpiCard label="Activos" value={summary.active} color={C.green} />
             <ListKpiCard label="Inactivos" value={summary.inactive} color={summary.inactive > 0 ? C.amber : undefined} />
-            <ListKpiCard label="Con saldo" value={summary.withCartera} color={summary.withCartera > 0 ? C.blueDark : undefined} />
+            <ListKpiCard label="Con saldo" value={arCertified ? summary.withCartera : 0} color={arCertified && summary.withCartera > 0 ? C.blueDark : undefined} />
             <ListKpiCard label="Sin compra 90d" value={summary.sinCompra90d} color={summary.sinCompra90d > 0 ? C.amber : undefined} />
           </div>
 
@@ -767,21 +770,34 @@ function TabFacturas({ sales, collections }: {
 // ── Tab: CARTERA ─────────────────────────────────────────────────────────────
 
 function TabCartera({ receivables }: { receivables: Cliente360Data["receivables"] }) {
+  const isCertified = receivables.truthStatus === "CERTIFIED";
+  const isCertifiedZero = isCertified && receivables.totalBalance === 0 && receivables.items.length === 0;
+
+  // UNVERIFIED — show validation message, do NOT show legacy items
+  if (!isCertified) {
+    return <EmptyOperationalState message={UNVERIFIED_RECEIVABLE_LABEL} detail="Los datos de cartera estan siendo validados contra la fuente certificada (SAG). No se muestran valores financieros hasta completar la certificacion." />;
+  }
+
+  // CERTIFIED_ZERO — customer truly has no receivables
+  if (isCertifiedZero) {
+    return <EmptyOperationalState message="Sin cartera" detail="Este cliente no tiene facturas pendientes de cobro segun la fuente certificada (SAG)." />;
+  }
+
   if (receivables.state === "no_disponible") {
     return <EmptyOperationalState message="Sin cartera registrada" detail="No hay facturas pendientes de cobro para este cliente." />;
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column" as const, gap: S[4] }}>
-      {/* PROVISIONAL SAG badge */}
+      {/* CERTIFIED SAG badge */}
       <div style={{
         padding: `${S[2]}px ${S[3]}px`, borderRadius: R.sm,
-        background: `${C.amber}11`, border: `1px solid ${C.amber}33`,
+        background: `${C.green}11`, border: `1px solid ${C.green}33`,
         display: "flex", alignItems: "center", gap: S[2],
       }}>
-        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.amber }}>PROVISIONAL SAG</span>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.green }}>CERTIFICADO SAG</span>
         <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
-          Datos de cartera sincronizados desde SAG. Sujetos a confirmacion en conciliacion.
+          Saldos certificados desde vw_agentik_cartera. Incluyen aplicacion de recaudos.
         </span>
       </div>
 
@@ -792,25 +808,27 @@ function TabCartera({ receivables }: { receivables: Cliente360Data["receivables"
         <MiniStat label="Facturas abiertas" value={receivables.openCount !== null ? String(receivables.openCount) : "\u2014"} />
       </div>
 
-      {/* Receivables table */}
-      <div className="ag-op-table" style={{ border: `1px solid ${C.line}`, borderRadius: R.sm, overflow: "hidden" }}>
-        <div className="ag-op-row" style={{ display: "grid", gridTemplateColumns: RECEIVABLE_GRID, gap: S[2], padding: `${S[2]}px ${S[3]}px`, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}` }}>
-          {["Factura", "Monto", "Pagado", "Saldo", "Mora", "Estado"].map(h => (
-            <span key={h} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkLight, textTransform: "uppercase" as const }}>{h}</span>
+      {/* Receivables table — only shown when certified items exist */}
+      {receivables.items.length > 0 && (
+        <div className="ag-op-table" style={{ border: `1px solid ${C.line}`, borderRadius: R.sm, overflow: "hidden" }}>
+          <div className="ag-op-row" style={{ display: "grid", gridTemplateColumns: RECEIVABLE_GRID, gap: S[2], padding: `${S[2]}px ${S[3]}px`, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}` }}>
+            {["Factura", "Monto", "Pagado", "Saldo", "Mora", "Estado"].map(h => (
+              <span key={h} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkLight, textTransform: "uppercase" as const }}>{h}</span>
+            ))}
+          </div>
+          {receivables.items.map(r => (
+            <div key={r.id} className={`ag-op-row${r.daysOverdue > 90 ? " ag-op-row--critical" : r.daysOverdue > 30 ? " ag-op-row--warning" : ""}`}
+              style={{ display: "grid", gridTemplateColumns: RECEIVABLE_GRID, gap: S[2], padding: `${S[2]}px ${S[3]}px`, borderBottom: `1px solid ${C.line}22`, alignItems: "center" }}>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{r.erpId ?? r.id.slice(0, 8)}</span>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink }}>{fmtCurrency(r.originalAmount)}</span>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.green }}>{fmtCurrency(r.paidAmount)}</span>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: r.balanceDue > 0 ? C.red : C.ink }}>{fmtCurrency(r.balanceDue)}</span>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: r.daysOverdue > 30 ? C.red : r.daysOverdue > 0 ? C.amber : C.inkGhost }}>{r.daysOverdue > 0 ? `${r.daysOverdue}d` : "\u2014"}</span>
+              <span className={`ag-op-status ag-op-status--${receivableStatusVariant(r.status)}`} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold }}>{carteraStatusLabel(r.status)}</span>
+            </div>
           ))}
         </div>
-        {receivables.items.map(r => (
-          <div key={r.id} className={`ag-op-row${r.daysOverdue > 90 ? " ag-op-row--critical" : r.daysOverdue > 30 ? " ag-op-row--warning" : ""}`}
-            style={{ display: "grid", gridTemplateColumns: RECEIVABLE_GRID, gap: S[2], padding: `${S[2]}px ${S[3]}px`, borderBottom: `1px solid ${C.line}22`, alignItems: "center" }}>
-            <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{r.erpId ?? r.id.slice(0, 8)}</span>
-            <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink }}>{fmtCurrency(r.originalAmount)}</span>
-            <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.green }}>{fmtCurrency(r.paidAmount)}</span>
-            <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: r.balanceDue > 0 ? C.red : C.ink }}>{fmtCurrency(r.balanceDue)}</span>
-            <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: r.daysOverdue > 30 ? C.red : r.daysOverdue > 0 ? C.amber : C.inkGhost }}>{r.daysOverdue > 0 ? `${r.daysOverdue}d` : "\u2014"}</span>
-            <span className={`ag-op-status ag-op-status--${receivableStatusVariant(r.status)}`} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold }}>{carteraStatusLabel(r.status)}</span>
-          </div>
-        ))}
-      </div>
+      )}
     </div>
   );
 }
@@ -1168,8 +1186,8 @@ function ClienteRowItem({ client, even, selected, onClick }: {
       <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: client.customerType ? C.inkMid : C.inkGhost, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
         {client.customerType ?? "\u2014"}
       </span>
-      <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: client.overdueReceivable > 0 ? T.wt.semibold : T.wt.normal, color: client.overdueReceivable > 0 ? C.red : C.inkGhost, textAlign: "right" as const }}>
-        {fmtCurrency(client.overdueReceivable)}
+      <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: (client.overdueReceivable ?? 0) > 0 ? T.wt.semibold : T.wt.normal, color: (client.overdueReceivable ?? 0) > 0 ? C.red : C.inkGhost, textAlign: "right" as const }}>
+        {client.overdueReceivable != null ? fmtCurrency(client.overdueReceivable) : "\u2014"}
       </span>
       <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, textAlign: "center" as const }}>
         {fmtDaysAgo(client.lastPurchaseAt)}

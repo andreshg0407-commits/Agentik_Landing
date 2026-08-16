@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { resolveCity } from "./city-resolver";
+import { isReceivableDataCertified, warmTruthStatusCache } from "@/lib/comercial/frontline/receivable-truth-status";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -17,8 +18,10 @@ export interface ClienteRow {
   customerType: string | null; // TIPO_CLIENTE from SAG
   segment: string | null;      // CANAL_CLIENTE from SAG
   lastPurchaseAt: string | null; // ISO — FECHA_ULTIMA_COMPRA from SAG
-  totalReceivable: number;
-  overdueReceivable: number;
+  /** Null when receivable data is not certified — do NOT show as 0 */
+  totalReceivable: number | null;
+  /** Null when receivable data is not certified — do NOT show as 0 */
+  overdueReceivable: number | null;
 }
 
 export interface ClientesSummary {
@@ -54,6 +57,10 @@ export async function loadClientesSummary(organizationId: string): Promise<Clien
   const db = prisma as any;
   const t0 = performance.now();
 
+  // Gate receivable KPIs behind AR certification
+  await warmTruthStatusCache();
+  const arCertified = isReceivableDataCertified(organizationId);
+
   try {
     interface AggRow {
       total: bigint;
@@ -85,15 +92,16 @@ export async function loadClientesSummary(organizationId: string): Promise<Clien
     const withSeller = Number(row.with_seller);
 
     const ms = (performance.now() - t0).toFixed(1);
-    console.log(`[PERF][CLIENTES] summary ${ms}ms — total=${total} active=${active} withSeller=${withSeller}`);
+    console.log(`[PERF][CLIENTES] summary ${ms}ms — total=${total} active=${active} withSeller=${withSeller} arCertified=${arCertified}`);
 
     return {
       total,
       active,
       inactive: Number(row.inactive),
       withSeller,
-      withCartera: Number(row.with_cartera),
-      withOverdue: Number(row.with_overdue),
+      // AR leak fix: suppress uncertified receivable KPIs
+      withCartera: arCertified ? Number(row.with_cartera) : 0,
+      withOverdue: arCertified ? Number(row.with_overdue) : 0,
       sinCompra90d: Number(row.sin_compra_90d),
       withCrm: Number(row.with_crm),
       loadedAt: new Date().toISOString(),
@@ -122,6 +130,10 @@ export async function loadClientesPage(
   const search = (params.search ?? "").trim();
   const filter = params.filter ?? "todos";
 
+  // Gate receivable filter behind AR certification
+  await warmTruthStatusCache();
+  const arCertified = isReceivableDataCertified(organizationId);
+
   try {
     // ── Build WHERE conditions ──────────────────────────────────────────
     const conditions: string[] = ['"organizationId" = $1'];
@@ -134,7 +146,12 @@ export async function loadClientesPage(
     } else if (filter === "inactivos") {
       conditions.push(`status = 'INACTIVE'`);
     } else if (filter === "con_cartera") {
-      conditions.push(`"totalReceivable" > 0`);
+      // AR leak fix: when not certified, con_cartera filter returns no matches
+      if (arCertified) {
+        conditions.push(`"totalReceivable" > 0`);
+      } else {
+        conditions.push(`FALSE`);
+      }
     } else if (filter === "con_vendedor") {
       conditions.push(`"sellerName" IS NOT NULL AND "sellerName" <> ''`);
     } else if (filter === "sin_compra_90d") {
@@ -171,7 +188,7 @@ export async function loadClientesPage(
     // City and sellerName are now populated directly from SAG vw_agentik_clientes.
     // No CRM quote JOINs needed — all data lives on CustomerProfile.
     const profiles = await db.customerProfile.findMany({
-      where: buildPrismaWhere(organizationId, filter, search),
+      where: buildPrismaWhere(organizationId, filter, search, arCertified),
       select: {
         id: true, name: true, legalName: true, nit: true, erpId: true,
         city: true, department: true,
@@ -201,8 +218,9 @@ export async function loadClientesPage(
         lastPurchaseAt: p.lastPurchaseAt instanceof Date
           ? p.lastPurchaseAt.toISOString()
           : (p.lastPurchaseAt ?? null),
-        totalReceivable: Number(p.totalReceivable ?? 0),
-        overdueReceivable: Number(p.overdueReceivable ?? 0),
+        // AR leak fix: return null when not certified — never show uncertified amounts
+        totalReceivable: arCertified ? Number(p.totalReceivable ?? 0) : null,
+        overdueReceivable: arCertified ? Number(p.overdueReceivable ?? 0) : null,
       };
     });
 
@@ -222,6 +240,7 @@ function buildPrismaWhere(
   organizationId: string,
   filter: string,
   search: string,
+  arCertified: boolean = true,
 ) {
   const where: any = { organizationId };
 
@@ -230,7 +249,12 @@ function buildPrismaWhere(
   } else if (filter === "inactivos") {
     where.status = "INACTIVE";
   } else if (filter === "con_cartera") {
-    where.totalReceivable = { gt: 0 };
+    // AR leak fix: when not certified, impossible condition returns empty
+    if (arCertified) {
+      where.totalReceivable = { gt: 0 };
+    } else {
+      where.id = "___IMPOSSIBLE___";
+    }
   } else if (filter === "con_vendedor") {
     where.sellerName = { not: null };
   } else if (filter === "sin_compra_90d") {

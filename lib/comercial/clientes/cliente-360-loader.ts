@@ -390,6 +390,8 @@ export async function loadCliente360(
   let totalOverdue: number | null;
   let openCount: number | null;
   let receivableTruthStatus: ReceivableTruthStatus = "UNVERIFIED";
+  /** When true, canonical AR is the authority — legacy items must be suppressed */
+  let arIsCertified = false;
 
   if (p.sagTerceroId != null && p.sagTerceroId > 0) {
     const tAr = performance.now();
@@ -401,11 +403,13 @@ export async function loadCliente360(
       totalOverdue = 0;
       openCount = 0;
       receivableTruthStatus = "CERTIFIED";
+      arIsCertified = true;
     } else if (arResult.status === "HAS_OPEN_AR") {
       totalBalance = arResult.snapshot.totalPendiente;
       totalOverdue = arResult.snapshot.totalVencido;
       openCount = arResult.snapshot.documentCount;
       receivableTruthStatus = "CERTIFIED";
+      arIsCertified = true;
     } else {
       // SAG_UNAVAILABLE or IDENTITY_UNKNOWN — do NOT show Prisma saldo.
       // CustomerReceivable.paidAmount is always 0 (legacy bug), so Prisma
@@ -424,6 +428,11 @@ export async function loadCliente360(
     openCount = null;
     // receivableTruthStatus stays "UNVERIFIED"
   }
+
+  // AR leak fix: when canonical AR is CERTIFIED (including CERTIFIED_ZERO),
+  // clear legacy receivable items — they have paidAmount=0 bug and would
+  // contradict SAG authority. Only SAG totals are trustworthy.
+  const certifiedReceivableItems = arIsCertified ? [] : receivableItems;
 
   const salesItems: Cliente360SaleRecord[] = salesRaw.map((s: any) => ({
     id: s.id,
@@ -444,8 +453,10 @@ export async function loadCliente360(
   }));
 
   // Opportunities (synchronous, no DB)
+  // AR leak fix: pass certified items (empty when AR is certified) to prevent
+  // "Cartera vencida" opportunity from being generated from legacy uncertified data
   const opportunities = computeOpportunities(
-    profile, seller, crmQuotes, sagOrders, receivableItems, salesItems,
+    profile, seller, crmQuotes, sagOrders, certifiedReceivableItems, salesItems,
   );
 
   timing.total = ms(t0);
@@ -463,8 +474,8 @@ export async function loadCliente360(
       items: sagOrders,
     },
     receivables: {
-      state: receivableItems.length > 0 || receivableTruthStatus === "CERTIFIED" ? "disponible" : "no_disponible",
-      items: receivableItems,
+      state: certifiedReceivableItems.length > 0 || receivableTruthStatus === "CERTIFIED" ? "disponible" : "no_disponible",
+      items: certifiedReceivableItems,
       totalBalance,
       totalOverdue,
       openCount,
@@ -494,7 +505,7 @@ export async function loadCliente360(
     `total=${timing.total} | ` +
     `payload=${payloadKb}KB | ` +
     `rows: quotes=${crmQuotes.length} sag=${sagOrders.length} ` +
-    `recv=${receivableItems.length} sales=${salesItems.length} ` +
+    `recv=${certifiedReceivableItems.length}(raw=${receivableItems.length}) sales=${salesItems.length} ` +
     `coll=${collectionItems.length} opps=${opportunities.length}`,
   );
 

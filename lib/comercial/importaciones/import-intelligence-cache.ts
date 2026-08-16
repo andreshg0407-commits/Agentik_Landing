@@ -28,6 +28,12 @@
  *   Computes fresh FIRST, then atomically writes both layers (UPSERT).
  *   On failure, the prior snapshot is preserved — never deleted before success.
  *
+ * FAIL-CLOSED CONTRACT:
+ *   When SOURCE_UNAVAILABLE, result.kpis uses sentinel value totalRefs = -1
+ *   to distinguish "no cache snapshot" from "prewarm ran, zero import refs."
+ *   UI consumers MUST check: if kpis.totalRefs < 0, treat as unavailable
+ *   and show em dashes instead of numeric zeros.
+ *
  * Sprint: AGENTIK-MANAGER-RELEASE-GATE-01 + IMPORT-CACHE-PROD-01
  */
 
@@ -261,9 +267,12 @@ export async function getCachedImportIntelligence(
     return staleData;
   }
 
-  // No snapshot anywhere — SOURCE_UNAVAILABLE; never false zeros
+  // No snapshot anywhere — SOURCE_UNAVAILABLE
+  // FAIL-CLOSED: totalRefs = -1 sentinel so UI consumers can distinguish
+  // "no cache" from "prewarm ran, genuinely zero refs."
+  // UI MUST check kpis.totalRefs < 0 and render em dashes, not "0".
   return {
-    result: { items: [], kpis: emptyKpis() },
+    result: { items: [], kpis: unavailableKpis() },
     freshness: {
       productEntityAsOf: null,
       inventoryAsOf: null,
@@ -299,13 +308,18 @@ export function projectManagerKpis(
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function emptyKpis(): ImportSupplyKpis {
+/**
+ * Sentinel KPIs for SOURCE_UNAVAILABLE state.
+ * totalRefs = -1 signals "no data available" to UI consumers.
+ * All other fields are -1 for consistency — UI should never display these.
+ */
+function unavailableKpis(): ImportSupplyKpis {
   return {
-    comprarAhora: 0,
-    revisarRecompra: 0,
-    noRecomprar: 0,
-    inventarioLento: 0,
-    totalRefs: 0,
+    comprarAhora: -1,
+    revisarRecompra: -1,
+    noRecomprar: -1,
+    inventarioLento: -1,
+    totalRefs: -1,
   };
 }
 

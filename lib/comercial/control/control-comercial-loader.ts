@@ -21,6 +21,7 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { isReceivableDataCertified, warmTruthStatusCache } from "@/lib/comercial/frontline/receivable-truth-status";
+import { UNVERIFIED_RECEIVABLE_LABEL } from "@/lib/comercial/frontline/receivable-truth-contract";
 import { fetchCertifiedArSnapshot } from "@/lib/comercial/frontline/canonical-ar-service";
 
 // ── Decision engine integration (COMMERCIAL-DATA-CONNECTIVITY-01) ────────────
@@ -112,6 +113,22 @@ export interface DecisionsSummary {
   endpointUrl: string;
 }
 
+// ── Control Panel Health ──────────────────────────────────────────────────────
+
+export type ControlPanelStatus = "OPERATIONAL" | "DATA_INCOMPLETE" | "DATA_UNAVAILABLE";
+
+export interface DataSourceStatus {
+  source: string;
+  label: string;
+  status: "available" | "unavailable" | "unverified";
+  detail: string | null;
+}
+
+export interface ControlPanelHealth {
+  controlPanelStatus: ControlPanelStatus;
+  dataSources: DataSourceStatus[];
+}
+
 export interface ControlComercialSnapshot {
   // KPI header — ventas
   ventasMes: number;
@@ -152,6 +169,8 @@ export interface ControlComercialSnapshot {
   alertas: ControlAlerta[];
   // BusinessDecision summary (COMMERCIAL-DATA-CONNECTIVITY-01)
   decisionsSummary: DecisionsSummary | null;
+  // Panel health
+  controlPanelHealth: ControlPanelHealth;
   // Meta
   loadedAt: string;
 }
@@ -204,6 +223,11 @@ export async function loadControlComercial(
   const db = prisma as any;
   await warmTruthStatusCache();
   const isCertified = isReceivableDataCertified(organizationId);
+  let _srcSales = false;
+  let _srcCrm = false;
+  let _srcClients = false;
+  let _srcCollections = false;
+  let _srcInventory = false;
   const today = startOfToday();
   const weekStart = startOfWeek();
   const monthStart = startOfMonth();
@@ -267,6 +291,7 @@ export async function loadControlComercial(
       if (s.storeSlug) entry.clientes.add(s.storeSlug);
       channelMap.set(ch, entry);
     }
+    _srcSales = true;
   } catch { /* Graceful */ }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -315,6 +340,7 @@ export async function loadControlComercial(
       where: { organizationId },
       select: { sellerSlug: true, sellerName: true, amount: true, customerId: true, issuedAt: true },
     });
+    _srcCrm = true;
   } catch { /* Graceful */ }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -339,6 +365,7 @@ export async function loadControlComercial(
     for (const p of profiles) {
       customerCityMap.set(p.id, { city: p.city, dept: p.department });
     }
+    _srcClients = true;
   } catch { /* Graceful */ }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -476,6 +503,7 @@ export async function loadControlComercial(
         recaudoPorCliente.set(c.customerId, (recaudoPorCliente.get(c.customerId) ?? 0) + amt);
       }
     }
+    _srcCollections = true;
   } catch { /* Graceful */ }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -500,6 +528,7 @@ export async function loadControlComercial(
         if (ref.pendingOrdersQty && ref.pendingOrdersQty > 0) refsConOp++;
       }
     }
+    _srcInventory = true;
   } catch { /* Graceful */ }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -945,6 +974,22 @@ export async function loadControlComercial(
     };
   } catch { /* Graceful — decisions are additive, never break the loader */ }
 
+  // ── Control Panel Health ──────────────────────────────────────────────────
+  const dataSources: DataSourceStatus[] = [
+    { source: "SaleRecord", label: "Ventas", status: _srcSales ? "available" : "unavailable", detail: _srcSales ? null : "Sin datos de ventas" },
+    { source: "CRMQuote", label: "Pedidos CRM", status: _srcCrm ? "available" : "unavailable", detail: _srcCrm ? null : "Sin datos CRM" },
+    { source: "CustomerProfile", label: "Clientes", status: _srcClients ? "available" : "unavailable", detail: _srcClients ? null : "Sin datos de clientes" },
+    { source: "CustomerReceivable", label: "Cartera", status: isCertified ? "available" : "unverified", detail: isCertified ? null : UNVERIFIED_RECEIVABLE_LABEL },
+    { source: "CollectionRecord", label: "Recaudos", status: _srcCollections ? "available" : "unavailable", detail: _srcCollections ? null : "Sin datos de recaudos" },
+    { source: "CommercialCoverageSnapshot", label: "Inventario", status: _srcInventory ? "available" : "unavailable", detail: _srcInventory ? null : "Sin datos de inventario" },
+  ];
+  const unavailableCount = dataSources.filter(d => d.status !== "available").length;
+  const controlPanelStatus: ControlPanelStatus =
+    unavailableCount === 0 ? "OPERATIONAL" :
+    unavailableCount === dataSources.length ? "DATA_UNAVAILABLE" :
+    "DATA_INCOMPLETE";
+  const controlPanelHealth: ControlPanelHealth = { controlPanelStatus, dataSources };
+
   console.log(`[COMERCIAL] control: ventas=$${fmtCop(ventasMes)} (${periodoVentas}), cartera=$${fmtCop(carteraTotal)} (${pctVencida}%venc), recaudos=$${fmtCop(recaudosMes)}, vendors=${vendedoresOperativos}, geo=${geoTable.length}, alerts=${alertas.length}, decisions=${decisionsSummary?.totalDecisions ?? 0}`);
 
   return {
@@ -958,6 +1003,7 @@ export async function loadControlComercial(
     vendorRanking, geoTable, customerHighlights,
     channels, insights, alertas,
     decisionsSummary,
+    controlPanelHealth,
     loadedAt: new Date().toISOString(),
   };
 }

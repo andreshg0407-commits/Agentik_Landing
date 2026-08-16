@@ -387,21 +387,27 @@ export async function loadVendedor360(
   }
 
   // Risks
+  // COMMERCIAL-TRUTH-CLOSURE: every risk includes source provenance.
+  // Cartera-based risks are fully suppressed when !isCertified (same pattern as Clientes 360).
   const riesgos: Vendedor360Risk[] = [];
   if (clientesSinCompraReciente > 0) {
     riesgos.push({
       type: "clientes_inactivos",
       title: `${clientesSinCompraReciente} cliente(s) sin compra reciente`,
       detail: "Clientes sin actividad comercial en los ultimos 90 dias.",
+      source: "Prisma CustomerProfile + CRM quotes",
     });
   }
-  if (totalCartera > 0) {
+  // Cartera-based risk: only when CERTIFIED (SAG vw_agentik_cartera).
+  // When UNVERIFIED: suppress entirely — do not show with a warning.
+  if (isCertified && totalCartera > 0) {
     const vencidos = carteraEntries.filter(e => e.daysOverdue > 30);
     if (vencidos.length > 0) {
       riesgos.push({
         type: "cartera_vencida",
         title: `Cartera vencida en ${vencidos.length} cliente(s)`,
         detail: "Documentos con mas de 30 dias de vencimiento.",
+        source: "SAG vw_agentik_cartera",
       });
     }
   }
@@ -410,6 +416,7 @@ export async function loadVendedor360(
       type: "inactividad",
       title: `${daysSince} dias sin actividad CRM`,
       detail: "No se registran cotizaciones recientes para este vendedor.",
+      source: "CRM quotes",
     });
   }
 
@@ -421,13 +428,16 @@ export async function loadVendedor360(
       type: "clientes_bajo_pedido",
       title: `${clientesSinPedido.length} cliente(s) con bajo volumen`,
       detail: "Clientes con 1 o menos pedidos. Potencial de crecimiento.",
+      source: "CRM quotes",
     });
   }
-  if (concentracionCartera && concentracionCartera.top3Percent > 60) {
+  // Concentration opportunity: only when CERTIFIED (requires trustworthy cartera data)
+  if (isCertified && concentracionCartera && concentracionCartera.top3Percent > 60) {
     oportunidades.push({
       type: "diversificacion",
       title: "Alta concentracion en pocos clientes",
       detail: "Diversificar cartera comercial reduce riesgo de ingresos.",
+      source: "SAG vw_agentik_cartera",
     });
   }
 
@@ -438,13 +448,16 @@ export async function loadVendedor360(
       type: "reactivar_clientes",
       title: "Reactivar clientes sin compra",
       detail: `Contactar ${clientesSinCompraReciente} cliente(s) sin actividad reciente.`,
+      source: "Prisma CustomerProfile + CRM quotes",
     });
   }
-  if (totalCartera > 0) {
+  // Cartera recommendation: only when CERTIFIED (suppress when UNVERIFIED)
+  if (isCertified && totalCartera > 0) {
     recomendaciones.push({
       type: "revisar_cartera",
       title: "Revisar cartera asociada",
       detail: "Gestionar cobros pendientes para mejorar flujo de caja.",
+      source: "SAG vw_agentik_cartera",
     });
   }
   if (pedidosUltimos30d === 0 && pedidosUltimos90d > 0) {
@@ -452,6 +465,7 @@ export async function loadVendedor360(
       type: "incrementar_actividad",
       title: "Incrementar actividad comercial",
       detail: "Sin pedidos en los ultimos 30 dias. Retomar gestion activa.",
+      source: "CRM quotes",
     });
   }
   if (clients.length > 0 && oportunidades.length > 0) {
@@ -459,6 +473,7 @@ export async function loadVendedor360(
       type: "cobertura_comercial",
       title: "Ampliar cobertura comercial",
       detail: "Seguimiento a oportunidades abiertas y clientes con potencial.",
+      source: "CRM quotes + Prisma CustomerProfile",
     });
   }
 

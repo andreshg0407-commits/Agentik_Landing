@@ -7,6 +7,7 @@
 
 import { requireOrgAccess } from "@/lib/auth/org-access";
 import { loadClientesSummary, loadClientesPage } from "@/lib/comercial/clientes/client-loader";
+import { isReceivableDataCertified, warmTruthStatusCache } from "@/lib/comercial/frontline/receivable-truth-status";
 import { ClientesClient } from "./clientes-client";
 
 export default async function ClientesPage({
@@ -24,6 +25,11 @@ export default async function ClientesPage({
   const search = String(sp.q ?? "");
   const filter = (sp.filter ?? "todos") as "todos" | "activos" | "inactivos" | "con_cartera" | "con_vendedor" | "sin_compra_90d" | "con_crm" | "sin_crm";
 
+  // Warm truth status cache before parallel loads (client-loader also warms,
+  // but doing it here ensures cache is ready for the arCertified prop)
+  await warmTruthStatusCache();
+  const arCertified = isReceivableDataCertified(organization.id);
+
   const [summary, pageResult] = await Promise.all([
     loadClientesSummary(organization.id),
     loadClientesPage(organization.id, { page, search, filter }),
@@ -36,6 +42,7 @@ export default async function ClientesPage({
       pageResult={pageResult}
       currentFilter={filter}
       currentSearch={search}
+      arCertified={arCertified}
     />
   );
 }

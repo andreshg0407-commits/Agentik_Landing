@@ -10,6 +10,14 @@
  *   - All classifications and KPIs come from import-intelligence-service.ts
  *   - Only filter/sort/useMemo for presentation
  *
+ * FAIL-CLOSED (IMPORT-CACHE-PROD-01):
+ *   When the import intelligence cache has no snapshot (fresh deploy, L1+L2
+ *   empty), the cache returns sentinel kpis with totalRefs = -1.
+ *   This component detects that condition and renders em dashes ("\u2014")
+ *   instead of "0" in KPI cards, plus a sync-aware banner.
+ *   This prevents false negatives ("0 importaciones" when data simply
+ *   has not been prewarmed yet).
+ *
  * Sprint: AGENTIK-IMPORTS-SIMPLIFICATION-01
  */
 
@@ -80,6 +88,17 @@ const SIZE_LABELS: Record<string, string> = {
   PEQUENO: "Pequenos", MEDIANO: "Medianos", GRANDE: "Grandes",
 };
 
+// ── Fail-closed detection ────────────────────────────────────────────────────
+// When the cache returns SOURCE_UNAVAILABLE, kpis.totalRefs is -1 (sentinel).
+// This is the ONLY reliable signal that reaches the client through page.tsx,
+// since page.tsx only destructures { items, kpis } from cached.result.
+
+const IMPORT_DATA_UNAVAILABLE_LABEL = "Datos de importacion no disponibles";
+
+function isImportDataUnavailable(kpis: ImportSupplyKpis): boolean {
+  return kpis.totalRefs < 0;
+}
+
 // ── Main Component ──────────────────────────────────────────────────────────
 
 export function ImportacionesClient({ orgSlug, items, kpis }: ImportacionesClientProps) {
@@ -95,6 +114,8 @@ export function ImportacionesClient({ orgSlug, items, kpis }: ImportacionesClien
     setFocusRecompra(focus ?? null);
   }, []);
 
+  const unavailable = isImportDataUnavailable(kpis);
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[5], padding: `${S[5]}px ${S[6]}px`, paddingBottom: S[12] }}>
 
@@ -105,35 +126,55 @@ export function ImportacionesClient({ orgSlug, items, kpis }: ImportacionesClien
           { label: "Importaciones" },
         ]}
         title="Importaciones"
-        subtitle={`${kpis.totalRefs} referencias importadas`}
+        subtitle={unavailable ? IMPORT_DATA_UNAVAILABLE_LABEL : `${kpis.totalRefs} referencias importadas`}
       />
+
+      {/* ── Unavailable banner ───────────────────────────────────────── */}
+      {unavailable && (
+        <div style={{
+          background: C.surface, border: `1px solid ${C.line}`, borderRadius: R.lg,
+          padding: `${S[3]}px ${S[5]}px`, display: "flex", alignItems: "center", gap: S[3],
+        }}>
+          <span style={{
+            fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold,
+            color: C.inkMid,
+          }}>
+            {IMPORT_DATA_UNAVAILABLE_LABEL}
+          </span>
+          <span style={{
+            fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint,
+          }}>
+            La sincronizacion aun no ha generado datos. El cron de prewarm se ejecuta diariamente a las 5:15 AM UTC.
+          </span>
+        </div>
+      )}
 
       {/* ── KPIs clickables (4) ─────────────────────────────────────── */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: S[3] }}>
         <ClickableKpi
           label="Comprar ahora"
-          value={kpis.comprarAhora}
-          color={kpis.comprarAhora > 0 ? C.green : undefined}
+          value={unavailable ? null : kpis.comprarAhora}
+          color={!unavailable && kpis.comprarAhora > 0 ? C.green : undefined}
           active={activeTab === "recompras" && focusRecompra === "INMEDIATA"}
           onClick={() => navigateTo("recompras", "INMEDIATA")}
         />
         <ClickableKpi
           label="Revisar recompra"
-          value={kpis.revisarRecompra}
-          color={kpis.revisarRecompra > 0 ? C.amber : undefined}
+          value={unavailable ? null : kpis.revisarRecompra}
+          color={!unavailable && kpis.revisarRecompra > 0 ? C.amber : undefined}
           active={activeTab === "recompras" && focusRecompra === "VIGILAR"}
           onClick={() => navigateTo("recompras", "VIGILAR")}
         />
         <ClickableKpi
           label="No recomprar"
-          value={kpis.noRecomprar}
+          value={unavailable ? null : kpis.noRecomprar}
           active={activeTab === "recompras" && focusRecompra === "NO_RECOMPRAR"}
           onClick={() => navigateTo("recompras", "NO_RECOMPRAR")}
         />
         <ClickableKpi
           label="Inventario lento"
-          value={kpis.inventarioLento}
-          color={kpis.inventarioLento > 0 ? C.red : undefined}
+          value={unavailable ? null : kpis.inventarioLento}
+          color={!unavailable && kpis.inventarioLento > 0 ? C.red : undefined}
           active={activeTab === "inventario_lento"}
           onClick={() => navigateTo("inventario_lento")}
         />
@@ -159,9 +200,19 @@ export function ImportacionesClient({ orgSlug, items, kpis }: ImportacionesClien
       </div>
 
       {/* ── Active view ──────────────────────────────────────────────── */}
-      {activeTab === "recompras" && <RecomprasView items={items} onDetail={openDrawer} focusGroup={focusRecompra} />}
-      {activeTab === "rotacion" && <RotacionView items={items} onDetail={openDrawer} />}
-      {activeTab === "inventario_lento" && <InventarioLentoView items={items} onDetail={openDrawer} />}
+      {unavailable ? (
+        <div style={{
+          background: C.white, borderRadius: R.lg, border: `1px solid ${C.line}`, boxShadow: E.sm,
+        }}>
+          <EmptyRow text={IMPORT_DATA_UNAVAILABLE_LABEL} />
+        </div>
+      ) : (
+        <>
+          {activeTab === "recompras" && <RecomprasView items={items} onDetail={openDrawer} focusGroup={focusRecompra} />}
+          {activeTab === "rotacion" && <RotacionView items={items} onDetail={openDrawer} />}
+          {activeTab === "inventario_lento" && <InventarioLentoView items={items} onDetail={openDrawer} />}
+        </>
+      )}
 
       {/* ── Drawer ──────────────────────────────────────────────────── */}
       {drawerItem && <ImportDetailDrawer item={drawerItem} onClose={closeDrawer} />}
@@ -663,8 +714,11 @@ function ImportDetailDrawer({ item, onClose }: { item: ImportSupplyIntelligenceI
 // ── Shared UI primitives ────────────────────────────────────────────────────
 
 function ClickableKpi({ label, value, color, active, onClick }: {
-  label: string; value: number; color?: string; active?: boolean; onClick: () => void;
+  label: string; value: number | null; color?: string; active?: boolean; onClick: () => void;
 }) {
+  // value === null means data unavailable — show em dash
+  const isUnavailable = value === null;
+
   return (
     <button
       onClick={onClick}
@@ -683,8 +737,8 @@ function ClickableKpi({ label, value, color, active, onClick }: {
       <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.medium, color: C.inkMid, textTransform: "uppercase" as const, letterSpacing: 0.5 }}>
         {label}
       </span>
-      <span style={{ fontFamily: T.mono, fontSize: T.sz.xl, fontWeight: T.wt.bold, color: value > 0 ? (color ?? C.ink) : C.inkFaint }}>
-        {value.toLocaleString("es-CO")}
+      <span style={{ fontFamily: T.mono, fontSize: T.sz.xl, fontWeight: T.wt.bold, color: isUnavailable ? C.inkFaint : (value > 0 ? (color ?? C.ink) : C.inkFaint) }}>
+        {isUnavailable ? "\u2014" : value.toLocaleString("es-CO")}
       </span>
     </button>
   );

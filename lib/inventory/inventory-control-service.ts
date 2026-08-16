@@ -39,6 +39,7 @@ import type {
   InventoryHealth,
   InventoryDataQuality,
   InventoryControlSnapshot,
+  BalanceSourceStatus,
   NonCommercialPilRow,
   SubgrupoCoverage,
   SubgrupoCoverageState,
@@ -233,6 +234,17 @@ async function loadTextileCommercialPil(
  * Each bodega represents an independent physical state.
  *
  * AGENTIK-INVENTORY-COMMERCIAL-VS-PRODUCTION-STOCK-CLARITY-01.
+ *
+ * ── B04 SEPARATION VERIFICATION (CASTILLITOS-COMMERCIAL-TRUTH-CLOSURE — Carril B) ──
+ * B04 (kaNlBodega=13) is classified as PRODUCTION_ONLY in warehouse-master.ts:
+ *   includeInCommercialInventory: false
+ *   includeInImportInventory: false
+ * Production stock is stored in InventoryItem.productionInProcess and aggregated
+ * ONLY into health.totalProductionInProcess. It is NEVER added to:
+ *   - onHandReal (commercial physical stock)
+ *   - disponibleReal (commercial available)
+ *   - health.totalDisponibleBodega / totalLT / totalCS / totalImportacion
+ * The separation is correct and must be preserved.
  */
 const PRODUCTION_IN_PROCESS_WH = "13";
 
@@ -419,6 +431,10 @@ function buildHealth(
       : 0,
 
     // New KPIs (INVENTARIO-KPI-REALIGNMENT-01)
+    // Source attribution (CASTILLITOS-COMMERCIAL-TRUTH-CLOSURE — Carril B):
+    //   When SAG_OFFICIAL: disponibleReal = SAG DISPONIBLE (vw_agentik_inventario)
+    //   When PIL_LEGACY:   disponibleReal = PIL positive-only sum
+    //   These KPIs inherit the per-item balanceSource — see item.balanceSource for each row.
     totalDisponibleBodega: items.reduce((s, i) => s + Math.max(i.disponibleReal, 0), 0),
     totalLT: ltItems.reduce((s, i) => s + Math.max(i.disponibleReal, 0), 0),
     totalCS: csItems.reduce((s, i) => s + Math.max(i.disponibleReal, 0), 0),
@@ -1036,9 +1052,31 @@ export async function buildInventoryControlSnapshot(
     i => i.disponibleReal < 0
   ).length;
 
+  // ── Resolve top-level truth state (CASTILLITOS-COMMERCIAL-TRUTH-CLOSURE — Carril B) ──
+  let balanceSourceStatus: BalanceSourceStatus;
+  let balanceSourceNote: string;
+  let sourceAsOf: string | null;
+
+  if (balanceSource === "SAG_OFFICIAL" && useSagOfficial) {
+    balanceSourceStatus = "SAG_OFFICIAL";
+    balanceSourceNote = "Inventario gobernado por SAG vw_agentik_inventario. PIL se usa solo para detalle de variantes y reconciliacion.";
+    sourceAsOf = sagResult.snapshotAt;
+  } else if (balanceSource === "SAG_OFFICIAL" && !useSagOfficial) {
+    balanceSourceStatus = "SAG_UNAVAILABLE";
+    balanceSourceNote = "SAG fue solicitado como autoridad pero no estuvo disponible. Valores en cero para referencias sin cache.";
+    sourceAsOf = null;
+  } else {
+    balanceSourceStatus = "PIL_LEGACY";
+    balanceSourceNote = "Inventario basado en registros internos. Comparacion SAG no disponible.";
+    sourceAsOf = null;
+  }
+
   return {
     orgSlug,
     computedAt: new Date().toISOString(),
+    balanceSourceStatus,
+    balanceSourceNote,
+    sourceAsOf,
     items,
     lineSummaries,
     subGrupoSummaries,
