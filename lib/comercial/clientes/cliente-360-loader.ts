@@ -27,8 +27,8 @@ import { prisma } from "@/lib/prisma";
 import { resolveCity, resolveCrmCity } from "./city-resolver";
 import { getCustomerPrimarySeller } from "@/lib/comercial/foundation/client-seller-linker";
 import { fetchCustomerArWithStatus } from "@/lib/comercial/frontline/canonical-ar-service";
-import type { ReceivableTruthStatus } from "@/lib/comercial/frontline/receivable-truth-status";
-import { UNVERIFIED_RECEIVABLE_LABEL } from "@/lib/comercial/frontline/receivable-truth-status";
+import type { CertifiedReceivableDocument } from "@/lib/comercial/frontline/canonical-ar-types";
+import type { ReceivableTruthStatus } from "@/lib/comercial/frontline/receivable-truth-contract";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -180,7 +180,7 @@ export async function loadCliente360(
 
   const tP1 = performance.now();
 
-  const [profileResult, sellerResult, rawReceivables, rawCollections] = await Promise.all([
+  const [profileResult, sellerResult, rawCollections] = await Promise.all([
     // 1. Profile
     (async () => {
       const t = performance.now();
@@ -208,24 +208,7 @@ export async function loadCliente360(
       return r;
     })(),
 
-    // 3. Receivables (via customerId FK)
-    (async () => {
-      const t = performance.now();
-      const r = await db.customerReceivable.findMany({
-        where: { organizationId, customerId: resolvedId },
-        select: {
-          id: true, erpId: true, originalAmount: true, paidAmount: true,
-          balanceDue: true, invoiceDate: true, dueDate: true,
-          daysOverdue: true, agingBucket: true, status: true,
-        },
-        orderBy: { dueDate: "desc" },
-        take: 50,
-      });
-      timing.receivables = ms(t);
-      return r;
-    })(),
-
-    // 4. Collections (via customerId FK)
+    // 3. Collections (via customerId FK)
     (async () => {
       const t = performance.now();
       const r = await db.collectionRecord.findMany({
@@ -369,29 +352,14 @@ export async function loadCliente360(
     customerName: o.customerName,
   }));
 
-  const receivableItems: Cliente360Receivable[] = rawReceivables.map((r: any) => ({
-    id: r.id,
-    erpId: r.erpId,
-    originalAmount: Number(r.originalAmount ?? 0),
-    paidAmount: Number(r.paidAmount ?? 0),
-    balanceDue: Number(r.balanceDue ?? 0),
-    invoiceDate: r.invoiceDate?.toISOString() ?? null,
-    dueDate: r.dueDate?.toISOString() ?? null,
-    daysOverdue: Number(r.daysOverdue ?? 0),
-    agingBucket: r.agingBucket,
-    status: r.status,
-  }));
-
-  // ── Canonical AR from SAG (CERTIFIED) — overrides Prisma legacy totals ──
-  // CustomerReceivable.paidAmount is always 0 (legacy bug), so balanceDue
-  // over-reports. When sagTerceroId exists, fetch certified SALDO_PENDIENTE
-  // from vw_agentik_cartera which includes all applied collections.
+  // ── Canonical AR from SAG — ONLY source of receivable truth ──────────────
+  // NO legacy CustomerReceivable is queried or used. All cartera data
+  // comes exclusively from fetchCustomerArWithStatus → vw_agentik_cartera.
   let totalBalance: number | null;
   let totalOverdue: number | null;
   let openCount: number | null;
   let receivableTruthStatus: ReceivableTruthStatus = "UNVERIFIED";
-  /** When true, canonical AR is the authority — legacy items must be suppressed */
-  let arIsCertified = false;
+  let receivableItems: Cliente360Receivable[] = [];
 
   if (p.sagTerceroId != null && p.sagTerceroId > 0) {
     const tAr = performance.now();
@@ -403,36 +371,29 @@ export async function loadCliente360(
       totalOverdue = 0;
       openCount = 0;
       receivableTruthStatus = "CERTIFIED";
-      arIsCertified = true;
+      // receivableItems stays [] — genuinely no open documents
     } else if (arResult.status === "HAS_OPEN_AR") {
       totalBalance = arResult.snapshot.totalPendiente;
       totalOverdue = arResult.snapshot.totalVencido;
       openCount = arResult.snapshot.documentCount;
       receivableTruthStatus = "CERTIFIED";
-      arIsCertified = true;
+      // Convert SAG certified documents to Cliente360Receivable[]
+      receivableItems = arResult.snapshot.documents.map(mapCertifiedDocToReceivable);
     } else {
-      // SAG_UNAVAILABLE or IDENTITY_UNKNOWN — do NOT show Prisma saldo.
-      // CustomerReceivable.paidAmount is always 0 (legacy bug), so Prisma
-      // balanceDue over-reports. Showing it would present uncertified financial
-      // data as fact. Instead: null totals + UNVERIFIED status, and the Manager
-      // adapter renders "Cartera no disponible" or UNVERIFIED_RECEIVABLE_LABEL.
+      // SAG_UNAVAILABLE or IDENTITY_UNKNOWN — all values null/unknown
       totalBalance = null;
       totalOverdue = null;
       openCount = null;
+      // receivableItems stays [] — no data to show
       // receivableTruthStatus stays "UNVERIFIED"
     }
   } else {
-    // No SAG identity — cannot certify cartera. Do NOT show Prisma saldo.
+    // No SAG identity — cannot certify. All values null/unknown.
     totalBalance = null;
     totalOverdue = null;
     openCount = null;
     // receivableTruthStatus stays "UNVERIFIED"
   }
-
-  // AR leak fix: when canonical AR is CERTIFIED (including CERTIFIED_ZERO),
-  // clear legacy receivable items — they have paidAmount=0 bug and would
-  // contradict SAG authority. Only SAG totals are trustworthy.
-  const certifiedReceivableItems = arIsCertified ? [] : receivableItems;
 
   const salesItems: Cliente360SaleRecord[] = salesRaw.map((s: any) => ({
     id: s.id,
@@ -453,10 +414,9 @@ export async function loadCliente360(
   }));
 
   // Opportunities (synchronous, no DB)
-  // AR leak fix: pass certified items (empty when AR is certified) to prevent
-  // "Cartera vencida" opportunity from being generated from legacy uncertified data
+  // receivableItems come exclusively from canonical SAG — empty when UNVERIFIED/CERTIFIED_ZERO
   const opportunities = computeOpportunities(
-    profile, seller, crmQuotes, sagOrders, certifiedReceivableItems, salesItems,
+    profile, seller, crmQuotes, sagOrders, receivableItems, salesItems,
   );
 
   timing.total = ms(t0);
@@ -474,8 +434,8 @@ export async function loadCliente360(
       items: sagOrders,
     },
     receivables: {
-      state: certifiedReceivableItems.length > 0 || receivableTruthStatus === "CERTIFIED" ? "disponible" : "no_disponible",
-      items: certifiedReceivableItems,
+      state: receivableTruthStatus === "CERTIFIED" ? "disponible" : "no_disponible",
+      items: receivableItems,
       totalBalance,
       totalOverdue,
       openCount,
@@ -505,11 +465,40 @@ export async function loadCliente360(
     `total=${timing.total} | ` +
     `payload=${payloadKb}KB | ` +
     `rows: quotes=${crmQuotes.length} sag=${sagOrders.length} ` +
-    `recv=${certifiedReceivableItems.length}(raw=${receivableItems.length}) sales=${salesItems.length} ` +
+    `recv=${receivableItems.length}(${receivableTruthStatus}) sales=${salesItems.length} ` +
     `coll=${collectionItems.length} opps=${opportunities.length}`,
   );
 
   return result;
+}
+
+// ── SAG document → Cliente360Receivable mapper ───────────────────────────────
+
+function mapCertifiedDocToReceivable(doc: CertifiedReceivableDocument): Cliente360Receivable {
+  return {
+    id: `sag-${doc.documento}`,
+    erpId: doc.documento,
+    originalAmount: doc.valorDocumento,
+    paidAmount: doc.valorDocumento - doc.saldoPendiente,
+    balanceDue: doc.saldoPendiente,
+    invoiceDate: doc.fechaDocumento.toISOString(),
+    dueDate: doc.fechaVencimiento?.toISOString() ?? null,
+    daysOverdue: doc.diasMora ?? 0,
+    agingBucket: classifyAgingBand(doc.diasMora),
+    status: doc.saldoPendiente <= 0 ? "CLOSED"
+      : (doc.diasMora !== null && doc.diasMora > 0) ? "OVERDUE"
+      : "OPEN",
+  };
+}
+
+function classifyAgingBand(diasMora: number | null): string {
+  if (diasMora === null || diasMora <= 0) return "CURRENT";
+  if (diasMora <= 30) return "1-30";
+  if (diasMora <= 60) return "31-60";
+  if (diasMora <= 90) return "61-90";
+  if (diasMora <= 180) return "91-180";
+  if (diasMora <= 365) return "181-365";
+  return "365+";
 }
 
 // ── Opportunity Engine ────────────────────────────────────────────────────────

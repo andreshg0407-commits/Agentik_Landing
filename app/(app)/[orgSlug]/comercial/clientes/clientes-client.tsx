@@ -72,7 +72,7 @@ const DRAWER_TABS: { key: DrawerTab; label: string }[] = [
 // ── Formatters ───────────────────────────────────────────────────────────────
 
 function fmtCurrency(value: number): string {
-  if (value === 0) return "\u2014";
+  if (value === 0) return "$0";
   if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
   if (value >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
   return `$${value.toLocaleString("es-CO")}`;
@@ -233,13 +233,12 @@ interface Props {
   pageResult: ClientesPageResult;
   currentFilter: FilterKey;
   currentSearch: string;
-  /** When false, all receivable amounts in table rows and KPIs are suppressed */
-  arCertified: boolean;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export function ClientesClient({ orgSlug, summary, pageResult, currentFilter, currentSearch, arCertified }: Props) {
+export function ClientesClient({ orgSlug, summary, pageResult, currentFilter, currentSearch }: Props) {
+  const arCertified = summary.arCertified;
   const router = useRouter();
   const pathname = usePathname();
   const [searchInput, setSearchInput] = useState(currentSearch);
@@ -364,7 +363,7 @@ export function ClientesClient({ orgSlug, summary, pageResult, currentFilter, cu
             <ListKpiCard label="Total" value={summary.total} />
             <ListKpiCard label="Activos" value={summary.active} color={C.green} />
             <ListKpiCard label="Inactivos" value={summary.inactive} color={summary.inactive > 0 ? C.amber : undefined} />
-            <ListKpiCard label="Con saldo" value={arCertified ? summary.withCartera : 0} color={arCertified && summary.withCartera > 0 ? C.blueDark : undefined} />
+            <ListKpiCard label="Con saldo" value={arCertified ? summary.withCartera : null} color={arCertified && summary.withCartera > 0 ? C.blueDark : undefined} />
             <ListKpiCard label="Sin compra 90d" value={summary.sinCompra90d} color={summary.sinCompra90d > 0 ? C.amber : undefined} />
           </div>
 
@@ -1097,12 +1096,13 @@ function scoreDescription(score: string): string {
 
 // ── Sub-components ───────────────────────────────────────────────────────────
 
-function ListKpiCard({ label, value, color }: { label: string; value: number; color?: string }) {
+function ListKpiCard({ label, value, color }: { label: string; value: number | null; color?: string }) {
+  const display = value === null ? "\u2014" : value === 0 ? "0" : value.toLocaleString("es-CO");
   return (
     <div className="ag-kpi-card" style={{ padding: S[4], background: C.surface, border: `1px solid ${C.line}`, borderRadius: R.sm, boxShadow: E.xs }}>
       <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight, marginBottom: S[1], textTransform: "uppercase" as const }}>{label}</div>
       <div style={{ fontFamily: T.mono, fontSize: T.sz["2xl"], fontWeight: T.wt.bold, color: color ?? C.ink, lineHeight: 1 }}>
-        {value === 0 ? "\u2014" : value.toLocaleString("es-CO")}
+        {display}
       </div>
     </div>
   );

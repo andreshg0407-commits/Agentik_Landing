@@ -552,14 +552,14 @@ describe("30 — Copilot: no mock experience", () => {
 describe("31 — Seller identity: toSlug is name-derived (IDENTITY_UNSTABLE)", () => {
   test("seller-directory.ts uses toSlug(name) to derive sellerId", () => {
     const src = readFile(SELLER_DIR);
-    expect(src).toContain("toSlug(data.name)");
+    expect(src).toContain("toSlug(displayName)");
     expect(src).toContain("sellerId: toSlug(");
   });
 
   test("no immutable seller PK (UUID/cuid) exists", () => {
     const src = readFile(SELLER_DIR);
     // sellerId is always derived from name
-    expect(src).toContain("sellerId: toSlug(data.name)");
+    expect(src).toContain("sellerId: toSlug(displayName)");
     // No cuid or uuid generation
     expect(src).not.toContain("cuid()");
     expect(src).not.toContain("uuid()");
