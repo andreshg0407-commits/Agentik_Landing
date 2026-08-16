@@ -47,9 +47,10 @@ describe("client-loader.ts — canonical AR only", () => {
     expect(src).toContain("canonical-ar-service");
   });
 
-  test("summary KPIs use reconciled intersection with CustomerProfile", () => {
-    expect(src).toContain("sagTerceroId: { in: carteraIds }");
-    expect(src).toContain("sagTerceroId: { in: overdueIds }");
+  test("summary KPIs use reconciled intersection with COUNT(DISTINCT sagTerceroId)", () => {
+    expect(src).toContain('COUNT(DISTINCT "sagTerceroId")');
+    expect(src).toContain("carteraIds");
+    expect(src).toContain("overdueIds");
   });
 
   test("row-level cartera uses arCtx via resolveRowCartera", () => {
@@ -182,12 +183,15 @@ describe("Diana (NIT 901383501) — HAS_OPEN_AR structural invariants", () => {
   });
 
   test("mapCertifiedDocToReceivable computes paidAmount = valorDocumento - saldoPendiente", () => {
-    expect(loader360).toContain("paidAmount: doc.valorDocumento - doc.saldoPendiente");
+    // Logic now in clientes-pure.ts
+    const pureSrc = readFile("lib/comercial/clientes/clientes-pure.ts");
+    expect(pureSrc).toContain("paidAmount: doc.valorDocumento - doc.saldoPendiente");
   });
 
   test("mapCertifiedDocToReceivable preserves SAG diasMora as-is (nullable)", () => {
-    expect(loader360).toContain("daysOverdue: doc.diasMora,");
-    expect(loader360).not.toContain("daysOverdue: doc.diasMora ?? 0");
+    const pureSrc = readFile("lib/comercial/clientes/clientes-pure.ts");
+    expect(pureSrc).toContain("daysOverdue: doc.diasMora,");
+    expect(pureSrc).not.toContain("daysOverdue: doc.diasMora ?? 0");
   });
 });
 
@@ -197,8 +201,11 @@ describe("UNVERIFIED state — fail-closed", () => {
   const clientLoader = readFile("lib/comercial/clientes/client-loader.ts");
   const loader360 = readFile("lib/comercial/clientes/cliente-360-loader.ts");
 
-  test("client-loader: UNVERIFIED row has totalReceivable=null via resolveRowCartera", () => {
-    expect(clientLoader).toContain("totalReceivable: null, overdueReceivable: null, carteraState: \"UNVERIFIED\"");
+  test("client-loader: resolveRowCartera imported from clientes-pure (UNVERIFIED row → null)", () => {
+    // The UNVERIFIED logic now lives in clientes-pure.ts
+    const pureSrc = readFile("lib/comercial/clientes/clientes-pure.ts");
+    expect(pureSrc).toContain("totalReceivable: null, overdueReceivable: null, carteraState: \"UNVERIFIED\"");
+    expect(clientLoader).toContain("resolveRowCartera");
   });
 
   test("client-loader: summary withCartera=null when not certified", () => {

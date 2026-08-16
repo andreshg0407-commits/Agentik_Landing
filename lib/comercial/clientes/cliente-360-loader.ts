@@ -29,6 +29,7 @@ import { getCustomerPrimarySeller } from "@/lib/comercial/foundation/client-sell
 import { fetchCustomerArWithStatus } from "@/lib/comercial/frontline/canonical-ar-service";
 import type { CertifiedReceivableDocument } from "@/lib/comercial/frontline/canonical-ar-types";
 import type { ReceivableTruthStatus } from "@/lib/comercial/frontline/receivable-truth-contract";
+import { classifyAgingBand, mapCertifiedDocToReceivable as mapDocPure } from "./clientes-pure";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -475,34 +476,13 @@ export async function loadCliente360(
 }
 
 // ── SAG document → Cliente360Receivable mapper ───────────────────────────────
+// Logic lives in clientes-pure.ts — same code tested directly by behavioral tests
 
 function mapCertifiedDocToReceivable(doc: CertifiedReceivableDocument): Cliente360Receivable {
-  return {
-    id: `sag-${doc.documento}`,
-    erpId: doc.documento,
-    originalAmount: doc.valorDocumento,
-    paidAmount: doc.valorDocumento - doc.saldoPendiente,
-    balanceDue: doc.saldoPendiente,
-    invoiceDate: doc.fechaDocumento.toISOString(),
-    dueDate: doc.fechaVencimiento?.toISOString() ?? null,
-    daysOverdue: doc.diasMora,  // preserve null — do NOT coerce to 0
-    agingBucket: classifyAgingBand(doc.diasMora),
-    status: doc.saldoPendiente <= 0 ? "CLOSED"
-      : (doc.diasMora !== null && doc.diasMora > 0) ? "OVERDUE"
-      : "OPEN",
-  };
+  return mapDocPure(doc) as Cliente360Receivable;
 }
 
-function classifyAgingBand(diasMora: number | null): string | null {
-  if (diasMora === null) return null;  // unknown mora — do NOT classify as CURRENT
-  if (diasMora <= 0) return "CURRENT";
-  if (diasMora <= 30) return "1-30";
-  if (diasMora <= 60) return "31-60";
-  if (diasMora <= 90) return "61-90";
-  if (diasMora <= 180) return "91-180";
-  if (diasMora <= 365) return "181-365";
-  return "365+";
-}
+// classifyAgingBand imported from clientes-pure.ts
 
 // ── Opportunity Engine ────────────────────────────────────────────────────────
 

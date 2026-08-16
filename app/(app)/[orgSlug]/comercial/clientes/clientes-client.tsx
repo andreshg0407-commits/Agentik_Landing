@@ -20,6 +20,10 @@ import { OperationalSideDrawer } from "@/components/workspace/operational-side-d
 import type { ClientesSummary, ClienteRow, ClientesPageResult } from "@/lib/comercial/clientes/client-loader";
 import type { Cliente360Data } from "@/lib/comercial/clientes/cliente-360-loader";
 import { UNVERIFIED_RECEIVABLE_LABEL } from "@/lib/comercial/frontline/receivable-truth-contract";
+import {
+  carteraTrafficLight as carteraTrafficLightPure,
+  computeClientScore as computeClientScorePure,
+} from "@/lib/comercial/clientes/clientes-pure";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -194,31 +198,16 @@ function oppLabel(type: string): string {
 // ── Cartera traffic light (semaforo) ─────────────────────────────────────────
 
 function carteraTrafficLight(receivables: Cliente360Data["receivables"]): { label: string; color: string } {
-  // UNVERIFIED — cannot assess health
-  if (receivables.truthStatus !== "CERTIFIED") {
-    return { label: "No verificada", color: C.inkGhost };
-  }
-  // CERTIFIED_ZERO — genuinely no cartera
-  if (receivables.totalBalance === null || receivables.totalBalance === 0) {
-    return { label: "Sin cartera", color: C.inkGhost };
-  }
-  // HAS_OPEN_AR — assess overdue status from items with known mora
-  const itemsWithKnownMora = receivables.items.filter(r => r.daysOverdue != null);
-  if (itemsWithKnownMora.length === 0) {
-    // Have balance but no known mora on any document
-    return { label: "Mora no disponible", color: C.inkMid };
-  }
-  const overdueItems = itemsWithKnownMora.filter(r => r.daysOverdue! > 0);
-  if (overdueItems.length === 0) {
-    return { label: "Al dia", color: C.green };
-  }
-  const maxDaysOverdue = Math.max(...overdueItems.map(r => r.daysOverdue!));
-  const overdueBalance = overdueItems.reduce((s, r) => s + r.balanceDue, 0);
-  const overdueRatio = overdueBalance / receivables.totalBalance!;
-  if (maxDaysOverdue > 90 || overdueRatio > 0.5) {
-    return { label: "Critica", color: C.red };
-  }
-  return { label: "En mora", color: C.amber };
+  const result = carteraTrafficLightPure({
+    truthStatus: receivables.truthStatus,
+    totalBalance: receivables.totalBalance,
+    items: receivables.items.map(r => ({ daysOverdue: r.daysOverdue, balanceDue: r.balanceDue })),
+  });
+  // Map color token names to actual C.* values
+  const colorMap: Record<string, string> = {
+    inkGhost: C.inkGhost, inkMid: C.inkMid, green: C.green, red: C.red, amber: C.amber,
+  };
+  return { label: result.label, color: colorMap[result.color] ?? C.inkGhost };
 }
 
 // ── Grid constants for drawer tables ─────────────────────────────────────────
@@ -353,7 +342,12 @@ export function ClientesClient({ orgSlug, summary, pageResult, currentFilter, cu
         statusLabel={headerStatusLabel}
       />
 
-      {summary.total === 0 ? (
+      {summary.loadFailed ? (
+        <EmptyOperationalState
+          message="Directorio de clientes no disponible"
+          detail="No se pudo cargar la informacion de clientes. Intente nuevamente recargando la pagina."
+        />
+      ) : summary.total === 0 ? (
         <EmptyOperationalState
           message="Sin clientes registrados"
           detail="Los clientes se consolidan automaticamente desde SAG y CRM."
@@ -374,17 +368,21 @@ export function ClientesClient({ orgSlug, summary, pageResult, currentFilter, cu
             <div style={{ display: "flex", gap: S[1], flexWrap: "wrap" as const }}>
               {FILTER_OPTIONS.map(opt => {
                 const active = currentFilter === opt.key;
+                const carteraDisabled = opt.key === "con_cartera" && pageResult.dataState !== "CERTIFIED";
                 return (
                   <button
                     key={opt.key}
-                    onClick={() => handleFilterChange(opt.key)}
+                    onClick={() => !carteraDisabled && handleFilterChange(opt.key)}
                     className="ag-action-ghost"
+                    title={carteraDisabled ? "Cartera no verificada" : undefined}
                     style={{
                       fontFamily: T.mono, fontSize: T.sz["2xs"], padding: `4px ${S[3]}px`,
                       borderRadius: R.pill, border: `1px solid ${active ? C.blueDark : C.line}`,
                       background: active ? C.blueDark : "transparent",
-                      color: active ? "#fff" : C.inkMid, cursor: "pointer",
+                      color: carteraDisabled ? C.inkGhost : active ? "#fff" : C.inkMid,
+                      cursor: carteraDisabled ? "not-allowed" : "pointer",
                       fontWeight: active ? T.wt.semibold : T.wt.normal,
+                      opacity: carteraDisabled ? 0.5 : 1,
                     }}
                   >
                     {opt.label}
@@ -427,7 +425,12 @@ export function ClientesClient({ orgSlug, summary, pageResult, currentFilter, cu
           </div>
 
           {/* Table */}
-          {clients.length === 0 ? (
+          {currentFilter === "con_cartera" && pageResult.dataState !== "CERTIFIED" ? (
+            <EmptyOperationalState
+              message={pageResult.dataState === "UNAVAILABLE" ? "Cartera no disponible" : "Cartera no verificada"}
+              detail="Los datos de cartera no estan certificados en este momento. No es posible filtrar por cartera hasta que la fuente SAG este verificada."
+            />
+          ) : clients.length === 0 ? (
             <EmptyOperationalState
               message={currentSearch ? `Sin resultados para "${currentSearch}"` : `Sin clientes con filtro "${FILTER_OPTIONS.find(o => o.key === currentFilter)?.label}"`}
               detail="Ajuste los filtros para ver clientes"
@@ -1059,39 +1062,17 @@ function TabTimeline({ data }: { data: Cliente360Data }) {
 // ── Client score computation ─────────────────────────────────────────────────
 
 function computeClientScore(data: Cliente360Data): { grade: string; incomplete: boolean } {
-  let score = 0;
   const { crmQuotes, sagOrders, receivables, sales, seller, opportunities } = data;
-  const arCertified = receivables.truthStatus === "CERTIFIED";
-
-  // Activity
-  if (crmQuotes.items.length > 0) score += 20;
-  if (sagOrders.items.length > 0) score += 15;
-  if (sales.items.length > 0) score += 15;
-
-  // Seller
-  if (seller.confidence >= 80) score += 15;
-  else if (seller.confidence >= 50) score += 8;
-
-  // Receivables health — ONLY award points when AR is certified
-  if (arCertified) {
-    if ((receivables.totalOverdue ?? 0) === 0 && (receivables.totalBalance ?? 0) > 0) score += 20;
-    else if ((receivables.totalOverdue ?? 0) === 0) score += 10;
-  }
-  // UNVERIFIED: no cartera health points — score is incomplete
-
-  // Low risk
-  const riskOpps = opportunities.filter(o => o.type === "cartera" || o.type === "inactividad");
-  if (riskOpps.length === 0) score += 15;
-
-  let grade: string;
-  if (score >= 85) grade = "A+";
-  else if (score >= 70) grade = "A";
-  else if (score >= 55) grade = "B+";
-  else if (score >= 40) grade = "B";
-  else if (score >= 25) grade = "C";
-  else grade = "D";
-
-  return { grade, incomplete: !arCertified };
+  return computeClientScorePure({
+    crmQuoteCount: crmQuotes.items.length,
+    sagOrderCount: sagOrders.items.length,
+    salesCount: sales.items.length,
+    sellerConfidence: seller.confidence,
+    arCertified: receivables.truthStatus === "CERTIFIED",
+    totalOverdue: receivables.totalOverdue,
+    totalBalance: receivables.totalBalance,
+    opportunityTypes: opportunities.map(o => o.type),
+  });
 }
 
 function scoreColor(score: string): string {
