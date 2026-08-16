@@ -373,6 +373,8 @@ export function ClientesClient({ orgSlug, summary, pageResult, currentFilter, cu
                   <button
                     key={opt.key}
                     onClick={() => !carteraDisabled && handleFilterChange(opt.key)}
+                    disabled={carteraDisabled}
+                    aria-disabled={carteraDisabled || undefined}
                     className="ag-action-ghost"
                     title={carteraDisabled ? "Cartera no verificada" : undefined}
                     style={{

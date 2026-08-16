@@ -113,8 +113,12 @@ export function carteraTrafficLight(receivables: CarteraTrafficLightInput): { la
   if (receivables.truthStatus !== "CERTIFIED") {
     return { label: "No verificada", color: "inkGhost" };
   }
-  // CERTIFIED_ZERO — genuinely no cartera
-  if (receivables.totalBalance === null || receivables.totalBalance === 0) {
+  // CERTIFIED but totalBalance=null → data inconsistency, treat as unverified
+  if (receivables.totalBalance === null) {
+    return { label: "Dato inconsistente", color: "inkGhost" };
+  }
+  // CERTIFIED_ZERO — genuinely no cartera ($0 confirmed by SAG)
+  if (receivables.totalBalance === 0) {
     return { label: "Sin cartera", color: "inkGhost" };
   }
   // HAS_OPEN_AR — assess overdue status from items with known mora
@@ -152,6 +156,13 @@ export interface ClientScoreInput {
 export function computeClientScore(input: ClientScoreInput): { grade: string; incomplete: boolean } {
   let score = 0;
 
+  // AR data is complete only when certified AND both totals are non-null.
+  // certified=true + balance=null is an inconsistent state — no AR points.
+  const arComplete =
+    input.arCertified &&
+    input.totalBalance !== null &&
+    input.totalOverdue !== null;
+
   // Activity
   if (input.crmQuoteCount > 0) score += 20;
   if (input.sagOrderCount > 0) score += 15;
@@ -161,23 +172,19 @@ export function computeClientScore(input: ClientScoreInput): { grade: string; in
   if (input.sellerConfidence >= 80) score += 15;
   else if (input.sellerConfidence >= 50) score += 8;
 
-  // Receivables health — ONLY award points when AR is certified
-  if (input.arCertified) {
-    if ((input.totalOverdue ?? 0) === 0 && (input.totalBalance ?? 0) > 0) score += 20;
-    else if ((input.totalOverdue ?? 0) === 0) score += 10;
+  // Receivables health — ONLY award points when AR data is complete
+  if (arComplete) {
+    if (input.totalOverdue === 0 && input.totalBalance! > 0) score += 20;
+    else if (input.totalOverdue === 0) score += 10;
   }
 
-  // Low risk — ONLY count absence of cartera risk when certified
-  const riskTypes = input.opportunityTypes.filter(t => t === "cartera" || t === "inactividad");
-  const hasCarteraRisk = riskTypes.includes("cartera");
-  const hasInactivityRisk = riskTypes.includes("inactividad");
-
-  // Cartera absence-of-risk only valid when certified
+  // Low risk — cartera absence-of-risk only valid when AR data is complete
   // Inactivity can be evaluated independently (has its own data source)
-  let lowRiskPoints = 0;
-  if (input.arCertified && !hasCarteraRisk) lowRiskPoints += 10;
-  if (!hasInactivityRisk) lowRiskPoints += 5;
-  score += lowRiskPoints;
+  const hasCarteraRisk = input.opportunityTypes.includes("cartera");
+  const hasInactivityRisk = input.opportunityTypes.includes("inactividad");
+
+  if (arComplete && !hasCarteraRisk) score += 10;
+  if (!hasInactivityRisk) score += 5;
 
   let grade: string;
   if (score >= 85) grade = "A+";
@@ -187,5 +194,186 @@ export function computeClientScore(input: ClientScoreInput): { grade: string; in
   else if (score >= 25) grade = "C";
   else grade = "D";
 
-  return { grade, incomplete: !input.arCertified };
+  return { grade, incomplete: !arComplete };
+}
+
+// ── Loader core functions (injectable deps for testability) ──────────────────
+
+/** Shape of a customer in the AR snapshot */
+export interface ArSnapshotCustomer {
+  clienteId: number;
+  totalPendiente: number;
+  totalVencido: number;
+}
+
+/** Shape of the full AR snapshot */
+export interface ArSnapshotData {
+  customers: ArSnapshotCustomer[];
+  asOf: Date;
+}
+
+/** Result from fetchCertifiedArSnapshot — ok:true with data, or ok:false with error */
+export type ArFetchResult =
+  | { ok: true; snapshot: ArSnapshotData }
+  | { ok: false; error: string };
+
+/** Full AR context with snapshot (superset of ArContextCore) */
+export interface ArContextFull extends ArContextCore {
+  snapshot: ArSnapshotData | null;
+  arCustomerIds: Set<number>;
+  overdueCustomerIds: Set<number>;
+  asOf: string;
+  reason: string;
+}
+
+/** Injectable dependencies for loadArContext */
+export interface LoadArContextDeps {
+  isCertified: (orgId: string) => boolean;
+  fetchSnapshot: () => Promise<ArFetchResult>;
+}
+
+/**
+ * Core logic of loadArContext — testable with injected dependencies.
+ * Production wraps this with real Prisma/SAG deps.
+ */
+export async function loadArContextCore(
+  organizationId: string,
+  deps: LoadArContextDeps,
+): Promise<ArContextFull> {
+  const certified = deps.isCertified(organizationId);
+
+  if (!certified) {
+    return {
+      dataState: "UNVERIFIED",
+      snapshot: null,
+      arLookup: new Map(),
+      arCustomerIds: new Set(),
+      overdueCustomerIds: new Set(),
+      asOf: new Date().toISOString(),
+      reason: "TENANT_NOT_CERTIFIED",
+    };
+  }
+
+  let arResult: ArFetchResult;
+  try {
+    arResult = await deps.fetchSnapshot();
+  } catch (err: any) {
+    return {
+      dataState: "UNAVAILABLE",
+      snapshot: null,
+      arLookup: new Map(),
+      arCustomerIds: new Set(),
+      overdueCustomerIds: new Set(),
+      asOf: new Date().toISOString(),
+      reason: err?.message ?? "FETCH_EXCEPTION",
+    };
+  }
+
+  if (!arResult.ok) {
+    return {
+      dataState: "UNAVAILABLE",
+      snapshot: null,
+      arLookup: new Map(),
+      arCustomerIds: new Set(),
+      overdueCustomerIds: new Set(),
+      asOf: new Date().toISOString(),
+      reason: arResult.error,
+    };
+  }
+
+  const arLookup = new Map<number, ArSnapshotCustomer>();
+  const arCustomerIds = new Set<number>();
+  const overdueCustomerIds = new Set<number>();
+
+  for (const c of arResult.snapshot.customers) {
+    arLookup.set(c.clienteId, c);
+    arCustomerIds.add(c.clienteId);
+    if (c.totalVencido > 0) {
+      overdueCustomerIds.add(c.clienteId);
+    }
+  }
+
+  return {
+    dataState: "CERTIFIED",
+    snapshot: arResult.snapshot,
+    arLookup,
+    arCustomerIds,
+    overdueCustomerIds,
+    asOf: arResult.snapshot.asOf.toISOString(),
+    reason: "SAG_CERTIFIED",
+  };
+}
+
+/** Injectable deps for loadClientesSummary core */
+export interface SummaryDbDeps {
+  queryProfileAgg: (orgId: string) => Promise<{
+    total: number; active: number; inactive: number;
+    withSeller: number; sinCompra90d: number; withCrm: number;
+  }>;
+  countDistinctProfiles: (orgId: string, sagIds: number[]) => Promise<number>;
+}
+
+/** Core logic of loadClientesSummary — testable */
+export async function loadClientesSummaryCoreLogic(
+  organizationId: string,
+  arCtx: ArContextFull,
+  deps: SummaryDbDeps,
+): Promise<{
+  total: number; active: number; inactive: number;
+  withSeller: number; withCartera: number | null; withOverdue: number | null;
+  sinCompra90d: number; withCrm: number;
+  dataState: ArDataState; arAsOf: string | null; loadFailed: boolean;
+}> {
+  try {
+    const agg = await deps.queryProfileAgg(organizationId);
+
+    let withCartera: number | null = null;
+    let withOverdue: number | null = null;
+
+    if (arCtx.dataState === "CERTIFIED" && arCtx.arCustomerIds.size > 0) {
+      const carteraIds = [...arCtx.arCustomerIds];
+      const overdueIds = [...arCtx.overdueCustomerIds];
+
+      const [carteraCount, overdueCount] = await Promise.all([
+        deps.countDistinctProfiles(organizationId, carteraIds),
+        overdueIds.length > 0
+          ? deps.countDistinctProfiles(organizationId, overdueIds)
+          : Promise.resolve(0),
+      ]);
+
+      withCartera = carteraCount;
+      withOverdue = overdueCount;
+    } else if (arCtx.dataState === "CERTIFIED") {
+      withCartera = 0;
+      withOverdue = 0;
+    }
+
+    return {
+      ...agg,
+      withCartera,
+      withOverdue,
+      dataState: arCtx.dataState,
+      arAsOf: arCtx.dataState === "CERTIFIED" ? arCtx.asOf : null,
+      loadFailed: false,
+    };
+  } catch {
+    return {
+      total: 0, active: 0, inactive: 0,
+      withSeller: 0, withCartera: null, withOverdue: null,
+      sinCompra90d: 0, withCrm: 0,
+      dataState: "UNAVAILABLE",
+      arAsOf: null,
+      loadFailed: true,
+    };
+  }
+}
+
+/** Core logic of loadClientesPage filter guard for con_cartera */
+export function resolveConCarteraFilter(
+  arCtx: ArContextCore & { arCustomerIds: Set<number> },
+): { allowed: false; dataState: ArDataState } | { allowed: true; sagIds: number[] } {
+  if (arCtx.dataState !== "CERTIFIED" || arCtx.arCustomerIds.size === 0) {
+    return { allowed: false, dataState: arCtx.dataState };
+  }
+  return { allowed: true, sagIds: [...arCtx.arCustomerIds] };
 }

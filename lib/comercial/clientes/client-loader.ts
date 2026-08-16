@@ -4,7 +4,7 @@ import { resolveCity } from "./city-resolver";
 import { isReceivableDataCertified, warmTruthStatusCache } from "@/lib/comercial/frontline/receivable-truth-status";
 import { fetchCertifiedArSnapshot } from "@/lib/comercial/frontline/canonical-ar-service";
 import type { CertifiedCustomerReceivableSnapshot, CertifiedArSnapshot } from "@/lib/comercial/frontline/canonical-ar-types";
-import { resolveRowCartera } from "./clientes-pure";
+import { resolveRowCartera, loadArContextCore } from "./clientes-pure";
 import type { ArDataState, ClienteCarteraState } from "./clientes-pure";
 
 // Re-export pure types and functions for consumers
@@ -87,55 +87,13 @@ export interface ClientesPageResult {
 
 export async function loadArContext(organizationId: string): Promise<ArContext> {
   await warmTruthStatusCache();
-  const certified = isReceivableDataCertified(organizationId);
-
-  if (!certified) {
-    return {
-      dataState: "UNVERIFIED",
-      snapshot: null,
-      arLookup: new Map(),
-      arCustomerIds: new Set(),
-      overdueCustomerIds: new Set(),
-      asOf: new Date().toISOString(),
-      reason: "TENANT_NOT_CERTIFIED",
-    };
-  }
-
-  const arResult = await fetchCertifiedArSnapshot();
-  if (!arResult.ok) {
-    // SAG query failed — UNAVAILABLE, NOT certified
-    return {
-      dataState: "UNAVAILABLE",
-      snapshot: null,
-      arLookup: new Map(),
-      arCustomerIds: new Set(),
-      overdueCustomerIds: new Set(),
-      asOf: new Date().toISOString(),
-      reason: arResult.error,
-    };
-  }
-
-  const arLookup = new Map<number, CertifiedCustomerReceivableSnapshot>();
-  const arCustomerIds = new Set<number>();
-  const overdueCustomerIds = new Set<number>();
-
-  for (const c of arResult.snapshot.customers) {
-    arLookup.set(c.clienteId, c);
-    arCustomerIds.add(c.clienteId);
-    if (c.totalVencido > 0) {
-      overdueCustomerIds.add(c.clienteId);
-    }
-  }
-
-  return {
-    dataState: "CERTIFIED",
-    snapshot: arResult.snapshot,
-    arLookup,
-    arCustomerIds,
-    overdueCustomerIds,
-    asOf: arResult.snapshot.asOf.toISOString(),
-    reason: "SAG_CERTIFIED",
-  };
+  // Delegate to testable core logic with real infra deps
+  const ctx = await loadArContextCore(organizationId, {
+    isCertified: (orgId) => isReceivableDataCertified(orgId),
+    fetchSnapshot: () => fetchCertifiedArSnapshot() as any,
+  });
+  // Cast to ArContext (full snapshot type is compatible)
+  return ctx as ArContext;
 }
 
 // ── Summary loader (KPIs only, no rows) ──────────────────────────────────────

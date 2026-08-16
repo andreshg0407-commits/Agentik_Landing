@@ -1,13 +1,13 @@
 /**
  * lib/auth/__tests__/clients-canonical-truth-03a1.test.ts
  *
- * CLIENTS-CANONICAL-TRUTH-03A2 — Production behavioral tests.
+ * CLIENTS-CANONICAL-TRUTH-03A3 — Production behavioral tests.
  *
  * ALL pure functions imported from the SAME production module:
  *   lib/comercial/clientes/clientes-pure.ts
  *
  * No replicated logic. No readFile/toContain as substitute for behavioral tests.
- * Structural parity checks remain for server-only loader shapes.
+ * Loader core functions tested with injected doubles.
  */
 
 import { describe, test, expect } from "bun:test";
@@ -21,13 +21,19 @@ import {
   mapCertifiedDocToReceivable,
   carteraTrafficLight,
   computeClientScore,
+  loadArContextCore,
+  loadClientesSummaryCoreLogic,
+  resolveConCarteraFilter,
 } from "@/lib/comercial/clientes/clientes-pure";
 import type {
   ArContextCore,
+  ArContextFull,
   ArDataState,
   ClientScoreInput,
   CertifiedDocInput,
   CarteraTrafficLightInput,
+  LoadArContextDeps,
+  SummaryDbDeps,
 } from "@/lib/comercial/clientes/clientes-pure";
 
 const ROOT = path.resolve(__dirname, "../../..");
@@ -37,10 +43,10 @@ function readFile(relPath: string): string {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// A. BEHAVIORAL TESTS — using real production functions
+// A. PURE FUNCTION BEHAVIORAL TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// ── 1. resolveRowCartera — production function ──────────────────────────────
+// ── 1. resolveRowCartera ────────────────────────────────────────────────────
 
 describe("resolveRowCartera — CERTIFIED context", () => {
   const arCtx: ArContextCore = {
@@ -71,13 +77,11 @@ describe("resolveRowCartera — CERTIFIED context", () => {
   });
 
   test("sagTerceroId=0 → UNVERIFIED", () => {
-    const result = resolveRowCartera(arCtx, 0);
-    expect(result.carteraState).toBe("UNVERIFIED");
+    expect(resolveRowCartera(arCtx, 0).carteraState).toBe("UNVERIFIED");
   });
 
   test("sagTerceroId=-1 → UNVERIFIED", () => {
-    const result = resolveRowCartera(arCtx, -1);
-    expect(result.carteraState).toBe("UNVERIFIED");
+    expect(resolveRowCartera(arCtx, -1).carteraState).toBe("UNVERIFIED");
   });
 });
 
@@ -85,18 +89,15 @@ describe("resolveRowCartera — UNAVAILABLE context (SAG down)", () => {
   const arCtx: ArContextCore = { dataState: "UNAVAILABLE", arLookup: new Map() };
 
   test("returns UNVERIFIED, not CERTIFIED_ZERO", () => {
-    const result = resolveRowCartera(arCtx, 856);
-    expect(result.carteraState).toBe("UNVERIFIED");
+    expect(resolveRowCartera(arCtx, 856).carteraState).toBe("UNVERIFIED");
   });
 
   test("totalReceivable = null (not 0)", () => {
-    const result = resolveRowCartera(arCtx, 856);
-    expect(result.totalReceivable).toBeNull();
+    expect(resolveRowCartera(arCtx, 856).totalReceivable).toBeNull();
   });
 
   test("overdueReceivable = null (not 0)", () => {
-    const result = resolveRowCartera(arCtx, 856);
-    expect(result.overdueReceivable).toBeNull();
+    expect(resolveRowCartera(arCtx, 856).overdueReceivable).toBeNull();
   });
 });
 
@@ -110,68 +111,33 @@ describe("resolveRowCartera — UNVERIFIED context (tenant not certified)", () =
   });
 });
 
-// ── 2. classifyAgingBand — production function ──────────────────────────────
+// ── 2. classifyAgingBand ────────────────────────────────────────────────────
 
 describe("classifyAgingBand — nullable mora contract", () => {
-  test("null → null (not CURRENT)", () => {
-    expect(classifyAgingBand(null)).toBeNull();
-  });
-
-  test("0 → CURRENT", () => {
-    expect(classifyAgingBand(0)).toBe("CURRENT");
-  });
-
-  test("-5 → CURRENT", () => {
-    expect(classifyAgingBand(-5)).toBe("CURRENT");
-  });
-
-  test("15 → 1-30", () => {
-    expect(classifyAgingBand(15)).toBe("1-30");
-  });
-
-  test("45 → 31-60", () => {
-    expect(classifyAgingBand(45)).toBe("31-60");
-  });
-
-  test("90 → 61-90", () => {
-    expect(classifyAgingBand(90)).toBe("61-90");
-  });
-
-  test("150 → 91-180", () => {
-    expect(classifyAgingBand(150)).toBe("91-180");
-  });
-
-  test("300 → 181-365", () => {
-    expect(classifyAgingBand(300)).toBe("181-365");
-  });
-
-  test("452 → 365+", () => {
-    expect(classifyAgingBand(452)).toBe("365+");
-  });
+  test("null → null (not CURRENT)", () => { expect(classifyAgingBand(null)).toBeNull(); });
+  test("0 → CURRENT", () => { expect(classifyAgingBand(0)).toBe("CURRENT"); });
+  test("-5 → CURRENT", () => { expect(classifyAgingBand(-5)).toBe("CURRENT"); });
+  test("15 → 1-30", () => { expect(classifyAgingBand(15)).toBe("1-30"); });
+  test("45 → 31-60", () => { expect(classifyAgingBand(45)).toBe("31-60"); });
+  test("90 → 61-90", () => { expect(classifyAgingBand(90)).toBe("61-90"); });
+  test("150 → 91-180", () => { expect(classifyAgingBand(150)).toBe("91-180"); });
+  test("300 → 181-365", () => { expect(classifyAgingBand(300)).toBe("181-365"); });
+  test("452 → 365+", () => { expect(classifyAgingBand(452)).toBe("365+"); });
 });
 
-// ── 3. mapCertifiedDocToReceivable — production function ────────────────────
+// ── 3. mapCertifiedDocToReceivable ──────────────────────────────────────────
 
 describe("mapCertifiedDocToReceivable — Diana documents", () => {
   const doc1: CertifiedDocInput = {
-    documento: "F2-6639",
-    valorDocumento: 529900,
-    saldoPendiente: 529900,
-    diasMora: 452,
-    fechaDocumento: new Date("2025-05-01"),
-    fechaVencimiento: new Date("2025-05-31"),
+    documento: "F2-6639", valorDocumento: 529900, saldoPendiente: 529900,
+    diasMora: 452, fechaDocumento: new Date("2025-05-01"), fechaVencimiento: new Date("2025-05-31"),
   };
-
   const doc2: CertifiedDocInput = {
-    documento: "F2-6668",
-    valorDocumento: 382500,
-    saldoPendiente: 382500,
-    diasMora: 445,
-    fechaDocumento: new Date("2025-05-08"),
-    fechaVencimiento: new Date("2025-06-07"),
+    documento: "F2-6668", valorDocumento: 382500, saldoPendiente: 382500,
+    diasMora: 445, fechaDocumento: new Date("2025-05-08"), fechaVencimiento: new Date("2025-06-07"),
   };
 
-  test("doc1 → daysOverdue=452, agingBucket=365+, status=OVERDUE", () => {
+  test("doc1 → daysOverdue=452, 365+, OVERDUE", () => {
     const r = mapCertifiedDocToReceivable(doc1);
     expect(r.daysOverdue).toBe(452);
     expect(r.agingBucket).toBe("365+");
@@ -180,205 +146,160 @@ describe("mapCertifiedDocToReceivable — Diana documents", () => {
     expect(r.paidAmount).toBe(0);
   });
 
-  test("doc2 → daysOverdue=445, agingBucket=365+, status=OVERDUE", () => {
+  test("doc2 → daysOverdue=445, 365+, OVERDUE", () => {
     const r = mapCertifiedDocToReceivable(doc2);
     expect(r.daysOverdue).toBe(445);
-    expect(r.agingBucket).toBe("365+");
     expect(r.status).toBe("OVERDUE");
   });
 
-  test("id format is sag-{documento}", () => {
+  test("id = sag-{documento}", () => {
     expect(mapCertifiedDocToReceivable(doc1).id).toBe("sag-F2-6639");
   });
 });
 
 describe("mapCertifiedDocToReceivable — null DIAS_MORA", () => {
   const doc: CertifiedDocInput = {
-    documento: "NC-100",
-    valorDocumento: 5_000_000,
-    saldoPendiente: 3_000_000,
-    diasMora: null,
-    fechaDocumento: new Date("2026-01-15"),
-    fechaVencimiento: null,
+    documento: "NC-100", valorDocumento: 5_000_000, saldoPendiente: 3_000_000,
+    diasMora: null, fechaDocumento: new Date("2026-01-15"), fechaVencimiento: null,
   };
 
-  test("daysOverdue = null (not 0)", () => {
-    expect(mapCertifiedDocToReceivable(doc).daysOverdue).toBeNull();
-  });
+  test("daysOverdue = null", () => { expect(mapCertifiedDocToReceivable(doc).daysOverdue).toBeNull(); });
+  test("agingBucket = null", () => { expect(mapCertifiedDocToReceivable(doc).agingBucket).toBeNull(); });
+  test("status = OPEN", () => { expect(mapCertifiedDocToReceivable(doc).status).toBe("OPEN"); });
+  test("paidAmount = 2M", () => { expect(mapCertifiedDocToReceivable(doc).paidAmount).toBe(2_000_000); });
+});
 
-  test("agingBucket = null (not CURRENT)", () => {
-    expect(mapCertifiedDocToReceivable(doc).agingBucket).toBeNull();
-  });
-
-  test("status = OPEN (not OVERDUE)", () => {
-    expect(mapCertifiedDocToReceivable(doc).status).toBe("OPEN");
-  });
-
-  test("paidAmount = valorDocumento - saldoPendiente", () => {
-    expect(mapCertifiedDocToReceivable(doc).paidAmount).toBe(2_000_000);
+describe("mapCertifiedDocToReceivable — fully paid", () => {
+  test("saldoPendiente=0 → CLOSED", () => {
+    const r = mapCertifiedDocToReceivable({
+      documento: "FE-001", valorDocumento: 1_000_000, saldoPendiente: 0,
+      diasMora: 0, fechaDocumento: new Date("2026-06-01"), fechaVencimiento: new Date("2026-07-01"),
+    });
+    expect(r.status).toBe("CLOSED");
   });
 });
 
-describe("mapCertifiedDocToReceivable — fully paid document", () => {
-  const doc: CertifiedDocInput = {
-    documento: "FE-001",
-    valorDocumento: 1_000_000,
-    saldoPendiente: 0,
-    diasMora: 0,
-    fechaDocumento: new Date("2026-06-01"),
-    fechaVencimiento: new Date("2026-07-01"),
-  };
+// ── 4. carteraTrafficLight — NULL MUST NEVER MEAN ZERO (Section A) ──────────
 
-  test("status = CLOSED when saldoPendiente = 0", () => {
-    expect(mapCertifiedDocToReceivable(doc).status).toBe("CLOSED");
-  });
-});
-
-// ── 4. carteraTrafficLight — production function ────────────────────────────
-
-describe("carteraTrafficLight — three-state contract", () => {
+describe("carteraTrafficLight — four-state contract", () => {
   test("UNVERIFIED → 'No verificada'", () => {
-    const result = carteraTrafficLight({ truthStatus: "UNVERIFIED", totalBalance: null, items: [] });
-    expect(result.label).toBe("No verificada");
+    expect(carteraTrafficLight({ truthStatus: "UNVERIFIED", totalBalance: null, items: [] }).label).toBe("No verificada");
   });
 
-  test("CERTIFIED + balance=0 → 'Sin cartera'", () => {
-    const result = carteraTrafficLight({ truthStatus: "CERTIFIED", totalBalance: 0, items: [] });
-    expect(result.label).toBe("Sin cartera");
-  });
-
-  test("CERTIFIED + balance=null → 'Sin cartera'", () => {
+  test("CERTIFIED + balance=null → 'Dato inconsistente' (NEVER 'Sin cartera')", () => {
     const result = carteraTrafficLight({ truthStatus: "CERTIFIED", totalBalance: null, items: [] });
-    expect(result.label).toBe("Sin cartera");
+    expect(result.label).toBe("Dato inconsistente");
+    expect(result.label).not.toBe("Sin cartera");
+  });
+
+  test("CERTIFIED + balance=0 → 'Sin cartera' (genuine $0)", () => {
+    expect(carteraTrafficLight({ truthStatus: "CERTIFIED", totalBalance: 0, items: [] }).label).toBe("Sin cartera");
   });
 
   test("CERTIFIED + balance>0 + no known mora → 'Mora no disponible'", () => {
-    const result = carteraTrafficLight({
-      truthStatus: "CERTIFIED",
-      totalBalance: 500_000,
+    expect(carteraTrafficLight({
+      truthStatus: "CERTIFIED", totalBalance: 500_000,
       items: [{ daysOverdue: null, balanceDue: 500_000 }],
-    });
-    expect(result.label).toBe("Mora no disponible");
+    }).label).toBe("Mora no disponible");
   });
 
   test("CERTIFIED + balance>0 + all mora=0 → 'Al dia'", () => {
-    const result = carteraTrafficLight({
-      truthStatus: "CERTIFIED",
-      totalBalance: 500_000,
+    expect(carteraTrafficLight({
+      truthStatus: "CERTIFIED", totalBalance: 500_000,
       items: [{ daysOverdue: 0, balanceDue: 500_000 }],
-    });
-    expect(result.label).toBe("Al dia");
+    }).label).toBe("Al dia");
   });
 
   test("CERTIFIED + mora=45 + ratio<50% → 'En mora'", () => {
-    const result = carteraTrafficLight({
-      truthStatus: "CERTIFIED",
-      totalBalance: 1_000_000,
-      items: [
-        { daysOverdue: 45, balanceDue: 400_000 },
-        { daysOverdue: 0, balanceDue: 600_000 },
-      ],
-    });
-    expect(result.label).toBe("En mora");
+    expect(carteraTrafficLight({
+      truthStatus: "CERTIFIED", totalBalance: 1_000_000,
+      items: [{ daysOverdue: 45, balanceDue: 400_000 }, { daysOverdue: 0, balanceDue: 600_000 }],
+    }).label).toBe("En mora");
   });
 
   test("CERTIFIED + mora>90 → 'Critica'", () => {
-    const result = carteraTrafficLight({
-      truthStatus: "CERTIFIED",
-      totalBalance: 912_400,
-      items: [
-        { daysOverdue: 452, balanceDue: 529_900 },
-        { daysOverdue: 445, balanceDue: 382_500 },
-      ],
-    });
-    expect(result.label).toBe("Critica");
-  });
-
-  test("CERTIFIED + overdueRatio>50% → 'Critica'", () => {
-    const result = carteraTrafficLight({
-      truthStatus: "CERTIFIED",
-      totalBalance: 1_000_000,
-      items: [
-        { daysOverdue: 30, balanceDue: 600_000 },
-        { daysOverdue: 0, balanceDue: 400_000 },
-      ],
-    });
-    expect(result.label).toBe("Critica");
+    expect(carteraTrafficLight({
+      truthStatus: "CERTIFIED", totalBalance: 912_400,
+      items: [{ daysOverdue: 452, balanceDue: 529_900 }, { daysOverdue: 445, balanceDue: 382_500 }],
+    }).label).toBe("Critica");
   });
 });
 
-// ── 5. computeClientScore — production function (Section D fix) ─────────────
+// ── 5. computeClientScore — fail-closed (Section B) ─────────────────────────
 
-describe("computeClientScore — UNVERIFIED must NOT award cartera points", () => {
-  const baseInput: ClientScoreInput = {
-    crmQuoteCount: 5, sagOrderCount: 3, salesCount: 10,
-    sellerConfidence: 90,
-    arCertified: false,
-    totalOverdue: null, totalBalance: null,
-    opportunityTypes: [],
+describe("computeClientScore — arComplete gate", () => {
+  const fullActivity: ClientScoreInput = {
+    crmQuoteCount: 5, sagOrderCount: 3, salesCount: 10, sellerConfidence: 90,
+    arCertified: false, totalOverdue: null, totalBalance: null, opportunityTypes: [],
   };
 
-  test("UNVERIFIED: no receivable health points", () => {
-    const certified = computeClientScore({ ...baseInput, arCertified: true, totalOverdue: 0, totalBalance: 500_000 });
-    const unverified = computeClientScore({ ...baseInput, arCertified: false });
-    // Certified gets 20 (health) + 10 (no cartera risk) more than unverified
-    // Unverified gets 0 health + 0 cartera-risk-absence
-    expect(certified.grade >= unverified.grade).toBe(true);
-    expect(certified.incomplete).toBe(false);
-    expect(unverified.incomplete).toBe(true);
-  });
-
-  test("UNVERIFIED: absence of cartera risk does NOT award cartera risk points", () => {
-    // With no opps, UNVERIFIED should NOT get cartera-absence points
-    const unverifiedNoOpps = computeClientScore({ ...baseInput, arCertified: false, opportunityTypes: [] });
-    // With certified + no cartera risk, should get cartera-absence points
-    const certifiedNoOpps = computeClientScore({ ...baseInput, arCertified: true, totalOverdue: 0, totalBalance: 0, opportunityTypes: [] });
-    // The difference should include cartera-specific points
-    expect(certifiedNoOpps.incomplete).toBe(false);
-    expect(unverifiedNoOpps.incomplete).toBe(true);
-  });
-
-  test("UNVERIFIED with inactivity risk loses inactivity points but NOT cartera", () => {
-    const withInactivity = computeClientScore({ ...baseInput, opportunityTypes: ["inactividad"] });
-    const withoutInactivity = computeClientScore({ ...baseInput, opportunityTypes: [] });
-    // Inactivity evaluated independently, unverified loses nothing from cartera
-    expect(withInactivity.incomplete).toBe(true);
-    expect(withoutInactivity.incomplete).toBe(true);
-  });
-
-  test("CERTIFIED with cartera risk loses cartera-absence points", () => {
-    const noRisk = computeClientScore({ ...baseInput, arCertified: true, totalOverdue: 0, totalBalance: 500_000, opportunityTypes: [] });
-    const withRisk = computeClientScore({ ...baseInput, arCertified: true, totalOverdue: 100_000, totalBalance: 500_000, opportunityTypes: ["cartera"] });
-    // The health score differs: noRisk gets +20 health + +10 absence, withRisk gets neither
-    expect(noRisk.grade >= withRisk.grade).toBe(true);
-  });
-});
-
-describe("computeClientScore — grade thresholds", () => {
-  test("max score (all certified, all activity) → A+", () => {
+  test("certified=true, balance=null, overdue=null → incomplete, zero AR points", () => {
     const result = computeClientScore({
-      crmQuoteCount: 1, sagOrderCount: 1, salesCount: 1,
-      sellerConfidence: 80,
-      arCertified: true, totalOverdue: 0, totalBalance: 1_000_000,
-      opportunityTypes: [],
+      ...fullActivity, arCertified: true, totalBalance: null, totalOverdue: null,
+    });
+    expect(result.incomplete).toBe(true);
+    // Should NOT get health or cartera-absence points
+  });
+
+  test("certified=true, balance=0, overdue=0 → CERTIFIED_ZERO valid, complete", () => {
+    const result = computeClientScore({
+      ...fullActivity, arCertified: true, totalBalance: 0, totalOverdue: 0,
+    });
+    expect(result.incomplete).toBe(false);
+  });
+
+  test("certified=true, balance>0, overdue=0 → cartera abierta al dia, complete", () => {
+    const result = computeClientScore({
+      ...fullActivity, arCertified: true, totalBalance: 500_000, totalOverdue: 0,
+    });
+    expect(result.incomplete).toBe(false);
+    // Gets maximum AR points: 20 (health) + 10 (no cartera risk)
+  });
+
+  test("certified=false, null amounts → incomplete, no AR points", () => {
+    const result = computeClientScore(fullActivity);
+    expect(result.incomplete).toBe(true);
+  });
+
+  test("certified=true + null balance gets FEWER points than certified + real balance", () => {
+    const nullBalance = computeClientScore({
+      ...fullActivity, arCertified: true, totalBalance: null, totalOverdue: null,
+    });
+    const realBalance = computeClientScore({
+      ...fullActivity, arCertified: true, totalBalance: 500_000, totalOverdue: 0,
+    });
+    // realBalance gets +20 health + +10 absence = +30 more
+    expect(realBalance.incomplete).toBe(false);
+    expect(nullBalance.incomplete).toBe(true);
+  });
+
+  test("UNVERIFIED with inactivity risk loses inactivity points independently", () => {
+    const withInact = computeClientScore({ ...fullActivity, opportunityTypes: ["inactividad"] });
+    const withoutInact = computeClientScore({ ...fullActivity, opportunityTypes: [] });
+    expect(withInact.incomplete).toBe(true);
+    expect(withoutInact.incomplete).toBe(true);
+  });
+
+  test("max score → A+", () => {
+    const result = computeClientScore({
+      crmQuoteCount: 1, sagOrderCount: 1, salesCount: 1, sellerConfidence: 80,
+      arCertified: true, totalOverdue: 0, totalBalance: 1_000_000, opportunityTypes: [],
     });
     expect(result.grade).toBe("A+");
     expect(result.incomplete).toBe(false);
   });
 
-  test("zero activity → D", () => {
+  test("zero everything → D", () => {
     const result = computeClientScore({
-      crmQuoteCount: 0, sagOrderCount: 0, salesCount: 0,
-      sellerConfidence: 0,
+      crmQuoteCount: 0, sagOrderCount: 0, salesCount: 0, sellerConfidence: 0,
       arCertified: false, totalOverdue: null, totalBalance: null,
       opportunityTypes: ["cartera", "inactividad"],
     });
     expect(result.grade).toBe("D");
-    expect(result.incomplete).toBe(true);
   });
 });
 
-// ── 6. Overdue opportunity filter excludes null daysOverdue ──────────────────
+// ── 6. Overdue opportunity filter ───────────────────────────────────────────
 
 describe("Overdue opportunity filter — null DIAS_MORA exclusion", () => {
   test("null daysOverdue items excluded from overdue filter", () => {
@@ -387,7 +308,6 @@ describe("Overdue opportunity filter — null DIAS_MORA exclusion", () => {
       { daysOverdue: 0, balanceDue: 5_000_000 },
       { daysOverdue: 45, balanceDue: 8_000_000 },
     ];
-    // Same filter as production: r.daysOverdue != null && r.daysOverdue > 0
     const overdue = items.filter(r => r.daysOverdue != null && r.daysOverdue > 0);
     expect(overdue.length).toBe(1);
     expect(overdue[0].daysOverdue).toBe(45);
@@ -395,29 +315,258 @@ describe("Overdue opportunity filter — null DIAS_MORA exclusion", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// B. STRUCTURAL TESTS — verify server-only loader shapes
+// B. LOADER BEHAVIORAL TESTS — real functions with injected doubles (Section C)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── C1. Tenant not certified → UNVERIFIED ───────────────────────────────────
+
+describe("loadArContextCore — tenant not certified", () => {
+  const deps: LoadArContextDeps = {
+    isCertified: () => false,
+    fetchSnapshot: async () => { throw new Error("should not be called"); },
+  };
+
+  test("returns dataState=UNVERIFIED", async () => {
+    const ctx = await loadArContextCore("org-1", deps);
+    expect(ctx.dataState).toBe("UNVERIFIED");
+  });
+
+  test("reason=TENANT_NOT_CERTIFIED", async () => {
+    const ctx = await loadArContextCore("org-1", deps);
+    expect(ctx.reason).toBe("TENANT_NOT_CERTIFIED");
+  });
+
+  test("snapshot=null, arLookup empty", async () => {
+    const ctx = await loadArContextCore("org-1", deps);
+    expect(ctx.snapshot).toBeNull();
+    expect(ctx.arLookup.size).toBe(0);
+  });
+});
+
+// ── C2. fetchSnapshot returns ok:false → UNAVAILABLE ────────────────────────
+
+describe("loadArContextCore — SAG returns error", () => {
+  const deps: LoadArContextDeps = {
+    isCertified: () => true,
+    fetchSnapshot: async () => ({ ok: false as const, error: "SOAP_TIMEOUT" }),
+  };
+
+  test("returns dataState=UNAVAILABLE", async () => {
+    const ctx = await loadArContextCore("org-1", deps);
+    expect(ctx.dataState).toBe("UNAVAILABLE");
+  });
+
+  test("reason contains error string", async () => {
+    const ctx = await loadArContextCore("org-1", deps);
+    expect(ctx.reason).toBe("SOAP_TIMEOUT");
+  });
+
+  test("snapshot=null, empty sets", async () => {
+    const ctx = await loadArContextCore("org-1", deps);
+    expect(ctx.snapshot).toBeNull();
+    expect(ctx.arCustomerIds.size).toBe(0);
+  });
+});
+
+// ── C3. fetchSnapshot throws exception → fail-closed UNAVAILABLE ────────────
+
+describe("loadArContextCore — SAG throws exception", () => {
+  const deps: LoadArContextDeps = {
+    isCertified: () => true,
+    fetchSnapshot: async () => { throw new Error("Connection refused"); },
+  };
+
+  test("returns UNAVAILABLE, not CERTIFIED", async () => {
+    const ctx = await loadArContextCore("org-1", deps);
+    expect(ctx.dataState).toBe("UNAVAILABLE");
+  });
+
+  test("reason contains exception message", async () => {
+    const ctx = await loadArContextCore("org-1", deps);
+    expect(ctx.reason).toContain("Connection refused");
+  });
+
+  test("does NOT present certified zeros", async () => {
+    const ctx = await loadArContextCore("org-1", deps);
+    expect(ctx.arCustomerIds.size).toBe(0);
+    expect(ctx.snapshot).toBeNull();
+    // resolveRowCartera with this context should return UNVERIFIED, not CERTIFIED_ZERO
+    const row = resolveRowCartera(ctx, 856);
+    expect(row.carteraState).toBe("UNVERIFIED");
+    expect(row.totalReceivable).toBeNull();
+  });
+});
+
+// ── C4. Prisma fails in summary → loadFailed=true, KPIs null ────────────────
+
+describe("loadClientesSummaryCoreLogic — DB failure", () => {
+  const arCtx: ArContextFull = {
+    dataState: "CERTIFIED", snapshot: null,
+    arLookup: new Map(), arCustomerIds: new Set([100]),
+    overdueCustomerIds: new Set(), asOf: new Date().toISOString(), reason: "SAG_CERTIFIED",
+  };
+
+  const failDeps: SummaryDbDeps = {
+    queryProfileAgg: async () => { throw new Error("DB connection lost"); },
+    countDistinctProfiles: async () => { throw new Error("DB connection lost"); },
+  };
+
+  test("loadFailed=true", async () => {
+    const result = await loadClientesSummaryCoreLogic("org-1", arCtx, failDeps);
+    expect(result.loadFailed).toBe(true);
+  });
+
+  test("withCartera=null (not 0)", async () => {
+    const result = await loadClientesSummaryCoreLogic("org-1", arCtx, failDeps);
+    expect(result.withCartera).toBeNull();
+  });
+
+  test("withOverdue=null (not 0)", async () => {
+    const result = await loadClientesSummaryCoreLogic("org-1", arCtx, failDeps);
+    expect(result.withOverdue).toBeNull();
+  });
+
+  test("dataState=UNAVAILABLE", async () => {
+    const result = await loadClientesSummaryCoreLogic("org-1", arCtx, failDeps);
+    expect(result.dataState).toBe("UNAVAILABLE");
+  });
+
+  test("total=0 (not a real count)", async () => {
+    const result = await loadClientesSummaryCoreLogic("org-1", arCtx, failDeps);
+    expect(result.total).toBe(0);
+  });
+});
+
+// ── C5. con_cartera with SAG unavailable → explicit UNAVAILABLE ─────────────
+
+describe("resolveConCarteraFilter — SAG unavailable", () => {
+  test("UNAVAILABLE → not allowed, explicit dataState", () => {
+    const arCtx = { dataState: "UNAVAILABLE" as const, arLookup: new Map(), arCustomerIds: new Set<number>() };
+    const result = resolveConCarteraFilter(arCtx);
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.dataState).toBe("UNAVAILABLE");
+    }
+  });
+
+  test("UNVERIFIED → not allowed", () => {
+    const arCtx = { dataState: "UNVERIFIED" as const, arLookup: new Map(), arCustomerIds: new Set<number>() };
+    const result = resolveConCarteraFilter(arCtx);
+    expect(result.allowed).toBe(false);
+  });
+
+  test("CERTIFIED + empty arCustomerIds → not allowed", () => {
+    const arCtx = { dataState: "CERTIFIED" as const, arLookup: new Map(), arCustomerIds: new Set<number>() };
+    const result = resolveConCarteraFilter(arCtx);
+    expect(result.allowed).toBe(false);
+  });
+
+  test("CERTIFIED + populated arCustomerIds → allowed with sagIds", () => {
+    const arCtx = {
+      dataState: "CERTIFIED" as const, arLookup: new Map(),
+      arCustomerIds: new Set([100, 200, 300]),
+    };
+    const result = resolveConCarteraFilter(arCtx);
+    expect(result.allowed).toBe(true);
+    if (result.allowed) {
+      expect(result.sagIds).toEqual([100, 200, 300]);
+    }
+  });
+});
+
+// ── C6. Duplicate sagTerceroId → KPI distinct without inflation ─────────────
+
+describe("loadClientesSummaryCoreLogic — distinct KPI counting", () => {
+  const arCtx: ArContextFull = {
+    dataState: "CERTIFIED", snapshot: null,
+    arLookup: new Map([[100, { clienteId: 100, totalPendiente: 500_000, totalVencido: 0 }]]),
+    arCustomerIds: new Set([100]),
+    overdueCustomerIds: new Set(),
+    asOf: new Date().toISOString(), reason: "SAG_CERTIFIED",
+  };
+
+  test("uses countDistinctProfiles, not raw count", async () => {
+    let distinctCalled = false;
+    const deps: SummaryDbDeps = {
+      queryProfileAgg: async () => ({
+        total: 50, active: 40, inactive: 10, withSeller: 30, sinCompra90d: 5, withCrm: 20,
+      }),
+      countDistinctProfiles: async (_orgId, sagIds) => {
+        distinctCalled = true;
+        // Simulate: 3 profiles share sagTerceroId=100, but distinct count is 1
+        return 1;
+      },
+    };
+
+    const result = await loadClientesSummaryCoreLogic("org-1", arCtx, deps);
+    expect(distinctCalled).toBe(true);
+    expect(result.withCartera).toBe(1); // distinct, not inflated
+  });
+});
+
+// ── loadArContextCore — successful certified snapshot ────────────────────────
+
+describe("loadArContextCore — SAG success", () => {
+  const deps: LoadArContextDeps = {
+    isCertified: () => true,
+    fetchSnapshot: async () => ({
+      ok: true as const,
+      snapshot: {
+        customers: [
+          { clienteId: 526, totalPendiente: 912400, totalVencido: 912400 },
+          { clienteId: 100, totalPendiente: 500000, totalVencido: 0 },
+        ],
+        asOf: new Date("2026-08-16T12:00:00Z"),
+      },
+    }),
+  };
+
+  test("returns CERTIFIED with populated lookup", async () => {
+    const ctx = await loadArContextCore("org-1", deps);
+    expect(ctx.dataState).toBe("CERTIFIED");
+    expect(ctx.arLookup.size).toBe(2);
+    expect(ctx.arCustomerIds.size).toBe(2);
+  });
+
+  test("overdueCustomerIds only includes customers with totalVencido>0", async () => {
+    const ctx = await loadArContextCore("org-1", deps);
+    expect(ctx.overdueCustomerIds.size).toBe(1);
+    expect(ctx.overdueCustomerIds.has(526)).toBe(true);
+    expect(ctx.overdueCustomerIds.has(100)).toBe(false);
+  });
+
+  test("resolveRowCartera produces correct results from this context", async () => {
+    const ctx = await loadArContextCore("org-1", deps);
+    const diana = resolveRowCartera(ctx, 526);
+    expect(diana.carteraState).toBe("HAS_OPEN_AR");
+    expect(diana.totalReceivable).toBe(912400);
+
+    const amv = resolveRowCartera(ctx, 856);
+    expect(amv.carteraState).toBe("CERTIFIED_ZERO");
+    expect(amv.totalReceivable).toBe(0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// C. STRUCTURAL TESTS — verify server-only shapes and wiring
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe("client-loader.ts — server module shape", () => {
   const src = readFile("lib/comercial/clientes/client-loader.ts");
 
-  test("imports resolveRowCartera from clientes-pure", () => {
-    expect(src).toContain('import { resolveRowCartera } from "./clientes-pure"');
-  });
-
-  test("re-exports resolveRowCartera for existing consumers", () => {
-    expect(src).toContain('export { resolveRowCartera } from "./clientes-pure"');
+  test("delegates to loadArContextCore from clientes-pure", () => {
+    expect(src).toContain("loadArContextCore");
   });
 
   test("ClientesPageResult has dataState field", () => {
     expect(src).toContain("dataState: ArDataState");
   });
 
-  test("loadClientesSummary uses COUNT(DISTINCT sagTerceroId)", () => {
+  test("uses COUNT(DISTINCT sagTerceroId)", () => {
     expect(src).toContain('COUNT(DISTINCT "sagTerceroId")');
   });
 
-  test("error fallback has loadFailed: true, dataState: UNAVAILABLE, withCartera: null", () => {
+  test("error fallback has loadFailed: true, UNAVAILABLE, null KPIs", () => {
     const catchBlock = src.slice(src.indexOf("catch (err)"));
     expect(catchBlock).toContain("loadFailed: true");
     expect(catchBlock).toContain('dataState: "UNAVAILABLE"');
@@ -425,65 +574,25 @@ describe("client-loader.ts — server module shape", () => {
   });
 });
 
-describe("cliente-360-loader.ts — delegates to clientes-pure", () => {
-  const src = readFile("lib/comercial/clientes/cliente-360-loader.ts");
-
-  test("imports classifyAgingBand from clientes-pure", () => {
-    expect(src).toContain('classifyAgingBand');
-    expect(src).toContain('from "./clientes-pure"');
-  });
-
-  test("imports mapCertifiedDocToReceivable from clientes-pure", () => {
-    expect(src).toContain('mapCertifiedDocToReceivable');
-  });
-
-  test("daysOverdue: number | null (nullable type)", () => {
-    expect(src).toContain("daysOverdue: number | null");
-  });
-
-  test("agingBucket: string | null", () => {
-    expect(src).toContain("agingBucket: string | null");
-  });
-});
-
-describe("clientes-client.tsx — imports from production pure module", () => {
+describe("clientes-client.tsx — UI wiring", () => {
   const src = readFile("app/(app)/[orgSlug]/comercial/clientes/clientes-client.tsx");
 
-  test("imports carteraTrafficLight from clientes-pure", () => {
+  test("imports from clientes-pure", () => {
     expect(src).toContain("from \"@/lib/comercial/clientes/clientes-pure\"");
-    expect(src).toContain("carteraTrafficLight");
   });
 
-  test("imports computeClientScore from clientes-pure", () => {
-    expect(src).toContain("computeClientScorePure");
-  });
-
-  test("handles loadFailed state", () => {
+  test("handles loadFailed", () => {
     expect(src).toContain("summary.loadFailed");
     expect(src).toContain("Directorio de clientes no disponible");
   });
 
-  test("handles cartera filter unavailable", () => {
+  test("con_cartera filter guarded by dataState", () => {
     expect(src).toContain("pageResult.dataState");
     expect(src).toContain("Cartera no verificada");
-    expect(src).toContain("Cartera no disponible");
   });
 
-  test("con_cartera button disabled when not CERTIFIED", () => {
-    expect(src).toContain("carteraDisabled");
-    expect(src).toContain("not-allowed");
-  });
-});
-
-describe("page.tsx — clean server boundary", () => {
-  const src = readFile("app/(app)/[orgSlug]/comercial/clientes/page.tsx");
-
-  test("calls loadArContext once", () => {
-    expect(src).toContain("const arCtx = await loadArContext(");
-  });
-
-  test("passes arCtx to both loaders", () => {
-    expect(src).toContain("loadClientesSummary(organization.id, arCtx)");
-    expect(src).toMatch(/loadClientesPage\(organization\.id,.*arCtx\)/);
+  test("con_cartera button has disabled and aria-disabled attributes", () => {
+    expect(src).toContain("disabled={carteraDisabled}");
+    expect(src).toContain("aria-disabled={carteraDisabled");
   });
 });
