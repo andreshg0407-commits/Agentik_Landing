@@ -91,7 +91,9 @@ export default async function Customer360Page({
 
     if (customer360) {
       [commercialTimeline, recentPayments, collectionRecords] = await Promise.all([
-        getUnifiedCustomerCommercialTimeline(customer360.profile.id).catch(() => []),
+        getUnifiedCustomerCommercialTimeline(customer360.profile.id, orgId)
+          .then(r => r.items)
+          .catch(() => []),
         customer360.profile.nit
           ? listPayments(orgId, { customerNit: customer360.profile.nit, limit: 10 }).catch(() => [])
           : Promise.resolve([]),

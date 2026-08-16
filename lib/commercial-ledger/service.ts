@@ -34,6 +34,7 @@ import { Prisma } from "@prisma/client";
 import type {
   CommercialFact,
   CommercialKpis,
+  CommercialTimelineResult,
   SellerLedgerKpis,
   CustomerLedgerKpis,
   LedgerStatus,
@@ -157,8 +158,9 @@ function computeCrmPipelineStats(
  */
 export async function getUnifiedCustomerCommercialTimeline(
   customerId: string,
-): Promise<CommercialFact[]> {
-  return _buildTimeline(customerId);
+  orgId:      string,
+): Promise<CommercialTimelineResult> {
+  return _buildTimeline(customerId, orgId);
 }
 
 /**
@@ -168,7 +170,7 @@ export async function getUnifiedCustomerCommercialTimeline(
 export async function getCustomerCommercialTimelineByKey(
   orgId:       string,
   customerKey: string,   // NIT (preferred) or customerName
-): Promise<CommercialFact[]> {
+): Promise<CommercialTimelineResult> {
   // Resolve to a CustomerProfile.id if possible
   const profile = await prisma.customerProfile.findFirst({
     where: {
@@ -191,9 +193,9 @@ export async function getCustomerCommercialTimelineByKey(
 
 async function _buildTimeline(
   customerId:  string | null,
-  orgId?:      string,
+  orgId:       string,
   customerKey?: string,   // NIT or name — used for SaleRecord fallback
-): Promise<CommercialFact[]> {
+): Promise<CommercialTimelineResult> {
   const facts: CommercialFact[] = [];
 
   // ── 1. CRMQuote ─────────────────────────────────────────────────────────
@@ -235,16 +237,23 @@ async function _buildTimeline(
   }
 
   // ── 2. CustomerReceivable ────────────────────────────────────────────────
+  // DATA-TRUST-REMEDIATION-01B: gate receivable section on certification.
+  // Default false — no missing orgId may ever imply certification.
+  const { isReceivableDataCertified: _isCertTl, warmTruthStatusCache: _warmTl } =
+    await import("@/lib/comercial/frontline/receivable-truth-status");
+  await _warmTl();
+  const arCertified = _isCertTl(orgId);
+
   const receivableWhere = customerId
     ? { customerId }
     : customerKey
       ? {
-          organizationId: orgId!,
+          organizationId: orgId,
           OR: [{ customerNit: customerKey }, { customerName: customerKey }],
         }
       : null;
 
-  if (receivableWhere) {
+  if (receivableWhere && arCertified) {
     const receivables = await prisma.customerReceivable.findMany({
       where:   receivableWhere,
       orderBy: { invoiceDate: "desc" },
@@ -325,7 +334,11 @@ async function _buildTimeline(
     return tb - ta;
   });
 
-  return facts;
+  return {
+    items: facts,
+    receivableTruthState: arCertified ? "CERTIFIED" as const : "UNVERIFIED" as const,
+    receivableReason: arCertified ? null : "RECEIVABLE_DATA_NOT_CERTIFIED",
+  };
 }
 
 // ── Org-level KPIs ────────────────────────────────────────────────────────────
@@ -337,6 +350,11 @@ async function _buildTimeline(
 export async function getUnifiedCommercialKpis(
   orgId: string,
 ): Promise<CommercialKpis> {
+  // DATA-TRUST-REMEDIATION-01B: gate AR-dependent KPIs on receivable certification
+  const { isReceivableDataCertified, warmTruthStatusCache } = await import("@/lib/comercial/frontline/receivable-truth-status");
+  await warmTruthStatusCache();
+  const _arCertified = isReceivableDataCertified(orgId);
+
   type CrmStatsRaw = {
     pending_to_sag:        string;
     pending_to_sag_amount: number;
@@ -349,65 +367,67 @@ export async function getUnifiedCommercialKpis(
     total_count:           string;
   };
 
-  const [crmStatsRows, receivableAgg, openAgg, overdueAgg] = await Promise.all([
-    // CRM pipeline breakdown via JSONB operators
-    prisma.$queryRaw<CrmStatsRaw[]>(Prisma.sql`
-      WITH q_attrs AS (
-        SELECT
-          "amount"::float                                         AS amount,
-          status::text                                            AS status,
-          NULLIF(TRIM(COALESCE(
-            "rawCrmJson"->'raw'->>'id_sag_c',
-            "rawCrmJson"->>'id_sag_c',
-            ''
-          )), '')                                                 AS id_sag,
-          NULLIF(TRIM(COALESCE(
-            "rawCrmJson"->'raw'->>'invoice_status',
-            "rawCrmJson"->>'invoice_status',
-            ''
-          )), '')                                                 AS invoice_status
-        FROM "CRMQuote"
-        WHERE "organizationId" = ${orgId}
-      )
+  // CRM pipeline breakdown — always executes (not AR-dependent)
+  const crmStatsRows = await prisma.$queryRaw<CrmStatsRaw[]>(Prisma.sql`
+    WITH q_attrs AS (
       SELECT
-        CAST(COUNT(*) FILTER (WHERE id_sag IS NULL)                          AS TEXT) AS pending_to_sag,
-        COALESCE(SUM(amount)  FILTER (WHERE id_sag IS NULL),           0)   AS pending_to_sag_amount,
-        CAST(COUNT(*) FILTER (WHERE id_sag IS NOT NULL)                      AS TEXT) AS synced_to_sag,
-        COALESCE(SUM(amount)  FILTER (WHERE id_sag IS NOT NULL),       0)   AS synced_to_sag_amount,
-        CAST(COUNT(*) FILTER (WHERE id_sag IS NOT NULL AND invoice_status IS NULL) AS TEXT) AS not_invoiced,
-        COALESCE(SUM(amount)  FILTER (WHERE id_sag IS NOT NULL AND invoice_status IS NULL), 0) AS not_invoiced_amount,
-        CAST(COUNT(*) FILTER (WHERE status = 'ACCEPTED')                     AS TEXT) AS accepted_quotes,
-        COALESCE(SUM(amount)  FILTER (WHERE status = 'ACCEPTED'),      0)   AS accepted_amount,
-        CAST(COUNT(*)                                                         AS TEXT) AS total_count
-      FROM q_attrs
-    `),
+        "amount"::float                                         AS amount,
+        status::text                                            AS status,
+        NULLIF(TRIM(COALESCE(
+          "rawCrmJson"->'raw'->>'id_sag_c',
+          "rawCrmJson"->>'id_sag_c',
+          ''
+        )), '')                                                 AS id_sag,
+        NULLIF(TRIM(COALESCE(
+          "rawCrmJson"->'raw'->>'invoice_status',
+          "rawCrmJson"->>'invoice_status',
+          ''
+        )), '')                                                 AS invoice_status
+      FROM "CRMQuote"
+      WHERE "organizationId" = ${orgId}
+    )
+    SELECT
+      CAST(COUNT(*) FILTER (WHERE id_sag IS NULL)                          AS TEXT) AS pending_to_sag,
+      COALESCE(SUM(amount)  FILTER (WHERE id_sag IS NULL),           0)   AS pending_to_sag_amount,
+      CAST(COUNT(*) FILTER (WHERE id_sag IS NOT NULL)                      AS TEXT) AS synced_to_sag,
+      COALESCE(SUM(amount)  FILTER (WHERE id_sag IS NOT NULL),       0)   AS synced_to_sag_amount,
+      CAST(COUNT(*) FILTER (WHERE id_sag IS NOT NULL AND invoice_status IS NULL) AS TEXT) AS not_invoiced,
+      COALESCE(SUM(amount)  FILTER (WHERE id_sag IS NOT NULL AND invoice_status IS NULL), 0) AS not_invoiced_amount,
+      CAST(COUNT(*) FILTER (WHERE status = 'ACCEPTED')                     AS TEXT) AS accepted_quotes,
+      COALESCE(SUM(amount)  FILTER (WHERE status = 'ACCEPTED'),      0)   AS accepted_amount,
+      CAST(COUNT(*)                                                         AS TEXT) AS total_count
+    FROM q_attrs
+  `);
 
-    // Total invoiced + collected
-    prisma.customerReceivable.aggregate({
-      where: { organizationId: orgId },
-      _sum: { originalAmount: true, paidAmount: true, balanceDue: true },
-      _count: { id: true },
-    }),
+  // AR aggregates — skip entirely when uncertified (DATA-TRUST-REMEDIATION-01B: query-level gate)
+  const _arStub = { _sum: { originalAmount: null, paidAmount: null, balanceDue: null }, _count: { id: 0 } };
+  const _arStubNoCount = { _sum: { balanceDue: null } };
 
-    // Open balance — canonical filter (mirrors RX_OPEN_STATUSES in receivables-snapshot.ts)
-    prisma.customerReceivable.aggregate({
-      where: { organizationId: orgId, status: { in: ["OPEN", "PARTIAL", "OVERDUE"] } },
-      _sum:   { balanceDue: true },
-      _count: { id: true },
-    }),
-
-    // Overdue balance
-    prisma.customerReceivable.aggregate({
-      where: { organizationId: orgId, daysOverdue: { gt: 0 }, status: { in: ["OPEN", "PARTIAL", "OVERDUE"] } },
-      _sum: { balanceDue: true },
-    }),
-  ]);
+  const [receivableAgg, openAgg, overdueAgg] = _arCertified
+    ? await Promise.all([
+        prisma.customerReceivable.aggregate({
+          where: { organizationId: orgId },
+          _sum: { originalAmount: true, paidAmount: true, balanceDue: true },
+          _count: { id: true },
+        }),
+        prisma.customerReceivable.aggregate({
+          where: { organizationId: orgId, status: { in: ["OPEN", "PARTIAL", "OVERDUE"] } },
+          _sum:   { balanceDue: true },
+          _count: { id: true },
+        }),
+        prisma.customerReceivable.aggregate({
+          where: { organizationId: orgId, daysOverdue: { gt: 0 }, status: { in: ["OPEN", "PARTIAL", "OVERDUE"] } },
+          _sum: { balanceDue: true },
+        }),
+      ])
+    : [_arStub, _arStub, _arStubNoCount];
 
   const crmStats     = crmStatsRows[0];
-  const totalInvoiced    = Number(receivableAgg._sum.originalAmount ?? 0);
-  const totalCollected   = Number(receivableAgg._sum.paidAmount     ?? 0);
-  const totalOutstanding = Number(openAgg._sum.balanceDue            ?? 0);
-  const totalOverdue     = Number(overdueAgg._sum.balanceDue         ?? 0);
+  // When AR data is uncertified, return null for all receivable-derived fields
+  const totalInvoiced    = _arCertified ? Number(receivableAgg._sum.originalAmount ?? 0) : null;
+  const totalCollected   = _arCertified ? Number(receivableAgg._sum.paidAmount     ?? 0) : null;
+  const totalOutstanding = _arCertified ? Number(openAgg._sum.balanceDue            ?? 0) : null;
+  const totalOverdue     = _arCertified ? Number(overdueAgg._sum.balanceDue         ?? 0) : null;
 
   return {
     totalOrdered:       Number(crmStats?.pending_to_sag_amount ?? 0)
@@ -416,8 +436,8 @@ export async function getUnifiedCommercialKpis(
     totalCollected,
     totalOutstanding,
     totalOverdue,
-    collectionRate:     totalInvoiced > 0
-                          ? Math.round((totalCollected / totalInvoiced) * 10000) / 100
+    collectionRate:     _arCertified && totalInvoiced != null && totalInvoiced > 0
+                          ? Math.round((totalCollected! / totalInvoiced) * 10000) / 100
                           : null,
 
     pendingToSag:       Number(crmStats?.pending_to_sag       ?? 0),
@@ -431,6 +451,8 @@ export async function getUnifiedCommercialKpis(
 
     quoteCount:         Number(crmStats?.total_count           ?? 0),
     openInvoiceCount:   openAgg._count.id,
+    truthState:         _arCertified ? "CERTIFIED" as const : "UNVERIFIED" as const,
+    reason:             _arCertified ? null : "RECEIVABLE_DATA_NOT_CERTIFIED",
   };
 }
 
@@ -445,6 +467,10 @@ export async function getSellerLedgerKpis(
   orgId:      string,
   sellerSlug: string,
 ): Promise<SellerLedgerKpis> {
+  // DATA-TRUST-REMEDIATION-01B: gate on receivable certification
+  const { isReceivableDataCertified: _isCert } = await import("@/lib/comercial/frontline/receivable-truth-status");
+  const _arCert = _isCert(orgId);
+
   type ReceivableStatsRaw = {
     outstanding: number;
     overdue:     number;
@@ -452,24 +478,27 @@ export async function getSellerLedgerKpis(
     seller_name: string | null;
   };
 
-  const [quotes, recvStatsRows] = await Promise.all([
-    prisma.cRMQuote.findMany({
-      where:  { organizationId: orgId, sellerSlug },
-      select: { amount: true, status: true, rawCrmJson: true, sellerName: true },
-    }),
-    prisma.$queryRaw<ReceivableStatsRaw[]>(Prisma.sql`
-      SELECT
-        COALESCE(SUM(cr."balanceDue")::float,                                  0) AS outstanding,
-        COALESCE(SUM(cr."balanceDue") FILTER (WHERE cr."daysOverdue" > 0)::float, 0) AS overdue,
-        CAST(COUNT(*) FILTER (WHERE cr."daysOverdue" > 0)              AS TEXT) AS overdue_cnt,
-        MAX(cp."sellerName")                                                    AS seller_name
-      FROM   "CustomerReceivable" cr
-      INNER  JOIN "CustomerProfile" cp ON cp.id = cr."customerId"
-      WHERE  cr."organizationId" = ${orgId}
-        AND  cr.status            NOT IN ('PAID', 'WRITTEN_OFF')
-        AND  cp."sellerSlug"      = ${sellerSlug}
-    `),
-  ]);
+  // CRM quotes — always executes (not AR-dependent)
+  const quotes = await prisma.cRMQuote.findMany({
+    where:  { organizationId: orgId, sellerSlug },
+    select: { amount: true, status: true, rawCrmJson: true, sellerName: true },
+  });
+
+  // AR receivable stats — skip entirely when uncertified (DATA-TRUST-REMEDIATION-01B: query-level gate)
+  const recvStatsRows: ReceivableStatsRaw[] = _arCert
+    ? await prisma.$queryRaw<ReceivableStatsRaw[]>(Prisma.sql`
+        SELECT
+          COALESCE(SUM(cr."balanceDue")::float,                                  0) AS outstanding,
+          COALESCE(SUM(cr."balanceDue") FILTER (WHERE cr."daysOverdue" > 0)::float, 0) AS overdue,
+          CAST(COUNT(*) FILTER (WHERE cr."daysOverdue" > 0)              AS TEXT) AS overdue_cnt,
+          MAX(cp."sellerName")                                                    AS seller_name
+        FROM   "CustomerReceivable" cr
+        INNER  JOIN "CustomerProfile" cp ON cp.id = cr."customerId"
+        WHERE  cr."organizationId" = ${orgId}
+          AND  cr.status            NOT IN ('PAID', 'WRITTEN_OFF')
+          AND  cp."sellerSlug"      = ${sellerSlug}
+      `)
+    : [];
 
   const crmStats = computeCrmPipelineStats(quotes);
   const recv     = recvStatsRows[0];
@@ -478,9 +507,11 @@ export async function getSellerLedgerKpis(
     sellerSlug,
     sellerName:         quotes[0]?.sellerName ?? recv?.seller_name ?? null,
     ...crmStats,
-    totalOutstanding:   Number(recv?.outstanding ?? 0),
-    totalOverdue:       Number(recv?.overdue      ?? 0),
-    overdueCount:       Number(recv?.overdue_cnt  ?? 0),
+    totalOutstanding:   _arCert ? Number(recv?.outstanding ?? 0) : null,
+    totalOverdue:       _arCert ? Number(recv?.overdue      ?? 0) : null,
+    overdueCount:       _arCert ? Number(recv?.overdue_cnt  ?? 0) : null,
+    truthState:         _arCert ? "CERTIFIED" as const : "UNVERIFIED" as const,
+    reason:             _arCert ? null : "RECEIVABLE_DATA_NOT_CERTIFIED",
   };
 }
 
@@ -494,6 +525,10 @@ export async function getCustomerLedgerKpis(
   orgId:       string,
   customerKey: string,   // NIT or customerName
 ): Promise<CustomerLedgerKpis> {
+  // DATA-TRUST-REMEDIATION-01B: gate on receivable certification
+  const { isReceivableDataCertified: _isCert2 } = await import("@/lib/comercial/frontline/receivable-truth-status");
+  const _arCert2 = _isCert2(orgId);
+
   // Resolve CustomerProfile
   const profile = await prisma.customerProfile.findFirst({
     where: {
@@ -521,23 +556,30 @@ export async function getCustomerLedgerKpis(
         OR: [{ customerNit: customerKey }, { customerName: customerKey }],
       };
 
-  const [quotes, recvAgg, recvOverdue] = await Promise.all([
-    quotesPromise,
-    prisma.customerReceivable.aggregate({
-      where: recvWhere,
-      _sum: { originalAmount: true, paidAmount: true, balanceDue: true },
-    }),
-    prisma.customerReceivable.aggregate({
-      where: { ...recvWhere, daysOverdue: { gt: 0 }, status: { in: ["OPEN", "PARTIAL", "OVERDUE"] } },
-      _sum: { balanceDue: true },
-    }),
-  ]);
+  // CRM quotes — always executes (not AR-dependent)
+  const quotes = await quotesPromise;
+
+  // AR aggregates — skip entirely when uncertified (DATA-TRUST-REMEDIATION-01B: query-level gate)
+  const _arStubCust = { _sum: { originalAmount: null, paidAmount: null, balanceDue: null } };
+
+  const [recvAgg, recvOverdue] = _arCert2
+    ? await Promise.all([
+        prisma.customerReceivable.aggregate({
+          where: recvWhere,
+          _sum: { originalAmount: true, paidAmount: true, balanceDue: true },
+        }),
+        prisma.customerReceivable.aggregate({
+          where: { ...recvWhere, daysOverdue: { gt: 0 }, status: { in: ["OPEN", "PARTIAL", "OVERDUE"] } },
+          _sum: { balanceDue: true },
+        }),
+      ])
+    : [_arStubCust, _arStubCust];
 
   const crmStats    = computeCrmPipelineStats(quotes);
-  const totalInvoiced  = Number(recvAgg._sum.originalAmount ?? 0);
-  const totalCollected = Number(recvAgg._sum.paidAmount     ?? 0);
-  const totalOutstanding = Number(recvAgg._sum.balanceDue   ?? 0);
-  const totalOverdue   = Number(recvOverdue._sum.balanceDue ?? 0);
+  const totalInvoiced    = _arCert2 ? Number(recvAgg._sum.originalAmount ?? 0) : null;
+  const totalCollected   = _arCert2 ? Number(recvAgg._sum.paidAmount     ?? 0) : null;
+  const totalOutstanding = _arCert2 ? Number(recvAgg._sum.balanceDue     ?? 0) : null;
+  const totalOverdue     = _arCert2 ? Number(recvOverdue._sum.balanceDue ?? 0) : null;
 
   return {
     customerId,
@@ -551,8 +593,10 @@ export async function getCustomerLedgerKpis(
     totalCollected,
     totalOutstanding,
     totalOverdue,
-    collectionRate: totalInvoiced > 0
-      ? Math.round((totalCollected / totalInvoiced) * 10000) / 100
+    collectionRate: _arCert2 && totalInvoiced != null && totalInvoiced > 0
+      ? Math.round((totalCollected! / totalInvoiced) * 10000) / 100
       : null,
+    truthState:     _arCert2 ? "CERTIFIED" as const : "UNVERIFIED" as const,
+    reason:         _arCert2 ? null : "RECEIVABLE_DATA_NOT_CERTIFIED",
   };
 }

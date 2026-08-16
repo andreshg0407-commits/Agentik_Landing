@@ -49,6 +49,7 @@ export type SagEventCode =
   | "soap:cache:ready" // emitted after adapter cache is populated (AR row count)
   | "soap:cache:future-skipped" // emitted when future-dated documents are excluded
   | "soap:page"        // emitted per pullReceivables page (offset, slice, hasMore)
+  | "soap:fallback"    // emitted when certified view fails and adapter falls back to legacy path
   | "soap:fault"
   | "soap:http:error"
   | "soap:parse:error"

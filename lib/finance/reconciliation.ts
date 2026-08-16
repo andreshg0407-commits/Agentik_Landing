@@ -87,6 +87,9 @@ export interface ReconciliationSummary {
   inconsistente: number;
   items:         ReconciliationItem[];
   hasData:       boolean;
+  /** DATA-TRUST-REMEDIATION-01B: mandatory discriminated truth state */
+  truthState:    "CERTIFIED" | "UNVERIFIED";
+  reason:        string | null;
 }
 
 // ── Database loader ───────────────────────────────────────────────────────────
@@ -286,6 +289,17 @@ function resolveStatus(
 export async function getReconciliationSummary(
   organizationId: string,
 ): Promise<ReconciliationSummary> {
+  // DATA-TRUST-REMEDIATION-01B: gate on receivable certification
+  const { isReceivableDataCertified, warmTruthStatusCache } = await import("@/lib/comercial/frontline/receivable-truth-status");
+  await warmTruthStatusCache();
+  if (!isReceivableDataCertified(organizationId)) {
+    return {
+      total: 0, conciliado: 0, parcial: 0, pendiente: 0, inconsistente: 0,
+      items: [], hasData: false,
+      truthState: "UNVERIFIED", reason: "RECEIVABLE_DATA_NOT_CERTIFIED",
+    };
+  }
+
   const [rawDocs, rawRecs] = await Promise.all([
     loadDocuments(organizationId),
     loadReceivables(organizationId),
@@ -426,6 +440,8 @@ export async function getReconciliationSummary(
     inconsistente: items.filter((i) => i.status === "INCONSISTENTE").length,
     items,
     hasData: rawDocs.length > 0 || rawRecs.length > 0,
+    truthState: "CERTIFIED" as const,
+    reason: null,
   };
 }
 

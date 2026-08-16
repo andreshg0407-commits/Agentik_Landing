@@ -261,22 +261,28 @@ export interface UnifiedReceivable extends SourceRecord {
   customerTaxId?: string;
 
   originalAmount: number;
-  paidAmount:     number;
-  /** Computed: originalAmount − paidAmount. */
+  /**
+   * Classified paid amount. null = UNAVAILABLE (source does not decompose
+   * reductions into payments vs credit notes vs adjustments vs retentions).
+   * When null, balanceDue is still authoritative from the source system.
+   */
+  paidAmount:     number | null;
+  /** Authoritative residual balance from source system. */
   balanceDue:     number;
   currency:       string;
 
   status:         ReceivableStatus;
 
   issueDate:      Date;
-  dueDate:        Date;
+  /** null when source does not provide a due date. */
+  dueDate:        Date | null;
   paidDate?:      Date;
 
   /**
    * Days past dueDate at time of pull. Negative = not yet due.
    * Computed by the adapter or the receivable normalizer.
    */
-  daysOverdue:    number;
+  daysOverdue:    number | null;  // null = UNAVAILABLE (unknown dueDate → unknown aging)
 }
 
 // ── 6. CRM Opportunity ────────────────────────────────────────────────────────
@@ -446,6 +452,18 @@ export interface UnifiedMovement extends SourceRecord {
   sagDocumentFamily: string;       // SagDocumentFamily enum string
   storeName:         string;       // derived from channel/code group
   storeSlug:         string;       // toSlug(storeName)
+
+  // DATA-TRUST-REMEDIATION-01: Optional fields from vw_agentik_ventas (line-item grain).
+  // When populated from the view, these replace the hardcoded defaults in storage.ts.
+  sellerCode?:       string | null; // VENDEDOR_ID from vw_agentik_ventas
+  sellerName?:       string | null; // VENDEDOR from vw_agentik_ventas
+  productCode?:      string | null; // CODIGO_PRODUCTO from vw_agentik_ventas
+  productLine?:      string | null; // LINEA from vw_agentik_ventas (ss_linea FK)
+  productName?:      string | null; // PRODUCTO from vw_agentik_ventas
+  units?:            number | null; // CANTIDAD from vw_agentik_ventas
+  unitPrice?:        number | null; // PRECIO_UNITARIO from vw_agentik_ventas
+  costo?:            number | null; // COSTO from vw_agentik_ventas
+  lineItemId?:       number | null; // ka_nl_movimiento_item — line-item PK for naturalKey
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

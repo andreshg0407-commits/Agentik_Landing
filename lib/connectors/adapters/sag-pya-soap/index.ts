@@ -43,7 +43,8 @@ import { BaseAdapter }     from "@/lib/connectors/core/base-adapter";
 import { sagDebug, sagInfo } from "@/lib/sag/logger";
 import { getSagConnection } from "@/lib/connectors/pya/sag-source-router";
 import type { SagSource } from "@/lib/connectors/pya/sag-source-router";
-import { mapSagCustomer, mapSagReceivable, mapSagMovement, mapSagOrder, mapSagCollection } from "./mappers";
+import { mapSagCustomer, mapSagReceivable, mapSagMovement, mapSagOrder, mapSagCollection, mapSagVentasRow, mapSagCarteraViewRow } from "./mappers";
+import { QUERY_CATALOG } from "./query-catalog";
 // Castillitos FUENTES registry — used as the default fuentesMap when
 // connector.config.fuentesMap is absent (backward-compat for existing connectors).
 // Jupiter Pets and future tenants must supply their own fuentesMap in connector.config.
@@ -359,6 +360,14 @@ export class SagPyaSoapAdapter extends BaseAdapter {
   private _colCache: UnifiedCollection[] | null = null;
   private _colCacheLatestDate: Date | null = null;
 
+  // DATA-TRUST-REMEDIATION-01: vw_agentik_ventas (enriched line-item grain)
+  private _ventasCache: UnifiedMovement[] | null = null;
+  private _ventasCacheLatestDate: Date | null = null;
+
+  // DATA-TRUST-REMEDIATION-01: vw_agentik_cartera (certified receivables with real paidAmount)
+  private _carteraCache: UnifiedReceivable[] | null = null;
+  private _carteraCacheLatestDate: Date | null = null;
+
   private get cfg(): SagPyaSoapConfig {
     return this.config as SagPyaSoapConfig;
   }
@@ -518,76 +527,123 @@ export class SagPyaSoapAdapter extends BaseAdapter {
     let dateFilter: Date | null = null;
 
     if (!cursor) {
-      // Fresh full sync — start from offset 0
       pageOffset = 0;
     } else if (cursor.startsWith(PAGE_PFX)) {
       pageOffset = parseInt(cursor.slice(PAGE_PFX.length), 10);
       if (isNaN(pageOffset) || pageOffset < 0) pageOffset = 0;
     } else {
-      // "date:ISO" or legacy bare ISO — incremental
       const iso = cursor.startsWith(DATE_PFX) ? cursor.slice(DATE_PFX.length) : cursor;
       dateFilter = new Date(iso);
       if (isNaN(dateFilter.getTime())) dateFilter = null;
     }
 
-    // ── Populate cache (once per adapter instance / Vercel invocation) ────────
-    if (!this._rxCache) {
+    // ── DATA-TRUST-REMEDIATION-01 / F4: Use vw_agentik_cartera for certified receivables.
+    //
+    // The old pipeline used raw MOVIMIENTOS GROUP BY with paidAmount=0 (always),
+    // producing $33.6B phantom debt. vw_agentik_cartera provides pre-computed
+    // SALDO_PENDIENTE (net of all applied collections) and VALOR_DOCUMENTO,
+    // allowing correct paidAmount = VALOR_DOCUMENTO - SALDO_PENDIENTE.
+    //
+    // The old _rxCache path is preserved as fallback when vw_agentik_cartera fails
+    // (e.g., view not yet deployed on the SAG instance).
+
+    if (!this._carteraCache) {
       await this.rateLimiter.consume();
 
-      const query    = this.cfg.receivableQuery ?? DEFAULT_RECEIVABLE_QUERY;
+      const carteraQuery = QUERY_CATALOG.canonicalAr.cartera.query;
       const { endpointUrl, database } = this.apiConfig;
 
       sagInfo("soap:call:start", {
         orgId:   this.orgId,
         module:  "receivables",
-        message: `token=${this.apiConfig.token ? "[SET]" : "MISSING"} a_s_bd=${database ?? "(omitted)"} endpoint=${endpointUrl} query=${query.slice(0, 80)}`,
-      });
-      sagDebug("soap:call:start", {
-        orgId:   this.orgId,
-        module:  "receivables",
-        message: buildEnvelopePreview(query, database, endpointUrl),
+        message: `DATA-TRUST: using vw_agentik_cartera (certified). a_s_bd=${database ?? "(omitted)"} endpoint=${endpointUrl}`,
       });
 
-      const rawRows = await consultaSagJson(this.apiConfig, query);
+      let usedCertifiedPath = false;
 
-      sagInfo("soap:call:done", {
-        orgId:   this.orgId,
-        module:  "receivables",
-        message: `SAG returned ${rawRows.length} raw rows — mapping + filtering AR records`,
-      });
+      try {
+        const rawRows = await consultaSagJson(this.apiConfig, carteraQuery);
 
-      // Map and filter: keep only AR documents (sc_cobrar_pagar = 'C').
-      // Rows where mapSagReceivable returns null are non-AR (payables, orders).
-      let latestDate: Date | null = null;
-      const mapped: UnifiedReceivable[] = [];
+        sagInfo("soap:call:done", {
+          orgId:   this.orgId,
+          module:  "receivables",
+          message: `vw_agentik_cartera returned ${rawRows.length} rows — mapping with real paidAmount`,
+        });
 
-      for (const row of rawRows) {
-        const r = row as Record<string, unknown>;
-        const rec = mapSagReceivable(r, this.orgId);
-        if (!rec) continue;
-        mapped.push(rec);
-        if (rec.issueDate.getTime() > 0 && (!latestDate || rec.issueDate > latestDate)) {
-          latestDate = rec.issueDate;
+        let latestDate: Date | null = null;
+        const mapped: UnifiedReceivable[] = [];
+
+        for (const row of rawRows) {
+          const r = row as Record<string, unknown>;
+          const rec = mapSagCarteraViewRow(r, this.orgId);
+          if (!rec) continue;
+          mapped.push(rec);
+          if (rec.issueDate.getTime() > 0 && (!latestDate || rec.issueDate > latestDate)) {
+            latestDate = rec.issueDate;
+          }
         }
+
+        this._carteraCache           = mapped;
+        this._carteraCacheLatestDate = latestDate;
+        usedCertifiedPath = true;
+
+        sagInfo("soap:cache:ready", {
+          orgId:   this.orgId,
+          module:  "receivables",
+          message: `Certified cartera cache: ${mapped.length} receivables with real paidAmount`,
+        });
+      } catch (carteraErr) {
+        // Fallback to legacy MOVIMIENTOS path if vw_agentik_cartera is not available
+        sagInfo("soap:fallback", {
+          orgId:   this.orgId,
+          module:  "receivables",
+          message: `vw_agentik_cartera failed (${(carteraErr as Error).message}), falling back to legacy MOVIMIENTOS path (paidAmount=0)`,
+        });
       }
 
-      this._rxCache           = mapped;
-      this._rxCacheLatestDate = latestDate;
+      // Fallback: LEGACY_UNCERTIFIED MOVIMIENTOS path (paidAmount=0 — produces phantom debt).
+      // Records from this path will be blocked at the storage layer when paidAmount
+      // or dueDate are null (PERSISTENCE_BLOCKED_UNREPRESENTABLE_AR).
+      if (!usedCertifiedPath) {
+        await this.rateLimiter.consume();
+        const query = this.cfg.receivableQuery ?? DEFAULT_RECEIVABLE_QUERY;
 
-      sagInfo("soap:cache:ready", {
-        orgId:   this.orgId,
-        module:  "receivables",
-        message: `Cache filled: ${mapped.length} AR records (${rawRows.length - mapped.length} non-AR skipped)`,
-      });
+        sagInfo("soap:call:start", {
+          orgId:   this.orgId,
+          module:  "receivables",
+          message: `LEGACY PATH (paidAmount=0). a_s_bd=${database ?? "(omitted)"} endpoint=${endpointUrl}`,
+        });
+
+        const rawRows = await consultaSagJson(this.apiConfig, query);
+        let latestDate: Date | null = null;
+        const mapped: UnifiedReceivable[] = [];
+
+        for (const row of rawRows) {
+          const r = row as Record<string, unknown>;
+          const rec = mapSagReceivable(r, this.orgId);
+          if (!rec) continue;
+          mapped.push(rec);
+          if (rec.issueDate.getTime() > 0 && (!latestDate || rec.issueDate > latestDate)) {
+            latestDate = rec.issueDate;
+          }
+        }
+
+        this._carteraCache           = mapped;
+        this._carteraCacheLatestDate = latestDate;
+
+        sagInfo("soap:cache:ready", {
+          orgId:   this.orgId,
+          module:  "receivables",
+          message: `Legacy cache: ${mapped.length} AR records (paidAmount=0, UNCERTIFIED)`,
+        });
+      }
     }
 
-    const cached    = this._rxCache;
+    const cached    = this._carteraCache!;
     const totalAR   = cached.length;
-    const latestISO = this._rxCacheLatestDate?.toISOString() ?? null;
+    const latestISO = this._carteraCacheLatestDate?.toISOString() ?? null;
 
     // ── Incremental (date-filter) branch ──────────────────────────────────────
-    // Incremental syncs are expected to be small (days/weeks of new records).
-    // Return all matching rows in one shot — no pagination needed.
     if (dateFilter) {
       const filtered = cached.filter(r => r.issueDate > dateFilter!);
       return {
@@ -599,7 +655,7 @@ export class SagPyaSoapAdapter extends BaseAdapter {
     }
 
     // ── Page-based (full-sync) branch ─────────────────────────────────────────
-    const slice     = cached.slice(pageOffset, pageOffset + RX_PAGE_SIZE);
+    const slice      = cached.slice(pageOffset, pageOffset + RX_PAGE_SIZE);
     const nextOffset = pageOffset + slice.length;
     const isLast     = nextOffset >= totalAR;
 
@@ -639,73 +695,134 @@ export class SagPyaSoapAdapter extends BaseAdapter {
       if (isNaN(dateFilter.getTime())) dateFilter = null;
     }
 
-    // ── Populate cache ────────────────────────────────────────────────────────
-    if (!this._movCache) {
-      await this.rateLimiter.consume();
+    // ── DATA-TRUST-REMEDIATION-01 / F1+F2+F3: Enriched ventas from vw_agentik_ventas.
+    //
+    // Two SOAP calls are needed:
+    //   1. Legacy MOVIMIENTOS query — only for order extraction (_orderCache side-effect).
+    //      Movement results from this call are NOT used for SaleRecord.
+    //   2. vw_agentik_ventas — line-item grain with VENDEDOR_ID, CODIGO_PRODUCTO,
+    //      LINEA, CANTIDAD, COSTO, etc. This is the canonical SaleRecord source.
+    //
+    // If vw_agentik_ventas fails (view not yet deployed), falls back to the
+    // legacy MOVIMIENTOS path (lossy: productLine="SAG", sellerName="Sin Vendedor").
 
-      const query = DEFAULT_MOVEMENTS_QUERY;
+    if (!this._ventasCache) {
       const { endpointUrl, database } = this.apiConfig;
-
-      sagInfo("soap:call:start", {
-        orgId:   this.orgId,
-        module:  "movements",
-        message: `token=${this.apiConfig.token ? "[SET]" : "MISSING"} a_s_bd=${database ?? "(omitted)"} endpoint=${endpointUrl} query=${query.slice(0, 80)}`,
-      });
-
-      const rawRows = await consultaSagJson(this.apiConfig, query);
-
-      sagInfo("soap:call:done", {
-        orgId:   this.orgId,
-        module:  "movements",
-        message: `SAG returned ${rawRows.length} raw rows — mapping to SaleRecord`,
-      });
-
-      let latestDate: Date | null = null;
-      const mapped: UnifiedMovement[] = [];
-      const orders: UnifiedSagOrder[] = [];
-      // AGENTIK-SAG-CURSOR-RESET-01: exclude future-dated documents from the
-      // operational sync.  They cannot be persisted as current SaleRecords and
-      // cannot advance the cursor.  They will be ingested naturally once their
-      // documentDate becomes <= the sync date on a later run.
       const cursorCeiling = new Date();
-      let futureSkipped = 0;
 
-      for (const row of rawRows) {
-        const r = row as Record<string, unknown>;
-        // Capture PD orders BEFORE mapSagMovement filters them out (clase === 4 → null)
-        const ord = mapSagOrder(r, this.orgId, this.fuenteToCode);
-        if (ord) { orders.push(ord); continue; }
-        const rec = mapSagMovement(r, this.orgId, this.fuenteToCode);
-        if (!rec) continue;
-        if (rec.saleDate > cursorCeiling) { futureSkipped++; continue; }
-        mapped.push(rec);
-        if (rec.saleDate.getTime() > 0 && (!latestDate || rec.saleDate > latestDate)) {
-          latestDate = rec.saleDate;
-        }
-      }
+      // Step 1: Fill _orderCache from legacy MOVIMIENTOS (if not already filled)
+      if (!this._orderCache) {
+        await this.rateLimiter.consume();
 
-      if (futureSkipped > 0) {
-        sagInfo("soap:cache:future-skipped", {
+        sagInfo("soap:call:start", {
           orgId:   this.orgId,
           module:  "movements",
-          message: `Excluded ${futureSkipped} future-dated document(s) (date > ${cursorCeiling.toISOString().slice(0, 10)})`,
+          message: `Step 1/2: legacy MOVIMIENTOS for order extraction. a_s_bd=${database ?? "(omitted)"}`,
+        });
+
+        const rawRows = await consultaSagJson(this.apiConfig, DEFAULT_MOVEMENTS_QUERY);
+        const orders: UnifiedSagOrder[] = [];
+        // Also build legacy movements as fallback
+        const legacyMov: UnifiedMovement[] = [];
+        let legacyLatest: Date | null = null;
+
+        for (const row of rawRows) {
+          const r = row as Record<string, unknown>;
+          const ord = mapSagOrder(r, this.orgId, this.fuenteToCode);
+          if (ord) { orders.push(ord); continue; }
+          const rec = mapSagMovement(r, this.orgId, this.fuenteToCode);
+          if (!rec) continue;
+          if (rec.saleDate > cursorCeiling) continue;
+          legacyMov.push(rec);
+          if (rec.saleDate.getTime() > 0 && (!legacyLatest || rec.saleDate > legacyLatest)) {
+            legacyLatest = rec.saleDate;
+          }
+        }
+
+        this._orderCache         = orders;
+        // Store legacy as fallback
+        this._movCache           = legacyMov;
+        this._movCacheLatestDate = legacyLatest;
+
+        sagInfo("soap:cache:ready", {
+          orgId:   this.orgId,
+          module:  "movements",
+          message: `Legacy cache: ${orders.length} orders, ${legacyMov.length} movements (fallback)`,
         });
       }
 
-      this._movCache           = mapped;
-      this._movCacheLatestDate = latestDate;
-      this._orderCache         = orders;
+      // Step 2: Fill _ventasCache from vw_agentik_ventas (enriched)
+      let usedVentasView = false;
 
-      sagInfo("soap:cache:ready", {
-        orgId:   this.orgId,
-        module:  "movements",
-        message: `Cache filled: ${mapped.length} movements (${rawRows.length - mapped.length} skipped)`,
-      });
+      try {
+        await this.rateLimiter.consume();
+
+        const ventasQuery = QUERY_CATALOG.canonicalVentas.ventasView.query;
+
+        sagInfo("soap:call:start", {
+          orgId:   this.orgId,
+          module:  "movements",
+          message: `Step 2/2: vw_agentik_ventas (enriched line-item). a_s_bd=${database ?? "(omitted)"}`,
+        });
+
+        const rawRows = await consultaSagJson(this.apiConfig, ventasQuery);
+
+        sagInfo("soap:call:done", {
+          orgId:   this.orgId,
+          module:  "movements",
+          message: `vw_agentik_ventas returned ${rawRows.length} line-item rows`,
+        });
+
+        let latestDate: Date | null = null;
+        const mapped: UnifiedMovement[] = [];
+        let futureSkipped = 0;
+
+        for (const row of rawRows) {
+          const r = row as Record<string, unknown>;
+          const rec = mapSagVentasRow(r, this.orgId);
+          if (!rec) continue;
+          if (rec.saleDate > cursorCeiling) { futureSkipped++; continue; }
+          mapped.push(rec);
+          if (rec.saleDate.getTime() > 0 && (!latestDate || rec.saleDate > latestDate)) {
+            latestDate = rec.saleDate;
+          }
+        }
+
+        if (futureSkipped > 0) {
+          sagInfo("soap:cache:future-skipped", {
+            orgId:   this.orgId,
+            module:  "movements",
+            message: `Excluded ${futureSkipped} future-dated line(s) from vw_agentik_ventas`,
+          });
+        }
+
+        this._ventasCache           = mapped;
+        this._ventasCacheLatestDate = latestDate;
+        usedVentasView = true;
+
+        sagInfo("soap:cache:ready", {
+          orgId:   this.orgId,
+          module:  "movements",
+          message: `Enriched ventas cache: ${mapped.length} line-items (seller/product/line populated)`,
+        });
+      } catch (ventasErr) {
+        sagInfo("soap:fallback", {
+          orgId:   this.orgId,
+          module:  "movements",
+          message: `vw_agentik_ventas failed (${(ventasErr as Error).message}), using legacy MOVIMIENTOS (lossy F1/F2/F3)`,
+        });
+      }
+
+      // Fallback: use legacy movements if ventas view failed
+      if (!usedVentasView) {
+        this._ventasCache           = this._movCache ?? [];
+        this._ventasCacheLatestDate = this._movCacheLatestDate;
+      }
     }
 
-    const cached    = this._movCache;
+    const cached    = this._ventasCache!;
     const totalMov  = cached.length;
-    const latestISO = this._movCacheLatestDate?.toISOString() ?? null;
+    const latestISO = this._ventasCacheLatestDate?.toISOString() ?? null;
 
     // ── Incremental branch ────────────────────────────────────────────────────
     if (dateFilter) {
@@ -754,11 +871,9 @@ export class SagPyaSoapAdapter extends BaseAdapter {
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async pullOrders(_cursor?: string): Promise<PullResult<any>> {
-    // Ensure the MOVIMIENTOS cache (and therefore _orderCache) is populated.
-    // If movements were already fetched this run, this is a no-op.
+    // Ensure the order cache is populated.
+    // pullMovements() populates _orderCache as a side-effect (Step 1: legacy MOVIMIENTOS).
     if (this._orderCache === null) {
-      // Trigger the cache fill by calling pullMovements with no cursor.
-      // We discard the PullResult; we only care about the side-effect on _orderCache.
       await this.pullMovements(undefined);
     }
     const cached = this._orderCache ?? [];

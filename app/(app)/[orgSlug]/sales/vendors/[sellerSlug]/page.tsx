@@ -94,13 +94,20 @@ export default async function SellerDetailPage({
   const currentPeriod = isValidPeriod(sp.period) ? sp.period : latest;
   const trendStart    = periodMinusMonths(currentPeriod, 11);
 
-  const [detail, branches, recentQuotes, overdueRows, ledger] = await Promise.all([
+  const [detail, branches, recentQuotes, overdueResult, ledger] = await Promise.all([
     getSellerDetail(orgId, sellerSlug, trendStart, currentPeriod).catch(() => null),
     getSellerBranchMix(orgId, sellerSlug, trendStart, currentPeriod).catch(() => []),
     getSellerRecentQuotes(orgId, sellerSlug, 10).catch(() => []),
-    getSellerOverdueReceivables(orgId, sellerSlug, 25).catch(() => []),
+    getSellerOverdueReceivables(orgId, sellerSlug, 25).catch(() => ({
+      items: [] as import("@/lib/sales/reports").SellerOverdueRow[],
+      truthState: "UNVERIFIED" as const,
+      reason: "RECEIVABLE_DATA_NOT_CERTIFIED",
+    })),
     getSellerLedgerKpis(orgId, sellerSlug).catch(() => null),
   ]);
+
+  const overdueRows = overdueResult.items;
+  const arCertified = overdueResult.truthState === "CERTIFIED";
 
   if (!detail || detail.trend.length === 0) {
     return (
@@ -120,7 +127,7 @@ export default async function SellerDetailPage({
   const totalPedidos = detail.trend.every(r => r.txCount != null)
     ? detail.trend.reduce((s, r) => s + (r.txCount ?? 0), 0)
     : null;
-  const totalOverdue = overdueRows.reduce((s, r) => s + r.balanceDue, 0);
+  const totalOverdue = arCertified ? overdueRows.reduce((s, r) => s + r.balanceDue, 0) : null;
   const crmTotal     = recentQuotes.reduce((s, r) => s + r.amount, 0);
 
   const isActive = detail.lastSaleDate != null
@@ -246,8 +253,8 @@ export default async function SellerDetailPage({
         />
         <KpiCard
           label="Cartera vencida"
-          value={overdueRows.length > 0 ? fmtCOP(totalOverdue) : "—"}
-          sub={overdueRows.length > 0 ? `${overdueRows.length} facturas` : undefined}
+          value={!arCertified ? "No certificada" : overdueRows.length > 0 ? fmtCOP(totalOverdue) : "—"}
+          sub={!arCertified ? "Datos en validación" : overdueRows.length > 0 ? `${overdueRows.length} facturas` : undefined}
           source="ERP"
           hint="Saldo pendiente de cobro de los clientes asignados a este vendedor."
         />
@@ -454,7 +461,7 @@ export default async function SellerDetailPage({
       )}
 
       {/* ── Overdue receivables ── */}
-      {overdueRows.length > 0 && (
+      {arCertified && overdueRows.length > 0 && (
         <Section title="Cartera vencida de sus clientes">
           <div style={{ padding: "8px 14px 4px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ fontSize: 12, color: "#dc2626", fontWeight: 700 }}>

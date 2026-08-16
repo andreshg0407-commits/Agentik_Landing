@@ -954,6 +954,66 @@ const CANONICAL_AR: Record<string, QueryEntry> = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// CANONICAL VENTAS — vw_agentik_ventas (line-item grain)
+// DATA-TRUST-REMEDIATION-01: Replaces lossy MOVIMIENTOS GROUP BY pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CANONICAL_VENTAS: Record<string, QueryEntry> = {
+
+  ventasView: {
+    key:     "canonicalVentas.ventasView",
+    purpose: "Line-item sales from vw_agentik_ventas. Provides VENDEDOR_ID, CODIGO_PRODUCTO, LINEA, CANTIDAD, PRECIO_UNITARIO, COSTO, MARGEN — all fields missing from the legacy MOVIMIENTOS GROUP BY pipeline.",
+    method:  "consultaSagJson",
+    query:   "SELECT * FROM vw_agentik_ventas",
+    expectedFields: [
+      // Confirmed from actual SQL view definition (DATA-TRUST-REMEDIATION-01)
+      "ID_DOCUMENTO",      // ka_nl_movimiento (document header PK)
+      "TIPO_DOCUMENTO",    // TEXT: "Factura" | "Nota Crédito"
+      "NUMERO_DOCUMENTO",  // n_numero_documento
+      "ESTADO_DOCUMENTO",  // TEXT: "Anulado" | "Con Saldo Pendiente" | "Sin Saldo Pendiente"
+      "FECHA_DOCUMENTO",   // ISNULL(dd_fecha_original, d_fecha_documento)
+      "CLIENTE_ID",        // ka_nl_tercero (SAG internal PK, NOT NIT)
+      "CLIENTE",           // sc_nombre (customer name)
+      "VENDEDOR_ID",       // ISNULL(id_vendedor1, id_vendedor2) — ka_nl_tercero of seller
+      "VENDEDOR",          // seller name
+      "SUCURSAL",          // ss_ciudad from clientes_sucursales
+      "CIUDAD",            // resolved city name
+      "CANAL_VENTA",       // channel detail from canales table
+      "CODIGO_PRODUCTO",   // k_sc_codigo_articulo (product SKU)
+      "PRODUCTO",          // sc_detalle_articulo
+      "LINEA",             // ss_linea — TEXT name ("Latin Kids", "Castillitos", "Importacion")
+      "CATEGORIA",         // sc_detalle_grupo
+      "CANTIDAD",          // n_cantidad
+      "PRECIO_UNITARIO",   // n_valor
+      "DESCUENTO",         // n_descuento (percentage)
+      "IMPUESTO",          // n_iva (percentage)
+      "VALOR_TOTAL",       // n_cantidad * n_valor * (1 - n_descuento/100)
+      "COSTO",             // n_costo_promedio
+      "MARGEN",            // computed margin percentage
+    ],
+    notes: [
+      "Line-item grain: one row per product per movement (NOT grouped by document).",
+      "Only includes facturas (F) and credit notes (X) from fuente clase 1, sc_afecta_factura='S', sc_cobrar_pagar='C'.",
+      "Date range: last 5 years from SAG server date.",
+      "VENDEDOR_ID = ISNULL(movement-level seller, customer-level seller).",
+      "LINEA is TEXT name from lineas table (e.g. 'Latin Kids'), NOT numeric FK. Mapper converts to code (LT, CS, IM).",
+      "CLIENTE_ID is ka_nl_tercero (SAG internal PK), NOT the customer NIT.",
+      "View does NOT output ITEM_ID (ka_nl_movimiento_item). Dedup uses synthetic hash.",
+      "Replaces the lossy MOVIMIENTOS GROUP BY query that produced F1/F2/F3.",
+    ].join(" "),
+    validationChecklist: [
+      "View exists on LUDISAM (Castillitos production database)",
+      "VENDEDOR_ID is populated for >90% of rows",
+      "CODIGO_PRODUCTO matches ProductEntity.externalId",
+      "LINEA is TEXT name — mapper reverses to 2-letter code via LINEA_NAME_TO_CODE",
+      "Row count matches expectation (line-item grain, ~131K+ for Castillitos 5yr window)",
+    ],
+    status: "validated",
+  },
+
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Unified catalog export
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -970,6 +1030,7 @@ export const QUERY_CATALOG = {
   commercialProducts: COMMERCIAL_PRODUCTS,
   masterLookups:  MASTER_LOOKUPS,
   canonicalAr:    CANONICAL_AR,
+  canonicalVentas: CANONICAL_VENTAS,
 } as const;
 
 /** Flat list of all query entries for iteration / report generation */

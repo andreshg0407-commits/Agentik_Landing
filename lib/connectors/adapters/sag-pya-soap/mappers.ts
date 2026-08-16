@@ -274,21 +274,12 @@ export function mapSagReceivable(
 
   // Dates
   const issueDate = parseDate(row, "d_fecha_documento");
-  const baseDate  = issueDate.getTime() > 0 ? issueDate : new Date();
 
-  // Due date: no VENCIMIENTOS/FORMAS_PAGO table in this SAG installation.
-  // Use ka_ni_forma_pago_fte as proxy for credit terms:
-  //   forma_pago = 2 → 30-day credit (electronic invoices, remisiones)
-  //   otherwise      → immediate (POS, cash)
-  const formaPago = row["ka_ni_forma_pago_fte"] != null
-    ? Number(row["ka_ni_forma_pago_fte"])
-    : null;
-  const creditDays = formaPago === 2 ? 30 : 0;
-  const dueDate = new Date(baseDate.getTime() + creditDays * 24 * 60 * 60 * 1000);
-
-  // Days overdue: MAX(0, days since dueDate)
-  const msOverdue  = Date.now() - dueDate.getTime();
-  const daysOverdue = msOverdue > 0 ? Math.floor(msOverdue / (24 * 60 * 60 * 1000)) : 0;
+  // LEGACY_UNCERTIFIED: dueDate and daysOverdue are UNAVAILABLE.
+  // MOVIMIENTOS has no FECHA_VENCIMIENTO. The old heuristic (forma_pago=2 → +30d)
+  // fabricated aging data. Set both to null to prevent synthetic mora.
+  const dueDate: Date | null = null;
+  const daysOverdue: number | null = null;
 
   // Currency: SAG returns human-readable string ("PESOS" | "DOLARES")
   const monedaRaw = str(row, "ss_moneda") ?? "PESOS";
@@ -304,15 +295,17 @@ export function mapSagReceivable(
   // A gross amount (with IVA) would require SUM(n_valor * n_iva / 100), which
   // needs a separate query; deferred until confirmed with Castillitos accountant.
   //
-  // paidAmount = 0 — RECIBOS/ANTICIPOS/ABONOS tables do not exist in this
-  // SAG installation. PAGOS table is empty. Reassess in next sprint.
+  // LEGACY_UNCERTIFIED: paidAmount = 0 — RECIBOS/ANTICIPOS/ABONOS tables do
+  // not exist in this SAG installation. PAGOS table is empty. This mapper is
+  // preserved for backward compatibility but MUST NOT be used in the certified
+  // receivable path. Use mapSagCarteraViewRow for certified data.
   const totalValor     = num(row, "total_valor",     0);
   const totalDescuento = num(row, "total_descuento", 0);
   const totalIva       = num(row, "total_iva",       0); // IVA rate sum — kept for meta
 
   const originalAmount = totalValor;
-  const paidAmount     = 0;
-  const balanceDue     = originalAmount - paidAmount;
+  const paidAmount: number | null = null;  // UNAVAILABLE — no payment source
+  const balanceDue     = originalAmount;   // without paidAmount, balanceDue = originalAmount
 
   // Status: "open" for all — payment status unresolvable without a payment table
   const status: ReceivableStatus = "open";
@@ -346,9 +339,100 @@ export function mapSagReceivable(
       totalValor,
       totalDescuento,
       totalIvaRateSum:  totalIva,
-      creditDays,
       // paidAmountPending: true until a payments table (PAGOS, RECIBOS, etc.) is available
       paidAmountPending: true,
+      certificationStatus: "LEGACY_UNCERTIFIED",
+    },
+  };
+}
+
+// ── Cartera view mapper — vw_agentik_cartera (certified) ─────────────────────
+//
+// DATA-TRUST-REMEDIATION-01 / F4: This mapper produces UnifiedReceivable from
+// the certified vw_agentik_cartera view. Unlike mapSagReceivable() which reads
+// raw MOVIMIENTOS and hardcodes paidAmount=0, this mapper uses SAG's pre-computed
+// SALDO_PENDIENTE which already includes all applied collections.
+//
+// paidAmount = VALOR_DOCUMENTO - SALDO_PENDIENTE
+// balanceDue = SALDO_PENDIENTE
+//
+// This eliminates the $33.6B phantom debt (F4).
+
+/**
+ * Map one row from vw_agentik_cartera to a canonical UnifiedReceivable.
+ *
+ * Only open documents are in this view (SALDO_PENDIENTE != 0 from SAG filter).
+ * Credit notes have negative SALDO_PENDIENTE.
+ */
+export function mapSagCarteraViewRow(
+  row: Record<string, unknown>,
+  orgId: string,
+): UnifiedReceivable | null {
+  const documento      = str(row, "DOCUMENTO");
+  if (!documento) return null;
+
+  const tipoDoc        = str(row, "TIPO_DOCUMENTO") ?? "Factura";
+  const clienteId      = str(row, "CLIENTE_ID") ?? null;
+  const clienteName    = str(row, "CLIENTE") ?? "SIN NOMBRE";
+  const vendedor       = str(row, "VENDEDOR") ?? null;
+  const fechaDoc       = parseDate(row, "FECHA_DOCUMENTO");
+  const fechaVenc      = parseDate(row, "FECHA_VENCIMIENTO");
+  const diasMora       = num(row, "DIAS_MORA", 0);
+  const valorDocumento = num(row, "VALOR_DOCUMENTO", 0);
+  const saldoPendiente = num(row, "SALDO_PENDIENTE", 0);
+  const estadoCartera  = str(row, "ESTADO_CARTERA") ?? "Pendiente de Pago";
+
+  // SALDO_PENDIENTE is the authoritative residual balance from SAG.
+  // The difference (valorDocumento - saldoPendiente) mixes payments, credit
+  // notes, adjustments, and retentions. We CANNOT label it as "paidAmount"
+  // because we don't know the decomposition.
+  // paidAmount is left at 0 (= UNAVAILABLE) until a classified breakdown
+  // can be sourced from vw_agentik_recaudos cross-referenced with cartera.
+  const reductionAmount = valorDocumento - saldoPendiente; // stored in meta only
+  const balanceDue = saldoPendiente;
+
+  // Map estado to canonical status
+  const status: ReceivableStatus =
+    Math.abs(saldoPendiente) < 0.01 ? "paid"
+    : diasMora > 0 ? "overdue"
+    : "open";
+
+  // Natural key: use document reference (stable across syncs)
+  const sourceId = `CARTERA-${documento}`;
+
+  return {
+    sourceId,
+    source:  "sag_pya_soap",
+    orgId,
+
+    invoiceRef:    documento,
+    customerName:  clienteName,
+    customerTaxId: clienteId ?? undefined,
+
+    originalAmount: valorDocumento,
+    paidAmount:     null,  // UNAVAILABLE — cannot classify decomposition
+    balanceDue,
+    currency:      "COP",
+
+    status,
+    daysOverdue:   Math.max(0, diasMora),
+
+    issueDate:     fechaDoc,
+    dueDate:       fechaVenc.getTime() > 0 ? fechaVenc : null,
+    paidDate:      undefined,
+
+    meta: {
+      raw:                   row,
+      documento,
+      tipoDoc,
+      clienteId,
+      vendedor,
+      estadoCartera,
+      saldoPendiente,
+      valorDocumento,
+      reductionAmount,       // UNCLASSIFIED: payments + credit notes + adjustments + retentions
+      paidAmountStatus:      "UNCLASSIFIED_REDUCTION",
+      source:                "vw_agentik_cartera",
     },
   };
 }
@@ -720,6 +804,190 @@ export function mapSagOrder(
     currency,
     sourceCode:   "PD",
     sellerTerceroId,
+  };
+}
+
+// ── Ventas view mapper — vw_agentik_ventas (line-item grain) ─────────────────
+//
+// DATA-TRUST-REMEDIATION-01: This mapper replaces the lossy MOVIMIENTOS GROUP BY
+// pipeline that produced F1/F2/F3 (hardcoded productLine="SAG", sellerName="Sin
+// Vendedor", productCode=NULL).
+//
+// vw_agentik_ventas provides line-item grain with VENDEDOR_ID, CODIGO_PRODUCTO,
+// LINEA, CANTIDAD, PRECIO_UNITARIO, COSTO, MARGEN.
+//
+// ACTUAL VIEW OUTPUT (confirmed from SQL definition):
+//   ID_DOCUMENTO       — ka_nl_movimiento (document header PK)
+//   TIPO_DOCUMENTO     — "Factura" | "Nota Crédito" (TEXT, not F/X)
+//   NUMERO_DOCUMENTO   — n_numero_documento
+//   ESTADO_DOCUMENTO   — "Anulado" | "Con Saldo Pendiente" | "Sin Saldo Pendiente"
+//   FECHA_DOCUMENTO    — ISNULL(dd_fecha_original, d_fecha_documento)
+//   CLIENTE_ID         — ka_nl_tercero (SAG internal PK, NOT NIT)
+//   CLIENTE            — sc_nombre
+//   VENDEDOR_ID        — ISNULL(id_vendedor1, id_vendedor2) — ka_nl_tercero of seller
+//   VENDEDOR           — seller name
+//   SUCURSAL           — ss_ciudad (client branch city)
+//   CIUDAD             — resolved city name
+//   CANAL_VENTA        — channel detail from canales table
+//   CODIGO_PRODUCTO    — k_sc_codigo_articulo (product SKU)
+//   PRODUCTO           — sc_detalle_articulo
+//   LINEA              — ss_linea (TEXT name: "Latin Kids", "Castillitos", etc.)
+//   CATEGORIA          — sc_detalle_grupo
+//   CANTIDAD           — n_cantidad
+//   PRECIO_UNITARIO    — n_valor
+//   DESCUENTO          — n_descuento (percentage)
+//   IMPUESTO           — n_iva (percentage)
+//   VALOR_TOTAL        — n_cantidad * n_valor * (1 - n_descuento/100)
+//   COSTO              — n_costo_promedio
+//   MARGEN             — computed margin percentage
+//
+// IMPORTANT: The view does NOT output ITEM_ID (ka_nl_movimiento_item).
+// Each row IS a unique line item but has no explicit line-level PK.
+// We generate a synthetic item ID from a content hash for stable dedup.
+//
+// IMPORTANT: LINEA is a TEXT name ("Latin Kids"), NOT a numeric FK ("1").
+// We use a reverse lookup to map text → 2-letter code (LT, CS, IM, etc.).
+
+// Reverse map: SAG line TEXT name → Agentik 2-letter code
+// Normalized to lowercase for case-insensitive matching
+const LINEA_NAME_TO_CODE: Record<string, string> = {
+  "latin kids":   "LT",
+  "castillitos":  "CS",
+  "importacion":  "IM",
+  "importación":  "IM",
+  "otros":        "OT",
+  "power":        "PW",
+  "produccion":   "PD",
+  "producción":   "PD",
+};
+
+/**
+ * Generate a stable synthetic item ID from row content.
+ * Used because vw_agentik_ventas does not output ka_nl_movimiento_item.
+ * The hash is deterministic so the same row produces the same ID across syncs.
+ */
+function syntheticLineItemId(
+  movId: number, productCode: string | null, cantidad: number, precioUnit: number, descuento: number,
+): number {
+  const { createHash } = require("crypto") as typeof import("crypto");
+  const input = [movId, productCode ?? "", cantidad, precioUnit, descuento].join("|");
+  const hex = createHash("sha256").update(input).digest("hex").slice(0, 8);
+  return parseInt(hex, 16);
+}
+
+/**
+ * Map one row from vw_agentik_ventas to a canonical UnifiedMovement.
+ *
+ * Key differences from mapSagMovement():
+ *   - Line-item grain (one row per product per document, not grouped by document)
+ *   - Includes sellerCode, sellerName, productCode, productLine, productName, units
+ *   - naturalKey uses synthetic item ID (no explicit line PK in view)
+ *   - Amount = VALOR_TOTAL per line (not SUM across document)
+ *
+ * Returns null for rows with missing ID_DOCUMENTO or anulled documents.
+ */
+export function mapSagVentasRow(
+  row: Record<string, unknown>,
+  orgId: string,
+): import("@/lib/connectors/core/types").UnifiedMovement | null {
+  // ID_DOCUMENTO = ka_nl_movimiento (document header PK)
+  const movId = num(row, "ID_DOCUMENTO", 0);
+  if (movId === 0) return null;
+
+  // Skip anulled documents
+  const estadoDoc = str(row, "ESTADO_DOCUMENTO");
+  if (estadoDoc === "Anulado") return null;
+
+  // TIPO_DOCUMENTO is text ("Factura" | "Nota Crédito"), not code
+  const tipoDocTexto = str(row, "TIPO_DOCUMENTO") ?? "Factura";
+  const docType = tipoDocTexto.includes("Cr") ? "X" : "F"; // Nota Crédito → X
+  const docNum  = str(row, "NUMERO_DOCUMENTO") ?? String(movId);
+
+  const saleDate     = parseDate(row, "FECHA_DOCUMENTO");
+  const customerName = str(row, "CLIENTE") ?? "SIN NOMBRE";
+  // CLIENTE_ID is ka_nl_tercero (SAG internal PK), NOT the customer NIT
+  const clienteId    = str(row, "CLIENTE_ID") ?? undefined;
+
+  // Seller — from ISNULL(id_vendedor1, id_vendedor2) in the view
+  const vendedorId   = str(row, "VENDEDOR_ID") ?? null;
+  const vendedorName = str(row, "VENDEDOR") ?? null;
+
+  // Product
+  const productCode = str(row, "CODIGO_PRODUCTO") ?? null;
+  const productName = str(row, "PRODUCTO") ?? null;
+
+  // LINEA is TEXT name ("Latin Kids"), not numeric FK
+  const lineaRaw    = str(row, "LINEA") ?? null;
+  let productLine: string | null = null;
+  if (lineaRaw) {
+    const normalized = lineaRaw.trim().toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    // Try normalized first, then original lowercase
+    productLine = LINEA_NAME_TO_CODE[normalized]
+      ?? LINEA_NAME_TO_CODE[lineaRaw.trim().toLowerCase()]
+      ?? null;
+  }
+
+  // Quantities & amounts — per line-item
+  const cantidad   = num(row, "CANTIDAD", 0);
+  const precioUnit = num(row, "PRECIO_UNITARIO", 0);
+  const descuento  = num(row, "DESCUENTO", 0);
+  const valorTotal = num(row, "VALOR_TOTAL", 0);
+  const costo      = num(row, "COSTO", 0);
+
+  // Synthetic item ID for stable dedup (view has no line-item PK)
+  const itemId = syntheticLineItemId(movId, productCode, cantidad, precioUnit, descuento);
+
+  // Channel — CANAL_VENTA from view (text like "Almacen", "Empresa")
+  // Fall back to "OTRO" when absent
+  const canalVenta = str(row, "CANAL_VENTA") ?? null;
+  const channel = canalVenta
+    ? (canalVenta.toUpperCase().includes("ALMAC") ? "ALMACEN"
+      : canalVenta.toUpperCase().includes("EMPRES") ? "EMPRESA"
+      : canalVenta.toUpperCase().includes("ONLINE") || canalVenta.toUpperCase().includes("WEB") ? "ONLINE"
+      : "OTRO")
+    : "OTRO";
+
+  // Source type and document family — from document type
+  const sagSourceType     = "OFICIAL"; // vw_agentik_ventas only includes facturas+notas
+  const sagDocumentFamily = docType === "X" ? "CREDIT_NOTE" : "OFFICIAL_INVOICE";
+  const storeName         = channel === "EMPRESA" ? "Empresa"
+    : channel === "ALMACEN" ? "Almacén"
+    : channel === "ONLINE" ? "Tienda Web"
+    : "SAG";
+  const storeSlug         = slugify(storeName);
+
+  // Currency: COP default (view does not output currency; SAG is COP-only for Castillitos)
+  const currency = "COP";
+
+  return {
+    sourceId:          `VENTA-${movId}-${itemId}`,
+    source:            "sag_pya_soap",
+    orgId,
+    erpMovId:          movId,
+    comprobanteCode:   null, // Not available in vw_agentik_ventas
+    comprobante:       docNum,
+    saleDate,
+    customerName,
+    customerTaxId:     clienteId, // SAG ka_nl_tercero (internal PK)
+    amount:            valorTotal,
+    currency,
+    channel,
+    sagSourceType,
+    sagDocumentFamily,
+    storeName,
+    storeSlug,
+    // Enriched fields from vw_agentik_ventas (DATA-TRUST-REMEDIATION-01)
+    sellerCode:        vendedorId,
+    sellerName:        vendedorName,
+    productCode,
+    productLine,
+    productName,
+    units:             cantidad !== 0 ? cantidad : null,
+    unitPrice:         precioUnit !== 0 ? precioUnit : null,
+    costo:             costo !== 0 ? costo : null,
+    lineItemId:        itemId,
+    meta: { raw: row, channel, sagSourceType, docType, lineaRaw, tipoDocTexto, canalVenta },
   };
 }
 

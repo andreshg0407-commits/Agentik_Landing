@@ -261,6 +261,40 @@ const MATCH_RESULTS_EMPTY: Record<string, { count: number; amount: number }> = {
   revision:       { count: 0, amount: 0 },
 };
 
+/**
+ * Pure view-model: derive conciliacion display state from reconSummary.
+ * Exported for deterministic testing (DATA-TRUST-REMEDIATION-01B).
+ */
+export function deriveConciliacionViewModel(
+  reconSummary: ReconciliationSummary | undefined,
+  graphCriticalCount = 0,
+  graphOrphanCount   = 0,
+  graphWarningCount  = 0,
+): {
+  matchResults: Record<string, { count: number; amount: number }>;
+  isCertified:  boolean;
+  statusLabel:  string;
+} {
+  if (!reconSummary) {
+    return { matchResults: MATCH_RESULTS_EMPTY, isCertified: false, statusLabel: "Sin datos" };
+  }
+  if (reconSummary.truthState === "UNVERIFIED") {
+    return { matchResults: MATCH_RESULTS_EMPTY, isCertified: false, statusLabel: "Datos de conciliación no certificados" };
+  }
+  return {
+    matchResults: {
+      conciliados:    { count: reconSummary.conciliado,                         amount: 0 },
+      pendientes:     { count: reconSummary.pendiente,                          amount: 0 },
+      duplicados:     { count: 0,                                               amount: 0 },
+      inconsistentes: { count: reconSummary.inconsistente + graphCriticalCount, amount: 0 },
+      huerfanos:      { count: graphOrphanCount,                                amount: 0 },
+      revision:       { count: reconSummary.parcial + graphWarningCount,        amount: 0 },
+    },
+    isCertified: true,
+    statusLabel: `${reconSummary.conciliado} conciliados · ${reconSummary.pendiente} pendientes · ${reconSummary.inconsistente + graphCriticalCount} inconsistentes`,
+  };
+}
+
 // EXCEPTIONS: no mock — real exceptions come from reconSummary.items (INCONSISTENTE status)
 const EXCEPTIONS: Array<{
   id: string; label: string; amount: number; source: string; type: string;
@@ -1237,8 +1271,11 @@ export function ConciliacionClient({
     }
   }
 
+  // DATA-TRUST-REMEDIATION-01B: gate on truthState — UNVERIFIED must not display as certified
+  const reconCertified = reconSummary?.truthState === "CERTIFIED";
+
   // Derive MATCH_RESULTS from real reconciliation data (or fall back to zeros)
-  const MATCH_RESULTS: Record<string, { count: number; amount: number }> = reconSummary ? {
+  const MATCH_RESULTS: Record<string, { count: number; amount: number }> = reconSummary && reconCertified ? {
     conciliados:    { count: reconSummary.conciliado,                         amount: 0 },
     pendientes:     { count: reconSummary.pendiente,                          amount: 0 },
     duplicados:     { count: 0,                                               amount: 0 },
@@ -1281,13 +1318,16 @@ export function ConciliacionClient({
         title="Conciliación Inteligente"
         subtitle={`Centro de cruce y validación entre universos de datos empresariales · ciclo ${_fmtNow()}`}
         status={
+          reconSummary && !reconCertified ? "warning" :
           graphCriticalCount > 0 ? "warning" :
           !reconSummary?.hasData ? "neutral" :
           reconSummary.inconsistente > 0 || totalExceptions > 0 ? "warning" :
           reconSummary.pendiente > 0 ? "warning" : "ok"
         }
         statusLabel={
-          !reconSummary?.hasData
+          reconSummary && !reconCertified
+            ? `Datos de conciliación no certificados · ${activeRules} reglas activas`
+            : !reconSummary?.hasData
             ? `Sin datos · ${activeRules} reglas activas${graphHasData ? ` · ${graphCriticalCount > 0 ? graphCriticalCount + " alertas graph" : "Graph sano"}` : ""}`
             : `${reconSummary.conciliado} conciliados · ${reconSummary.pendiente} pendientes · ${reconSummary.inconsistente + graphCriticalCount} inconsistentes · ${activeRules} reglas activas${graphHasData && graphUnresolvedCount > 0 ? ` · ${graphUnresolvedCount} sin resolver en graph` : ""}`
         }

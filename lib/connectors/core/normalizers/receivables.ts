@@ -48,21 +48,28 @@ export function computeDaysOverdue(dueDate: Date, reference = new Date()): numbe
 
 type ReceivableInput =
   Omit<UnifiedReceivable, "daysOverdue" | "balanceDue" | "paidAmount">
-  & { daysOverdue?: number; balanceDue?: number; paidAmount?: number };
+  & { daysOverdue?: number | null; balanceDue?: number; paidAmount?: number | null };
 
 /**
  * Build a UnifiedReceivable, computing daysOverdue and balanceDue when absent.
+ *
+ * IMPORTANT: paidAmount defaults to null (UNAVAILABLE), NOT 0.
+ * daysOverdue defaults to null when dueDate is null (unknown aging).
+ * Status derivation (paid/partial/overdue) is skipped when the
+ * underlying data is unavailable, to avoid fabricating certified state.
  */
 export function buildReceivable(input: ReceivableInput): UnifiedReceivable {
-  const paidAmount = input.paidAmount ?? 0;
-  const balanceDue = input.balanceDue ?? Math.max(0, input.originalAmount - paidAmount);
-  const daysOverdue = input.daysOverdue ?? computeDaysOverdue(input.dueDate);
+  const paidAmount = input.paidAmount ?? null;  // null = UNAVAILABLE — never fabricate 0
+  const balanceDue = input.balanceDue
+    ?? (paidAmount != null ? Math.max(0, input.originalAmount - paidAmount) : 0);
+  const daysOverdue: number | null = input.daysOverdue
+    ?? (input.dueDate ? computeDaysOverdue(input.dueDate) : null);  // null = unknown aging
 
-  // Auto-derive status from balance + days overdue when status is missing context
+  // Auto-derive status — only when underlying data is known
   let status = input.status;
-  if (status === "open" && daysOverdue > 0) status = "overdue";
-  if (balanceDue <= 0 && paidAmount > 0)   status = "paid";
-  if (paidAmount > 0 && balanceDue > 0)    status = "partial";
+  if (daysOverdue != null && status === "open" && daysOverdue > 0) status = "overdue";
+  if (paidAmount != null && balanceDue <= 0 && paidAmount > 0) status = "paid";
+  if (paidAmount != null && paidAmount > 0 && balanceDue > 0)  status = "partial";
 
   return { ...input, paidAmount, balanceDue, daysOverdue, status };
 }

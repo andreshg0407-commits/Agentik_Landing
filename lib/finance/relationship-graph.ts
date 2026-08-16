@@ -72,6 +72,9 @@ export interface FinancialRelationshipGraph {
   outgoing:       Map<string, FinancialEdge[]>;
   /** nodeId → incoming edges */
   incoming:       Map<string, FinancialEdge[]>;
+  /** DATA-TRUST-REMEDIATION-01B: mandatory discriminated truth state */
+  truthState:     "CERTIFIED" | "UNVERIFIED";
+  reason:         string | null;
 }
 
 // ── Module-level cache (FASE 9) ───────────────────────────────────────────────
@@ -159,6 +162,17 @@ export async function buildFinancialRelationshipGraph(
   orgId:        string,
   forceRebuild: boolean = false,
 ): Promise<FinancialRelationshipGraph> {
+  // DATA-TRUST-REMEDIATION-01B: gate on receivable certification
+  const { isReceivableDataCertified, warmTruthStatusCache } = await import("@/lib/comercial/frontline/receivable-truth-status");
+  await warmTruthStatusCache();
+  if (!isReceivableDataCertified(orgId)) {
+    return {
+      organizationId: orgId, builtAt: new Date(),
+      nodes: new Map(), edges: [], outgoing: new Map(), incoming: new Map(),
+      truthState: "UNVERIFIED", reason: "RECEIVABLE_DATA_NOT_CERTIFIED",
+    };
+  }
+
   // Check cache
   const cached = graphCache.get(orgId);
   if (!forceRebuild && cached && Date.now() - cached.builtAt < CACHE_TTL_MS) {
@@ -383,6 +397,8 @@ export async function buildFinancialRelationshipGraph(
     edges,
     outgoing,
     incoming,
+    truthState: "CERTIFIED" as const,
+    reason: null,
   };
 
   graphCache.set(orgId, { graph, builtAt: Date.now() });

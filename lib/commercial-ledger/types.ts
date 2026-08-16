@@ -102,19 +102,19 @@ export interface CommercialKpis {
   /** Sum of CRMQuote.amount for the org (total ordered via CRM) */
   totalOrdered:     number;
 
-  /** Sum of CustomerReceivable.originalAmount (total invoiced / billed by ERP) */
-  totalInvoiced:    number;
+  /** Sum of CustomerReceivable.originalAmount (total invoiced / billed by ERP). null when uncertified. */
+  totalInvoiced:    number | null;
 
-  /** Sum of CustomerReceivable.paidAmount (cash collected) */
-  totalCollected:   number;
+  /** Sum of CustomerReceivable.paidAmount (cash collected). null when uncertified. */
+  totalCollected:   number | null;
 
-  /** Sum of CustomerReceivable.balanceDue where status != PAID (open balance) */
-  totalOutstanding: number;
+  /** Sum of CustomerReceivable.balanceDue where status != PAID (open balance). null when uncertified. */
+  totalOutstanding: number | null;
 
-  /** Sum of CustomerReceivable.balanceDue where daysOverdue > 0 */
-  totalOverdue:     number;
+  /** Sum of CustomerReceivable.balanceDue where daysOverdue > 0. null when uncertified. */
+  totalOverdue:     number | null;
 
-  /** totalCollected / totalInvoiced as 0–100 percentage. null when totalInvoiced = 0. */
+  /** totalCollected / totalInvoiced as 0–100 percentage. null when totalInvoiced = 0 or uncertified. */
   collectionRate: number | null;
 
   // ── CRM → SAG pipeline ─────────────────────────────────────────────────────
@@ -140,6 +140,10 @@ export interface CommercialKpis {
 
   /** Open CustomerReceivable rows */
   openInvoiceCount: number;
+
+  /** DATA-TRUST-REMEDIATION-01B: mandatory discriminated truth state for AR fields */
+  truthState:       "CERTIFIED" | "UNVERIFIED";
+  reason:           string | null;
 }
 
 // ── Seller-level ledger summary ────────────────────────────────────────────────
@@ -157,10 +161,13 @@ export interface SellerLedgerKpis {
   notInvoicedAmount:  number;
   acceptedQuotes:     number;
   acceptedAmount:     number;
-  // Receivables (customers assigned to this seller)
-  totalOutstanding:   number;
-  totalOverdue:       number;
-  overdueCount:       number;
+  // Receivables (customers assigned to this seller). null when uncertified.
+  totalOutstanding:   number | null;
+  totalOverdue:       number | null;
+  overdueCount:       number | null;
+  /** DATA-TRUST-REMEDIATION-01B */
+  truthState:         "CERTIFIED" | "UNVERIFIED";
+  reason:             string | null;
 }
 
 // ── Customer-level ledger summary ──────────────────────────────────────────────
@@ -174,15 +181,25 @@ export interface CustomerLedgerKpis {
   totalQuoteAmount: number;
   pendingToSag:     number;
   notInvoiced:      number;
-  // Receivables
-  totalInvoiced:    number;
-  totalCollected:   number;
-  totalOutstanding: number;
-  totalOverdue:     number;
+  // Receivables. null when uncertified.
+  totalInvoiced:    number | null;
+  totalCollected:   number | null;
+  totalOutstanding: number | null;
+  totalOverdue:     number | null;
   collectionRate:   number | null;
+  /** DATA-TRUST-REMEDIATION-01B */
+  truthState:       "CERTIFIED" | "UNVERIFIED";
+  reason:           string | null;
 }
 
 // ── Customer-level timeline ────────────────────────────────────────────────────
+
+/** Timeline result with receivable truth propagation. */
+export interface CommercialTimelineResult {
+  items:                  CommercialFact[];
+  receivableTruthState:   "CERTIFIED" | "UNVERIFIED";
+  receivableReason:       string | null;
+}
 
 /** CommercialFact with string-serialized Dates — safe to pass across RSC → client boundary. */
 export type SerializedCommercialFact = Omit<

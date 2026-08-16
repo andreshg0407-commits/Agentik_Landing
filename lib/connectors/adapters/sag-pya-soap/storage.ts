@@ -191,14 +191,32 @@ export const customerReceivableStorage: StorageHandler<UnifiedReceivable> = {
     for (let i = 0; i < records.length; i += BATCH_SIZE) {
       const batch = records.slice(i, i + BATCH_SIZE);
 
-      // Pre-validate: separate valid records from those missing erpId.
+      // Pre-validate: separate valid records from those missing erpId
+      // or unrepresentable in the legacy NOT NULL schema.
       const valid:   typeof batch = [];
       const invalid: typeof batch = [];
+      let persistenceBlocked = 0;
       for (const record of batch) {
-        if (!record.sourceId) invalid.push(record);
-        else                  valid.push(record);
+        if (!record.sourceId) {
+          invalid.push(record);
+        } else if (record.paidAmount === null || record.dueDate === null || record.daysOverdue === null) {
+          // PERSISTENCE_BLOCKED_UNREPRESENTABLE_AR: Prisma CustomerReceivable
+          // has NOT NULL constraints on paidAmount, dueDate, and daysOverdue.
+          // Persisting 0 or a fabricated date/aging would create false financial
+          // state. Skip the record; canonical data lives in SAG view path only.
+          persistenceBlocked++;
+        } else {
+          valid.push(record);
+        }
       }
-      skipped += invalid.length;
+      if (persistenceBlocked > 0) {
+        console.warn(
+          `[CustomerReceivableStorage] PERSISTENCE_BLOCKED_UNREPRESENTABLE_AR: ` +
+          `${persistenceBlocked} records skipped (paidAmount=null or dueDate=null) ` +
+          `— legacy Prisma schema cannot represent UNAVAILABLE without fabrication`
+        );
+      }
+      skipped += invalid.length + persistenceBlocked;
 
       if (valid.length === 0) continue;
 
@@ -208,7 +226,7 @@ export const customerReceivableStorage: StorageHandler<UnifiedReceivable> = {
       // connection per row — eliminating the ~600 ms/row Neon pool overhead.
       const ops = valid.map(record => {
         const erpId     = record.sourceId;
-        const bucket    = agingBucket(record.daysOverdue);
+        const bucket    = agingBucket(record.daysOverdue!);
         const statusStr = record.status.toUpperCase();
         return prisma.customerReceivable.upsert({
           where:  { organizationId_erpId: { organizationId: ctx.orgId, erpId } },
@@ -219,13 +237,13 @@ export const customerReceivableStorage: StorageHandler<UnifiedReceivable> = {
             customerNit:    record.customerTaxId ?? null,
             customerName:   record.customerName,
             originalAmount: record.originalAmount,
-            paidAmount:     record.paidAmount,
+            paidAmount:     record.paidAmount!,  // guaranteed non-null by pre-validation filter
             balanceDue:     record.balanceDue,
             currency:       record.currency,
             invoiceDate:    record.issueDate,
-            dueDate:        record.dueDate,
+            dueDate:        record.dueDate!,     // guaranteed non-null by pre-validation filter
             paidAt:         record.paidDate      ?? null,
-            daysOverdue:    record.daysOverdue,
+            daysOverdue:    record.daysOverdue!,  // guaranteed non-null by pre-validation
             agingBucket:    bucket,
             status:         statusStr,
             rawErpJson:     (record.meta ?? {}) as object,
@@ -236,13 +254,13 @@ export const customerReceivableStorage: StorageHandler<UnifiedReceivable> = {
             customerNit:    record.customerTaxId ?? null,
             customerName:   record.customerName,
             originalAmount: record.originalAmount,
-            paidAmount:     record.paidAmount,
+            paidAmount:     record.paidAmount!,  // guaranteed non-null by pre-validation filter
             balanceDue:     record.balanceDue,
             currency:       record.currency,
             invoiceDate:    record.issueDate,
-            dueDate:        record.dueDate,
+            dueDate:        record.dueDate!,     // guaranteed non-null by pre-validation filter
             paidAt:         record.paidDate      ?? null,
-            daysOverdue:    record.daysOverdue,
+            daysOverdue:    record.daysOverdue!,  // guaranteed non-null by pre-validation
             agingBucket:    bucket,
             status:         statusStr,
             rawErpJson:     (record.meta ?? {}) as object,
@@ -271,7 +289,7 @@ export const customerReceivableStorage: StorageHandler<UnifiedReceivable> = {
         );
         for (const record of valid) {
           const erpId     = record.sourceId;
-          const bucket    = agingBucket(record.daysOverdue);
+          const bucket    = agingBucket(record.daysOverdue!);
           const statusStr = record.status.toUpperCase();
           try {
             await prisma.customerReceivable.upsert({
@@ -283,13 +301,13 @@ export const customerReceivableStorage: StorageHandler<UnifiedReceivable> = {
                 customerNit:    record.customerTaxId ?? null,
                 customerName:   record.customerName,
                 originalAmount: record.originalAmount,
-                paidAmount:     record.paidAmount,
+                paidAmount:     record.paidAmount!,  // guaranteed non-null by pre-validation
                 balanceDue:     record.balanceDue,
                 currency:       record.currency,
                 invoiceDate:    record.issueDate,
-                dueDate:        record.dueDate,
+                dueDate:        record.dueDate!,     // guaranteed non-null by pre-validation
                 paidAt:         record.paidDate      ?? null,
-                daysOverdue:    record.daysOverdue,
+                daysOverdue:    record.daysOverdue!,  // guaranteed non-null by pre-validation
                 agingBucket:    bucket,
                 status:         statusStr,
                 rawErpJson:     (record.meta ?? {}) as object,
@@ -300,13 +318,13 @@ export const customerReceivableStorage: StorageHandler<UnifiedReceivable> = {
                 customerNit:    record.customerTaxId ?? null,
                 customerName:   record.customerName,
                 originalAmount: record.originalAmount,
-                paidAmount:     record.paidAmount,
+                paidAmount:     record.paidAmount!,  // guaranteed non-null by pre-validation
                 balanceDue:     record.balanceDue,
                 currency:       record.currency,
                 invoiceDate:    record.issueDate,
-                dueDate:        record.dueDate,
+                dueDate:        record.dueDate!,     // guaranteed non-null by pre-validation
                 paidAt:         record.paidDate      ?? null,
-                daysOverdue:    record.daysOverdue,
+                daysOverdue:    record.daysOverdue!,  // guaranteed non-null by pre-validation
                 agingBucket:    bucket,
                 status:         statusStr,
                 rawErpJson:     (record.meta ?? {}) as object,
@@ -413,6 +431,11 @@ function movementNaturalKey(erpMovId: number): string {
   return createHash("sha256").update(`MOV-${erpMovId}`).digest("hex").slice(0, 16);
 }
 
+/** DATA-TRUST-REMEDIATION-01: Line-item natural key for vw_agentik_ventas grain. */
+function ventasLineNaturalKey(erpMovId: number, itemId: number): string {
+  return createHash("sha256").update(`VENTA-${erpMovId}-${itemId}`).digest("hex").slice(0, 16);
+}
+
 function toSlugLocal(s: string): string {
   return s
     .trim()
@@ -467,30 +490,47 @@ export const saleRecordStorage: StorageHandler<UnifiedMovement> = {
       const ops = batch
         .filter(r => r.erpMovId > 0)
         .map(r => {
-          const nk = movementNaturalKey(r.erpMovId);
+          // DATA-TRUST-REMEDIATION-01: Use line-item PK for naturalKey when available
+          // (vw_agentik_ventas grain), fall back to header PK (legacy MOVIMIENTOS grain).
+          const nk = r.lineItemId
+            ? ventasLineNaturalKey(r.erpMovId, r.lineItemId)
+            : movementNaturalKey(r.erpMovId);
           const saleDateUtc = new Date(
             Date.UTC(r.saleDate.getFullYear(), r.saleDate.getMonth(), r.saleDate.getDate())
           );
           const periodoAoMes = `${r.saleDate.getFullYear()}${String(r.saleDate.getMonth() + 1).padStart(2, "0")}`;
           const storeSlug = r.storeSlug || toSlugLocal(r.storeName || "sin-tienda");
+
+          // DATA-TRUST-REMEDIATION-01 / F1+F2+F3: Use enriched fields from
+          // vw_agentik_ventas when present. Only fall back to defaults when
+          // the record genuinely has no seller/product data from SAG.
+          const sellerName = r.sellerName ?? "Sin Vendedor";
+          const sellerSlug = r.sellerCode
+            ? toSlugLocal(r.sellerCode)
+            : (r.sellerName ? toSlugLocal(r.sellerName) : "sin-vendedor");
+
           const fields = {
             organizationId: ctx.orgId,
             importBatchId,
-            grain:           "TRANSACTION",
+            grain:           r.lineItemId ? "LINE_ITEM" : "TRANSACTION",
             saleDate:        saleDateUtc,
             periodoAoMes,
-            sellerSlug:      "sin-vendedor",
-            sellerName:      "Sin Vendedor",
+            sellerSlug,
+            sellerName,
+            sellerCode:      r.sellerCode ?? null,
             storeSlug,
             storeName:       r.storeName,
-            productLine:     "SAG",
+            productLine:     r.productLine ?? "SAG",
+            productCode:     r.productCode ?? null,
+            productName:     r.productName ?? null,
+            units:           r.units ?? null,
             channel:         r.channel,
             comprobanteCode: r.comprobanteCode ?? null,
             comprobante:     r.comprobante,
             sagDocumentFamily: r.sagDocumentFamily,
             sagSourceType:   r.sagSourceType,
             sourceDocumentStage: r.sagSourceType === "REMISION" ? "REMITIDO" : "FACTURADO",
-            sourceInferredFrom:  "family",
+            sourceInferredFrom:  r.lineItemId ? "ventas_view" : "family",
             customerNit:     r.customerTaxId ?? null,
             customerName:    r.customerName,
             amount:          r.amount,
@@ -506,14 +546,22 @@ export const saleRecordStorage: StorageHandler<UnifiedMovement> = {
               importBatchId,
               saleDate:         fields.saleDate,
               periodoAoMes:     fields.periodoAoMes,
+              sellerSlug:       fields.sellerSlug,
+              sellerName:       fields.sellerName,
+              sellerCode:       fields.sellerCode,
               storeSlug:        fields.storeSlug,
               storeName:        fields.storeName,
+              productLine:      fields.productLine,
+              productCode:      fields.productCode,
+              productName:      fields.productName,
+              units:            fields.units,
               channel:          fields.channel,
               comprobanteCode:  fields.comprobanteCode,
               comprobante:      fields.comprobante,
               sagDocumentFamily: fields.sagDocumentFamily,
               sagSourceType:    fields.sagSourceType,
               sourceDocumentStage: fields.sourceDocumentStage,
+              sourceInferredFrom: fields.sourceInferredFrom,
               customerNit:      fields.customerNit,
               customerName:     fields.customerName,
               amount:           fields.amount,

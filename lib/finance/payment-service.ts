@@ -123,6 +123,9 @@ export interface PaymentSummary {
   todayCount:           number;
   pendingAllocation:    number;   // SUM(unallocatedAmount) pendientes de conciliar
   collectionRate:       number | null;   // totalCollected / totalInvoiced × 100
+  /** DATA-TRUST-REMEDIATION-01B: mandatory discriminated truth state */
+  truthState:           "CERTIFIED" | "UNVERIFIED";
+  reason:               string | null;
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -507,6 +510,17 @@ export async function getPaymentSummary(
   organizationId: string,
   opts?: { from?: Date; to?: Date },
 ): Promise<PaymentSummary> {
+  // DATA-TRUST-REMEDIATION-01B: gate on receivable certification
+  const { isReceivableDataCertified, warmTruthStatusCache } = await import("@/lib/comercial/frontline/receivable-truth-status");
+  await warmTruthStatusCache();
+  if (!isReceivableDataCertified(organizationId)) {
+    return {
+      totalCollected: 0, collectedToday: 0, collectedThisMonth: 0,
+      paymentCount: 0, todayCount: 0, pendingAllocation: 0, collectionRate: null,
+      truthState: "UNVERIFIED", reason: "RECEIVABLE_DATA_NOT_CERTIFIED",
+    };
+  }
+
   const now          = new Date();
   const todayStart   = new Date(now); todayStart.setHours(0, 0, 0, 0);
   const monthStart   = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
@@ -570,6 +584,8 @@ export async function getPaymentSummary(
     todayCount,
     pendingAllocation,
     collectionRate,
+    truthState: "CERTIFIED" as const,
+    reason: null,
   };
 }
 
@@ -613,11 +629,31 @@ export async function listPayments(
  * Facturas abiertas de un cliente, ordenadas por vencimiento.
  * Usadas por el formulario de cobro para mostrar qué facturas conciliar.
  */
+export interface OpenReceivableRow {
+  id: string; invoiceNumber: string | null; erpId: string | null;
+  originalAmount: Prisma.Decimal; paidAmount: Prisma.Decimal; balanceDue: Prisma.Decimal;
+  invoiceDate: Date; dueDate: Date; daysOverdue: number;
+  agingBucket: string; status: string;
+}
+
+export type OpenReceivablesResult = {
+  items:       OpenReceivableRow[];
+  truthState:  "CERTIFIED" | "UNVERIFIED";
+  reason:      string | null;
+};
+
 export async function getOpenReceivablesForCustomer(
   organizationId: string,
   customerNit:    string,
-) {
-  return prisma.customerReceivable.findMany({
+): Promise<OpenReceivablesResult> {
+  // DATA-TRUST-REMEDIATION-01B: gate on receivable certification
+  const { isReceivableDataCertified, warmTruthStatusCache } = await import("@/lib/comercial/frontline/receivable-truth-status");
+  await warmTruthStatusCache();
+  if (!isReceivableDataCertified(organizationId)) {
+    return { items: [], truthState: "UNVERIFIED", reason: "RECEIVABLE_DATA_NOT_CERTIFIED" };
+  }
+
+  const items = await prisma.customerReceivable.findMany({
     where: {
       organizationId,
       customerNit,
@@ -631,4 +667,5 @@ export async function getOpenReceivablesForCustomer(
       agingBucket: true, status: true,
     },
   });
+  return { items, truthState: "CERTIFIED" as const, reason: null };
 }

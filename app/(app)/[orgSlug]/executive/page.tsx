@@ -2116,7 +2116,8 @@ function fmtPeriodo(p: string): string {
   return `${MONTH_NAMES[m] ?? p.slice(4)} ${p.slice(0, 4)}`;
 }
 
-function fmtCOP(n: number): string {
+function fmtCOP(n: number | null | undefined): string {
+  if (n == null) return "—";
   return "$" + new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 }).format(n);
 }
 

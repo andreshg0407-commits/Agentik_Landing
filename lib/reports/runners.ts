@@ -8,6 +8,7 @@
 import { prisma }         from "@/lib/prisma";
 import { Prisma }         from "@prisma/client";
 import type { QuerySpec, QueryFamily } from "./interpreter";
+import { isReceivableDataCertified, warmTruthStatusCache, UNVERIFIED_RECEIVABLE_LABEL } from "@/lib/comercial/frontline/receivable-truth-status";
 
 // ── Result types ──────────────────────────────────────────────────────────────
 
@@ -25,6 +26,8 @@ export interface ReportKpi {
   positive?:  boolean;   // green highlight
 }
 
+export type ReportDataStatus = "AVAILABLE" | "UNVERIFIED" | "BLOCKED";
+
 export interface ReportResult {
   title:       string;
   subtitle:    string;
@@ -35,6 +38,13 @@ export interface ReportResult {
   queryFamily: QueryFamily;
   querySpec:   QuerySpec;
   generatedAt: string;
+  /**
+   * DATA-TRUST-REMEDIATION-01B: explicit data availability status.
+   * UNVERIFIED = data source not certified, results MUST NOT be interpreted as factual.
+   * BLOCKED = data source unavailable.
+   * When absent, defaults to AVAILABLE (backward compatible).
+   */
+  dataStatus?: ReportDataStatus;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -68,6 +78,24 @@ function str(v: unknown): string | null {
 // ── Runner: cartera_vencida ───────────────────────────────────────────────────
 
 async function runCarteraVencida(orgId: string, spec: QuerySpec): Promise<ReportResult> {
+  // DATA-TRUST-REMEDIATION-01 F4: Gate on certified receivable data.
+  // CustomerReceivable.paidAmount=$0 for uncertified tenants → phantom overdue.
+  await warmTruthStatusCache();
+  if (!isReceivableDataCertified(orgId)) {
+    return {
+      title:       "Cartera vencida",
+      subtitle:    UNVERIFIED_RECEIVABLE_LABEL,
+      kpis:        [{ label: "Estado", value: "Datos en validación" }],
+      columns:     [],
+      rows:        [],
+      totalRows:   0,
+      queryFamily: spec.family,
+      querySpec:   spec,
+      generatedAt: new Date().toISOString(),
+      dataStatus:  "UNVERIFIED",
+    };
+  }
+
   const where: Prisma.CustomerReceivableWhereInput = {
     organizationId: orgId,
     daysOverdue:    { gt: 0 },
@@ -224,6 +252,11 @@ async function runCotizaciones(orgId: string, spec: QuerySpec): Promise<ReportRe
 // ── Runner: clientes ──────────────────────────────────────────────────────────
 
 async function runClientes(orgId: string, spec: QuerySpec): Promise<ReportResult> {
+  // DATA-TRUST-REMEDIATION-01 F4: overdueReceivable on CustomerProfile is
+  // denormalized from the same uncertified pipeline. Suppress when not certified.
+  await warmTruthStatusCache();
+  const arCertified = isReceivableDataCertified(orgId);
+
   const where: Prisma.CustomerProfileWhereInput = {
     organizationId: orgId,
     ...(spec.sellerQuery    ? { sellerName: { contains: spec.sellerQuery, mode: "insensitive" } } : {}),
@@ -237,8 +270,8 @@ async function runClientes(orgId: string, spec: QuerySpec): Promise<ReportResult
     take: spec.limit,
   });
 
-  const withOverdue   = rows.filter(r => Number(r.overdueReceivable ?? 0) > 0).length;
-  const totalOverdue  = rows.reduce((s, r) => s + Number(r.overdueReceivable ?? 0), 0);
+  const withOverdue   = arCertified ? rows.filter(r => Number(r.overdueReceivable ?? 0) > 0).length : 0;
+  const totalOverdue  = arCertified ? rows.reduce((s, r) => s + Number(r.overdueReceivable ?? 0), 0) : 0;
   const totalLtv      = rows.reduce((s, r) => s + Number(r.ltv ?? 0), 0);
 
   const parts = [
@@ -247,31 +280,39 @@ async function runClientes(orgId: string, spec: QuerySpec): Promise<ReportResult
     spec.riskFilter?.length && `riesgo: ${spec.riskFilter.join(", ")}`,
   ].filter(Boolean);
 
+  const kpis: ReportKpi[] = [
+    { label: "Total clientes",      value: String(rows.length) },
+    ...(arCertified ? [
+      { label: "Con cartera vencida", value: String(withOverdue), highlight: withOverdue > 0 },
+      { label: "Cartera vencida",     value: fmtCOP(totalOverdue), highlight: totalOverdue > 0 },
+    ] : []),
+    { label: "LTV total",           value: fmtCOP(totalLtv) },
+  ];
+
+  const columns: ReportColumn[] = [
+    { key: "name",              label: "Cliente" },
+    { key: "nit",               label: "NIT" },
+    { key: "city",              label: "Ciudad" },
+    { key: "sellerName",        label: "Vendedor" },
+    ...(arCertified ? [
+      { key: "overdueReceivable", label: "Cartera vencida", numeric: true, currency: true } as ReportColumn,
+    ] : []),
+    { key: "ltv",               label: "LTV",             numeric: true, currency: true },
+    { key: "churnRisk",         label: "Riesgo" },
+    { key: "lastPurchaseAt",    label: "Última compra" },
+  ];
+
   return {
     title:    "Clientes",
     subtitle: parts.length ? parts.join(" · ") : "todos los clientes activos",
-    kpis: [
-      { label: "Total clientes",      value: String(rows.length) },
-      { label: "Con cartera vencida", value: String(withOverdue), highlight: withOverdue > 0 },
-      { label: "Cartera vencida",     value: fmtCOP(totalOverdue), highlight: totalOverdue > 0 },
-      { label: "LTV total",           value: fmtCOP(totalLtv) },
-    ],
-    columns: [
-      { key: "name",              label: "Cliente" },
-      { key: "nit",               label: "NIT" },
-      { key: "city",              label: "Ciudad" },
-      { key: "sellerName",        label: "Vendedor" },
-      { key: "overdueReceivable", label: "Cartera vencida", numeric: true, currency: true },
-      { key: "ltv",               label: "LTV",             numeric: true, currency: true },
-      { key: "churnRisk",         label: "Riesgo" },
-      { key: "lastPurchaseAt",    label: "Última compra" },
-    ],
+    kpis,
+    columns,
     rows: rows.map(r => ({
       name:              r.name,
       nit:               r.nit ?? null,
       city:              r.city ?? null,
       sellerName:        r.sellerName ?? null,
-      overdueReceivable: Number(r.overdueReceivable ?? 0) || null,
+      overdueReceivable: arCertified ? (Number(r.overdueReceivable ?? 0) || null) : null,
       ltv:               Number(r.ltv ?? 0) || null,
       churnRisk:         r.churnRisk ?? null,
       lastPurchaseAt:    fmtDate(r.lastPurchaseAt),

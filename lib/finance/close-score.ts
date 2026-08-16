@@ -137,6 +137,15 @@ function scoreReconciliation(rec: ReconciliationSummary): Omit<CloseScoreDimensi
   const signals: string[] = [];
   let score = 100;
 
+  // DATA-TRUST-REMEDIATION-01B: UNVERIFIED receivable data must never score as healthy.
+  // Distinguish explicitly from "no data" — the source exists but is not certified.
+  if (rec.truthState === "UNVERIFIED") {
+    return {
+      key: "reconciliacion", label: "Conciliación", weight: 0.20,
+      score: 50, signals: ["Datos de conciliación no certificados"], severity: "warning",
+    };
+  }
+
   if (!rec.hasData || rec.total === 0) {
     return {
       key: "reconciliacion", label: "Conciliación", weight: 0.20,

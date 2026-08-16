@@ -140,6 +140,34 @@ export function isReceivableDataCertified(
   return resolveReceivableTruthStatus(orgIdOrSlug) === "CERTIFIED";
 }
 
+// ── Semantic gate types ──────────────────────────────────────────────────────
+
+/**
+ * DATA-TRUST-REMEDIATION-01B: Discriminated result envelope for AR data.
+ *
+ * Every consumer that returns receivable-derived data MUST use this
+ * discriminated union. Bare `[]`, `0`, or empty objects are PROHIBITED —
+ * they are indistinguishable from certified empty/zero.
+ *
+ * truthState is MANDATORY on every branch (certified AND uncertified).
+ */
+export type ReceivableTruthState = "CERTIFIED" | "UNVERIFIED";
+
+export const RECEIVABLE_NOT_CERTIFIED_REASON = "RECEIVABLE_DATA_NOT_CERTIFIED" as const;
+
+export type CertifiedResult<T> = {
+  truthState: "CERTIFIED";
+  items: T;
+};
+
+export type UnverifiedResult<T> = {
+  truthState: "UNVERIFIED";
+  reason: string;
+  items: T;
+};
+
+export type TruthGatedResult<T> = CertifiedResult<T> | UnverifiedResult<T>;
+
 // ── UI copy for unverified state ──────────────────────────────────────────────
 
 /**

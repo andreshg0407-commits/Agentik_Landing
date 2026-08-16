@@ -89,6 +89,9 @@ export interface ReceivablesSnapshot {
   agingBuckets:     RxAgingBucket[];
   // Top debtors (org-level only; vacío cuando customerNit/customerId están presentes)
   topDebtors:       RxCustomerBalance[];
+  /** DATA-TRUST-REMEDIATION-01B: mandatory discriminated truth state */
+  truthState:       "CERTIFIED" | "UNVERIFIED";
+  reason:           string | null;
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -190,6 +193,19 @@ export async function getReceivablesSnapshot(
     topDebtorsLimit?:  number;
   },
 ): Promise<ReceivablesSnapshot> {
+  // DATA-TRUST-REMEDIATION-01B: gate on receivable certification
+  const { isReceivableDataCertified, warmTruthStatusCache } = await import("@/lib/comercial/frontline/receivable-truth-status");
+  await warmTruthStatusCache();
+  if (!isReceivableDataCertified(organizationId)) {
+    return {
+      hasData: false, currency: "COP", windowLabel: "UNVERIFIED",
+      computedAt: new Date(), totalOpenBalance: 0, overdueBalance: 0,
+      overdueRatio: 0, docCount: 0, overdueDocCount: 0,
+      agingBuckets: [], topDebtors: [],
+      truthState: "UNVERIFIED", reason: "RECEIVABLE_DATA_NOT_CERTIFIED",
+    };
+  }
+
   const now   = new Date();
   const limit = opts?.topDebtorsLimit ?? 10;
 
@@ -314,5 +330,7 @@ export async function getReceivablesSnapshot(
     overdueDocCount,
     agingBuckets,
     topDebtors,
+    truthState: "CERTIFIED" as const,
+    reason: null,
   };
 }

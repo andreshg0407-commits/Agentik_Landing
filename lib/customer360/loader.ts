@@ -56,6 +56,8 @@ export interface CustomerCommandData {
   // Commercial ledger (CRM + SAG + XML reconciliation)
   ledger:   CustomerLedgerKpis | null;
   timeline: CommercialFact[];             // crm_quote · sag_invoice · xml_payment
+  receivableTruthState: "CERTIFIED" | "UNVERIFIED";
+  receivableReason: string | null;
 
   // CRM data (empty arrays when CRM connector not active)
   opportunities:    CRMOpportunity_type[];
@@ -96,7 +98,10 @@ export async function loadCustomerCommandData(
 
   const c360      = c360R.status     === "fulfilled" ? c360R.value     : null;
   const ledger    = ledgerR.status   === "fulfilled" ? ledgerR.value   : null;
-  const timeline  = timelineR.status === "fulfilled" ? timelineR.value : [];
+  const timelineResult = timelineR.status === "fulfilled"
+    ? timelineR.value
+    : { items: [], receivableTruthState: "UNVERIFIED" as const, receivableReason: "RECEIVABLE_DATA_NOT_CERTIFIED" };
+  const timeline = timelineResult.items;
   const allAlerts = alertsR.status   === "fulfilled" ? alertsR.value   : [];
 
   const profile = c360?.profile ?? null;
@@ -252,6 +257,8 @@ export async function loadCustomerCommandData(
     monthlyTrend: c360?.salesSummary.monthlyTrend ?? [],
     ledger,
     timeline,
+    receivableTruthState: timelineResult.receivableTruthState,
+    receivableReason: timelineResult.receivableReason,
     opportunities:    c360?.opportunities    ?? [],
     recentActivities: c360?.recentActivities ?? [],
     quotes:           c360?.quotes           ?? [],

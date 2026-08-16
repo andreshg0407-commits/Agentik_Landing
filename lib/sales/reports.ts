@@ -1177,11 +1177,23 @@ export interface SellerOverdueRow {
   invoiceNumber: string | null;
 }
 
+export interface SellerOverdueResult {
+  items:       SellerOverdueRow[];
+  truthState:  "CERTIFIED" | "UNVERIFIED";
+  reason:      string | null;
+}
+
 export async function getSellerOverdueReceivables(
   organizationId: string,
   sellerSlug:     string,
   limit = 20,
-): Promise<SellerOverdueRow[]> {
+): Promise<SellerOverdueResult> {
+  // DATA-TRUST-REMEDIATION-01B: gate on receivable certification
+  const { isReceivableDataCertified, warmTruthStatusCache } = await import("@/lib/comercial/frontline/receivable-truth-status");
+  await warmTruthStatusCache();
+  if (!isReceivableDataCertified(organizationId)) {
+    return { items: [], truthState: "UNVERIFIED", reason: "RECEIVABLE_DATA_NOT_CERTIFIED" };
+  }
   type RawRow = {
     customer_name:  string;
     customer_nit:   string | null;
@@ -1220,14 +1232,18 @@ export async function getSellerOverdueReceivables(
     LIMIT  ${Prisma.raw(String(limit))}
   `);
 
-  return rows.map(r => ({
-    customerName:  r.customer_name,
-    customerNit:   r.customer_nit,
-    balanceDue:    r.balance_due,
-    daysOverdue:   r.days_overdue,
-    agingBucket:   r.aging_bucket,
-    invoiceNumber: r.invoice_number,
-  }));
+  return {
+    items: rows.map(r => ({
+      customerName:  r.customer_name,
+      customerNit:   r.customer_nit,
+      balanceDue:    r.balance_due,
+      daysOverdue:   r.days_overdue,
+      agingBucket:   r.aging_bucket,
+      invoiceNumber: r.invoice_number,
+    })),
+    truthState: "CERTIFIED" as const,
+    reason: null,
+  };
 }
 
 // ── 11. Channels Summary ──────────────────────────────────────────────────────

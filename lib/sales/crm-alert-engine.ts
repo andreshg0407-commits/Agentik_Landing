@@ -14,6 +14,7 @@
 
 import { prisma }        from "@/lib/prisma";
 import { AlertSeverity } from "@prisma/client";
+import { isReceivableDataCertified, warmTruthStatusCache } from "@/lib/comercial/frontline/receivable-truth-status";
 
 // ── Thresholds ─────────────────────────────────────────────────────────────────
 
@@ -91,6 +92,16 @@ async function checkCarteraVencida(
   organizationId: string,
   period:         string,
 ): Promise<number> {
+  // DATA-TRUST-REMEDIATION-01 / F5: Gate on receivable certification.
+  // CustomerReceivable.paidAmount is always $0 for uncertified tenants,
+  // producing phantom overdue amounts (e.g. $33.6B for Castillitos).
+  // Only generate cartera_vencida alerts when the receivable pipeline
+  // has been audited and proven correct.
+  await warmTruthStatusCache();
+  if (!isReceivableDataCertified(organizationId)) {
+    return 0;
+  }
+
   // Access new Prisma model via any-cast until migration runs
   const db = prisma as unknown as {
     customerReceivable: {
