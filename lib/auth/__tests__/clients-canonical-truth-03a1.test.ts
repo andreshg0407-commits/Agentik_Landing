@@ -566,11 +566,11 @@ describe("client-loader.ts — server module shape", () => {
     expect(src).toContain('COUNT(DISTINCT "sagTerceroId")');
   });
 
-  test("error fallback has loadFailed: true, UNAVAILABLE, null KPIs", () => {
-    const catchBlock = src.slice(src.indexOf("catch (err)"));
-    expect(catchBlock).toContain("loadFailed: true");
-    expect(catchBlock).toContain('dataState: "UNAVAILABLE"');
-    expect(catchBlock).toContain("withCartera: null");
+  test("summary error fallback delegates to core (which returns loadFailed: true)", () => {
+    // Summary now delegates to loadClientesSummaryCoreLogic — the core handles failures
+    const fnStart = src.indexOf("export async function loadClientesSummary");
+    const fnBody = src.slice(fnStart, src.indexOf("\n}\n", fnStart) + 3);
+    expect(fnBody).toContain("loadClientesSummaryCoreLogic(");
   });
 });
 
@@ -581,9 +581,14 @@ describe("clientes-client.tsx — UI wiring", () => {
     expect(src).toContain("from \"@/lib/comercial/clientes/clientes-pure\"");
   });
 
-  test("handles loadFailed", () => {
+  test("handles summary.loadFailed", () => {
     expect(src).toContain("summary.loadFailed");
     expect(src).toContain("Directorio de clientes no disponible");
+  });
+
+  test("handles pageResult.loadFailed", () => {
+    expect(src).toContain("pageResult.loadFailed");
+    expect(src).toContain("Listado de clientes no disponible");
   });
 
   test("con_cartera filter guarded by dataState", () => {
@@ -594,5 +599,194 @@ describe("clientes-client.tsx — UI wiring", () => {
   test("con_cartera button has disabled and aria-disabled attributes", () => {
     expect(src).toContain("disabled={carteraDisabled}");
     expect(src).toContain("aria-disabled={carteraDisabled");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// D. PRODUCTION WIRING TESTS — 03A4
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("03A4-E1: summary wrapper delegates to loadClientesSummaryCoreLogic", () => {
+  const src = readFile("lib/comercial/clientes/client-loader.ts");
+
+  test("imports loadClientesSummaryCoreLogic from clientes-pure", () => {
+    expect(src).toContain("loadClientesSummaryCoreLogic");
+    expect(src).toMatch(/import\s*\{[^}]*loadClientesSummaryCoreLogic[^}]*\}\s*from\s*["']\.\/clientes-pure["']/);
+  });
+
+  test("loadClientesSummary calls loadClientesSummaryCoreLogic (not inline logic)", () => {
+    // Extract the loadClientesSummary function body
+    const fnStart = src.indexOf("export async function loadClientesSummary");
+    const fnBody = src.slice(fnStart, src.indexOf("\n}\n", fnStart) + 3);
+    expect(fnBody).toContain("loadClientesSummaryCoreLogic(");
+    // Must NOT have inline withCartera/withOverdue decisions — those live in the core
+    expect(fnBody).not.toContain("let withCartera");
+    expect(fnBody).not.toContain("let withOverdue");
+  });
+
+  test("passes real Prisma adapters for queryProfileAgg and countDistinctProfiles", () => {
+    const fnStart = src.indexOf("export async function loadClientesSummary");
+    const fnBody = src.slice(fnStart, src.indexOf("\n}\n", fnStart) + 3);
+    expect(fnBody).toContain("queryProfileAgg:");
+    expect(fnBody).toContain("countDistinctProfiles:");
+    expect(fnBody).toContain('COUNT(DISTINCT "sagTerceroId")');
+  });
+});
+
+describe("03A4-E2: page wrapper uses resolveConCarteraFilter", () => {
+  const src = readFile("lib/comercial/clientes/client-loader.ts");
+
+  test("imports resolveConCarteraFilter from clientes-pure", () => {
+    expect(src).toMatch(/import\s*\{[^}]*resolveConCarteraFilter[^}]*\}\s*from\s*["']\.\/clientes-pure["']/);
+  });
+
+  test("loadClientesPage calls resolveConCarteraFilter (not inline guard)", () => {
+    const fnStart = src.indexOf("export async function loadClientesPage");
+    const fnBody = src.slice(fnStart, src.indexOf("\n}\n", fnStart) + 3);
+    expect(fnBody).toContain("resolveConCarteraFilter(");
+    // Must NOT have the old inline guard
+    expect(fnBody).not.toContain("arCtx.dataState !== \"CERTIFIED\" || arCtx.arCustomerIds.size === 0");
+  });
+});
+
+describe("03A4-E3: page count() failure → loadFailed=true, UNAVAILABLE", () => {
+  const src = readFile("lib/comercial/clientes/client-loader.ts");
+
+  test("ClientesPageResult has loadFailed field", () => {
+    const typeBlock = src.slice(
+      src.indexOf("export interface ClientesPageResult"),
+      src.indexOf("}", src.indexOf("export interface ClientesPageResult")) + 1,
+    );
+    expect(typeBlock).toContain("loadFailed: boolean");
+  });
+
+  test("catch block returns loadFailed=true and UNAVAILABLE", () => {
+    const fnStart = src.indexOf("export async function loadClientesPage");
+    const fnBody = src.slice(fnStart, src.indexOf("\n}\n", fnStart) + 3);
+    const catchBlock = fnBody.slice(fnBody.lastIndexOf("catch"));
+    expect(catchBlock).toContain("loadFailed: true");
+    expect(catchBlock).toContain('dataState: "UNAVAILABLE"');
+  });
+
+  test("success paths return loadFailed=false", () => {
+    const fnStart = src.indexOf("export async function loadClientesPage");
+    const fnBody = src.slice(fnStart, src.indexOf("\n}\n", fnStart) + 3);
+    // The two success return statements (con_cartera early return + normal return)
+    const returns = fnBody.match(/return\s*\{[^}]*loadFailed:\s*false[^}]*\}/g);
+    expect(returns).not.toBeNull();
+    expect(returns!.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("03A4-E4: page findMany() failure → same fail-closed", () => {
+  // This is structurally the same catch block as E3 — if count succeeds but findMany throws,
+  // the same catch handles it. Verify the catch covers the entire try block.
+  const src = readFile("lib/comercial/clientes/client-loader.ts");
+
+  test("try block encompasses both count and findMany", () => {
+    const fnStart = src.indexOf("export async function loadClientesPage");
+    const fnBody = src.slice(fnStart, src.indexOf("\n}\n", fnStart) + 3);
+    const tryStart = fnBody.indexOf("try {");
+    const catchStart = fnBody.lastIndexOf("catch");
+    const tryBody = fnBody.slice(tryStart, catchStart);
+    expect(tryBody).toContain("customerProfile.count");
+    expect(tryBody).toContain("customerProfile.findMany");
+  });
+});
+
+describe("03A4-E5: UI with pageResult.loadFailed shows 'Listado de clientes no disponible'", () => {
+  const src = readFile("app/(app)/[orgSlug]/comercial/clientes/clientes-client.tsx");
+
+  test("pageResult.loadFailed check exists before filter/empty checks", () => {
+    const loadFailedIdx = src.indexOf("pageResult.loadFailed");
+    const conCarteraIdx = src.indexOf("con_cartera", loadFailedIdx);
+    const sinResultadosIdx = src.indexOf("Sin resultados", loadFailedIdx);
+    // loadFailed check must come BEFORE the other checks
+    expect(loadFailedIdx).toBeGreaterThan(-1);
+    expect(conCarteraIdx).toBeGreaterThan(loadFailedIdx);
+    expect(sinResultadosIdx).toBeGreaterThan(loadFailedIdx);
+  });
+
+  test("shows 'Listado de clientes no disponible' (not 'Sin clientes')", () => {
+    expect(src).toContain("Listado de clientes no disponible");
+    // The loadFailed message must NOT contain any of these misleading strings
+    const loadFailedBlock = src.slice(
+      src.indexOf("pageResult.loadFailed"),
+      src.indexOf("con_cartera", src.indexOf("pageResult.loadFailed")),
+    );
+    expect(loadFailedBlock).not.toContain("Sin clientes");
+    expect(loadFailedBlock).not.toContain("0 clientes");
+    expect(loadFailedBlock).not.toContain("Sin resultados");
+  });
+});
+
+describe("03A4-E6: warmTruthStatusCache throws → ArContext UNAVAILABLE", () => {
+  const src = readFile("lib/comercial/clientes/client-loader.ts");
+
+  test("warmTruthStatusCache is wrapped in try/catch", () => {
+    const fnStart = src.indexOf("export async function loadArContext");
+    const fnBody = src.slice(fnStart, src.indexOf("\n}\n", fnStart) + 3);
+    // The actual await call must be inside a try block
+    const tryIdx = fnBody.indexOf("try {");
+    const warmIdx = fnBody.indexOf("await warmTruthStatusCache()");
+    const catchIdx = fnBody.indexOf("catch", warmIdx);
+    expect(tryIdx).toBeGreaterThan(-1);
+    expect(warmIdx).toBeGreaterThan(tryIdx);
+    expect(catchIdx).toBeGreaterThan(warmIdx);
+  });
+
+  test("catch returns UNAVAILABLE with null snapshot and empty sets", () => {
+    const fnStart = src.indexOf("export async function loadArContext");
+    const fnBody = src.slice(fnStart, src.indexOf("\n}\n", fnStart) + 3);
+    // Find the catch block for warmTruthStatusCache (first catch in the function)
+    const catchIdx = fnBody.indexOf("catch");
+    const nextReturn = fnBody.indexOf("return", catchIdx);
+    const returnBlock = fnBody.slice(nextReturn, fnBody.indexOf(";", nextReturn + 10) + 1);
+    expect(returnBlock).toContain('"UNAVAILABLE"');
+    expect(returnBlock).toContain("snapshot: null");
+  });
+
+  test("reason includes WARM_CACHE_FAILED", () => {
+    const fnStart = src.indexOf("export async function loadArContext");
+    const fnBody = src.slice(fnStart, src.indexOf("\n}\n", fnStart) + 3);
+    expect(fnBody).toContain("WARM_CACHE_FAILED");
+  });
+});
+
+describe("03A4-E7: CERTIFIED + zero customers with cartera → valid certified-empty", () => {
+  // This tests the core logic path: CERTIFIED context with empty arCustomerIds
+  test("resolveConCarteraFilter: CERTIFIED + empty → not allowed (valid, not error)", () => {
+    const arCtx = {
+      dataState: "CERTIFIED" as const,
+      arLookup: new Map(),
+      arCustomerIds: new Set<number>(),
+    };
+    const result = resolveConCarteraFilter(arCtx);
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      // dataState is still CERTIFIED — it's a valid certified-empty, not an error
+      expect(result.dataState).toBe("CERTIFIED");
+    }
+  });
+
+  test("loadClientesSummaryCoreLogic: CERTIFIED + empty → withCartera=0, withOverdue=0, loadFailed=false", async () => {
+    const arCtx: ArContextFull = {
+      dataState: "CERTIFIED", snapshot: null,
+      arLookup: new Map(),
+      arCustomerIds: new Set<number>(),
+      overdueCustomerIds: new Set<number>(),
+      asOf: new Date().toISOString(), reason: "SAG_CERTIFIED",
+    };
+    const deps: SummaryDbDeps = {
+      queryProfileAgg: async () => ({
+        total: 50, active: 40, inactive: 10, withSeller: 30, sinCompra90d: 5, withCrm: 20,
+      }),
+      countDistinctProfiles: async () => { throw new Error("should not be called"); },
+    };
+    const result = await loadClientesSummaryCoreLogic("org-1", arCtx, deps);
+    expect(result.withCartera).toBe(0);
+    expect(result.withOverdue).toBe(0);
+    expect(result.loadFailed).toBe(false);
+    expect(result.dataState).toBe("CERTIFIED");
   });
 });

@@ -47,10 +47,9 @@ describe("client-loader.ts — canonical AR only", () => {
     expect(src).toContain("canonical-ar-service");
   });
 
-  test("summary KPIs use reconciled intersection with COUNT(DISTINCT sagTerceroId)", () => {
+  test("summary delegates to loadClientesSummaryCoreLogic with COUNT(DISTINCT sagTerceroId) adapter", () => {
     expect(src).toContain('COUNT(DISTINCT "sagTerceroId")');
-    expect(src).toContain("carteraIds");
-    expect(src).toContain("overdueIds");
+    expect(src).toContain("loadClientesSummaryCoreLogic");
   });
 
   test("row-level cartera uses arCtx via resolveRowCartera", () => {
@@ -208,8 +207,11 @@ describe("UNVERIFIED state — fail-closed", () => {
     expect(clientLoader).toContain("resolveRowCartera");
   });
 
-  test("client-loader: summary withCartera=null when not certified", () => {
-    expect(clientLoader).toContain("let withCartera: number | null = null");
+  test("client-loader: summary delegates to core (which handles withCartera=null when not certified)", () => {
+    // The withCartera=null logic now lives in loadClientesSummaryCoreLogic in clientes-pure.ts
+    const pureSrc = readFile("lib/comercial/clientes/clientes-pure.ts");
+    expect(pureSrc).toContain("let withCartera: number | null = null");
+    expect(clientLoader).toContain("loadClientesSummaryCoreLogic");
   });
 
   test("cliente-360-loader: SAG_UNAVAILABLE produces null totals", () => {

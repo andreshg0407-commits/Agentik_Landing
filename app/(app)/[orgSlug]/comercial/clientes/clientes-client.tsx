@@ -427,7 +427,12 @@ export function ClientesClient({ orgSlug, summary, pageResult, currentFilter, cu
           </div>
 
           {/* Table */}
-          {currentFilter === "con_cartera" && pageResult.dataState !== "CERTIFIED" ? (
+          {pageResult.loadFailed ? (
+            <EmptyOperationalState
+              message="Listado de clientes no disponible"
+              detail="No fue posible cargar los datos del listado. Intente recargar la pagina."
+            />
+          ) : currentFilter === "con_cartera" && pageResult.dataState !== "CERTIFIED" ? (
             <EmptyOperationalState
               message={pageResult.dataState === "UNAVAILABLE" ? "Cartera no disponible" : "Cartera no verificada"}
               detail="Los datos de cartera no estan certificados en este momento. No es posible filtrar por cartera hasta que la fuente SAG este verificada."

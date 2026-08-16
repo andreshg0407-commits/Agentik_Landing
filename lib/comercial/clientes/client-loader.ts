@@ -4,7 +4,7 @@ import { resolveCity } from "./city-resolver";
 import { isReceivableDataCertified, warmTruthStatusCache } from "@/lib/comercial/frontline/receivable-truth-status";
 import { fetchCertifiedArSnapshot } from "@/lib/comercial/frontline/canonical-ar-service";
 import type { CertifiedCustomerReceivableSnapshot, CertifiedArSnapshot } from "@/lib/comercial/frontline/canonical-ar-types";
-import { resolveRowCartera, loadArContextCore } from "./clientes-pure";
+import { resolveRowCartera, loadArContextCore, loadClientesSummaryCoreLogic, resolveConCarteraFilter } from "./clientes-pure";
 import type { ArDataState, ClienteCarteraState } from "./clientes-pure";
 
 // Re-export pure types and functions for consumers
@@ -81,12 +81,28 @@ export interface ClientesPageResult {
   totalPages: number;
   /** AR data state — propagated so the UI can disable cartera filter when unavailable */
   dataState: ArDataState;
+  /** True when the page loader failed (DB down) — rows unreliable */
+  loadFailed: boolean;
 }
 
 // ── AR Context loader (call once, share between summary + page) ─────────────
 
 export async function loadArContext(organizationId: string): Promise<ArContext> {
-  await warmTruthStatusCache();
+  // warmTruthStatusCache may throw (e.g. Prisma connection down) — fail-closed
+  try {
+    await warmTruthStatusCache();
+  } catch (err: any) {
+    console.error("[CLIENTES] warmTruthStatusCache failed:", err?.message);
+    return {
+      dataState: "UNAVAILABLE",
+      snapshot: null,
+      arLookup: new Map(),
+      arCustomerIds: new Set(),
+      overdueCustomerIds: new Set(),
+      asOf: new Date().toISOString(),
+      reason: `WARM_CACHE_FAILED: ${err?.message ?? "UNKNOWN"}`,
+    };
+  }
   // Delegate to testable core logic with real infra deps
   const ctx = await loadArContextCore(organizationId, {
     isCertified: (orgId) => isReceivableDataCertified(orgId),
@@ -105,98 +121,56 @@ export async function loadClientesSummary(
   const db = prisma as any;
   const t0 = performance.now();
 
-  try {
-    // Base profile counts (NO receivable fields — those come from canonical AR)
-    interface AggRow {
-      total: bigint;
-      active: bigint;
-      inactive: bigint;
-      with_seller: bigint;
-      sin_compra_90d: bigint;
-      with_crm: bigint;
-    }
-    const agg: AggRow[] = await db.$queryRawUnsafe(`
-      SELECT
-        COUNT(*)::bigint AS total,
-        COUNT(*) FILTER (WHERE status = 'ACTIVE')::bigint AS active,
-        COUNT(*) FILTER (WHERE status = 'INACTIVE')::bigint AS inactive,
-        COUNT(*) FILTER (WHERE "sellerName" IS NOT NULL AND "sellerName" <> '')::bigint AS with_seller,
-        COUNT(*) FILTER (WHERE "lastPurchaseAt" IS NOT NULL AND "lastPurchaseAt" < NOW() - INTERVAL '90 days')::bigint AS sin_compra_90d,
-        COUNT(*) FILTER (WHERE "crmId" IS NOT NULL)::bigint AS with_crm
-      FROM "CustomerProfile"
-      WHERE "organizationId" = $1
-    `, organizationId);
+  // Delegate ALL decision logic to the tested core function
+  const coreResult = await loadClientesSummaryCoreLogic(organizationId, arCtx as any, {
+    queryProfileAgg: async (orgId) => {
+      interface AggRow {
+        total: bigint;
+        active: bigint;
+        inactive: bigint;
+        with_seller: bigint;
+        sin_compra_90d: bigint;
+        with_crm: bigint;
+      }
+      const agg: AggRow[] = await db.$queryRawUnsafe(`
+        SELECT
+          COUNT(*)::bigint AS total,
+          COUNT(*) FILTER (WHERE status = 'ACTIVE')::bigint AS active,
+          COUNT(*) FILTER (WHERE status = 'INACTIVE')::bigint AS inactive,
+          COUNT(*) FILTER (WHERE "sellerName" IS NOT NULL AND "sellerName" <> '')::bigint AS with_seller,
+          COUNT(*) FILTER (WHERE "lastPurchaseAt" IS NOT NULL AND "lastPurchaseAt" < NOW() - INTERVAL '90 days')::bigint AS sin_compra_90d,
+          COUNT(*) FILTER (WHERE "crmId" IS NOT NULL)::bigint AS with_crm
+        FROM "CustomerProfile"
+        WHERE "organizationId" = $1
+      `, orgId);
+      const row = agg[0];
+      return {
+        total: Number(row.total),
+        active: Number(row.active),
+        inactive: Number(row.inactive),
+        withSeller: Number(row.with_seller),
+        sinCompra90d: Number(row.sin_compra_90d),
+        withCrm: Number(row.with_crm),
+      };
+    },
+    countDistinctProfiles: async (orgId, sagIds) => {
+      const result: { cnt: bigint }[] = await db.$queryRawUnsafe(`
+        SELECT COUNT(DISTINCT "sagTerceroId")::bigint AS cnt
+        FROM "CustomerProfile"
+        WHERE "organizationId" = $1
+          AND "sagTerceroId" = ANY($2::int[])
+      `, orgId, sagIds);
+      return Number(result[0].cnt);
+    },
+  });
 
-    const row = agg[0];
-    const total = Number(row.total);
-    const active = Number(row.active);
-    const withSeller = Number(row.with_seller);
+  const elapsed = (performance.now() - t0).toFixed(1);
+  console.log(`[PERF][CLIENTES] summary ${elapsed}ms — total=${coreResult.total} active=${coreResult.active} withSeller=${coreResult.withSeller} dataState=${coreResult.dataState} withCartera=${coreResult.withCartera} withOverdue=${coreResult.withOverdue}`);
 
-    // Cartera KPIs — reconciled intersection of AR snapshot with CustomerProfile
-    let withCartera: number | null = null;
-    let withOverdue: number | null = null;
-
-    if (arCtx.dataState === "CERTIFIED" && arCtx.arCustomerIds.size > 0) {
-      // Count CustomerProfile rows whose sagTerceroId appears in the AR snapshot
-      // This ensures summary.withCartera === totalFiltered for con_cartera filter
-      const carteraIds = [...arCtx.arCustomerIds];
-      const overdueIds = [...arCtx.overdueCustomerIds];
-
-      // Use COUNT(DISTINCT sagTerceroId) to avoid inflating KPIs from duplicate profiles
-      const [carteraAgg, overdueAgg] = await Promise.all([
-        db.$queryRawUnsafe(`
-          SELECT COUNT(DISTINCT "sagTerceroId")::bigint AS cnt
-          FROM "CustomerProfile"
-          WHERE "organizationId" = $1
-            AND "sagTerceroId" = ANY($2::int[])
-        `, organizationId, carteraIds) as Promise<{ cnt: bigint }[]>,
-        overdueIds.length > 0
-          ? db.$queryRawUnsafe(`
-              SELECT COUNT(DISTINCT "sagTerceroId")::bigint AS cnt
-              FROM "CustomerProfile"
-              WHERE "organizationId" = $1
-                AND "sagTerceroId" = ANY($2::int[])
-            `, organizationId, overdueIds) as Promise<{ cnt: bigint }[]>
-          : Promise.resolve([{ cnt: BigInt(0) }] as { cnt: bigint }[]),
-      ]);
-
-      withCartera = Number(carteraAgg[0].cnt);
-      withOverdue = Number(overdueAgg[0].cnt);
-    } else if (arCtx.dataState === "CERTIFIED") {
-      // Certified but zero customers with open AR
-      withCartera = 0;
-      withOverdue = 0;
-    }
-    // UNVERIFIED/UNAVAILABLE → withCartera/withOverdue stay null
-
-    const elapsed = (performance.now() - t0).toFixed(1);
-    console.log(`[PERF][CLIENTES] summary ${elapsed}ms — total=${total} active=${active} withSeller=${withSeller} dataState=${arCtx.dataState} withCartera=${withCartera} withOverdue=${withOverdue}`);
-
-    return {
-      total,
-      active,
-      inactive: Number(row.inactive),
-      withSeller,
-      withCartera,
-      withOverdue,
-      sinCompra90d: Number(row.sin_compra_90d),
-      withCrm: Number(row.with_crm),
-      dataState: arCtx.dataState,
-      arAsOf: arCtx.dataState === "CERTIFIED" ? arCtx.asOf : null,
-      loadFailed: false,
-      loadedAt: new Date().toISOString(),
-    };
-  } catch (err) {
-    console.error("[PERF][CLIENTES][ERROR] summary failed:", err);
-    return {
-      total: 0, active: 0, inactive: 0,
-      withSeller: 0, withCartera: null, withOverdue: null, sinCompra90d: 0, withCrm: 0,
-      dataState: "UNAVAILABLE",
-      arAsOf: null,
-      loadFailed: true,
-      loadedAt: new Date().toISOString(),
-    };
-  }
+  return {
+    ...coreResult,
+    loadedAt: new Date().toISOString(),
+  };
 }
 
 // ── Paginated page loader ────────────────────────────────────────────────────
@@ -215,14 +189,15 @@ export async function loadClientesPage(
   const filter = params.filter ?? "todos";
 
   try {
-    // ── For con_cartera filter: get sagTerceroIds that have open AR ────
+    // ── For con_cartera filter: delegate to tested guard ────────────────
     let carteraSagIds: number[] | null = null;
     if (filter === "con_cartera") {
-      if (arCtx.dataState !== "CERTIFIED" || arCtx.arCustomerIds.size === 0) {
-        // No certified AR data → empty results (not a false certified-empty)
-        return { clients: [], totalFiltered: 0, page: 1, pageSize, totalPages: 1, dataState: arCtx.dataState };
+      const carteraGuard = resolveConCarteraFilter(arCtx);
+      if (!carteraGuard.allowed) {
+        // Not certified or empty snapshot — explicit state, not certified-empty
+        return { clients: [], totalFiltered: 0, page: 1, pageSize, totalPages: 1, dataState: carteraGuard.dataState, loadFailed: false };
       }
-      carteraSagIds = [...arCtx.arCustomerIds];
+      carteraSagIds = carteraGuard.sagIds;
     }
 
     // ── Build Prisma WHERE ─────────────────────────────────────────────
@@ -275,10 +250,10 @@ export async function loadClientesPage(
     const elapsed = (performance.now() - t0).toFixed(1);
     console.log(`[PERF][CLIENTES] page ${elapsed}ms — page=${safePage}/${totalPages} rows=${clients.length} totalFiltered=${totalFiltered} dataState=${arCtx.dataState}`);
 
-    return { clients, totalFiltered, page: safePage, pageSize, totalPages, dataState: arCtx.dataState };
+    return { clients, totalFiltered, page: safePage, pageSize, totalPages, dataState: arCtx.dataState, loadFailed: false };
   } catch (err) {
     console.error("[PERF][CLIENTES][ERROR] page load failed:", err);
-    return { clients: [], totalFiltered: 0, page: 1, pageSize, totalPages: 1, dataState: arCtx.dataState };
+    return { clients: [], totalFiltered: 0, page: 1, pageSize, totalPages: 1, dataState: "UNAVAILABLE", loadFailed: true };
   }
 }
 
