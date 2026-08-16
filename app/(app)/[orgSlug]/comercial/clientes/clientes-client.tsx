@@ -194,25 +194,27 @@ function oppLabel(type: string): string {
 // ── Cartera traffic light (semaforo) ─────────────────────────────────────────
 
 function carteraTrafficLight(receivables: Cliente360Data["receivables"]): { label: string; color: string } {
-  if (receivables.state === "no_disponible" || receivables.totalBalance === null || receivables.totalBalance === 0) {
+  // UNVERIFIED — cannot assess health
+  if (receivables.truthStatus !== "CERTIFIED") {
+    return { label: "No verificada", color: C.inkGhost };
+  }
+  // CERTIFIED_ZERO — genuinely no cartera
+  if (receivables.totalBalance === null || receivables.totalBalance === 0) {
     return { label: "Sin cartera", color: C.inkGhost };
   }
-  if (receivables.truthStatus !== "CERTIFIED") {
-    return { label: "Sin certificar", color: C.inkGhost };
+  // HAS_OPEN_AR — assess overdue status from items with known mora
+  const itemsWithKnownMora = receivables.items.filter(r => r.daysOverdue != null);
+  if (itemsWithKnownMora.length === 0) {
+    // Have balance but no known mora on any document
+    return { label: "Mora no disponible", color: C.inkMid };
   }
-  // Check if we have certified overdue data (daysOverdue on individual items)
-  const itemsWithDueDate = receivables.items.filter(r => r.dueDate !== null);
-  if (itemsWithDueDate.length === 0) {
-    // Have balance but no due dates — cannot determine mora
-    return { label: "Saldo pendiente", color: C.inkMid };
-  }
-  const overdueItems = itemsWithDueDate.filter(r => r.daysOverdue > 0);
+  const overdueItems = itemsWithKnownMora.filter(r => r.daysOverdue! > 0);
   if (overdueItems.length === 0) {
     return { label: "Al dia", color: C.green };
   }
-  const maxDaysOverdue = Math.max(...overdueItems.map(r => r.daysOverdue));
+  const maxDaysOverdue = Math.max(...overdueItems.map(r => r.daysOverdue!));
   const overdueBalance = overdueItems.reduce((s, r) => s + r.balanceDue, 0);
-  const overdueRatio = overdueBalance / receivables.totalBalance;
+  const overdueRatio = overdueBalance / receivables.totalBalance!;
   if (maxDaysOverdue > 90 || overdueRatio > 0.5) {
     return { label: "Critica", color: C.red };
   }
@@ -238,7 +240,7 @@ interface Props {
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function ClientesClient({ orgSlug, summary, pageResult, currentFilter, currentSearch }: Props) {
-  const arCertified = summary.arCertified;
+  const arCertified = summary.dataState === "CERTIFIED";
   const router = useRouter();
   const pathname = usePathname();
   const [searchInput, setSearchInput] = useState(currentSearch);
@@ -363,7 +365,7 @@ export function ClientesClient({ orgSlug, summary, pageResult, currentFilter, cu
             <ListKpiCard label="Total" value={summary.total} />
             <ListKpiCard label="Activos" value={summary.active} color={C.green} />
             <ListKpiCard label="Inactivos" value={summary.inactive} color={summary.inactive > 0 ? C.amber : undefined} />
-            <ListKpiCard label="Con saldo" value={arCertified ? summary.withCartera : null} color={arCertified && summary.withCartera > 0 ? C.blueDark : undefined} />
+            <ListKpiCard label="Con saldo" value={summary.withCartera} color={(summary.withCartera ?? 0) > 0 ? C.blueDark : undefined} />
             <ListKpiCard label="Sin compra 90d" value={summary.sinCompra90d} color={summary.sinCompra90d > 0 ? C.amber : undefined} />
           </div>
 
@@ -544,7 +546,7 @@ function DrawerContent({
         <DrawerKpi label="Pedidos CRM" value={crmQuotes.items.length} />
         <DrawerKpi label="Pedidos SAG" value={sagOrders.items.length} />
         <DrawerKpi label="Facturas" value={facturaCount} />
-        <DrawerKpi label="Saldo cartera" textValue={receivables.totalBalance !== null && receivables.totalBalance > 0 ? fmtCurrency(receivables.totalBalance) : "\u2014"} color={(receivables.totalOverdue ?? 0) > 0 ? C.red : undefined} />
+        <DrawerKpi label="Saldo cartera" textValue={receivables.truthStatus !== "CERTIFIED" ? "No verificado" : receivables.totalBalance !== null && receivables.totalBalance > 0 ? fmtCurrency(receivables.totalBalance) : "$0"} color={receivables.truthStatus !== "CERTIFIED" ? C.inkGhost : (receivables.totalOverdue ?? 0) > 0 ? C.red : undefined} />
         <DrawerKpi label="Ultima compra" textValue={fmtDaysAgo(lastActivity)} />
         <DrawerKpi label="Salud cartera" textValue={carteraTrafficLight(receivables).label} color={carteraTrafficLight(receivables).color} />
       </div>
@@ -816,13 +818,13 @@ function TabCartera({ receivables }: { receivables: Cliente360Data["receivables"
             ))}
           </div>
           {receivables.items.map(r => (
-            <div key={r.id} className={`ag-op-row${r.daysOverdue > 90 ? " ag-op-row--critical" : r.daysOverdue > 30 ? " ag-op-row--warning" : ""}`}
+            <div key={r.id} className={`ag-op-row${(r.daysOverdue ?? 0) > 90 ? " ag-op-row--critical" : (r.daysOverdue ?? 0) > 30 ? " ag-op-row--warning" : ""}`}
               style={{ display: "grid", gridTemplateColumns: RECEIVABLE_GRID, gap: S[2], padding: `${S[2]}px ${S[3]}px`, borderBottom: `1px solid ${C.line}22`, alignItems: "center" }}>
               <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{r.erpId ?? r.id.slice(0, 8)}</span>
               <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink }}>{fmtCurrency(r.originalAmount)}</span>
               <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.green }}>{fmtCurrency(r.paidAmount)}</span>
               <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: r.balanceDue > 0 ? C.red : C.ink }}>{fmtCurrency(r.balanceDue)}</span>
-              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: r.daysOverdue > 30 ? C.red : r.daysOverdue > 0 ? C.amber : C.inkGhost }}>{r.daysOverdue > 0 ? `${r.daysOverdue}d` : "\u2014"}</span>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: r.daysOverdue == null ? C.inkGhost : r.daysOverdue > 30 ? C.red : r.daysOverdue > 0 ? C.amber : C.inkGhost }}>{r.daysOverdue != null && r.daysOverdue > 0 ? `${r.daysOverdue}d` : "\u2014"}</span>
               <span className={`ag-op-status ag-op-status--${receivableStatusVariant(r.status)}`} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold }}>{carteraStatusLabel(r.status)}</span>
             </div>
           ))}
@@ -859,13 +861,20 @@ function TabInteligencia({ data }: { data: Cliente360Data }) {
       <div style={{ ...panelStyle, padding: S[4], display: "flex", alignItems: "center", gap: S[4] }}>
         <div style={{
           width: 48, height: 48, borderRadius: R.pill,
-          background: scoreColor(score), display: "flex", alignItems: "center", justifyContent: "center",
+          background: scoreColor(score.grade), display: "flex", alignItems: "center", justifyContent: "center",
         }}>
-          <span style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: "#fff" }}>{score}</span>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: T.wt.bold, color: "#fff" }}>{score.grade}</span>
         </div>
         <div>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight, textTransform: "uppercase" as const }}>Score cliente</div>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.ink }}>{scoreDescription(score)}</div>
+          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight, textTransform: "uppercase" as const }}>
+            Score cliente{score.incomplete ? " (incompleto)" : ""}
+          </div>
+          <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.ink }}>{scoreDescription(score.grade)}</div>
+          {score.incomplete && (
+            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.amber, marginTop: 2 }}>
+              Cartera no verificada — score puede variar
+            </div>
+          )}
         </div>
       </div>
 
@@ -902,7 +911,7 @@ function TabInteligencia({ data }: { data: Cliente360Data }) {
         <SectionLabel label="Rentabilidad" />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[3] }}>
           <FieldRow label="Total facturado" value={totalSales > 0 ? fmtCurrency(totalSales) : null} />
-          <FieldRow label="Saldo cartera" value={receivables.totalBalance !== null && receivables.totalBalance > 0 ? fmtCurrency(receivables.totalBalance) : null} />
+          <FieldRow label="Saldo cartera" value={receivables.truthStatus !== "CERTIFIED" ? "No verificado" : receivables.totalBalance !== null && receivables.totalBalance > 0 ? fmtCurrency(receivables.totalBalance) : "Sin cartera"} color={receivables.truthStatus !== "CERTIFIED" ? C.inkGhost : undefined} />
         </div>
       </div>
 
@@ -910,7 +919,7 @@ function TabInteligencia({ data }: { data: Cliente360Data }) {
       <div>
         <SectionLabel label="Riesgo" />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[3] }}>
-          <FieldRow label="Cartera vencida" value={receivables.totalOverdue !== null && receivables.totalOverdue > 0 ? fmtCurrency(receivables.totalOverdue) : null} color={(receivables.totalOverdue ?? 0) > 0 ? C.red : undefined} />
+          <FieldRow label="Cartera vencida" value={receivables.truthStatus !== "CERTIFIED" ? "No verificada" : receivables.totalOverdue !== null && receivables.totalOverdue > 0 ? fmtCurrency(receivables.totalOverdue) : null} color={receivables.truthStatus !== "CERTIFIED" ? C.inkGhost : (receivables.totalOverdue ?? 0) > 0 ? C.red : undefined} />
           <FieldRow label="Facturas abiertas" value={receivables.openCount !== null && receivables.openCount > 0 ? String(receivables.openCount) : null} />
         </div>
       </div>
@@ -1049,9 +1058,10 @@ function TabTimeline({ data }: { data: Cliente360Data }) {
 
 // ── Client score computation ─────────────────────────────────────────────────
 
-function computeClientScore(data: Cliente360Data): string {
+function computeClientScore(data: Cliente360Data): { grade: string; incomplete: boolean } {
   let score = 0;
   const { crmQuotes, sagOrders, receivables, sales, seller, opportunities } = data;
+  const arCertified = receivables.truthStatus === "CERTIFIED";
 
   // Activity
   if (crmQuotes.items.length > 0) score += 20;
@@ -1062,20 +1072,26 @@ function computeClientScore(data: Cliente360Data): string {
   if (seller.confidence >= 80) score += 15;
   else if (seller.confidence >= 50) score += 8;
 
-  // Receivables health
-  if ((receivables.totalOverdue ?? 0) === 0 && (receivables.totalBalance ?? 0) > 0) score += 20;
-  else if ((receivables.totalOverdue ?? 0) === 0) score += 10;
+  // Receivables health — ONLY award points when AR is certified
+  if (arCertified) {
+    if ((receivables.totalOverdue ?? 0) === 0 && (receivables.totalBalance ?? 0) > 0) score += 20;
+    else if ((receivables.totalOverdue ?? 0) === 0) score += 10;
+  }
+  // UNVERIFIED: no cartera health points — score is incomplete
 
   // Low risk
   const riskOpps = opportunities.filter(o => o.type === "cartera" || o.type === "inactividad");
   if (riskOpps.length === 0) score += 15;
 
-  if (score >= 85) return "A+";
-  if (score >= 70) return "A";
-  if (score >= 55) return "B+";
-  if (score >= 40) return "B";
-  if (score >= 25) return "C";
-  return "D";
+  let grade: string;
+  if (score >= 85) grade = "A+";
+  else if (score >= 70) grade = "A";
+  else if (score >= 55) grade = "B+";
+  else if (score >= 40) grade = "B";
+  else if (score >= 25) grade = "C";
+  else grade = "D";
+
+  return { grade, incomplete: !arCertified };
 }
 
 function scoreColor(score: string): string {

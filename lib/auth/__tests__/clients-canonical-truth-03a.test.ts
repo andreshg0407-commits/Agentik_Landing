@@ -47,13 +47,13 @@ describe("client-loader.ts — canonical AR only", () => {
     expect(src).toContain("canonical-ar-service");
   });
 
-  test("summary KPIs use canonical AR snapshot counts", () => {
-    expect(src).toContain("arResult.snapshot.totalOpenCustomers");
-    expect(src).toContain("arResult.snapshot.totalOverdueCustomers");
+  test("summary KPIs use reconciled intersection with CustomerProfile", () => {
+    expect(src).toContain("sagTerceroId: { in: carteraIds }");
+    expect(src).toContain("sagTerceroId: { in: overdueIds }");
   });
 
-  test("row-level cartera uses arLookup from canonical snapshot", () => {
-    expect(src).toContain("arLookup.get(p.sagTerceroId)");
+  test("row-level cartera uses arCtx via resolveRowCartera", () => {
+    expect(src).toContain("resolveRowCartera(arCtx");
   });
 
   test("con_cartera filter uses sagTerceroId IN from canonical AR", () => {
@@ -64,12 +64,13 @@ describe("client-loader.ts — canonical AR only", () => {
     expect(src).toContain("carteraState: ClienteCarteraState");
   });
 
-  test("ClientesSummary has arCertified field", () => {
-    expect(src).toContain("arCertified: boolean");
+  test("ClientesSummary has dataState field", () => {
+    expect(src).toContain("dataState: ArDataState");
   });
 
-  test("error fallback returns arCertified: false, not zero KPIs", () => {
-    expect(src).toContain("arCertified: false");
+  test("error fallback returns UNAVAILABLE with loadFailed: true", () => {
+    expect(src).toContain('dataState: "UNAVAILABLE"');
+    expect(src).toContain("loadFailed: true");
   });
 
   test("lastPurchaseAt=null does NOT count as sin_compra_90d", () => {
@@ -184,8 +185,9 @@ describe("Diana (NIT 901383501) — HAS_OPEN_AR structural invariants", () => {
     expect(loader360).toContain("paidAmount: doc.valorDocumento - doc.saldoPendiente");
   });
 
-  test("mapCertifiedDocToReceivable uses SAG diasMora, not legacy daysOverdue", () => {
-    expect(loader360).toContain("daysOverdue: doc.diasMora ?? 0");
+  test("mapCertifiedDocToReceivable preserves SAG diasMora as-is (nullable)", () => {
+    expect(loader360).toContain("daysOverdue: doc.diasMora,");
+    expect(loader360).not.toContain("daysOverdue: doc.diasMora ?? 0");
   });
 });
 
@@ -195,14 +197,12 @@ describe("UNVERIFIED state — fail-closed", () => {
   const clientLoader = readFile("lib/comercial/clientes/client-loader.ts");
   const loader360 = readFile("lib/comercial/clientes/cliente-360-loader.ts");
 
-  test("client-loader: UNVERIFIED row has totalReceivable=null, not 0", () => {
-    // When arLookup is null, totalReceivable stays null
-    expect(clientLoader).toContain("let totalReceivable: number | null = null");
+  test("client-loader: UNVERIFIED row has totalReceivable=null via resolveRowCartera", () => {
+    expect(clientLoader).toContain("totalReceivable: null, overdueReceivable: null, carteraState: \"UNVERIFIED\"");
   });
 
-  test("client-loader: summary withCartera=0 when not certified", () => {
-    expect(clientLoader).toContain("let withCartera = 0");
-    expect(clientLoader).toContain("if (arCertified)");
+  test("client-loader: summary withCartera=null when not certified", () => {
+    expect(clientLoader).toContain("let withCartera: number | null = null");
   });
 
   test("cliente-360-loader: SAG_UNAVAILABLE produces null totals", () => {
@@ -218,7 +218,7 @@ describe("UNVERIFIED state — fail-closed", () => {
   test("cliente-360-loader: UNVERIFIED does not generate cartera opportunities", () => {
     // When UNVERIFIED, receivableItems=[] → no overdue items → no opp_cartera_vencida
     // Verify the opportunity engine only fires on actual items
-    expect(loader360).toContain("const overdue = receivables.filter(r => r.daysOverdue > 0)");
+    expect(loader360).toContain("const overdue = receivables.filter(r => r.daysOverdue != null && r.daysOverdue > 0)");
     expect(loader360).toContain("if (overdue.length > 0)");
   });
 });

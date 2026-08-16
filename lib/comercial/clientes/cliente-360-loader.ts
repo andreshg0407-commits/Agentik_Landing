@@ -94,7 +94,9 @@ export interface Cliente360Receivable {
   balanceDue: number;
   invoiceDate: string | null;
   dueDate: string | null;
-  daysOverdue: number;
+  /** Null when SAG DIAS_MORA is null — do NOT coerce to 0 */
+  daysOverdue: number | null;
+  /** Null when DIAS_MORA is null — do NOT classify as CURRENT */
   agingBucket: string | null;
   status: string;
 }
@@ -483,7 +485,7 @@ function mapCertifiedDocToReceivable(doc: CertifiedReceivableDocument): Cliente3
     balanceDue: doc.saldoPendiente,
     invoiceDate: doc.fechaDocumento.toISOString(),
     dueDate: doc.fechaVencimiento?.toISOString() ?? null,
-    daysOverdue: doc.diasMora ?? 0,
+    daysOverdue: doc.diasMora,  // preserve null — do NOT coerce to 0
     agingBucket: classifyAgingBand(doc.diasMora),
     status: doc.saldoPendiente <= 0 ? "CLOSED"
       : (doc.diasMora !== null && doc.diasMora > 0) ? "OVERDUE"
@@ -491,8 +493,9 @@ function mapCertifiedDocToReceivable(doc: CertifiedReceivableDocument): Cliente3
   };
 }
 
-function classifyAgingBand(diasMora: number | null): string {
-  if (diasMora === null || diasMora <= 0) return "CURRENT";
+function classifyAgingBand(diasMora: number | null): string | null {
+  if (diasMora === null) return null;  // unknown mora — do NOT classify as CURRENT
+  if (diasMora <= 0) return "CURRENT";
   if (diasMora <= 30) return "1-30";
   if (diasMora <= 60) return "31-60";
   if (diasMora <= 90) return "61-90";
@@ -527,11 +530,11 @@ function computeOpportunities(
     });
   }
 
-  // 2. Cartera vencida
-  const overdue = receivables.filter(r => r.daysOverdue > 0);
+  // 2. Cartera vencida — only when daysOverdue is known (not null)
+  const overdue = receivables.filter(r => r.daysOverdue != null && r.daysOverdue > 0);
   if (overdue.length > 0) {
     const totalOverdue = overdue.reduce((s, r) => s + r.balanceDue, 0);
-    const maxDays = Math.max(...overdue.map(r => r.daysOverdue));
+    const maxDays = Math.max(...overdue.map(r => r.daysOverdue!));
     ops.push({
       id: "opp_cartera_vencida",
       type: "cartera",

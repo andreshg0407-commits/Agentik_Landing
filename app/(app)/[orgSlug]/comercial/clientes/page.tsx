@@ -2,11 +2,11 @@
  * /[orgSlug]/comercial/clientes
  *
  * Clientes — Centro Operativo de Clientes.
- * Sprint: CLIENTES-PERFORMANCE-HOTFIX-01 — server-side pagination
+ * Sprint: CLIENTS-CANONICAL-TRUTH-03A1 — single AR snapshot per page load
  */
 
 import { requireOrgAccess } from "@/lib/auth/org-access";
-import { loadClientesSummary, loadClientesPage } from "@/lib/comercial/clientes/client-loader";
+import { loadArContext, loadClientesSummary, loadClientesPage } from "@/lib/comercial/clientes/client-loader";
 import { ClientesClient } from "./clientes-client";
 
 export default async function ClientesPage({
@@ -24,9 +24,12 @@ export default async function ClientesPage({
   const search = String(sp.q ?? "");
   const filter = (sp.filter ?? "todos") as "todos" | "activos" | "inactivos" | "con_cartera" | "con_vendedor" | "sin_compra_90d" | "con_crm" | "sin_crm";
 
+  // Single AR context — shared by summary and page loaders (one SAG call)
+  const arCtx = await loadArContext(organization.id);
+
   const [summary, pageResult] = await Promise.all([
-    loadClientesSummary(organization.id),
-    loadClientesPage(organization.id, { page, search, filter }),
+    loadClientesSummary(organization.id, arCtx),
+    loadClientesPage(organization.id, { page, search, filter }, arCtx),
   ]);
 
   return (

@@ -3,11 +3,26 @@ import { prisma } from "@/lib/prisma";
 import { resolveCity } from "./city-resolver";
 import { isReceivableDataCertified, warmTruthStatusCache } from "@/lib/comercial/frontline/receivable-truth-status";
 import { fetchCertifiedArSnapshot } from "@/lib/comercial/frontline/canonical-ar-service";
-import type { CertifiedCustomerReceivableSnapshot } from "@/lib/comercial/frontline/canonical-ar-types";
+import type { CertifiedCustomerReceivableSnapshot, CertifiedArSnapshot } from "@/lib/comercial/frontline/canonical-ar-types";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type ClienteCarteraState = "HAS_OPEN_AR" | "CERTIFIED_ZERO" | "UNVERIFIED";
+
+/** AR data availability state — shared by summary and page loaders */
+export type ArDataState = "CERTIFIED" | "UNVERIFIED" | "UNAVAILABLE";
+
+/** Pre-loaded AR context — call loadArContext() once, pass to both loaders */
+export interface ArContext {
+  dataState: ArDataState;
+  snapshot: CertifiedArSnapshot | null;
+  arLookup: Map<number, CertifiedCustomerReceivableSnapshot>;
+  arCustomerIds: Set<number>;
+  /** IDs of customers with overdue balances (totalVencido > 0) */
+  overdueCustomerIds: Set<number>;
+  asOf: string;
+  reason: string;
+}
 
 export interface ClienteRow {
   id: string;
@@ -35,14 +50,18 @@ export interface ClientesSummary {
   active: number;
   inactive: number;
   withSeller: number;
-  /** Count from canonical AR snapshot — 0 when UNVERIFIED */
-  withCartera: number;
-  /** Count from canonical AR snapshot — 0 when UNVERIFIED */
-  withOverdue: number;
+  /** Null when UNAVAILABLE/UNVERIFIED — reconciled count of profiles with open AR */
+  withCartera: number | null;
+  /** Null when UNAVAILABLE/UNVERIFIED — reconciled count of profiles with overdue AR */
+  withOverdue: number | null;
   sinCompra90d: number;  // lastPurchaseAt > 90 days ago
   withCrm: number;       // crmId IS NOT NULL
-  /** Whether canonical AR data is available */
-  arCertified: boolean;
+  /** AR data availability state */
+  dataState: ArDataState;
+  /** Timestamp of the AR snapshot (null when unavailable) */
+  arAsOf: string | null;
+  /** True when the entire loader failed (DB down) — all KPIs unreliable */
+  loadFailed: boolean;
   loadedAt: string;
 }
 
@@ -61,14 +80,69 @@ export interface ClientesPageResult {
   totalPages: number;
 }
 
+// ── AR Context loader (call once, share between summary + page) ─────────────
+
+export async function loadArContext(organizationId: string): Promise<ArContext> {
+  await warmTruthStatusCache();
+  const certified = isReceivableDataCertified(organizationId);
+
+  if (!certified) {
+    return {
+      dataState: "UNVERIFIED",
+      snapshot: null,
+      arLookup: new Map(),
+      arCustomerIds: new Set(),
+      overdueCustomerIds: new Set(),
+      asOf: new Date().toISOString(),
+      reason: "TENANT_NOT_CERTIFIED",
+    };
+  }
+
+  const arResult = await fetchCertifiedArSnapshot();
+  if (!arResult.ok) {
+    // SAG query failed — UNAVAILABLE, NOT certified
+    return {
+      dataState: "UNAVAILABLE",
+      snapshot: null,
+      arLookup: new Map(),
+      arCustomerIds: new Set(),
+      overdueCustomerIds: new Set(),
+      asOf: new Date().toISOString(),
+      reason: arResult.error,
+    };
+  }
+
+  const arLookup = new Map<number, CertifiedCustomerReceivableSnapshot>();
+  const arCustomerIds = new Set<number>();
+  const overdueCustomerIds = new Set<number>();
+
+  for (const c of arResult.snapshot.customers) {
+    arLookup.set(c.clienteId, c);
+    arCustomerIds.add(c.clienteId);
+    if (c.totalVencido > 0) {
+      overdueCustomerIds.add(c.clienteId);
+    }
+  }
+
+  return {
+    dataState: "CERTIFIED",
+    snapshot: arResult.snapshot,
+    arLookup,
+    arCustomerIds,
+    overdueCustomerIds,
+    asOf: arResult.snapshot.asOf.toISOString(),
+    reason: "SAG_CERTIFIED",
+  };
+}
+
 // ── Summary loader (KPIs only, no rows) ──────────────────────────────────────
 
-export async function loadClientesSummary(organizationId: string): Promise<ClientesSummary> {
+export async function loadClientesSummary(
+  organizationId: string,
+  arCtx: ArContext,
+): Promise<ClientesSummary> {
   const db = prisma as any;
   const t0 = performance.now();
-
-  await warmTruthStatusCache();
-  const arCertified = isReceivableDataCertified(organizationId);
 
   try {
     // Base profile counts (NO receivable fields — those come from canonical AR)
@@ -97,19 +171,38 @@ export async function loadClientesSummary(organizationId: string): Promise<Clien
     const active = Number(row.active);
     const withSeller = Number(row.with_seller);
 
-    // Cartera KPIs from canonical AR snapshot (SAG vw_agentik_cartera)
-    let withCartera = 0;
-    let withOverdue = 0;
-    if (arCertified) {
-      const arResult = await fetchCertifiedArSnapshot();
-      if (arResult.ok) {
-        withCartera = arResult.snapshot.totalOpenCustomers;
-        withOverdue = arResult.snapshot.totalOverdueCustomers;
-      }
+    // Cartera KPIs — reconciled intersection of AR snapshot with CustomerProfile
+    let withCartera: number | null = null;
+    let withOverdue: number | null = null;
+
+    if (arCtx.dataState === "CERTIFIED" && arCtx.arCustomerIds.size > 0) {
+      // Count CustomerProfile rows whose sagTerceroId appears in the AR snapshot
+      // This ensures summary.withCartera === totalFiltered for con_cartera filter
+      const carteraIds = [...arCtx.arCustomerIds];
+      const overdueIds = [...arCtx.overdueCustomerIds];
+
+      const [carteraCount, overdueCount] = await Promise.all([
+        db.customerProfile.count({
+          where: { organizationId, sagTerceroId: { in: carteraIds } },
+        }),
+        overdueIds.length > 0
+          ? db.customerProfile.count({
+              where: { organizationId, sagTerceroId: { in: overdueIds } },
+            })
+          : Promise.resolve(0),
+      ]);
+
+      withCartera = carteraCount;
+      withOverdue = overdueCount;
+    } else if (arCtx.dataState === "CERTIFIED") {
+      // Certified but zero customers with open AR
+      withCartera = 0;
+      withOverdue = 0;
     }
+    // UNVERIFIED/UNAVAILABLE → withCartera/withOverdue stay null
 
     const elapsed = (performance.now() - t0).toFixed(1);
-    console.log(`[PERF][CLIENTES] summary ${elapsed}ms — total=${total} active=${active} withSeller=${withSeller} arCertified=${arCertified} withCartera=${withCartera} withOverdue=${withOverdue}`);
+    console.log(`[PERF][CLIENTES] summary ${elapsed}ms — total=${total} active=${active} withSeller=${withSeller} dataState=${arCtx.dataState} withCartera=${withCartera} withOverdue=${withOverdue}`);
 
     return {
       total,
@@ -120,15 +213,19 @@ export async function loadClientesSummary(organizationId: string): Promise<Clien
       withOverdue,
       sinCompra90d: Number(row.sin_compra_90d),
       withCrm: Number(row.with_crm),
-      arCertified,
+      dataState: arCtx.dataState,
+      arAsOf: arCtx.dataState === "CERTIFIED" ? arCtx.asOf : null,
+      loadFailed: false,
       loadedAt: new Date().toISOString(),
     };
   } catch (err) {
     console.error("[PERF][CLIENTES][ERROR] summary failed:", err);
     return {
       total: 0, active: 0, inactive: 0,
-      withSeller: 0, withCartera: 0, withOverdue: 0, sinCompra90d: 0, withCrm: 0,
-      arCertified: false,
+      withSeller: 0, withCartera: null, withOverdue: null, sinCompra90d: 0, withCrm: 0,
+      dataState: "UNAVAILABLE",
+      arAsOf: null,
+      loadFailed: true,
       loadedAt: new Date().toISOString(),
     };
   }
@@ -139,6 +236,7 @@ export async function loadClientesSummary(organizationId: string): Promise<Clien
 export async function loadClientesPage(
   organizationId: string,
   params: ClientesPageParams = {},
+  arCtx: ArContext,
 ): Promise<ClientesPageResult> {
   const db = prisma as any;
   const t0 = performance.now();
@@ -148,33 +246,15 @@ export async function loadClientesPage(
   const search = (params.search ?? "").trim();
   const filter = params.filter ?? "todos";
 
-  await warmTruthStatusCache();
-  const arCertified = isReceivableDataCertified(organizationId);
-
-  // Load canonical AR snapshot once (used for row-level cartera + filter)
-  let arLookup: Map<number, CertifiedCustomerReceivableSnapshot> | null = null;
-  let arCustomerIds: Set<number> | null = null;
-  if (arCertified) {
-    const arResult = await fetchCertifiedArSnapshot();
-    if (arResult.ok) {
-      arLookup = new Map();
-      arCustomerIds = new Set();
-      for (const c of arResult.snapshot.customers) {
-        arLookup.set(c.clienteId, c);
-        arCustomerIds.add(c.clienteId);
-      }
-    }
-  }
-
   try {
     // ── For con_cartera filter: get sagTerceroIds that have open AR ────
     let carteraSagIds: number[] | null = null;
     if (filter === "con_cartera") {
-      if (!arCustomerIds || arCustomerIds.size === 0) {
-        // No certified AR data → empty results
+      if (arCtx.dataState !== "CERTIFIED" || arCtx.arCustomerIds.size === 0) {
+        // No certified AR data → empty results (not a false certified-empty)
         return { clients: [], totalFiltered: 0, page: 1, pageSize, totalPages: 1 };
       }
-      carteraSagIds = [...arCustomerIds];
+      carteraSagIds = [...arCtx.arCustomerIds];
     }
 
     // ── Build Prisma WHERE ─────────────────────────────────────────────
@@ -203,25 +283,7 @@ export async function loadClientesPage(
     // ── Map to ClienteRow with canonical AR ───────────────────────────
     const clients: ClienteRow[] = profiles.map((p: any) => {
       const resolvedCity = p.city ? resolveCity(p.city) : null;
-      // Resolve cartera from canonical AR snapshot by sagTerceroId
-      let totalReceivable: number | null = null;
-      let overdueReceivable: number | null = null;
-      let carteraState: ClienteCarteraState = "UNVERIFIED";
-
-      if (arLookup && p.sagTerceroId != null && p.sagTerceroId > 0) {
-        const arSnap = arLookup.get(p.sagTerceroId);
-        if (arSnap) {
-          totalReceivable = arSnap.totalPendiente;
-          overdueReceivable = arSnap.totalVencido;
-          carteraState = "HAS_OPEN_AR";
-        } else {
-          // Customer exists in SAG but not in cartera → CERTIFIED_ZERO
-          totalReceivable = 0;
-          overdueReceivable = 0;
-          carteraState = "CERTIFIED_ZERO";
-        }
-      }
-      // If arLookup is null (AR failed or uncertified), stays UNVERIFIED with null amounts
+      const cartera = resolveRowCartera(arCtx, p.sagTerceroId);
 
       return {
         id: p.id,
@@ -238,20 +300,45 @@ export async function loadClientesPage(
         lastPurchaseAt: p.lastPurchaseAt instanceof Date
           ? p.lastPurchaseAt.toISOString()
           : (p.lastPurchaseAt ?? null),
-        totalReceivable,
-        overdueReceivable,
-        carteraState,
+        ...cartera,
       };
     });
 
     const elapsed = (performance.now() - t0).toFixed(1);
-    console.log(`[PERF][CLIENTES] page ${elapsed}ms — page=${safePage}/${totalPages} rows=${clients.length} totalFiltered=${totalFiltered} arCertified=${arCertified}`);
+    console.log(`[PERF][CLIENTES] page ${elapsed}ms — page=${safePage}/${totalPages} rows=${clients.length} totalFiltered=${totalFiltered} dataState=${arCtx.dataState}`);
 
     return { clients, totalFiltered, page: safePage, pageSize, totalPages };
   } catch (err) {
     console.error("[PERF][CLIENTES][ERROR] page load failed:", err);
     return { clients: [], totalFiltered: 0, page: 1, pageSize, totalPages: 1 };
   }
+}
+
+// ── Row-level cartera resolution (pure — testable) ──────────────────────────
+
+export function resolveRowCartera(
+  arCtx: ArContext,
+  sagTerceroId: number | null | undefined,
+): { totalReceivable: number | null; overdueReceivable: number | null; carteraState: ClienteCarteraState } {
+  if (arCtx.dataState !== "CERTIFIED") {
+    return { totalReceivable: null, overdueReceivable: null, carteraState: "UNVERIFIED" };
+  }
+
+  if (sagTerceroId == null || sagTerceroId <= 0) {
+    return { totalReceivable: null, overdueReceivable: null, carteraState: "UNVERIFIED" };
+  }
+
+  const arSnap = arCtx.arLookup.get(sagTerceroId);
+  if (arSnap) {
+    return {
+      totalReceivable: arSnap.totalPendiente,
+      overdueReceivable: arSnap.totalVencido,
+      carteraState: "HAS_OPEN_AR",
+    };
+  }
+
+  // Customer exists in SAG but not in cartera → CERTIFIED_ZERO
+  return { totalReceivable: 0, overdueReceivable: 0, carteraState: "CERTIFIED_ZERO" };
 }
 
 // ── Prisma WHERE builder ──────────────────────────────────────────────────────
