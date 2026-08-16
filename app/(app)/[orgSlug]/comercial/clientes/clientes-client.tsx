@@ -19,7 +19,7 @@ import { EmptyOperationalState, WorkspaceSection } from "@/components/shell/oper
 import { OperationalSideDrawer } from "@/components/workspace/operational-side-drawer";
 import type { ClientesSummary, ClienteRow, ClientesPageResult } from "@/lib/comercial/clientes/client-loader";
 import type { Cliente360Data } from "@/lib/comercial/clientes/cliente-360-loader";
-import { UNVERIFIED_RECEIVABLE_LABEL } from "@/lib/comercial/frontline/receivable-truth-status";
+import { UNVERIFIED_RECEIVABLE_LABEL } from "@/lib/comercial/frontline/receivable-truth-contract";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
