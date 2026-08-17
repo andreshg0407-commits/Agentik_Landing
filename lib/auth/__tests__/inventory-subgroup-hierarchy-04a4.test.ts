@@ -186,8 +186,10 @@ describe("G7 — Reference row data display rules", () => {
     expect(src).toContain("disp < 0");
   });
 
-  test("T7c: Reservado uses reservedReal with pedidosPendientes fallback", () => {
-    expect(src).toContain("orig.reservedReal ?? orig.pedidosPendientes");
+  test("T7c: Reservado uses reservedReal only (SAG RESERVADO authority, no fallback)", () => {
+    // 04A3R2 ADDENDUM: pedidosPendientes fallback eliminated — SAG RESERVADO is sole authority
+    expect(src).toContain("const reserved = orig.reservedReal;");
+    expect(src).not.toContain("orig.reservedReal ?? orig.pedidosPendientes");
   });
 
   test("T7d: Production shows units when available, 'Con OP' when active but no WIP count", () => {

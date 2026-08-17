@@ -2317,7 +2317,7 @@ function SubgrupoCoveragePanel({
                     const orig = originalItemsByRef?.get(ci.reference);
                     if (!orig) return null;
                     const disp = orig.disponibleReal;
-                    const reserved = orig.reservedReal ?? orig.pedidosPendientes;
+                    const reserved = orig.reservedReal; // SAG RESERVADO is the sole authority (04A3R2 ADDENDUM)
                     const production = orig.productionInProcess;
                     const sColor = STATE_COLORS[orig.operationalState] ?? C.inkGhost;
                     return (
