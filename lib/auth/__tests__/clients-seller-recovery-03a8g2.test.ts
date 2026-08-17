@@ -173,8 +173,9 @@ describe("seller recovery — truth state edges", () => {
 describe("seller recovery — no N+1", () => {
   test("T07: enrichment service uses single batch query, not per-document", () => {
     const enrichSrc = readFile("lib/comercial/clientes/sales-seller-enrichment.ts");
-    // Must query with CLIENTE_ID (batch), not per-document ID
-    expect(enrichSrc).toContain("WHERE CLIENTE_ID =");
+    // Must query with ka_nl_tercero (batch), not per-document ID
+    // 03A8G3: upgraded from vw_agentik_ventas to direct MOVIMIENTOS query
+    expect(enrichSrc).toContain("m.ka_nl_tercero =");
     // The single consultaSagJson call is the batch query — exactly one SAG query
     const callCount = (enrichSrc.match(/await consultaSagJson\(/g) || []).length;
     expect(callCount).toBe(1);
@@ -264,7 +265,8 @@ describe("seller recovery — production wiring", () => {
   test("T12b: enrichment service file exists and exports correctly", () => {
     const enrichSrc = readFile("lib/comercial/clientes/sales-seller-enrichment.ts");
     expect(enrichSrc).toContain("export async function fetchSalesSellerEnrichment");
-    expect(enrichSrc).toContain("export interface SagVentasSellerRow");
+    // 03A8G3: SagVentasSellerRow replaced by DocumentSellerInfo (collision-safe)
+    expect(enrichSrc).toContain("export interface DocumentSellerInfo");
     expect(enrichSrc).toContain("buildDocumentSellerMap");
     // Uses server-only
     expect(enrichSrc).toContain('"server-only"');

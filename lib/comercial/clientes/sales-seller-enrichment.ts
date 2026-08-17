@@ -1,18 +1,20 @@
 /**
  * lib/comercial/clientes/sales-seller-enrichment.ts
  *
- * CLIENT-SALES-SELLER-PROVENANCE-03A8G2
+ * CLIENT-SALES-CANONICAL-COMPLETENESS-03A8G3
  *
- * Runtime seller recovery from SAG vw_agentik_ventas.
- * Single batch query per client — no N+1 queries.
+ * Collision-safe runtime seller recovery + coverage reconciliation.
  *
- * Recovers seller data lost by the legacy mapSagMovement() import path,
- * which stored "Sin Vendedor" as a fallback when the MOVIMIENTOS source
- * does not carry seller fields.
+ * Uses a direct MOVIMIENTOS+FUENTES query (not vw_agentik_ventas) to obtain
+ * the fuente code (sc_codigo_fuente) for each document. This prevents
+ * document number collisions: FE-849 and D2-849 are different documents
+ * with the same NUMERO_DOCUMENTO but different fuentes.
  *
- * Join key: NUMERO_DOCUMENTO (document number within SAG is unique per fuente
- * type for a given client). The enrichment map is keyed by document number
- * and grouped by document to detect seller conflicts within the same document.
+ * Map key: composite "fuenteCode-numero" (e.g. "FE-10505", "D2-849").
+ * Primary identity: ID_DOCUMENTO (ka_nl_movimiento) when available.
+ * Fallback identity: CLIENTE_ID + fuenteCode + NUMERO_DOCUMENTO.
+ *
+ * Single batch query per client — zero N+1 queries.
  *
  * IMPORTANT: Backend-only. Never import in client components.
  */
@@ -20,56 +22,112 @@
 import "server-only";
 import { consultaSagJson } from "@/lib/connectors/pya/client";
 import { getSagConnection } from "@/lib/connectors/pya/sag-source-router";
+import { CASTILLITOS_SOURCE_SEMANTIC_RULES } from "@/lib/sag/master-data/source-semantic-rules";
+
+// ── Fuente code lookup ───────────────────────────────────────────────────────
+
+const FUENTE_ID_TO_CODE = new Map<number, string>(
+  CASTILLITOS_SOURCE_SEMANTIC_RULES.map(r => [r.kaNiFuente, r.codigoFuente]),
+);
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export interface SagVentasSellerRow {
-  ID_DOCUMENTO: number;        // ka_nl_movimiento — stable SAG PK
-  NUMERO_DOCUMENTO: string;    // document number
-  TIPO_DOCUMENTO: string;      // "Factura" | "Nota Credito"
-  ESTADO_DOCUMENTO: string;    // "Anulado" | "Con Saldo Pendiente" | "Sin Saldo Pendiente"
-  FECHA_DOCUMENTO: string;     // ISO date
-  VENDEDOR_ID: string | null;  // ka_nl_tercero of seller
-  VENDEDOR: string | null;     // seller name
+/** Raw row from the direct MOVIMIENTOS+FUENTES+TERCEROS query */
+export interface SagDocumentRow {
+  ka_nl_movimiento: number;
+  ka_ni_fuente: number;
+  codigo_fuente: string;       // f.k_sc_codigo_fuente
+  n_numero_documento: string;
+  d_fecha_documento: string;
+  sc_anulado: string;          // 'S' or 'N'
+  vendedor_id: number | null;  // seller ka_nl_tercero
+  vendedor_nombre: string | null;
+  total_valor: number;
 }
 
 export interface DocumentSellerInfo {
   idDocumento: number;
+  fuenteCode: string;          // composite-safe fuente code (FE, D2, F2, etc.)
   numeroDocumento: string;
-  tipoDocumento: string;
-  estadoDocumento: string;
+  compositeKey: string;        // "fuenteCode-numero" — collision-safe map key
   fechaDocumento: string;
+  anulado: boolean;
   vendedorId: string | null;
   vendedor: string | null;
+  amount: number;
+}
+
+export type SalesCoverageState =
+  | "COMPLETE"
+  | "STORAGE_LAG"
+  | "SOURCE_DOWN"
+  | "IDENTITY_MISSING"
+  | "DOCUMENT_CONFLICT";
+
+export interface SalesCoverage {
+  state: SalesCoverageState;
+  sourceDocumentCount: number;
+  storedDocumentCount: number;
+  matchedDocumentCount: number;
+  sourceOnlyDocumentCount: number;
+  storageOnlyDocumentCount: number;
+  sourceAsOf: string | null;
+  pendingDocuments: DocumentSellerInfo[];
+  reason: string;
 }
 
 export interface SellerEnrichmentResult {
-  /** Whether the SAG query failed */
   sourceDown: boolean;
-  /** All rows returned by SAG (line-item grain, may have duplicates per document) */
-  rawRows: SagVentasSellerRow[];
-  /** Distinct documents from SAG */
   distinctDocuments: DocumentSellerInfo[];
-  /** Build a map keyed by NUMERO_DOCUMENTO for fast lookup */
+  /** Build a collision-safe map keyed by "fuenteCode-numero" */
   buildDocumentSellerMap(): Map<string, DocumentSellerInfo>;
+}
+
+// ── Query ────────────────────────────────────────────────────────────────────
+
+/**
+ * Direct MOVIMIENTOS+FUENTES+TERCEROS query for a single client.
+ * Returns one row per document header (GROUP BY on header fields).
+ * Includes seller via LEFT JOIN to TERCEROS for the seller tercero.
+ *
+ * Authorized by Section D of 03A8G3: vw_agentik_ventas does not expose
+ * fuente code, making collision-safe identity impossible via the view alone.
+ */
+function buildClientDocumentsQuery(sagTerceroId: number): string {
+  return [
+    "SELECT",
+    "  m.ka_nl_movimiento,",
+    "  m.ka_ni_fuente,",
+    "  f.k_sc_codigo_fuente AS codigo_fuente,",
+    "  m.n_numero_documento,",
+    "  m.d_fecha_documento,",
+    "  m.sc_anulado,",
+    "  ISNULL(m.ka_nl_tercero_vend, 0) AS vendedor_id,",
+    "  tv.sc_nombre AS vendedor_nombre,",
+    "  SUM(ISNULL(mi.n_valor, 0)) AS total_valor",
+    "FROM MOVIMIENTOS m",
+    "LEFT JOIN FUENTES f ON f.ka_ni_fuente = m.ka_ni_fuente",
+    "LEFT JOIN MOVIMIENTOS_ITEMS mi ON mi.ka_nl_movimiento = m.ka_nl_movimiento",
+    "LEFT JOIN TERCEROS tv ON tv.ka_nl_tercero = m.ka_nl_tercero_vend",
+    `WHERE m.ka_nl_tercero = ${Number(sagTerceroId)}`,
+    "  AND f.sc_cobrar_pagar = 'C'",        // receivables only (not payables)
+    "  AND f.k_n_clase_fuente IN (1, 2, 3)", // exclude class 4 (orders)
+    "GROUP BY",
+    "  m.ka_nl_movimiento, m.ka_ni_fuente,",
+    "  f.k_sc_codigo_fuente, m.n_numero_documento,",
+    "  m.d_fecha_documento, m.sc_anulado,",
+    "  m.ka_nl_tercero_vend, tv.sc_nombre",
+    "ORDER BY m.d_fecha_documento DESC",
+  ].join(" ");
 }
 
 // ── Fetch ────────────────────────────────────────────────────────────────────
 
-/**
- * Fetch all sales documents for a client from vw_agentik_ventas in a single
- * batch query. Returns seller info per document for runtime enrichment.
- *
- * The view only covers facturas (F) and notas credito (X) — remisiones (F2)
- * are NOT included in the view. Documents outside the view scope will not
- * appear in the enrichment map.
- */
 export async function fetchSalesSellerEnrichment(
   sagTerceroId: number | null,
 ): Promise<SellerEnrichmentResult> {
   const empty: SellerEnrichmentResult = {
     sourceDown: false,
-    rawRows: [],
     distinctDocuments: [],
     buildDocumentSellerMap: () => new Map(),
   };
@@ -85,46 +143,61 @@ export async function fetchSalesSellerEnrichment(
     return { ...empty, sourceDown: true };
   }
 
-  let rows: SagVentasSellerRow[];
+  let rawRows: Record<string, unknown>[];
   try {
-    rows = await consultaSagJson(
+    rawRows = await consultaSagJson(
       config,
-      `SELECT ID_DOCUMENTO, NUMERO_DOCUMENTO, TIPO_DOCUMENTO, ESTADO_DOCUMENTO, FECHA_DOCUMENTO, VENDEDOR_ID, VENDEDOR FROM vw_agentik_ventas WHERE CLIENTE_ID = ${Number(sagTerceroId)}`,
-    ) as unknown as SagVentasSellerRow[];
+      buildClientDocumentsQuery(sagTerceroId),
+    ) as Record<string, unknown>[];
   } catch {
     return { ...empty, sourceDown: true };
   }
 
-  if (!Array.isArray(rows)) {
+  if (!Array.isArray(rawRows)) {
     return { ...empty, sourceDown: true };
   }
 
-  // Deduplicate by ID_DOCUMENTO (view is line-item grain — many rows per document)
-  // Fail closed on seller conflict within the same document
+  // Deduplicate by ka_nl_movimiento (rows are grouped by document header)
   const docMap = new Map<number, DocumentSellerInfo>();
-  for (const row of rows) {
-    const id = typeof row.ID_DOCUMENTO === "number" ? row.ID_DOCUMENTO : Number(row.ID_DOCUMENTO);
-    if (!id || isNaN(id)) continue;
+  for (const row of rawRows) {
+    const movId = typeof row.ka_nl_movimiento === "number"
+      ? row.ka_nl_movimiento : Number(row.ka_nl_movimiento);
+    if (!movId || isNaN(movId)) continue;
 
-    const existing = docMap.get(id);
-    if (existing) {
-      // Conflict check: if same document has different sellers, fail closed
-      const rowVendedorId = row.VENDEDOR_ID != null ? String(row.VENDEDOR_ID) : null;
+    if (docMap.has(movId)) {
+      // Conflict check within same document
+      const existing = docMap.get(movId)!;
+      const rowVendedorId = row.vendedor_id != null && Number(row.vendedor_id) > 0
+        ? String(row.vendedor_id) : null;
       if (existing.vendedorId && rowVendedorId && existing.vendedorId !== rowVendedorId) {
-        // Seller conflict within same document — fail closed: keep first, mark conflict
         existing.vendedor = `${existing.vendedor} [CONFLICTO]`;
       }
-      continue; // Already have this document
+      continue;
     }
 
-    docMap.set(id, {
-      idDocumento: id,
-      numeroDocumento: String(row.NUMERO_DOCUMENTO ?? ""),
-      tipoDocumento: String(row.TIPO_DOCUMENTO ?? ""),
-      estadoDocumento: String(row.ESTADO_DOCUMENTO ?? ""),
-      fechaDocumento: String(row.FECHA_DOCUMENTO ?? ""),
-      vendedorId: row.VENDEDOR_ID != null ? String(row.VENDEDOR_ID) : null,
-      vendedor: row.VENDEDOR != null ? String(row.VENDEDOR) : null,
+    // Derive fuente code: prefer the query's codigo_fuente, fall back to semantic rules
+    const fuenteId = typeof row.ka_ni_fuente === "number"
+      ? row.ka_ni_fuente : Number(row.ka_ni_fuente);
+    const codigoFuente = (row.codigo_fuente as string)
+      ?? FUENTE_ID_TO_CODE.get(fuenteId)
+      ?? null;
+    if (!codigoFuente) continue; // cannot classify without fuente code
+
+    const numero = String(row.n_numero_documento ?? "");
+    const compositeKey = `${codigoFuente}-${numero}`;
+    const vendedorIdRaw = row.vendedor_id != null && Number(row.vendedor_id) > 0
+      ? String(row.vendedor_id) : null;
+
+    docMap.set(movId, {
+      idDocumento: movId,
+      fuenteCode: codigoFuente,
+      numeroDocumento: numero,
+      compositeKey,
+      fechaDocumento: String(row.d_fecha_documento ?? ""),
+      anulado: String(row.sc_anulado ?? "N") === "S",
+      vendedorId: vendedorIdRaw,
+      vendedor: vendedorIdRaw ? (row.vendedor_nombre as string ?? null) : null,
+      amount: Number(row.total_valor ?? 0),
     });
   }
 
@@ -132,17 +205,90 @@ export async function fetchSalesSellerEnrichment(
 
   return {
     sourceDown: false,
-    rawRows: rows,
     distinctDocuments,
     buildDocumentSellerMap(): Map<string, DocumentSellerInfo> {
-      // Key by NUMERO_DOCUMENTO for join with SaleRecord.comprobante
+      // Key by composite "fuenteCode-numero" — collision-safe
       const map = new Map<string, DocumentSellerInfo>();
       for (const doc of distinctDocuments) {
-        if (doc.numeroDocumento) {
-          map.set(doc.numeroDocumento, doc);
-        }
+        map.set(doc.compositeKey, doc);
       }
       return map;
     },
+  };
+}
+
+// ── Coverage reconciliation ─────────────────────────────────────────────────
+
+/**
+ * Compute sales coverage state by comparing SAG source documents
+ * against stored SaleRecord documents.
+ */
+export function computeSalesCoverage(
+  enrichment: SellerEnrichmentResult,
+  storedCompositeKeys: Set<string>,
+  hasSagIdentity: boolean,
+): SalesCoverage {
+  if (!hasSagIdentity) {
+    return {
+      state: "IDENTITY_MISSING",
+      sourceDocumentCount: 0, storedDocumentCount: storedCompositeKeys.size,
+      matchedDocumentCount: 0, sourceOnlyDocumentCount: 0, storageOnlyDocumentCount: 0,
+      sourceAsOf: null, pendingDocuments: [], reason: "Sin identidad SAG",
+    };
+  }
+
+  if (enrichment.sourceDown) {
+    return {
+      state: "SOURCE_DOWN",
+      sourceDocumentCount: 0, storedDocumentCount: storedCompositeKeys.size,
+      matchedDocumentCount: 0, sourceOnlyDocumentCount: 0, storageOnlyDocumentCount: 0,
+      sourceAsOf: null, pendingDocuments: [],
+      reason: "Consulta SAG de documentos fallida",
+    };
+  }
+
+  // Only count non-anulled sales documents for coverage
+  // (receivable-class fuentes like R1, AP are in the query but excluded from sales classification)
+  const salesFuentes = new Set(["FE", "F1", "F2", "F3", "FD", "FC", "FG", "FA", "FW",
+    "D2", "NC", "ND", "V1", "V2", "V3", "V4", "V5", "V6", "VC"]);
+  const sourceSalesDocs = enrichment.distinctDocuments.filter(
+    d => !d.anulado && salesFuentes.has(d.fuenteCode),
+  );
+  const sourceDocumentCount = sourceSalesDocs.length;
+  const storedDocumentCount = storedCompositeKeys.size;
+
+  let matched = 0;
+  const pending: DocumentSellerInfo[] = [];
+  for (const doc of sourceSalesDocs) {
+    if (storedCompositeKeys.has(doc.compositeKey)) {
+      matched++;
+    } else {
+      pending.push(doc);
+    }
+  }
+  const storageOnly = [...storedCompositeKeys].filter(
+    k => !sourceSalesDocs.some(d => d.compositeKey === k),
+  ).length;
+
+  const sourceOnlyCount = pending.length;
+  let state: SalesCoverageState;
+  if (sourceOnlyCount === 0) {
+    state = "COMPLETE";
+  } else {
+    state = "STORAGE_LAG";
+  }
+
+  return {
+    state,
+    sourceDocumentCount,
+    storedDocumentCount,
+    matchedDocumentCount: matched,
+    sourceOnlyDocumentCount: sourceOnlyCount,
+    storageOnlyDocumentCount: storageOnly,
+    sourceAsOf: new Date().toISOString(),
+    pendingDocuments: pending,
+    reason: state === "COMPLETE"
+      ? `${sourceDocumentCount} documentos SAG, todos sincronizados`
+      : `${sourceOnlyCount} documento(s) SAG pendiente(s) de sincronización`,
   };
 }

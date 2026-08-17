@@ -388,6 +388,20 @@ export function Cliente360Client({ orgSlug, data }: Props) {
       {/* ── Phase 7: Ventas (F1/F2 separated) ────────────────────────────── */}
       <div style={{ marginTop: S[6] }}>
         <WorkspaceSection title="Ventas" subtitle={sh.truthState === "CERTIFIED" ? `${sh.officialInvoices.length + sh.remissions.length} documentos` : undefined}>
+          {/* STORAGE_LAG banner — source documents not yet synced */}
+          {data.salesCoverage.state === "STORAGE_LAG" && (
+            <div style={{
+              padding: `${S[2]}px ${S[3]}px`, borderRadius: R.sm, marginBottom: S[3],
+              background: `${C.amber}11`, border: `1px solid ${C.amber}33`,
+              display: "flex", alignItems: "center", gap: S[2],
+            }}>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.amber }}>SINCRONIZACION PENDIENTE</span>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
+                {data.salesCoverage.sourceOnlyDocumentCount} documento(s) SAG pendiente(s) de sincronizacion.
+                {data.salesCoverage.pendingDocuments.length > 0 && ` Incluidos en runtime: ${data.salesCoverage.pendingDocuments.map(d => d.compositeKey).join(", ")}.`}
+              </span>
+            </div>
+          )}
           {sh.truthState === "IDENTITY_MISSING" ? (
             <EmptyOperationalState message="Cliente no vinculado con SAG" detail={sh.reason} />
           ) : sh.truthState === "SOURCE_DOWN" ? (

@@ -737,6 +737,20 @@ function TabPedidos({ crmQuotes, sagOrders }: {
 function TabVentas({ data }: { data: Cliente360Data }) {
   const { salesHistory: sh, salesProfileLabels: labels } = data;
 
+  // STORAGE_LAG banner — source documents not yet synced
+  const storageLagBanner = data.salesCoverage.state === "STORAGE_LAG" ? (
+    <div style={{
+      padding: `${S[2]}px ${S[3]}px`, borderRadius: R.sm, marginBottom: S[3],
+      background: `${C.amber}11`, border: `1px solid ${C.amber}33`,
+      display: "flex", alignItems: "center", gap: S[2],
+    }}>
+      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.amber }}>SINCRONIZACION PENDIENTE</span>
+      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
+        {data.salesCoverage.sourceOnlyDocumentCount} documento(s) SAG pendiente(s).
+      </span>
+    </div>
+  ) : null;
+
   if (sh.truthState === "IDENTITY_MISSING") {
     return <EmptyOperationalState message="Cliente no vinculado con SAG" detail={sh.reason} />;
   }
@@ -757,6 +771,7 @@ function TabVentas({ data }: { data: Cliente360Data }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column" as const, gap: S[4] }}>
+      {storageLagBanner}
       {/* Summary strip */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: S[2] }}>
         <MiniStat label="Ventas netas" value={fmtCurrency(sh.officialNet + sh.remissionNet)} />

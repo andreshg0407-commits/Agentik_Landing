@@ -28,7 +28,7 @@ import { resolveCity, resolveCrmCity } from "./city-resolver";
 import { getCustomerPrimarySeller } from "@/lib/comercial/foundation/client-seller-linker";
 import { fetchCustomerArWithStatus } from "@/lib/comercial/frontline/canonical-ar-service";
 import { fetchCertifiedCustomerRecaudos } from "@/lib/comercial/frontline/canonical-recaudos-service";
-import { fetchSalesSellerEnrichment, type SagVentasSellerRow } from "./sales-seller-enrichment";
+import { fetchSalesSellerEnrichment, computeSalesCoverage, type SalesCoverage } from "./sales-seller-enrichment";
 import type { CertifiedReceivableDocument } from "@/lib/comercial/frontline/canonical-ar-types";
 import type { ReceivableTruthStatus } from "@/lib/comercial/frontline/receivable-truth-contract";
 import {
@@ -188,6 +188,8 @@ export interface Cliente360Data {
   salesProfileLabels: SalesProfileLabels;
   /** Classified collections from vw_agentik_recaudos — F1/F2 separated */
   collectionsResult: CustomerCollectionsResult;
+  /** Sales coverage reconciliation — COMPLETE, STORAGE_LAG, SOURCE_DOWN, etc. */
+  salesCoverage: SalesCoverage;
   loadedAt: string;
 }
 
@@ -567,9 +569,21 @@ export async function loadCliente360(
   );
 
   // Build classified sale items for sales history F1/F2 separation
-  // SAG seller enrichment: build lookup map keyed by NUMERO_DOCUMENTO+TIPO
-  // so we can recover seller data lost by legacy MOVIMIENTOS import
+  // SAG seller enrichment: build lookup map keyed by composite "fuenteCode-numero"
+  // Collision-safe: FE-849 and D2-849 are different documents (03A8G3)
   const sagSellerMap = sellerEnrichment.buildDocumentSellerMap();
+
+  // Build stored composite keys for coverage reconciliation
+  const storedCompositeKeys = new Set<string>();
+  for (const s of salesRaw.rows) {
+    const code = (s.comprobanteCode as string) ?? "";
+    const num = (s.comprobante as string) ?? "";
+    if (code && num) storedCompositeKeys.add(`${code}-${num}`);
+  }
+
+  // Compute sales coverage (SAG source vs stored SaleRecords)
+  const hasSagIdentity = p.sagTerceroId != null && p.sagTerceroId > 0;
+  const salesCoverage = computeSalesCoverage(sellerEnrichment, storedCompositeKeys, hasSagIdentity);
 
   const classifiedSales: ClassifiedSaleItem[] = salesRaw.rows.map((s: any) => {
     const code = (s.comprobanteCode as string) ?? "";
@@ -581,8 +595,9 @@ export async function loadCliente360(
     });
 
     // Seller resolution: SAG enrichment > persisted data > fallback
-    // Step 1: Try SAG runtime enrichment (recovers seller lost by legacy import)
-    const sagSeller = sagSellerMap.get(num);
+    // Step 1: Try SAG runtime enrichment using composite key (collision-safe)
+    const compositeKey = code ? `${code}-${num}` : num;
+    const sagSeller = sagSellerMap.get(compositeKey);
     // Step 2: Check persisted data quality
     const rawSellerName = (s.sellerName as string) ?? "";
     const rawSellerCode = (s.sellerCode as string) ?? null;
@@ -647,6 +662,30 @@ export async function loadCliente360(
       sourceProfileId,
     };
   });
+
+  // Inject source-only documents from SAG into classified sales (runtime recovery)
+  // These are documents SAG knows about but SaleRecord hasn't synced yet (STORAGE_LAG)
+  for (const pending of salesCoverage.pendingDocuments) {
+    const docRef = `${pending.fuenteCode}-${pending.numeroDocumento}`;
+    const kind = resolveCanonicalDocumentKind(sourceProfileId, {
+      documento: docRef,
+      tipoDocumento: "",
+    });
+    classifiedSales.push({
+      id: `sag-pending-${pending.idDocumento}`,
+      canonicalKind: kind.kind,
+      rawSourceCode: pending.fuenteCode,
+      rawDocumentNumber: docRef,
+      issueDate: pending.fechaDocumento || null,
+      seller: null,
+      sellerId: pending.vendedorId,
+      sellerName: pending.vendedor,
+      sellerTruthState: pending.vendedor ? "CERTIFIED" : pending.vendedorId ? "IDENTITY_ONLY" : "NOT_REPORTED_BY_SOURCE",
+      grossAmount: pending.amount,
+      productLine: null,
+      sourceProfileId,
+    });
+  }
 
   const hasProfile = sourceProfileId.length > 0;
   // Cartera document codes for cross-source mismatch detection
@@ -726,6 +765,7 @@ export async function loadCliente360(
     salesHistory,
     salesProfileLabels,
     collectionsResult,
+    salesCoverage,
     loadedAt: new Date().toISOString(),
   };
 
