@@ -52,9 +52,9 @@ describe("resolveRowCartera — CERTIFIED context", () => {
   const arCtx: ArContextCore = {
     dataState: "CERTIFIED",
     arLookup: new Map([
-      [526, { clienteId: 526, totalPendiente: 912400, totalVencido: 912400 }],
-      [700, { clienteId: 700, totalPendiente: 0, totalVencido: 0 }],
-      [800, { clienteId: 800, totalPendiente: -150000, totalVencido: 0 }],
+      [526, { clienteId: 526, totalPendiente: 912400, totalVencido: 912400, creditBalance: 0, netReceivable: 912400 }],
+      [700, { clienteId: 700, totalPendiente: 0, totalVencido: 0, creditBalance: 0, netReceivable: 0 }],
+      [800, { clienteId: 800, totalPendiente: 0, totalVencido: 0, creditBalance: 150000, netReceivable: -150000 }],
     ]),
   };
 
@@ -79,7 +79,7 @@ describe("resolveRowCartera — CERTIFIED context", () => {
     expect(result.overdueReceivable).toBe(0);
   });
 
-  test("(800) — totalPendiente<0 → CERTIFIED_CREDIT_BALANCE", () => {
+  test("(800) — netReceivable<0 → CERTIFIED_CREDIT_BALANCE", () => {
     const result = resolveRowCartera(arCtx, 800);
     expect(result.carteraState).toBe("CERTIFIED_CREDIT_BALANCE");
     expect(result.totalReceivable).toBe(-150000);
@@ -500,7 +500,7 @@ describe("resolveConCarteraFilter — SAG unavailable", () => {
 describe("loadClientesSummaryCoreLogic — distinct KPI counting", () => {
   const arCtx: ArContextFull = {
     dataState: "CERTIFIED", snapshot: null,
-    arLookup: new Map([[100, { clienteId: 100, totalPendiente: 500_000, totalVencido: 0 }]]),
+    arLookup: new Map([[100, { clienteId: 100, totalPendiente: 500_000, totalVencido: 0, creditBalance: 0, netReceivable: 500_000 }]]),
     arCustomerIds: new Set([100]),
     overdueCustomerIds: new Set(),
     asOf: new Date().toISOString(), reason: "SAG_CERTIFIED",
@@ -534,18 +534,18 @@ describe("loadArContextCore — 5-customer positive-balance scenario", () => {
   // B: totalPendiente=105_000 (open AR, no overdue)
   // C: totalPendiente=0 (zero balance)
   // D: totalPendiente=0 (zero balance)
-  // E: totalPendiente=-250_000 (credit/saldo a favor)
+  // E: netReceivable=-250_000 (credit/saldo a favor)
   const deps: LoadArContextDeps = {
     isCertified: () => true,
     fetchSnapshot: async () => ({
       ok: true as const,
       snapshot: {
         customers: [
-          { clienteId: 10, totalPendiente: 1_000_000, totalVencido: 300_000 },
-          { clienteId: 20, totalPendiente: 105_000, totalVencido: 0 },
-          { clienteId: 30, totalPendiente: 0, totalVencido: 0 },
-          { clienteId: 40, totalPendiente: 0, totalVencido: 0 },
-          { clienteId: 50, totalPendiente: -250_000, totalVencido: 0 },
+          { clienteId: 10, totalPendiente: 1_000_000, totalVencido: 300_000, creditBalance: 0, netReceivable: 1_000_000 },
+          { clienteId: 20, totalPendiente: 105_000, totalVencido: 0, creditBalance: 0, netReceivable: 105_000 },
+          { clienteId: 30, totalPendiente: 0, totalVencido: 0, creditBalance: 0, netReceivable: 0 },
+          { clienteId: 40, totalPendiente: 0, totalVencido: 0, creditBalance: 0, netReceivable: 0 },
+          { clienteId: 50, totalPendiente: 0, totalVencido: 0, creditBalance: 250_000, netReceivable: -250_000 },
         ],
         asOf: new Date("2026-08-16T12:00:00Z"),
       },
@@ -567,7 +567,7 @@ describe("loadArContextCore — 5-customer positive-balance scenario", () => {
     expect(ctx.arCustomerIds.has(50)).toBe(false);
   });
 
-  test("overdueCustomerIds only includes A (totalVencido>0 AND totalPendiente>0)", async () => {
+  test("overdueCustomerIds only includes A (totalVencido>0 AND netReceivable>0)", async () => {
     const ctx = await loadArContextCore("org-1", deps);
     expect(ctx.overdueCustomerIds.size).toBe(1);
     expect(ctx.overdueCustomerIds.has(10)).toBe(true);
@@ -969,11 +969,11 @@ describe("03A6: con_cartera filter invariants (behavioral)", () => {
   // Simulate the full pipeline with the 5-customer scenario
   const snapshot = {
     customers: [
-      { clienteId: 10, totalPendiente: 1_000_000, totalVencido: 300_000 },
-      { clienteId: 20, totalPendiente: 105_000, totalVencido: 0 },
-      { clienteId: 30, totalPendiente: 0, totalVencido: 0 },
-      { clienteId: 40, totalPendiente: 0, totalVencido: 0 },
-      { clienteId: 50, totalPendiente: -250_000, totalVencido: 0 },
+      { clienteId: 10, totalPendiente: 1_000_000, totalVencido: 300_000, creditBalance: 0, netReceivable: 1_000_000 },
+      { clienteId: 20, totalPendiente: 105_000, totalVencido: 0, creditBalance: 0, netReceivable: 105_000 },
+      { clienteId: 30, totalPendiente: 0, totalVencido: 0, creditBalance: 0, netReceivable: 0 },
+      { clienteId: 40, totalPendiente: 0, totalVencido: 0, creditBalance: 0, netReceivable: 0 },
+      { clienteId: 50, totalPendiente: 0, totalVencido: 0, creditBalance: 250_000, netReceivable: -250_000 },
     ],
     asOf: new Date("2026-08-16T12:00:00Z"),
   };
@@ -1063,9 +1063,9 @@ describe("03A6: NIT 24296154 equivalent — customer in snapshot with totalPendi
         snapshot: {
           customers: [
             // Simulates Alba Maria Marin: present in snapshot but zero balance
-            { clienteId: 24296154, totalPendiente: 0, totalVencido: 0 },
+            { clienteId: 24296154, totalPendiente: 0, totalVencido: 0, creditBalance: 0, netReceivable: 0 },
             // A real open-AR customer for contrast
-            { clienteId: 999, totalPendiente: 500_000, totalVencido: 100_000 },
+            { clienteId: 999, totalPendiente: 500_000, totalVencido: 100_000, creditBalance: 0, netReceivable: 500_000 },
           ],
           asOf: new Date("2026-08-16T12:00:00Z"),
         },
@@ -1089,5 +1089,229 @@ describe("03A6: NIT 24296154 equivalent — customer in snapshot with totalPendi
     // KPI
     expect(ctx.arCustomerIds.has(24296154)).toBe(false);
     expect(ctx.arCustomerIds.size).toBe(1);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// F. SIGNED BALANCE AND DOCUMENT SEMANTICS — 03A7
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("03A7: groupByCustomer signed balance — only positive saldos", () => {
+  test("solo positivos: netReceivable = grossReceivable", async () => {
+    const ctx = await loadArContextCore("org-1", {
+      isCertified: () => true,
+      fetchSnapshot: async () => ({
+        ok: true as const,
+        snapshot: {
+          customers: [
+            { clienteId: 1, totalPendiente: 1_000_000, totalVencido: 300_000, creditBalance: 0, netReceivable: 1_000_000 },
+          ],
+          asOf: new Date("2026-08-16T12:00:00Z"),
+        },
+      }),
+    });
+    const snap = ctx.arLookup.get(1)!;
+    expect(snap.netReceivable).toBe(1_000_000);
+    expect(snap.creditBalance).toBe(0);
+    expect(snap.totalPendiente).toBe(1_000_000);
+    const row = resolveRowCartera(ctx, 1);
+    expect(row.carteraState).toBe("HAS_OPEN_AR");
+    expect(row.totalReceivable).toBe(1_000_000);
+  });
+});
+
+describe("03A7: groupByCustomer signed balance — positivos + creditos", () => {
+  test("positivos + creditos: netReceivable = gross - credit", async () => {
+    const ctx = await loadArContextCore("org-1", {
+      isCertified: () => true,
+      fetchSnapshot: async () => ({
+        ok: true as const,
+        snapshot: {
+          customers: [
+            { clienteId: 1, totalPendiente: 1_500_000, totalVencido: 0, creditBalance: 80_900, netReceivable: 1_419_100 },
+          ],
+          asOf: new Date("2026-08-16T12:00:00Z"),
+        },
+      }),
+    });
+    const snap = ctx.arLookup.get(1)!;
+    expect(snap.netReceivable).toBe(1_419_100);
+    expect(snap.creditBalance).toBe(80_900);
+    const row = resolveRowCartera(ctx, 1);
+    expect(row.carteraState).toBe("HAS_OPEN_AR");
+    expect(row.totalReceivable).toBe(1_419_100);
+  });
+});
+
+describe("03A7: groupByCustomer signed balance — solo creditos", () => {
+  test("solo creditos: CERTIFIED_CREDIT_BALANCE", async () => {
+    const ctx = await loadArContextCore("org-1", {
+      isCertified: () => true,
+      fetchSnapshot: async () => ({
+        ok: true as const,
+        snapshot: {
+          customers: [
+            { clienteId: 1, totalPendiente: 0, totalVencido: 0, creditBalance: 250_000, netReceivable: -250_000 },
+          ],
+          asOf: new Date("2026-08-16T12:00:00Z"),
+        },
+      }),
+    });
+    const row = resolveRowCartera(ctx, 1);
+    expect(row.carteraState).toBe("CERTIFIED_CREDIT_BALANCE");
+    expect(row.totalReceivable).toBe(-250_000);
+    expect(ctx.arCustomerIds.has(1)).toBe(false);
+  });
+});
+
+describe("03A7: groupByCustomer signed balance — neto cero", () => {
+  test("neto cero: gross=500K credit=500K → CERTIFIED_ZERO", async () => {
+    const ctx = await loadArContextCore("org-1", {
+      isCertified: () => true,
+      fetchSnapshot: async () => ({
+        ok: true as const,
+        snapshot: {
+          customers: [
+            { clienteId: 1, totalPendiente: 500_000, totalVencido: 0, creditBalance: 500_000, netReceivable: 0 },
+          ],
+          asOf: new Date("2026-08-16T12:00:00Z"),
+        },
+      }),
+    });
+    const row = resolveRowCartera(ctx, 1);
+    expect(row.carteraState).toBe("CERTIFIED_ZERO");
+    expect(row.totalReceivable).toBe(0);
+    expect(ctx.arCustomerIds.has(1)).toBe(false);
+  });
+});
+
+describe("03A7: mapCertifiedDocToReceivable — negative saldo is CREDIT, not CLOSED", () => {
+  test("negative saldoPendiente → status=CREDIT", () => {
+    const r = mapCertifiedDocToReceivable({
+      documento: "D2-849", valorDocumento: -80_900, saldoPendiente: -80_900,
+      diasMora: null, fechaDocumento: new Date("2026-07-15"), fechaVencimiento: null,
+    });
+    expect(r.status).toBe("CREDIT");
+    expect(r.status).not.toBe("CLOSED");
+    expect(r.balanceDue).toBe(-80_900);
+  });
+
+  test("zero saldoPendiente → status=CLOSED (not CREDIT)", () => {
+    const r = mapCertifiedDocToReceivable({
+      documento: "FE-100", valorDocumento: 500_000, saldoPendiente: 0,
+      diasMora: 0, fechaDocumento: new Date("2026-06-01"), fechaVencimiento: new Date("2026-07-01"),
+    });
+    expect(r.status).toBe("CLOSED");
+  });
+
+  test("positive saldoPendiente with mora → status=OVERDUE", () => {
+    const r = mapCertifiedDocToReceivable({
+      documento: "F2-8653", valorDocumento: 1_500_000, saldoPendiente: 1_500_000,
+      diasMora: 45, fechaDocumento: new Date("2026-06-01"), fechaVencimiento: new Date("2026-07-01"),
+    });
+    expect(r.status).toBe("OVERDUE");
+  });
+
+  test("positive saldoPendiente without mora → status=OPEN", () => {
+    const r = mapCertifiedDocToReceivable({
+      documento: "FE-200", valorDocumento: 300_000, saldoPendiente: 300_000,
+      diasMora: 0, fechaDocumento: new Date("2026-08-01"), fechaVencimiento: new Date("2026-09-01"),
+    });
+    expect(r.status).toBe("OPEN");
+  });
+});
+
+describe("03A7: carteraTrafficLight — negative totalBalance is 'Saldo a favor'", () => {
+  test("totalBalance < 0 → 'Saldo a favor'", () => {
+    const result = carteraTrafficLight({
+      truthStatus: "CERTIFIED",
+      totalBalance: -80_900,
+      items: [{ daysOverdue: null, balanceDue: -80_900 }],
+    });
+    expect(result.label).toBe("Saldo a favor");
+  });
+
+  test("totalBalance < 0 → NOT 'Sin cartera'", () => {
+    const result = carteraTrafficLight({
+      truthStatus: "CERTIFIED",
+      totalBalance: -250_000,
+      items: [],
+    });
+    expect(result.label).not.toBe("Sin cartera");
+    expect(result.label).not.toBe("Critica");
+  });
+});
+
+describe("03A7: UI structural — document semantics", () => {
+  const clientesSrc = readFile("app/(app)/[orgSlug]/comercial/clientes/clientes-client.tsx");
+  const detailSrc = readFile("app/(app)/[orgSlug]/comercial/clientes/[clienteId]/cliente-360-client.tsx");
+
+  test("drawer table header says 'Documento' not 'Factura'", () => {
+    expect(clientesSrc).toContain('"Documento", "Monto", "Pagado", "Saldo", "Mora", "Estado"');
+    expect(clientesSrc).not.toContain('"Factura", "Monto", "Pagado", "Saldo", "Mora", "Estado"');
+  });
+
+  test("360 detail table header says 'Documento' not 'Factura'", () => {
+    expect(detailSrc).toContain('"Documento", "Monto", "Pagado", "Saldo", "Mora", "Estado"');
+    expect(detailSrc).not.toContain('"Factura", "Monto", "Pagado", "Saldo", "Mora", "Estado"');
+  });
+
+  test("CREDIT status maps to 'Saldo a favor' label", () => {
+    expect(clientesSrc).toContain('CREDIT: "Saldo a favor"');
+    expect(detailSrc).toContain('CREDIT: "Saldo a favor"');
+  });
+
+  test("receivableStatusVariant handles CREDIT status", () => {
+    expect(clientesSrc).toContain('case "CREDIT":');
+    expect(detailSrc).toContain('case "CREDIT":');
+  });
+
+  test("drawer shows 'Documentos con saldo' (not 'Facturas abiertas')", () => {
+    expect(clientesSrc).toContain("Documentos con saldo");
+    expect(detailSrc).toContain("Documentos con saldo");
+  });
+});
+
+describe("03A7: signed balance semantics — ArSnapshotCustomer contract", () => {
+  test("ArSnapshotCustomer requires creditBalance and netReceivable", () => {
+    const src = readFile("lib/comercial/clientes/clientes-pure.ts");
+    const typeBlock = src.slice(
+      src.indexOf("export interface ArSnapshotCustomer"),
+      src.indexOf("}", src.indexOf("export interface ArSnapshotCustomer")) + 1,
+    );
+    expect(typeBlock).toContain("creditBalance: number");
+    expect(typeBlock).toContain("netReceivable: number");
+  });
+
+  test("ArContextCore arLookup value includes creditBalance and netReceivable", () => {
+    const src = readFile("lib/comercial/clientes/clientes-pure.ts");
+    const typeBlock = src.slice(
+      src.indexOf("export interface ArContextCore"),
+      src.indexOf("}", src.indexOf("export interface ArContextCore")) + 1,
+    );
+    expect(typeBlock).toContain("creditBalance: number");
+    expect(typeBlock).toContain("netReceivable: number");
+  });
+
+  test("canonical-ar-types CertifiedCustomerReceivableSnapshot includes creditBalance and netReceivable", () => {
+    const src = readFile("lib/comercial/frontline/canonical-ar-types.ts");
+    const typeBlock = src.slice(
+      src.indexOf("export interface CertifiedCustomerReceivableSnapshot"),
+      src.indexOf("}", src.indexOf("export interface CertifiedCustomerReceivableSnapshot")) + 1,
+    );
+    expect(typeBlock).toContain("creditBalance:");
+    expect(typeBlock).toContain("netReceivable:");
+  });
+});
+
+describe("03A7: canonical-ar-service groupByCustomer computes creditBalance", () => {
+  const src = readFile("lib/comercial/frontline/canonical-ar-service.ts");
+
+  test("groupByCustomer handles negative saldoPendiente as creditBalance", () => {
+    const fnStart = src.indexOf("function groupByCustomer");
+    const fnBody = src.slice(fnStart, src.indexOf("\n}\n", fnStart + 10) + 3);
+    expect(fnBody).toContain("creditBalance");
+    expect(fnBody).toContain("netReceivable");
+    expect(fnBody).toContain("totalPendiente - creditBalance");
   });
 });

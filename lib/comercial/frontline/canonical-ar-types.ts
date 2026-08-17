@@ -88,13 +88,17 @@ export interface CertifiedCustomerReceivableSnapshot {
   nit:                    number | null;
   /** Customer name */
   clienteName:            string;
-  /** Total pending balance (sum of SALDO_PENDIENTE for positive balances) */
+  /** Gross receivable (sum of SALDO_PENDIENTE for positive balances only) */
   totalPendiente:         number;
-  /** Total overdue balance (SALDO_PENDIENTE where DIAS_MORA > 0) */
+  /** Total overdue balance (SALDO_PENDIENTE where DIAS_MORA > 0, positive only) */
   totalVencido:           number;
-  /** Total current balance (SALDO_PENDIENTE where DIAS_MORA <= 0) */
+  /** Total current balance (SALDO_PENDIENTE where DIAS_MORA <= 0, positive only) */
   totalVigente:           number;
-  /** Count of open receivable documents */
+  /** Absolute value of sum of negative SALDO_PENDIENTE documents (credits/saldo a favor) */
+  creditBalance:          number;
+  /** Signed net receivable (totalPendiente - creditBalance) */
+  netReceivable:          number;
+  /** Count of all documents with non-zero balance */
   documentCount:          number;
   /** Count of overdue documents */
   overdueDocumentCount:   number;

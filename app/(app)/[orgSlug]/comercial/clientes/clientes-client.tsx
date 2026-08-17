@@ -144,6 +144,7 @@ function receivableStatusVariant(status: string): StatusVariant {
     case "PARTIAL": return "pending";
     case "OVERDUE": return "critical";
     case "WRITTEN_OFF": case "CANCELLED": return "critical";
+    case "CREDIT": return "info";
     default: return "info";
   }
 }
@@ -156,6 +157,7 @@ const CARTERA_STATUS_LABELS: Record<string, string> = {
   OVERDUE: "Vencida",
   CANCELLED: "Anulada",
   WRITTEN_OFF: "Anulada",
+  CREDIT: "Saldo a favor",
 };
 
 function carteraStatusLabel(status: string): string {
@@ -813,17 +815,23 @@ function TabCartera({ receivables }: { receivables: Cliente360Data["receivables"
       </div>
 
       {/* Cartera summary strip */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: S[2] }}>
-        <MiniStat label="Total cartera" value={receivables.totalBalance !== null ? fmtCurrency(receivables.totalBalance) : "\u2014"} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: S[2] }}>
+        <MiniStat label="Cartera bruta" value={receivables.grossReceivable !== null ? fmtCurrency(receivables.grossReceivable) : "\u2014"} />
+        {(receivables.creditBalance ?? 0) > 0 && (
+          <MiniStat label="Creditos" value={receivables.creditBalance !== null ? `-${fmtCurrency(receivables.creditBalance)}` : "\u2014"} color={C.inkMid} />
+        )}
+        <MiniStat label="Cartera neta" value={receivables.totalBalance !== null ? fmtCurrency(receivables.totalBalance) : "\u2014"} />
         <MiniStat label="Vencida" value={receivables.totalOverdue !== null ? fmtCurrency(receivables.totalOverdue) : "\u2014"} color={(receivables.totalOverdue ?? 0) > 0 ? C.red : undefined} />
-        <MiniStat label="Facturas abiertas" value={receivables.openCount !== null ? String(receivables.openCount) : "\u2014"} />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: S[2], marginTop: S[1] }}>
+        <MiniStat label="Documentos con saldo" value={receivables.openCount !== null ? String(receivables.openCount) : "\u2014"} />
       </div>
 
       {/* Receivables table — only shown when certified items exist */}
       {receivables.items.length > 0 && (
         <div className="ag-op-table" style={{ border: `1px solid ${C.line}`, borderRadius: R.sm, overflow: "hidden" }}>
           <div className="ag-op-row" style={{ display: "grid", gridTemplateColumns: RECEIVABLE_GRID, gap: S[2], padding: `${S[2]}px ${S[3]}px`, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}` }}>
-            {["Factura", "Monto", "Pagado", "Saldo", "Mora", "Estado"].map(h => (
+            {["Documento", "Monto", "Pagado", "Saldo", "Mora", "Estado"].map(h => (
               <span key={h} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkLight, textTransform: "uppercase" as const }}>{h}</span>
             ))}
           </div>
@@ -930,7 +938,7 @@ function TabInteligencia({ data }: { data: Cliente360Data }) {
         <SectionLabel label="Riesgo" />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[3] }}>
           <FieldRow label="Cartera vencida" value={receivables.truthStatus !== "CERTIFIED" ? "No verificada" : receivables.totalOverdue !== null && receivables.totalOverdue > 0 ? fmtCurrency(receivables.totalOverdue) : null} color={receivables.truthStatus !== "CERTIFIED" ? C.inkGhost : (receivables.totalOverdue ?? 0) > 0 ? C.red : undefined} />
-          <FieldRow label="Facturas abiertas" value={receivables.openCount !== null && receivables.openCount > 0 ? String(receivables.openCount) : null} />
+          <FieldRow label="Documentos con saldo" value={receivables.openCount !== null && receivables.openCount > 0 ? String(receivables.openCount) : null} />
         </div>
       </div>
 

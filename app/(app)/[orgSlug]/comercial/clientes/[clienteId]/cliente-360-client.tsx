@@ -98,6 +98,7 @@ function receivableStatusVariant(status: string): StatusVariant {
     case "PARTIAL": return "pending";
     case "OVERDUE": return "critical";
     case "WRITTEN_OFF": case "CANCELLED": return "critical";
+    case "CREDIT": return "info";
     default: return "info";
   }
 }
@@ -107,6 +108,7 @@ function carteraStatusLabel(status: string): string {
     OPEN: "Pendiente", CLOSED: "Pagada", PAID: "Pagada",
     PARTIAL: "Pago parcial", OVERDUE: "Vencida",
     CANCELLED: "Anulada", WRITTEN_OFF: "Anulada",
+    CREDIT: "Saldo a favor",
   };
   return map[status] ?? status;
 }
@@ -320,12 +322,12 @@ export function Cliente360Client({ orgSlug, data }: Props) {
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: S[3], marginBottom: S[4] }}>
                 <MiniStat label="Total cartera" value={receivables.totalBalance !== null ? fmtCurrency(receivables.totalBalance) : "\u2014"} />
                 <MiniStat label="Vencida" value={receivables.totalOverdue !== null ? fmtCurrency(receivables.totalOverdue) : "\u2014"} color={(receivables.totalOverdue ?? 0) > 0 ? C.red : undefined} />
-                <MiniStat label="Facturas abiertas" value={receivables.openCount !== null ? String(receivables.openCount) : "\u2014"} />
+                <MiniStat label="Documentos con saldo" value={receivables.openCount !== null ? String(receivables.openCount) : "\u2014"} />
               </div>
               {/* Receivables table */}
               <div className="ag-op-table" style={{ border: `1px solid ${C.line}`, borderRadius: R.sm, overflow: "hidden" }}>
                 <div className="ag-op-row" style={{ display: "grid", gridTemplateColumns: RECEIVABLE_GRID, gap: S[2], padding: `${S[2]}px ${S[4]}px`, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}` }}>
-                  {["Factura", "Monto", "Pagado", "Saldo", "Mora", "Estado"].map(h => (
+                  {["Documento", "Monto", "Pagado", "Saldo", "Mora", "Estado"].map(h => (
                     <span key={h} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkLight, textTransform: "uppercase" as const }}>{h}</span>
                   ))}
                 </div>

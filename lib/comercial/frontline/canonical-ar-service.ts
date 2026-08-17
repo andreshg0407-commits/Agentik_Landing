@@ -107,6 +107,7 @@ function groupByCustomer(
     let totalPendiente = 0;
     let totalVencido = 0;
     let totalVigente = 0;
+    let creditBalance = 0;
     let overdueDocumentCount = 0;
     let maxDiasMora = 0;
 
@@ -120,8 +121,12 @@ function groupByCustomer(
         } else {
           totalVigente += doc.saldoPendiente;
         }
+      } else if (doc.saldoPendiente < 0) {
+        creditBalance += Math.abs(doc.saldoPendiente);
       }
     }
+
+    const netReceivable = totalPendiente - creditBalance;
 
     snapshots.push({
       clienteId,
@@ -130,6 +135,8 @@ function groupByCustomer(
       totalPendiente,
       totalVencido,
       totalVigente,
+      creditBalance,
+      netReceivable,
       documentCount: customerDocs.length,
       overdueDocumentCount,
       maxDiasMora,

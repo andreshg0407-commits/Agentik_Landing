@@ -135,11 +135,15 @@ export interface Cliente360Data {
   receivables: {
     state: BlockState;
     items: Cliente360Receivable[];
-    /** Null when SAG unavailable — do NOT show Prisma saldo (paidAmount always 0) */
+    /** Net receivable (gross - credits). Null when SAG unavailable */
     totalBalance: number | null;
+    /** Gross receivable (positive saldos only). Null when SAG unavailable */
+    grossReceivable: number | null;
+    /** Credit balance (absolute value of negative saldos). Null when SAG unavailable */
+    creditBalance: number | null;
     /** Null when SAG unavailable — do NOT show Prisma saldo */
     totalOverdue: number | null;
-    /** Null when SAG unavailable */
+    /** Count of documents with non-zero balance. Null when SAG unavailable */
     openCount: number | null;
     truthStatus: ReceivableTruthStatus;
   };
@@ -359,6 +363,8 @@ export async function loadCliente360(
   // NO legacy CustomerReceivable is queried or used. All cartera data
   // comes exclusively from fetchCustomerArWithStatus → vw_agentik_cartera.
   let totalBalance: number | null;
+  let grossReceivable: number | null;
+  let creditBalance: number | null;
   let totalOverdue: number | null;
   let openCount: number | null;
   let receivableTruthStatus: ReceivableTruthStatus = "UNVERIFIED";
@@ -371,12 +377,16 @@ export async function loadCliente360(
 
     if (arResult.status === "CERTIFIED_ZERO") {
       totalBalance = 0;
+      grossReceivable = 0;
+      creditBalance = 0;
       totalOverdue = 0;
       openCount = 0;
       receivableTruthStatus = "CERTIFIED";
       // receivableItems stays [] — genuinely no open documents
     } else if (arResult.status === "HAS_OPEN_AR") {
-      totalBalance = arResult.snapshot.totalPendiente;
+      grossReceivable = arResult.snapshot.totalPendiente;
+      creditBalance = arResult.snapshot.creditBalance;
+      totalBalance = arResult.snapshot.netReceivable;
       totalOverdue = arResult.snapshot.totalVencido;
       openCount = arResult.snapshot.documentCount;
       receivableTruthStatus = "CERTIFIED";
@@ -385,6 +395,8 @@ export async function loadCliente360(
     } else {
       // SAG_UNAVAILABLE or IDENTITY_UNKNOWN — all values null/unknown
       totalBalance = null;
+      grossReceivable = null;
+      creditBalance = null;
       totalOverdue = null;
       openCount = null;
       // receivableItems stays [] — no data to show
@@ -393,6 +405,8 @@ export async function loadCliente360(
   } else {
     // No SAG identity — cannot certify. All values null/unknown.
     totalBalance = null;
+    grossReceivable = null;
+    creditBalance = null;
     totalOverdue = null;
     openCount = null;
     // receivableTruthStatus stays "UNVERIFIED"
@@ -440,6 +454,8 @@ export async function loadCliente360(
       state: receivableTruthStatus === "CERTIFIED" ? "disponible" : "no_disponible",
       items: receivableItems,
       totalBalance,
+      grossReceivable,
+      creditBalance,
       totalOverdue,
       openCount,
       truthStatus: receivableTruthStatus,

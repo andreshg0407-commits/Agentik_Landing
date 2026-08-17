@@ -16,7 +16,7 @@ export type ArDataState = "CERTIFIED" | "UNVERIFIED" | "UNAVAILABLE";
 /** Minimal AR context shape needed by pure functions */
 export interface ArContextCore {
   dataState: ArDataState;
-  arLookup: Map<number, { clienteId: number; totalPendiente: number; totalVencido: number }>;
+  arLookup: Map<number, { clienteId: number; totalPendiente: number; totalVencido: number; creditBalance: number; netReceivable: number }>;
 }
 
 // ── resolveRowCartera ────────────────────────────────────────────────────────
@@ -35,22 +35,22 @@ export function resolveRowCartera(
 
   const arSnap = arCtx.arLookup.get(sagTerceroId);
   if (arSnap) {
-    if (arSnap.totalPendiente > 0) {
+    if (arSnap.netReceivable > 0) {
       return {
-        totalReceivable: arSnap.totalPendiente,
+        totalReceivable: arSnap.netReceivable,
         overdueReceivable: arSnap.totalVencido,
         carteraState: "HAS_OPEN_AR",
       };
     }
-    if (arSnap.totalPendiente < 0) {
-      // Credit balance / saldo a favor — not open receivables
+    if (arSnap.netReceivable < 0) {
+      // Net credit balance — credits exceed gross receivables
       return {
-        totalReceivable: arSnap.totalPendiente,
+        totalReceivable: arSnap.netReceivable,
         overdueReceivable: 0,
         carteraState: "CERTIFIED_CREDIT_BALANCE",
       };
     }
-    // totalPendiente === 0 — present in snapshot but fully paid
+    // netReceivable === 0 — gross and credits cancel out, or no balance
     return { totalReceivable: 0, overdueReceivable: 0, carteraState: "CERTIFIED_ZERO" };
   }
 
@@ -106,7 +106,8 @@ export function mapCertifiedDocToReceivable(doc: CertifiedDocInput): ReceivableO
     dueDate: doc.fechaVencimiento?.toISOString() ?? null,
     daysOverdue: doc.diasMora,  // preserve null — do NOT coerce to 0
     agingBucket: classifyAgingBand(doc.diasMora),
-    status: doc.saldoPendiente <= 0 ? "CLOSED"
+    status: doc.saldoPendiente < 0 ? "CREDIT"
+      : doc.saldoPendiente === 0 ? "CLOSED"
       : (doc.diasMora !== null && doc.diasMora > 0) ? "OVERDUE"
       : "OPEN",
   };
@@ -220,6 +221,8 @@ export interface ArSnapshotCustomer {
   clienteId: number;
   totalPendiente: number;
   totalVencido: number;
+  creditBalance: number;
+  netReceivable: number;
 }
 
 /** Shape of the full AR snapshot */
@@ -303,8 +306,8 @@ export async function loadArContextCore(
 
   for (const c of arResult.snapshot.customers) {
     arLookup.set(c.clienteId, c);
-    // Only customers with positive pending balance count as "open AR"
-    if (c.totalPendiente > 0) {
+    // Only customers with positive net receivable count as "open AR"
+    if (c.netReceivable > 0) {
       arCustomerIds.add(c.clienteId);
       if (c.totalVencido > 0) {
         overdueCustomerIds.add(c.clienteId);
