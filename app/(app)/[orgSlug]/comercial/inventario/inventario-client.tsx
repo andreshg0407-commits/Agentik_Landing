@@ -188,24 +188,34 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
   const { panels, canonicalItems } = canonicalSnapshot;
 
   // ── Compute tab counts ─────────────────────────────────────────────────
+  // 04A5: Line tab badges show the canonical B01 universe per line.
+  // Computed from canonicalItems grouped by canonicalLine, NOT from panels.
+  // Panels route some refs to VAULT/AGOTADOS — those still belong to their line's universe.
   const tabCounts = useMemo(() => {
+    const lineCounts: Record<string, number> = {};
+    for (const ci of canonicalItems) {
+      if (ci.exclusionReason) continue; // skip EXTERNAL_EXCLUDED (Jupiter Pets)
+      lineCounts[ci.canonicalLine] = (lineCounts[ci.canonicalLine] ?? 0) + 1;
+    }
     const counts: Record<PanelDestination, number> = {
-      CASTILLITOS: panels.CASTILLITOS.length,
-      LATIN_KIDS: panels.LATIN_KIDS.length,
-      IMPORTACION: panels.IMPORTACION.length,
-      SIN_CLASIFICAR: panels.SIN_CLASIFICAR.length,
+      CASTILLITOS: lineCounts["CASTILLITOS"] ?? 0,
+      LATIN_KIDS: lineCounts["LATIN_KIDS"] ?? 0,
+      IMPORTACION: lineCounts["IMPORTACION"] ?? 0,
+      SIN_CLASIFICAR: lineCounts["SIN_CLASIFICAR"] ?? 0,
       AGOTADOS: panels.AGOTADOS.length,
       VAULT: panels.VAULT.length,
       EXTERNAL_EXCLUDED: panels.EXTERNAL_EXCLUDED.length,
     };
     return counts;
-  }, [panels]);
+  }, [canonicalItems, panels]);
 
   // ── Active panel items (filtered + searched) ───────────────────────────
+  // 04A5: Line tabs use ALL canonicalItems with matching canonicalLine.
+  // This includes refs that panel routing diverts to AGOTADOS/VAULT,
+  // so the tab universe matches the canonical B01 count per line.
 
   const panelItems = useMemo(() => {
     if (activeTab === "VAULT" || activeTab === "AGOTADOS") {
-      // These tabs use canonical items directly
       let result = panels[activeTab];
       if (search.trim()) {
         const q = search.trim().toLowerCase();
@@ -216,8 +226,10 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
       return result;
     }
 
-    // For line-based tabs, we filter the original items from the panel
-    let result = panels[activeTab];
+    // 04A5: Line tab items = all canonical B01 refs for this line
+    let result = canonicalItems.filter(
+      ci => ci.canonicalLine === activeTab && !ci.exclusionReason,
+    );
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       result = result.filter(
@@ -225,14 +237,14 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
       );
     }
     return result;
-  }, [panels, activeTab, search]);
+  }, [canonicalItems, panels, activeTab, search]);
 
   // ── Cross-panel search hint (CANONICAL-INVENTORY-REFERENCE-LOOKUP-01) ──
   // When search yields 0 results in current tab, check OTHER tabs for an exact
   // normalized reference match. Partial matches are excluded to avoid false hints.
+  const LINE_TABS = new Set<PanelDestination>(["CASTILLITOS", "LATIN_KIDS", "IMPORTACION", "SIN_CLASIFICAR"]);
   const crossPanelHint = useMemo(() => {
     if (!search.trim() || panelItems.length > 0) return null;
-    // Normalize: trim, uppercase, collapse whitespace — same as normalizeReferenceCode
     const q = search.trim().toUpperCase().replace(/\s+/g, " ");
     if (!q) return null;
     const TAB_ORDER: PanelDestination[] = [
@@ -240,14 +252,18 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
     ];
     for (const tab of TAB_ORDER) {
       if (tab === activeTab || tab === "EXTERNAL_EXCLUDED") continue;
-      const found = panels[tab].find(ci => {
+      // 04A5: Line tabs use canonicalItems by canonicalLine, not panels
+      const pool = LINE_TABS.has(tab)
+        ? canonicalItems.filter(ci => ci.canonicalLine === tab && !ci.exclusionReason)
+        : panels[tab];
+      const found = pool.find(ci => {
         const normRef = ci.reference.trim().toUpperCase().replace(/\s+/g, " ");
         return normRef === q;
       });
       if (found) return { tab, label: TAB_LABELS[tab], reference: found.reference };
     }
     return null;
-  }, [search, panelItems.length, activeTab, panels]);
+  }, [search, panelItems.length, activeTab, canonicalItems, panels]);
 
   // ── Map canonical items to original items for line-based tabs ──────────
   const originalItemsByRef = useMemo(() => {
@@ -272,16 +288,21 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
         });
         break;
       case "cobertura_suficiente":
-        // 04A3: threshold-based coverage (was "Disponibles")
+        // 04A5: Pure threshold — CS: disponible B01 > 100, LT: disponible B01 > 200.
+        // Refs with null threshold (pendiente_validar) are excluded.
         result = result.filter(ci => {
           const orig = originalItemsByRef.get(ci.reference);
-          return orig && (orig.operationalState === "disponible" || orig.operationalState === "alta_disponibilidad");
+          if (!orig || orig.threshold == null) return false;
+          return orig.disponibleReal > orig.threshold;
         });
         break;
       case "bajo":
+        // 04A5: Below threshold but above zero — needs attention.
+        // Refs with null threshold excluded (cannot evaluate coverage).
         result = result.filter(ci => {
           const orig = originalItemsByRef.get(ci.reference);
-          return orig && (orig.operationalState === "bajo" || orig.operationalState === "critico");
+          if (!orig || orig.threshold == null) return false;
+          return orig.disponibleReal > 0 && orig.disponibleReal <= orig.threshold;
         });
         break;
       case "sin_cobertura":

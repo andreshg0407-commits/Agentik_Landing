@@ -213,11 +213,13 @@ describe("H7: Filter semantics corrected", () => {
     expect(block).toContain("disponibleReal > 0");
   });
 
-  test("H7e: Cobertura suficiente uses operationalState", () => {
+  test("H7e: Cobertura suficiente uses pure threshold (04A5)", () => {
     const idx = clientSrc.indexOf('case "cobertura_suficiente"');
     expect(idx).toBeGreaterThan(-1);
-    const block = clientSrc.substring(idx, idx + 300);
-    expect(block).toContain("operationalState");
+    const block = clientSrc.substring(idx, idx + 400);
+    // 04A5: Pure threshold — disponibleReal > threshold, not operationalState
+    expect(block).toContain("orig.disponibleReal > orig.threshold");
+    expect(block).not.toContain("operationalState");
   });
 });
 
