@@ -116,12 +116,12 @@ describe("T02: Castillitos warehouse profiles", () => {
     }
   });
 
-  test("T02g: Active IMPORTACION is SUPPLY_CHAIN", () => {
+  test("T02g: Active IMPORTACION is COMMERCIAL (04A3 correction)", () => {
     const line = src.split("\n").find(l =>
       l.includes('"IMPORTACION"') && l.includes("bodegaId: 33")
     );
     expect(line).toBeTruthy();
-    expect(line).toContain("SUPPLY_CHAIN");
+    expect(line).toContain("COMMERCIAL");
   });
 });
 
@@ -270,11 +270,11 @@ describe("T06: Commercial/Supply chain boundary", () => {
     expect(profile!.role).toBe("WIP");
   });
 
-  test("T06c: Import staging (IMPORTACION) must be SUPPLY_CHAIN", async () => {
+  test("T06c: Import staging (IMPORTACION) must be COMMERCIAL (04A3 correction)", async () => {
     const mod = await import("@/lib/comercial/inventory/castillitos-warehouse-profiles");
     const profile = mod.getWarehouseProfile(33);
     expect(profile!.role).toBe("IMPORT_STAGING");
-    expect(profile!.commercialScope).toBe("SUPPLY_CHAIN");
+    expect(profile!.commercialScope).toBe("COMMERCIAL");
   });
 
   test("T06d: Store bodegas count as commercial", async () => {

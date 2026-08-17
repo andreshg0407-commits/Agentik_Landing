@@ -206,7 +206,7 @@ export interface VendorSampleRef {
   brand: string | null;             // "Castillitos" | "Latin Kids" resolved from productLine
   sizeClass: string | null;         // IMPORT only: "PEQUENO" | "MEDIANO" | "GRANDE"
   present: boolean;                  // F34 net balance > 0
-  centralAvailable: number;          // textil: B01+B04 (CCS), import: B24 (canonical)
+  centralAvailable: number;          // textil: B01 (CCS), import: B24 (canonical) — 04A3: B04 excluded
   minimumRequired: number;           // from business rules
   state: SampleState;                // "saludable" | "reemplazar" (central stock vs minimum)
   commercialHealth: SampleCommercialHealth; // MAIN warehouse health (independent of presence)

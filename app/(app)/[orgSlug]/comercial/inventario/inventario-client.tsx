@@ -6,7 +6,7 @@
  * COMERCIAL-INVENTARIO-CANONICAL-STATUS-INTEGRATION-01 — Client Component.
  *
  * The Inventory Control Center is the official owner of commercial inventory.
- * Textile: Bodega 01+04+14+15 (LT, CS, OT, PW, PD). Accessories: B26+B27 (productLine=5).
+ * 04A3: Textile commercial = B01 only. Import = B24. B04 = WIP (never commercial).
  *
  * Tab structure:
  *   CASTILLITOS | LATIN_KIDS | IMPORTACION | SIN_CLASIFICAR | AGOTADOS | VAULT
@@ -64,19 +64,23 @@ const PAGE_SIZE = 20;
 
 type FilterKey =
   | "todos"
-  | "disponible"
+  | "con_disponibilidad"
+  | "cobertura_suficiente"
   | "bajo"
   | "sin_cobertura"
   | "subgrupos"
   | "accesorios_bajo";
 
+// 04A3: "Con disponibilidad" = disponibleReal > 0 (actual stock).
+// "Cobertura suficiente" = threshold-based operationalState (was "Disponibles").
 const FILTER_OPTIONS: { key: FilterKey; label: string }[] = [
-  { key: "todos",           label: "Todos" },
-  { key: "disponible",      label: "Disponibles" },
-  { key: "bajo",            label: "Bajo" },
-  { key: "sin_cobertura",   label: "Sin cobertura" },
-  { key: "subgrupos",       label: "Subgrupos" },
-  { key: "accesorios_bajo", label: "Acc. bajo" },
+  { key: "todos",                label: "Todos" },
+  { key: "con_disponibilidad",   label: "Con disponibilidad" },
+  { key: "cobertura_suficiente", label: "Cobertura suficiente" },
+  { key: "bajo",                 label: "Bajo" },
+  { key: "sin_cobertura",        label: "Sin cobertura" },
+  { key: "subgrupos",            label: "Subgrupos" },
+  { key: "accesorios_bajo",      label: "Acc. bajo" },
 ];
 
 const STATE_COLORS: Record<InventoryOperationalState, string> = {
@@ -260,7 +264,15 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
 
     let result = panelItems;
     switch (filter) {
-      case "disponible":
+      case "con_disponibilidad":
+        // 04A3: actual disponible > 0 (real stock, not threshold-based)
+        result = result.filter(ci => {
+          const orig = originalItemsByRef.get(ci.reference);
+          return orig && orig.disponibleReal > 0;
+        });
+        break;
+      case "cobertura_suficiente":
+        // 04A3: threshold-based coverage (was "Disponibles")
         result = result.filter(ci => {
           const orig = originalItemsByRef.get(ci.reference);
           return orig && (orig.operationalState === "disponible" || orig.operationalState === "alta_disponibilidad");

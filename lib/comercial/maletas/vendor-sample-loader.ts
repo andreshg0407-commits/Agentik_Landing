@@ -755,7 +755,7 @@ export async function loadVendorSampleData(
       disponible: cr.available,
     }));
 
-  // IMPORT-COVERAGE-B24-01: CCS only covers textile warehouses (B01+B04).
+  // IMPORT-COVERAGE-B24-01: CCS only covers textile warehouses (B01). 04A3: B04 excluded.
   // Import products live in B24. Load B24 inventory and append import refs
   // so the coverage engine can find import replacement candidates.
   const existingRefs = new Set(allCentralRefs.map((r) => r.reference));

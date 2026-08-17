@@ -33,8 +33,8 @@ export interface CanonicalRefAvailability {
   grupoSag: string | null;    // grupo name resolved via SAG live lookup
   subgrupoId: number | null;
   subgrupoSag: string | null; // resolved via SAG live lookup (NOT stale CCS value)
-  available: number;          // disponible (main warehouse B01+B04)
-  warehouseCode: string;      // "B01+B04" (main warehouse composite)
+  available: number;          // disponible (main warehouse B01 textile, B24 import)
+  warehouseCode: string;      // "B01" (textile) or "B24" (import) — 04A3: B04 excluded
   source: "CommercialCoverageSnapshot";
   sourceUpdatedAt: Date | null; // snapshotAt of the CCS row
   dataConfidence: DataConfidence;
@@ -198,7 +198,7 @@ export async function getCanonicalMainWarehouseAvailability(
       subgrupoId: r.subgrupoId,
       subgrupoSag: resolvedSubgrupoSag,
       available,
-      warehouseCode: "B01+B04",
+      warehouseCode: "B01", // 04A3: B04 (WIP) excluded from commercial availability
       source: "CommercialCoverageSnapshot",
       sourceUpdatedAt: r.snapshotAt ? new Date(r.snapshotAt) : null,
       dataConfidence,
