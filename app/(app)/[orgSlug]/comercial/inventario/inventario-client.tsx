@@ -1991,10 +1991,17 @@ function PagButton({ label, disabled, onClick }: { label: string; disabled: bool
 // ── Subgrupo Coverage Panel ─────────────────────────────────────────────────
 
 /**
- * SubgrupoCoveragePanel — Addendum F: accordion-based subgroup view.
+ * SubgrupoCoveragePanel — Hierarchical subgroup table (04A4).
  * REPLACES the main table when "Subgrupos" filter is active.
- * All accordions start collapsed. Click to expand references inline.
+ * All accordions start collapsed. Click row or chevron to expand references.
+ *
+ * Main headers:  SUBGRUPO | LINEA | REFERENCIAS | DISP. COMERCIAL | REFS. CON DISP. | ESTADO | ACCION
+ * Child headers: REFERENCIA | DESCRIPCION | DISP. COMERCIAL | RESERVADO | EN PRODUCCION | ESTADO
  */
+
+const SG_GRID = "28px 1fr 90px 80px 120px 100px 120px 40px";
+const SG_REF_GRID = "40px 110px 1fr 100px 90px 100px 110px";
+
 function SubgrupoCoveragePanel({
   coverage,
   items,
@@ -2029,6 +2036,9 @@ function SubgrupoCoveragePanel({
     });
   };
 
+  const expandAll = () => {
+    setExpanded(new Set(filteredCoverage.map(sg => sg.subgrupoSag)));
+  };
   const collapseAll = () => setExpanded(new Set());
 
   // Filter subgroups by search
@@ -2056,13 +2066,24 @@ function SubgrupoCoveragePanel({
     return map;
   }, [items, originalItemsByRef]);
 
+  const thStyle = {
+    fontFamily: T.mono,
+    fontSize: T.sz["2xs"],
+    fontWeight: T.wt.bold,
+    color: C.inkMid,
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.03em",
+    padding: `${S[2]}px 0`,
+    whiteSpace: "nowrap" as const,
+  };
+
   return (
-    <div style={{
+    <div className="ag-op-table" style={{
       border: `1px solid ${C.line}`,
       borderRadius: R.sm,
       overflow: "hidden",
     }}>
-      {/* Header */}
+      {/* Toolbar */}
       <div style={{
         padding: `${S[3]}px ${S[4]}px`,
         background: C.surfaceAlt ?? C.surface,
@@ -2077,7 +2098,7 @@ function SubgrupoCoveragePanel({
           fontWeight: T.wt.bold,
           color: C.ink,
         }}>
-          Cobertura por subgrupo
+          Inventario por subgrupo
         </span>
         <span style={{
           fontFamily: T.mono,
@@ -2104,6 +2125,24 @@ function SubgrupoCoveragePanel({
             outline: "none",
           }}
         />
+        {expanded.size < filteredCoverage.length && (
+          <button
+            onClick={expandAll}
+            className="ag-action-ghost"
+            style={{
+              fontFamily: T.mono,
+              fontSize: T.sz["2xs"],
+              padding: `3px ${S[2]}px`,
+              borderRadius: R.sm,
+              border: `1px solid ${C.line}`,
+              background: "transparent",
+              color: C.inkMid,
+              cursor: "pointer",
+            }}
+          >
+            Expandir todos
+          </button>
+        )}
         {expanded.size > 0 && (
           <button
             onClick={collapseAll}
@@ -2124,21 +2163,44 @@ function SubgrupoCoveragePanel({
         )}
       </div>
 
-      {/* Accordion rows */}
+      {/* ── Column headers ─────────────────────────────────────── */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: SG_GRID,
+        gap: S[2],
+        padding: `0 ${S[4]}px`,
+        borderBottom: `1px solid ${C.line}`,
+        background: C.surface,
+      }}>
+        <span />
+        <span style={{ ...thStyle, textAlign: "left" }}>Subgrupo</span>
+        <span style={{ ...thStyle, textAlign: "left" }}>Linea</span>
+        <span style={{ ...thStyle, textAlign: "right" }}>Refs.</span>
+        <span style={{ ...thStyle, textAlign: "right" }}>Disp. comercial</span>
+        <span style={{ ...thStyle, textAlign: "right" }}>Refs. con disp.</span>
+        <span style={{ ...thStyle, textAlign: "left" }}>Estado</span>
+        <span />
+      </div>
+
+      {/* ── Accordion rows ─────────────────────────────────────── */}
       {filteredCoverage.map((sg, idx) => {
         const sc = stateColor[sg.estado] ?? C.inkGhost;
         const isOpen = expanded.has(sg.subgrupoSag);
         const sgItems = itemsBySubgrupo.get(sg.subgrupoSag) ?? [];
 
         return (
-          <div key={sg.subgrupoSag}>
-            {/* Subgroup header row (clickable) */}
+          <div key={sg.subgrupoSag} role="row">
+            {/* Subgroup summary row */}
             <div
               className="ag-op-row"
+              role="button"
+              aria-expanded={isOpen}
+              tabIndex={0}
               onClick={() => toggle(sg.subgrupoSag)}
+              onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(sg.subgrupoSag); } }}
               style={{
                 display: "grid",
-                gridTemplateColumns: "24px 1fr 70px 70px 70px 70px 100px",
+                gridTemplateColumns: SG_GRID,
                 gap: S[2],
                 padding: `${S[2]}px ${S[4]}px`,
                 background: idx % 2 === 0 ? C.surface : "transparent",
@@ -2147,44 +2209,50 @@ function SubgrupoCoveragePanel({
                 cursor: "pointer",
               }}
             >
+              {/* Chevron */}
               <span style={{
                 fontFamily: T.mono,
                 fontSize: T.sz.xs,
                 color: C.inkLight,
                 textAlign: "center" as const,
+                transition: "transform 0.15s ease",
               }}>
                 {isOpen ? "\u25BC" : "\u25B6"}
               </span>
-              <div>
-                <span style={{
-                  fontFamily: T.mono,
-                  fontSize: T.sz.xs,
-                  fontWeight: T.wt.semibold,
-                  color: C.ink,
-                }}>
-                  {sg.subgrupoSag}
-                </span>
-                <span style={{
-                  fontFamily: T.mono,
-                  fontSize: T.sz["2xs"],
-                  color: C.inkGhost,
-                  marginLeft: S[2],
-                }}>
-                  {sg.subLinea}
-                </span>
-              </div>
-              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, textAlign: "center" as const }}>
+              {/* Subgrupo name */}
+              <span style={{
+                fontFamily: T.mono,
+                fontSize: T.sz.xs,
+                fontWeight: T.wt.semibold,
+                color: C.ink,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap" as const,
+              }}>
+                {sg.subgrupoSag}
+              </span>
+              {/* Linea */}
+              <span style={{
+                fontFamily: T.mono,
+                fontSize: T.sz["2xs"],
+                color: C.inkMid,
+                textAlign: "left" as const,
+              }}>
+                {sg.subLinea}
+              </span>
+              {/* Refs */}
+              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, textAlign: "right" as const }}>
                 {sg.referenciasActivas}
               </span>
-              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, textAlign: "center" as const }}>
+              {/* Disp. comercial */}
+              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: sg.unidadesDisponibles > 0 ? C.ink : C.inkGhost, textAlign: "right" as const }}>
                 {sg.unidadesDisponibles > 0 ? sg.unidadesDisponibles.toLocaleString("es-CO") : "\u2014"}
               </span>
-              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, textAlign: "center" as const }}>
+              {/* Refs. con disp. (tallasDisponibles = proxy for refs with disponibilidad > 0) */}
+              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, textAlign: "right" as const }}>
                 {sg.tallasDisponibles}
               </span>
-              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, textAlign: "center" as const }}>
-                {/* existencia placeholder — available via unidadesDisponibles already */}
-              </span>
+              {/* Estado badge */}
               <span className="ag-op-status" style={{
                 fontFamily: T.mono,
                 fontSize: T.sz["2xs"],
@@ -2200,57 +2268,106 @@ function SubgrupoCoveragePanel({
                 }} />
                 {stateLabel[sg.estado] ?? sg.estado}
               </span>
+              {/* Action hint */}
+              <span style={{
+                fontFamily: T.mono,
+                fontSize: T.sz["2xs"],
+                color: C.inkGhost,
+                textAlign: "center" as const,
+              }}>
+                {isOpen ? "\u2212" : "+"}
+              </span>
             </div>
 
-            {/* Expanded references (Addendum F4) */}
-            {isOpen && sgItems.length > 0 && (
+            {/* ── Expanded reference sub-table ──────────────────── */}
+            {isOpen && (
               <div style={{
                 background: `${C.blueDark}04`,
-                borderBottom: `1px solid ${C.line}22`,
+                borderBottom: `1px solid ${C.line}33`,
               }}>
-                {sgItems.map(ci => {
-                  const orig = originalItemsByRef?.get(ci.reference);
-                  if (!orig) return null;
-                  const disp = orig.disponibleReal;
-                  const sColor = STATE_COLORS[orig.operationalState] ?? C.inkGhost;
-                  return (
-                    <div
-                      key={ci.reference}
-                      className="ag-op-row"
-                      onClick={() => onRowClick?.(ci)}
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "24px 120px 1fr 80px 80px 100px",
-                        gap: S[2],
-                        padding: `${S[1]}px ${S[4]}px ${S[1]}px ${S[5]}px`,
-                        borderBottom: `1px solid ${C.line}11`,
-                        alignItems: "center",
-                        cursor: "pointer",
-                      }}
-                    >
-                      <span />
-                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.ink }}>
-                        {ci.reference}
-                      </span>
-                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
-                        {orig.description ?? "\u2014"}
-                      </span>
-                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: disp <= 0 ? C.red : C.ink, textAlign: "right" as const }}>
-                        {disp > 0 ? disp.toLocaleString("es-CO") : "\u2014"}
-                      </span>
-                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, textAlign: "right" as const }}>
-                        {orig.pedidosPendientes > 0 ? orig.pedidosPendientes.toLocaleString("es-CO") : "\u2014"}
-                      </span>
-                      <span style={{
-                        fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                        color: sColor, display: "flex", alignItems: "center", gap: 3,
-                      }}>
-                        <span style={{ width: 5, height: 5, borderRadius: "50%", background: sColor, display: "inline-block" }} />
-                        {STATE_LABELS[orig.operationalState] ?? "\u2014"}
-                      </span>
-                    </div>
-                  );
-                })}
+                {/* Reference column headers */}
+                <div style={{
+                  display: "grid",
+                  gridTemplateColumns: SG_REF_GRID,
+                  gap: S[2],
+                  padding: `${S[1]}px ${S[4]}px ${S[1]}px ${S[5]}px`,
+                  borderBottom: `1px solid ${C.line}22`,
+                }}>
+                  <span />
+                  <span style={{ ...thStyle, textAlign: "left", fontSize: T.sz["2xs"] }}>Referencia</span>
+                  <span style={{ ...thStyle, textAlign: "left", fontSize: T.sz["2xs"] }}>Descripcion</span>
+                  <span style={{ ...thStyle, textAlign: "right", fontSize: T.sz["2xs"] }}>Disp. comercial</span>
+                  <span style={{ ...thStyle, textAlign: "right", fontSize: T.sz["2xs"] }}>Reservado</span>
+                  <span style={{ ...thStyle, textAlign: "right", fontSize: T.sz["2xs"] }}>En produccion</span>
+                  <span style={{ ...thStyle, textAlign: "left", fontSize: T.sz["2xs"] }}>Estado</span>
+                </div>
+
+                {sgItems.length === 0 ? (
+                  <div style={{
+                    padding: `${S[3]}px ${S[5]}px`,
+                    fontFamily: T.mono,
+                    fontSize: T.sz["2xs"],
+                    color: C.inkGhost,
+                    fontStyle: "italic",
+                  }}>
+                    Sin referencias en este subgrupo para el panel actual
+                  </div>
+                ) : (
+                  sgItems.map(ci => {
+                    const orig = originalItemsByRef?.get(ci.reference);
+                    if (!orig) return null;
+                    const disp = orig.disponibleReal;
+                    const reserved = orig.reservedReal ?? orig.pedidosPendientes;
+                    const production = orig.productionInProcess;
+                    const sColor = STATE_COLORS[orig.operationalState] ?? C.inkGhost;
+                    return (
+                      <div
+                        key={ci.reference}
+                        className="ag-op-row"
+                        onClick={() => onRowClick?.(ci)}
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: SG_REF_GRID,
+                          gap: S[2],
+                          padding: `${S[1]}px ${S[4]}px ${S[1]}px ${S[5]}px`,
+                          borderBottom: `1px solid ${C.line}11`,
+                          alignItems: "center",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <span />
+                        {/* Referencia */}
+                        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.blueDark }}>
+                          {ci.reference}
+                        </span>
+                        {/* Descripcion */}
+                        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                          {orig.description ?? "\u2014"}
+                        </span>
+                        {/* Disp. comercial */}
+                        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: disp <= 0 ? C.red : C.ink, textAlign: "right" as const }}>
+                          {disp > 0 ? disp.toLocaleString("es-CO") : disp < 0 ? `(${Math.abs(disp).toLocaleString("es-CO")})` : "\u2014"}
+                        </span>
+                        {/* Reservado */}
+                        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, textAlign: "right" as const }}>
+                          {reserved > 0 ? reserved.toLocaleString("es-CO") : "\u2014"}
+                        </span>
+                        {/* En produccion */}
+                        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: production > 0 ? "#6366f1" : C.inkGhost, textAlign: "right" as const }}>
+                          {production > 0 ? production.toLocaleString("es-CO") : orig.hasActiveProduction ? "Con OP" : "\u2014"}
+                        </span>
+                        {/* Estado badge */}
+                        <span style={{
+                          fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                          color: sColor, display: "flex", alignItems: "center", gap: 3,
+                        }}>
+                          <span style={{ width: 5, height: 5, borderRadius: "50%", background: sColor, display: "inline-block", flexShrink: 0 }} />
+                          {STATE_LABELS[orig.operationalState] ?? "\u2014"}
+                        </span>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             )}
           </div>
