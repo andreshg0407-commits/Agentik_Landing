@@ -554,17 +554,50 @@ export type RecaudoLinkageState =
   | "APPLIED"
   | "PARTIALLY_LINKED"
   | "HISTORY_ONLY"
+  | "UNAPPLIED"
   | "UNVERIFIED";
 
-export interface CustomerCollectionItem {
+export type ReceiptNormalizationState =
+  | "CERTIFIED_SINGLE_ROW"
+  | "CERTIFIED_SPLIT_APPLICATIONS"
+  | "AMBIGUOUS"
+  | "INVALID";
+
+export type GlobalNormalizationState =
+  | "ALL_CERTIFIED"
+  | "PARTIAL_AMBIGUOUS"
+  | "UNRESOLVED";
+
+/** Per-application row — one row per DOCUMENTO_RELACIONADO */
+export interface CollectionApplicationItem {
   id: string;
+  receiptId: number;
   date: string | null;
-  receiptNumber: string;
   rawSourceCode: string;
   amount: number;
+  unappliedAmount: number;
   appliedToDocument: string | null;
   collectionTarget: CollectionTarget;
   linkageLabel: string;
+  /** Per-application linkage: APPLIED / PARTIALLY_LINKED / UNAPPLIED / HISTORY_ONLY */
+  applicationLinkage: "APPLIED" | "PARTIALLY_LINKED" | "UNAPPLIED" | "HISTORY_ONLY";
+}
+
+/** Normalized receipt — grouped from all application rows with the same ID_RECAUDO */
+export interface NormalizedCollectionReceipt {
+  receiptId: number;
+  date: string | null;
+  customerId: number;
+  grossAmount: number;
+  reversalAmount: number;
+  netAmount: number;
+  unappliedAmount: number;
+  appliedAmount: number;
+  relatedDocuments: string[];
+  normalizationState: ReceiptNormalizationState;
+  sourceRowCount: number;
+  collectionTarget: CollectionTarget;
+  linkageState: RecaudoLinkageState;
 }
 
 export interface CollectionBucket {
@@ -574,42 +607,146 @@ export interface CollectionBucket {
 
 export interface CustomerCollectionsResult {
   truthState: CollectionsTruthState;
+  normalizationState: GlobalNormalizationState | null;
   source: "vw_agentik_recaudos";
   asOf: string | null;
   windowLabel: string | null;
   linkageState: RecaudoLinkageState;
-  totalCollected: number | null;
+  grossCollected: number | null;
+  certifiedReversals: number | null;
+  netCollected: number | null;
+  appliedAmount: number | null;
+  unappliedAmount: number | null;
+  ambiguousAmount: number | null;
   receiptCount: number | null;
+  sourceRowCount: number;
   officialInvoiceCollections: CollectionBucket | null;
   remissionCollections: CollectionBucket | null;
   advances: CollectionBucket | null;
   unclassified: CollectionBucket | null;
   latestCollectionAt: string | null;
-  items: CustomerCollectionItem[];
+  items: CollectionApplicationItem[];
   totalItems: number;
+  receipts: NormalizedCollectionReceipt[];
   reason: string;
 }
 
+/** Input row shape from CertifiedCollectionApplication */
+export interface CollectionAppInput {
+  idRecaudo: number;
+  fechaRecaudo: Date;
+  clienteId: number;
+  documentoRelacionado: string;
+  valorRecaudado: number;
+  montoNoAplicado: number;
+  banco: string;
+}
+
 /**
- * Classify collection applications from vw_agentik_recaudos into the
- * CustomerCollectionsResult contract.
+ * Normalize collection applications by grouping on ID_RECAUDO.
  *
- * Each application from CertifiedCollectionApplication is mapped to:
- * - A CollectionTarget based on the receipt document prefix via the profile
- * - A linkage label based on DOCUMENTO_RELACIONADO presence
+ * vw_agentik_recaudos semantics (confirmed by profiling):
+ * - Each row = one application to a specific DOCUMENTO_RELACIONADO
+ * - Multiple rows per ID_RECAUDO = split applications (distinct documents)
+ * - Positive VALOR_RECAUDADO = payment application
+ * - Negative VALOR_RECAUDADO = reversal/return application
+ * - SUM of all rows for an ID_RECAUDO = net receipt total
+ * - MONTO_NO_APLICADO = unapplied remainder per application row
+ */
+export function normalizeCollectionReceipts(
+  applications: CollectionAppInput[],
+  sourceProfileId: string,
+): NormalizedCollectionReceipt[] {
+  // Group by ID_RECAUDO
+  const groups = new Map<number, CollectionAppInput[]>();
+  for (const a of applications) {
+    const g = groups.get(a.idRecaudo);
+    if (g) g.push(a); else groups.set(a.idRecaudo, [a]);
+  }
+
+  const receipts: NormalizedCollectionReceipt[] = [];
+
+  for (const [receiptId, rows] of groups) {
+    let grossAmount = 0;
+    let reversalAmount = 0;
+    let unappliedTotal = 0;
+    const docs: string[] = [];
+
+    for (const r of rows) {
+      if (r.valorRecaudado >= 0) {
+        grossAmount += r.valorRecaudado;
+      } else {
+        reversalAmount += Math.abs(r.valorRecaudado);
+      }
+      unappliedTotal += r.montoNoAplicado;
+      if (r.documentoRelacionado) {
+        docs.push(r.documentoRelacionado);
+      }
+    }
+
+    const netAmount = grossAmount - reversalAmount;
+    const appliedAmount = netAmount - unappliedTotal;
+
+    // Determine normalization state
+    let normState: ReceiptNormalizationState;
+    if (rows.length === 1) {
+      normState = "CERTIFIED_SINGLE_ROW";
+    } else if (new Set(rows.map(r => r.documentoRelacionado)).size === rows.length && rows.length > 0) {
+      // Each row targets a different document → confirmed split applications
+      normState = "CERTIFIED_SPLIT_APPLICATIONS";
+    } else {
+      // Duplicate documents within the same receipt → ambiguous
+      normState = "AMBIGUOUS";
+    }
+
+    // Resolve collection target from the first document prefix
+    const firstDoc = docs[0] ?? "";
+    const prefix = firstDoc.slice(0, 2).toUpperCase();
+    const target = resolveCollectionTarget(sourceProfileId, prefix) ?? "UNCLASSIFIED";
+
+    // Determine per-receipt linkage
+    let linkage: RecaudoLinkageState;
+    if (docs.length === 0) {
+      linkage = "UNAPPLIED";
+    } else if (unappliedTotal > 0) {
+      linkage = "PARTIALLY_LINKED";
+    } else if (docs.length > 0 && unappliedTotal === 0) {
+      linkage = "APPLIED";
+    } else {
+      linkage = "HISTORY_ONLY";
+    }
+
+    receipts.push({
+      receiptId,
+      date: rows[0].fechaRecaudo.toISOString(),
+      customerId: rows[0].clienteId,
+      grossAmount,
+      reversalAmount,
+      netAmount,
+      unappliedAmount: unappliedTotal,
+      appliedAmount: Math.max(0, appliedAmount),
+      relatedDocuments: docs,
+      normalizationState: normState,
+      sourceRowCount: rows.length,
+      collectionTarget: target,
+      linkageState: linkage,
+    });
+  }
+
+  return receipts;
+}
+
+/**
+ * Classify collection applications from vw_agentik_recaudos.
  *
- * Credit notes (SALES_CREDIT_NOTE by canonical kind) are EXCLUDED from
- * collections — they belong in the sales domain.
+ * Uses normalizeCollectionReceipts for receipt-level deduplication,
+ * then computes KPIs from normalized receipts (not raw rows).
+ *
+ * Credit notes (SALES_CREDIT_NOTE by canonical kind) are EXCLUDED.
+ * Negative values within non-NC receipts are tracked as certified reversals.
  */
 export function classifyCollections(
-  applications: Array<{
-    idRecaudo: number;
-    fechaRecaudo: Date;
-    documentoRelacionado: string;
-    valorRecaudado: number;
-    montoNoAplicado: number;
-    banco: string;
-  }>,
+  applications: CollectionAppInput[],
   querySucceeded: boolean,
   hasSagIdentity: boolean,
   sourceProfileId: string | null,
@@ -618,136 +755,148 @@ export function classifyCollections(
   const base = {
     source: "vw_agentik_recaudos" as const,
     asOf: queryAsOf?.toISOString() ?? null,
+    sourceRowCount: applications.length,
+  };
+
+  const emptyResult = {
+    windowLabel: null as string | null,
+    linkageState: "UNVERIFIED" as RecaudoLinkageState,
+    normalizationState: null as GlobalNormalizationState | null,
+    grossCollected: null as number | null,
+    certifiedReversals: null as number | null,
+    netCollected: null as number | null,
+    appliedAmount: null as number | null,
+    unappliedAmount: null as number | null,
+    ambiguousAmount: null as number | null,
+    receiptCount: null as number | null,
+    officialInvoiceCollections: null as CollectionBucket | null,
+    remissionCollections: null as CollectionBucket | null,
+    advances: null as CollectionBucket | null,
+    unclassified: null as CollectionBucket | null,
+    latestCollectionAt: null as string | null,
+    items: [] as CollectionApplicationItem[],
+    totalItems: 0,
+    receipts: [] as NormalizedCollectionReceipt[],
   };
 
   if (!hasSagIdentity) {
-    return {
-      ...base, truthState: "IDENTITY_MISSING",
-      windowLabel: null,
-      linkageState: "UNVERIFIED",
-      totalCollected: null, receiptCount: null,
-      officialInvoiceCollections: null, remissionCollections: null,
-      advances: null, unclassified: null,
-      latestCollectionAt: null, items: [], totalItems: 0,
-      reason: "Cliente sin identidad SAG — no se puede consultar recaudos",
-    };
+    return { ...base, ...emptyResult, truthState: "IDENTITY_MISSING",
+      reason: "Cliente sin identidad SAG — no se puede consultar recaudos" };
   }
-
   if (!querySucceeded) {
-    return {
-      ...base, truthState: "SOURCE_DOWN",
-      windowLabel: null,
-      linkageState: "UNVERIFIED",
-      totalCollected: null, receiptCount: null,
-      officialInvoiceCollections: null, remissionCollections: null,
-      advances: null, unclassified: null,
-      latestCollectionAt: null, items: [], totalItems: 0,
-      reason: "Consulta de recaudos fallida",
-    };
+    return { ...base, ...emptyResult, truthState: "SOURCE_DOWN",
+      reason: "Consulta de recaudos fallida" };
   }
-
   if (!sourceProfileId) {
-    return {
-      ...base, truthState: "PROFILE_UNRESOLVED",
-      windowLabel: null,
-      linkageState: "UNVERIFIED",
-      totalCollected: null, receiptCount: null,
-      officialInvoiceCollections: null, remissionCollections: null,
-      advances: null, unclassified: null,
-      latestCollectionAt: null, items: [], totalItems: 0,
-      reason: "Perfil documental no configurado para esta organización",
-    };
+    return { ...base, ...emptyResult, truthState: "PROFILE_UNRESOLVED",
+      reason: "Perfil documental no configurado para esta organización" };
   }
 
   // Filter out credit notes — they belong in sales, not collections
   const validApps = applications.filter(a => {
-    // If the document prefix resolves to SALES_CREDIT_NOTE, exclude it
     if (a.documentoRelacionado) {
       if (isDocumentCreditNote(sourceProfileId, a.documentoRelacionado)) return false;
     }
-    // Only include positive values (actual payments)
-    return a.valorRecaudado > 0;
+    return true; // Keep both positive AND negative (reversals)
   });
 
   if (validApps.length === 0) {
     return {
-      ...base, truthState: "EMPTY_CERTIFIED",
+      ...base, ...emptyResult, truthState: "EMPTY_CERTIFIED",
       windowLabel: "Sin recaudos registrados",
       linkageState: "HISTORY_ONLY",
-      totalCollected: 0, receiptCount: 0,
+      normalizationState: "ALL_CERTIFIED",
+      grossCollected: 0, certifiedReversals: 0, netCollected: 0,
+      appliedAmount: 0, unappliedAmount: 0, ambiguousAmount: 0,
+      receiptCount: 0,
       officialInvoiceCollections: { amount: 0, count: 0 },
       remissionCollections: { amount: 0, count: 0 },
       advances: { amount: 0, count: 0 },
       unclassified: { amount: 0, count: 0 },
-      latestCollectionAt: null, items: [], totalItems: 0,
       reason: "0 recaudos, 0 anticipos",
     };
   }
 
+  // Normalize receipts
+  const receipts = normalizeCollectionReceipts(validApps, sourceProfileId);
+
+  // Compute KPIs from normalized receipts (not raw rows)
+  let grossCollected = 0;
+  let certifiedReversals = 0;
+  let totalUnapplied = 0;
+  let ambiguousAmount = 0;
+  let latestDate: Date | null = null;
   const officialBucket: CollectionBucket = { amount: 0, count: 0 };
   const remissionBucket: CollectionBucket = { amount: 0, count: 0 };
   const advanceBucket: CollectionBucket = { amount: 0, count: 0 };
   const unclassifiedBucket: CollectionBucket = { amount: 0, count: 0 };
+  let ambiguousCount = 0;
 
-  let totalCollected = 0;
-  let latestDate: Date | null = null;
-  let linkedCount = 0;
-
-  const items: CustomerCollectionItem[] = validApps.map((a, i) => {
-    const docRef = a.documentoRelacionado || "";
-    const receiptPrefix = docRef.slice(0, 2).toUpperCase();
-
-    // Resolve collection target from profile
-    const target = resolveCollectionTarget(sourceProfileId, receiptPrefix) ?? "UNCLASSIFIED";
-
-    // Determine linkage
-    const hasDocLink = docRef.length > 0;
-    if (hasDocLink) linkedCount++;
-    const linkageLabel = hasDocLink
-      ? `Aplicado a ${docRef}`
-      : "Sin vínculo documental certificado";
-
-    totalCollected += a.valorRecaudado;
-
-    // Bucket assignment
-    switch (target) {
-      case "OFFICIAL_INVOICE":
-        officialBucket.amount += a.valorRecaudado;
-        officialBucket.count++;
-        break;
-      case "REMISSION":
-        remissionBucket.amount += a.valorRecaudado;
-        remissionBucket.count++;
-        break;
-      case "CUSTOMER_ADVANCE":
-        advanceBucket.amount += a.valorRecaudado;
-        advanceBucket.count++;
-        break;
-      default:
-        unclassifiedBucket.amount += a.valorRecaudado;
-        unclassifiedBucket.count++;
-        break;
+  for (const r of receipts) {
+    if (r.normalizationState === "AMBIGUOUS") {
+      ambiguousAmount += r.grossAmount;
+      ambiguousCount++;
+      continue; // Ambiguous receipts excluded from certified KPIs
     }
 
-    if (!latestDate || a.fechaRecaudo > latestDate) {
-      latestDate = a.fechaRecaudo;
+    grossCollected += r.grossAmount;
+    certifiedReversals += r.reversalAmount;
+    totalUnapplied += r.unappliedAmount;
+
+    // Bucket by collection target (net amount per receipt)
+    const net = r.netAmount;
+    switch (r.collectionTarget) {
+      case "OFFICIAL_INVOICE": officialBucket.amount += net; officialBucket.count++; break;
+      case "REMISSION": remissionBucket.amount += net; remissionBucket.count++; break;
+      case "CUSTOMER_ADVANCE": advanceBucket.amount += net; advanceBucket.count++; break;
+      default: unclassifiedBucket.amount += net; unclassifiedBucket.count++; break;
+    }
+
+    const receiptDate = new Date(r.date!);
+    if (!latestDate || receiptDate > latestDate) {
+      latestDate = receiptDate;
+    }
+  }
+
+  const netCollected = grossCollected - certifiedReversals;
+  const appliedAmount = netCollected - totalUnapplied;
+
+  // Build application-level items for the table (all validated apps)
+  let linkedCount = 0;
+  const items: CollectionApplicationItem[] = validApps.map((a, i) => {
+    const docRef = a.documentoRelacionado || "";
+    const prefix = docRef.slice(0, 2).toUpperCase();
+    const target = resolveCollectionTarget(sourceProfileId, prefix) ?? "UNCLASSIFIED";
+    const hasDocLink = docRef.length > 0;
+    if (hasDocLink) linkedCount++;
+
+    // Per-application linkage
+    let appLinkage: CollectionApplicationItem["applicationLinkage"];
+    if (!hasDocLink) {
+      appLinkage = a.valorRecaudado > 0 ? "UNAPPLIED" : "HISTORY_ONLY";
+    } else if (a.montoNoAplicado > 0) {
+      appLinkage = "PARTIALLY_LINKED";
+    } else {
+      appLinkage = "APPLIED";
     }
 
     return {
       id: `rec-${a.idRecaudo}-${i}`,
+      receiptId: a.idRecaudo,
       date: a.fechaRecaudo.toISOString(),
-      receiptNumber: `${a.idRecaudo}`,
-      rawSourceCode: receiptPrefix || "\u2014",
+      rawSourceCode: prefix || "\u2014",
       amount: a.valorRecaudado,
+      unappliedAmount: a.montoNoAplicado,
       appliedToDocument: hasDocLink ? docRef : null,
       collectionTarget: target,
-      linkageLabel,
+      linkageLabel: hasDocLink ? `Aplicado a ${docRef}` : "Sin vínculo documental certificado",
+      applicationLinkage: appLinkage,
     };
   });
 
-  // Determine linkage state
+  // Global linkage
   let linkageState: RecaudoLinkageState;
-  if (linkedCount === items.length && linkedCount > 0) {
+  if (linkedCount === items.length && linkedCount > 0 && totalUnapplied === 0) {
     linkageState = "APPLIED";
   } else if (linkedCount > 0) {
     linkageState = "PARTIALLY_LINKED";
@@ -755,24 +904,41 @@ export function classifyCollections(
     linkageState = "HISTORY_ONLY";
   }
 
-  // Distinct receipt IDs for count
-  const distinctReceipts = new Set(validApps.map(a => a.idRecaudo));
+  // Global normalization state
+  let normState: GlobalNormalizationState;
+  if (ambiguousCount === 0) {
+    normState = "ALL_CERTIFIED";
+  } else if (ambiguousCount < receipts.length) {
+    normState = "PARTIAL_AMBIGUOUS";
+  } else {
+    normState = "UNRESOLVED";
+  }
+
+  const certifiedReceipts = receipts.filter(r => r.normalizationState !== "AMBIGUOUS");
 
   return {
     ...base,
     truthState: "CERTIFIED",
-    windowLabel: `${distinctReceipts.size} recibos / ${items.length} aplicaciones`,
+    normalizationState: normState,
+    windowLabel: `${certifiedReceipts.length} recibos / ${items.length} aplicaciones`,
     linkageState,
-    totalCollected,
-    receiptCount: distinctReceipts.size,
+    grossCollected,
+    certifiedReversals,
+    netCollected,
+    appliedAmount: Math.max(0, appliedAmount),
+    unappliedAmount: totalUnapplied,
+    ambiguousAmount: ambiguousAmount > 0 ? ambiguousAmount : 0,
+    receiptCount: certifiedReceipts.length,
     officialInvoiceCollections: officialBucket,
     remissionCollections: remissionBucket,
     advances: advanceBucket,
     unclassified: unclassifiedBucket,
-    latestCollectionAt: latestDate ? (latestDate as Date).toISOString() : null,
+    latestCollectionAt: latestDate ? latestDate.toISOString() : null,
     items,
     totalItems: items.length,
-    reason: `${officialBucket.count} facturación, ${remissionBucket.count} remisiones, ${advanceBucket.count} anticipos, ${unclassifiedBucket.count} sin clasificar`,
+    receipts,
+    reason: `${officialBucket.count} facturación, ${remissionBucket.count} remisiones, ${advanceBucket.count} anticipos, ${unclassifiedBucket.count} sin clasificar` +
+      (ambiguousCount > 0 ? `, ${ambiguousCount} ambiguos excluidos` : ""),
   };
 }
 

@@ -16,7 +16,7 @@
  *  10. No sagTerceroId → IDENTITY_MISSING
  *  11. Recaudo without document link → linkageLabel = "Sin vínculo documental certificado"
  *  12. No heuristic association
- *  13. totalCollected does NOT modify receivable SALDO_PENDIENTE
+ *  13. netCollected does NOT modify receivable SALDO_PENDIENTE
  *  14. Ventas contains zero cobros
  *  15. Recaudos contains zero notas crédito
  *  16. Production delegates to tested cores
@@ -39,6 +39,7 @@ function readFile(relPath: string): string {
 function makeApp(overrides: Partial<{
   idRecaudo: number;
   fechaRecaudo: Date;
+  clienteId: number;
   documentoRelacionado: string;
   valorRecaudado: number;
   montoNoAplicado: number;
@@ -47,6 +48,7 @@ function makeApp(overrides: Partial<{
   return {
     idRecaudo: overrides.idRecaudo ?? 1001,
     fechaRecaudo: overrides.fechaRecaudo ?? new Date("2026-08-01T00:00:00Z"),
+    clienteId: overrides.clienteId ?? 99999,
     documentoRelacionado: overrides.documentoRelacionado ?? "FE-1234",
     valorRecaudado: overrides.valorRecaudado ?? 1_000_000,
     montoNoAplicado: overrides.montoNoAplicado ?? 0,
@@ -136,7 +138,8 @@ describe("classifyCollections — CustomerCollectionsResult", () => {
   test("query succeeded, 0 records → EMPTY_CERTIFIED with 0", () => {
     const r = classifyCollections([], true, true, "castillitos", NOW);
     expect(r.truthState).toBe("EMPTY_CERTIFIED");
-    expect(r.totalCollected).toBe(0);
+    expect(r.netCollected).toBe(0);
+    expect(r.grossCollected).toBe(0);
     expect(r.receiptCount).toBe(0);
     expect(r.source).toBe("vw_agentik_recaudos");
   });
@@ -144,21 +147,21 @@ describe("classifyCollections — CustomerCollectionsResult", () => {
   test("query failed → SOURCE_DOWN with null", () => {
     const r = classifyCollections([], false, true, "castillitos", NOW);
     expect(r.truthState).toBe("SOURCE_DOWN");
-    expect(r.totalCollected).toBeNull();
+    expect(r.netCollected).toBeNull();
     expect(r.receiptCount).toBeNull();
   });
 
   test("no sagTerceroId → IDENTITY_MISSING", () => {
     const r = classifyCollections([], true, false, "castillitos", NOW);
     expect(r.truthState).toBe("IDENTITY_MISSING");
-    expect(r.totalCollected).toBeNull();
+    expect(r.netCollected).toBeNull();
     expect(r.reason).toContain("identidad SAG");
   });
 
   test("null profileId → PROFILE_UNRESOLVED", () => {
     const r = classifyCollections([makeApp()], true, true, null, NOW);
     expect(r.truthState).toBe("PROFILE_UNRESOLVED");
-    expect(r.totalCollected).toBeNull();
+    expect(r.netCollected).toBeNull();
     expect(r.reason).toContain("Perfil documental");
   });
 
@@ -194,7 +197,7 @@ describe("classifyCollections — CustomerCollectionsResult", () => {
     const r = classifyCollections(apps, true, true, "castillitos", NOW);
     // D2 is excluded (credit note + negative value)
     expect(r.items.length).toBe(1);
-    expect(r.totalCollected).toBe(2_000_000);
+    expect(r.netCollected).toBe(2_000_000);
     // No item should reference D2
     expect(r.items.find((i: any) => i.appliedToDocument?.startsWith("D2"))).toBeUndefined();
   });
@@ -273,13 +276,15 @@ describe("classifyCollections — CustomerCollectionsResult", () => {
     expect(r.linkageState).toBe("HISTORY_ONLY");
   });
 
-  test("totalCollected sums only positive values", () => {
+  test("grossCollected sums positive values, netCollected = gross - reversals", () => {
     const apps = [
       makeApp({ idRecaudo: 1, documentoRelacionado: "FE-100", valorRecaudado: 5_000_000 }),
       makeApp({ idRecaudo: 2, documentoRelacionado: "FE-200", valorRecaudado: 3_000_000 }),
     ];
     const r = classifyCollections(apps, true, true, "castillitos", NOW);
-    expect(r.totalCollected).toBe(8_000_000);
+    expect(r.grossCollected).toBe(8_000_000);
+    expect(r.certifiedReversals).toBe(0);
+    expect(r.netCollected).toBe(8_000_000);
   });
 
   test("receiptCount counts distinct idRecaudo values", () => {
@@ -364,15 +369,15 @@ describe("cross-domain invariants", () => {
     expect(r.items[0].appliedToDocument).toBe("R1-100");
   });
 
-  test("totalCollected does NOT appear in cartera computation", () => {
+  test("netCollected does NOT appear in cartera computation", () => {
     // This is structural — cartera uses SALDO_PENDIENTE from vw_agentik_cartera
-    // and totalCollected from vw_agentik_recaudos stays in the collections domain
+    // and netCollected from vw_agentik_recaudos stays in the collections domain
     const r = classifyColl(
       [makeApp({ valorRecaudado: 22_300_000 })],
       true, true, "castillitos", NOW,
     );
-    expect(r.totalCollected).toBe(22_300_000);
-    // The contract returns totalCollected but does NOT expose netReceivable or SALDO_PENDIENTE
+    expect(r.netCollected).toBe(22_300_000);
+    // The contract returns netCollected but does NOT expose netReceivable or SALDO_PENDIENTE
     expect((r as any).netReceivable).toBeUndefined();
     expect((r as any).saldoPendiente).toBeUndefined();
   });

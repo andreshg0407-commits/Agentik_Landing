@@ -17,6 +17,7 @@
  * Empty states per block — no false zeros.
  */
 
+import { useState } from "react";
 import { C, T, S, R, E } from "@/lib/ui/tokens";
 import { OperationalWorkspaceHeader } from "@/components/workspace/operational-workspace-header";
 import { EmptyOperationalState, WorkspaceSection } from "@/components/shell/operational-primitives";
@@ -126,6 +127,8 @@ const COLLECTIONS_GRID = "80px 80px 80px 1fr 90px 70px";
 
 export function Cliente360Client({ orgSlug, data }: Props) {
   const { profile, seller, crmQuotes, sagOrders, receivables, sales, collections, opportunities, salesHistory: sh } = data;
+  const [collVisibleCount, setCollVisibleCount] = useState(50);
+  const [salesVisibleCount, setSalesVisibleCount] = useState(50);
 
   // Determine last activity across all sources
   const allDates: number[] = [];
@@ -270,7 +273,7 @@ export function Cliente360Client({ orgSlug, data }: Props) {
         />
         <KpiCard
           label="Recaudos"
-          textValue={data.collectionsResult.truthState === "CERTIFIED" ? fmtCurrency(data.collectionsResult.totalCollected ?? 0) : data.collectionsResult.truthState === "EMPTY_CERTIFIED" ? "$0" : "\u2014"}
+          textValue={data.collectionsResult.truthState === "CERTIFIED" ? fmtCurrency(data.collectionsResult.netCollected ?? 0) : data.collectionsResult.truthState === "EMPTY_CERTIFIED" ? "$0" : "\u2014"}
         />
         <KpiCard
           label="Cartera vencida"
@@ -409,10 +412,10 @@ export function Cliente360Client({ orgSlug, data }: Props) {
                     <span key={h} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkLight, textTransform: "uppercase" as const }}>{h}</span>
                   ))}
                 </div>
-                {[...sh.officialInvoices, ...sh.remissions, ...sh.creditNotes]
-                  .sort((a, b) => (b.issueDate ?? "").localeCompare(a.issueDate ?? ""))
-                  .slice(0, 50)
-                  .map(s => {
+                {(() => {
+                  const allSales = [...sh.officialInvoices, ...sh.remissions, ...sh.creditNotes]
+                    .sort((a, b) => (b.issueDate ?? "").localeCompare(a.issueDate ?? ""));
+                  return allSales.slice(0, salesVisibleCount).map(s => {
                     const isNC = s.canonicalKind === "SALES_CREDIT_NOTE";
                     const kindLabel = s.canonicalKind === "SALES_INVOICE" ? "Factura" : s.canonicalKind === "SALES_REMISSION" ? "Remisión" : "NC";
                     return (
@@ -424,8 +427,26 @@ export function Cliente360Client({ orgSlug, data }: Props) {
                         <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{s.seller ?? "\u2014"}</span>
                       </div>
                     );
-                  })}
+                  });
+                })()}
               </div>
+
+              {/* Sales pagination footer */}
+              {(() => {
+                const total = sh.officialInvoices.length + sh.remissions.length + sh.creditNotes.length;
+                return total > 1 ? (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost }}>
+                      Mostrando {Math.min(salesVisibleCount, total)} de {total}
+                    </span>
+                    {total > salesVisibleCount && (
+                      <button onClick={() => setSalesVisibleCount(v => v + 50)} className="ag-action-ghost" style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.blueDark, background: "none", border: "none", cursor: "pointer" }}>
+                        Ver más
+                      </button>
+                    )}
+                  </div>
+                ) : null;
+              })()}
 
               {/* Source provenance */}
               <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost }}>
@@ -450,11 +471,12 @@ export function Cliente360Client({ orgSlug, data }: Props) {
           ) : (
             <div style={{ display: "flex", flexDirection: "column" as const, gap: S[4] }}>
               {/* Summary strip */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: S[3] }}>
-                <MiniStat label="Total recaudado" value={fmtCurrency(data.collectionsResult.totalCollected ?? 0)} />
-                <MiniStat label="Facturación oficial" value={data.collectionsResult.officialInvoiceCollections ? `${data.collectionsResult.officialInvoiceCollections.count} / ${fmtCurrency(data.collectionsResult.officialInvoiceCollections.amount)}` : "\u2014"} />
-                <MiniStat label="Remisiones" value={data.collectionsResult.remissionCollections ? `${data.collectionsResult.remissionCollections.count} / ${fmtCurrency(data.collectionsResult.remissionCollections.amount)}` : "\u2014"} />
-                <MiniStat label="Anticipos" value={data.collectionsResult.advances && data.collectionsResult.advances.count > 0 ? `${data.collectionsResult.advances.count} / ${fmtCurrency(data.collectionsResult.advances.amount)}` : "\u2014"} />
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: S[3] }}>
+                <MiniStat label="Recaudo neto" value={fmtCurrency(data.collectionsResult.netCollected ?? 0)} />
+                <MiniStat label="Recaudo bruto" value={fmtCurrency(data.collectionsResult.grossCollected ?? 0)} />
+                <MiniStat label="Reversiones" value={data.collectionsResult.certifiedReversals ? fmtCurrency(data.collectionsResult.certifiedReversals) : "\u2014"} />
+                <MiniStat label="Recibos" value={data.collectionsResult.receiptCount != null ? String(data.collectionsResult.receiptCount) : "\u2014"} />
+                <MiniStat label="No aplicado" value={data.collectionsResult.unappliedAmount ? fmtCurrency(data.collectionsResult.unappliedAmount) : "\u2014"} />
                 <MiniStat label="Último recaudo" value={data.collectionsResult.latestCollectionAt ? fmtDate(data.collectionsResult.latestCollectionAt) : "\u2014"} />
               </div>
 
@@ -465,7 +487,7 @@ export function Cliente360Client({ orgSlug, data }: Props) {
                     <span key={h} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkLight, textTransform: "uppercase" as const }}>{h}</span>
                   ))}
                 </div>
-                {data.collectionsResult.items.slice(0, 100).map(c => {
+                {data.collectionsResult.items.slice(0, collVisibleCount).map(c => {
                   const tLabel = c.collectionTarget === "OFFICIAL_INVOICE" ? "Facturación"
                     : c.collectionTarget === "REMISSION" ? "Remisión"
                     : c.collectionTarget === "CUSTOMER_ADVANCE" ? "Anticipo"
@@ -474,18 +496,32 @@ export function Cliente360Client({ orgSlug, data }: Props) {
                     <div key={c.id} className="ag-op-row" style={{ display: "grid", gridTemplateColumns: COLLECTIONS_GRID, gap: S[2], padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}22`, alignItems: "center" }}>
                       <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{fmtDate(c.date)}</span>
                       <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{tLabel}</span>
-                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{c.receiptNumber}</span>
+                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{c.receiptId}</span>
                       <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: c.appliedToDocument ? C.ink : C.inkGhost, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{c.linkageLabel}</span>
-                      <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink }}>{fmtCurrency(c.amount)}</span>
-                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: c.appliedToDocument ? C.green : C.inkGhost }}>{c.appliedToDocument ? "Aplicado" : "Histórico"}</span>
+                      <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: c.amount < 0 ? C.red : C.ink }}>{fmtCurrency(c.amount)}</span>
+                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: c.applicationLinkage === "APPLIED" ? C.green : c.applicationLinkage === "PARTIALLY_LINKED" ? C.amber : C.inkGhost }}>
+                        {c.applicationLinkage === "APPLIED" ? "Aplicado" : c.applicationLinkage === "PARTIALLY_LINKED" ? "Parcial" : c.applicationLinkage === "UNAPPLIED" ? "No aplicado" : "Histórico"}
+                      </span>
                     </div>
                   );
                 })}
               </div>
 
+              {/* Pagination footer */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost }}>
+                  Mostrando {Math.min(collVisibleCount, data.collectionsResult.items.length)} de {data.collectionsResult.totalItems} aplicaciones
+                </span>
+                {data.collectionsResult.items.length > collVisibleCount && (
+                  <button onClick={() => setCollVisibleCount(v => v + 50)} className="ag-action-ghost" style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.blueDark, background: "none", border: "none", cursor: "pointer" }}>
+                    Ver más
+                  </button>
+                )}
+              </div>
+
               {/* Source provenance */}
               <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost }}>
-                Fuente: {data.collectionsResult.source}. {data.collectionsResult.reason}. {data.collectionsResult.totalItems > 100 ? `Mostrando 100 de ${data.collectionsResult.totalItems}.` : ""}
+                Fuente: {data.collectionsResult.source}. {data.collectionsResult.reason}. {data.collectionsResult.windowLabel ?? ""}
               </div>
             </div>
           )}
