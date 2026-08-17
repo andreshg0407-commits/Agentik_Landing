@@ -75,7 +75,7 @@ export interface CanonicalMaletaInventoryRef {
 export interface MaletaCcsRecord {
   /** Reference code (SKU) */
   reference: string;
-  /** CCS disponible (B01 for textile, B24 for import) — 04A3: B04 excluded */
+  /** SAG CURRENT B01 disponible (04A3R: CCS prohibited for decisions) */
   disponible: number;
   /** CCS line ("CS" | "LT" | etc.) */
   line: string | null;

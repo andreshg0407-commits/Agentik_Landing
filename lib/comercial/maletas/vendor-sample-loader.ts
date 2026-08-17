@@ -238,7 +238,7 @@ export interface VendorSampleLoadResult {
   productionSuggestions: ProductionSuggestion[];
   intelligence: MaletasCommercialIntelligenceResult;
   accessorySummary: AccessorySummary;
-  source: "sag" | "empty";
+  source: "sag" | "empty" | "sag_source_down";
   loadedAt: string;
   totalRefs: number;
   // MALLETS-FUNCTIONAL-RECOVERY-01
@@ -305,15 +305,40 @@ export async function loadVendorSampleData(
     };
   }
 
-  // ── 2. Canonical main-warehouse availability (single source of truth) ──
-  // Uses live SAG lookups for subgrupo/grupo name resolution — never stale CCS values.
-  // Sprint: MALETAS-INVENTARIO-PRODUCCION-SINGLE-SOURCE-OF-TRUTH-01 (Phase 4)
+  // ── 2. Canonical main-warehouse availability (SAG CURRENT B01) ──
+  // 04A3R: queries SAG CURRENT vw_agentik_inventario for B01 only.
+  // CCS is PROHIBITED for opportunity decisions. No fallback on SOURCE_DOWN.
   const canonical = await getCanonicalMainWarehouseAvailability(
     db,
     organizationId,
     subgrupoLookup,
     subgrupoToGrupoLookup,
   );
+
+  // 04A3R: SOURCE_DOWN — no CCS fallback, return empty with sourceDown flag
+  if (canonical.sourceDown) {
+    console.warn("[MALETAS] SAG CURRENT B01 unavailable — SOURCE_DOWN. No CCS fallback.");
+    const emptyVendors = VENDOR_BODEGA_CONFIGS.map((v) => emptyVendor(v.id, v.name, v.bodegaKaNl));
+    return {
+      vendors: emptyVendors,
+      summary: emptySummary(),
+      coverageGaps: [],
+      productionSuggestions: [],
+      intelligence: buildCommercialIntelligence(emptyVendors, []),
+      accessorySummary: { totalRefs: 0, availableRefs: 0, scarcityRefs: 0, healthyRefs: 0, zeroStockRefs: 0 },
+      source: "sag_source_down",
+      loadedAt,
+      totalRefs: 0,
+      assortmentEvaluations: [],
+      productionThresholds: [],
+      importEvaluation: { evaluations: [], diagnostic: { evaluadas: 0, sinFechaIngreso: 0, sinVentas: 0, sinTamano: 0, sinInventario: 0, watch: 0, doNotRebuy: 0, rebuy: 0, lowRotation: 0 } },
+      coverageResult: { textileCoverage: [], importCoverage: [], urgentProductionNeeds: [] },
+      canonicalDiffReport: null,
+      commercialScopeAudit: null,
+      supplyPlan: { vendorPlans: [], totalMissingPositions: 0, totalExcessPositions: 0, globalCompletionPct: 0, coverageSummary: { bodega: 0, op: 0, produccion: 0, recompra: 0, sinCobertura: 0 } },
+    };
+  }
+
   // Backward-compatible types derived from canonical (no separate CCS query)
   type CoverageRow = {
     refCode: string;
