@@ -176,3 +176,75 @@ New canonical inventory contract separates:
 - **PRODUCTION**: 43 active orders, 11,225 pending units
 
 The control dashboard should show COMMERCIAL numbers, not ALL-bodegas numbers.
+
+## Addendum 04A1: Production, KPI, Subgroups & Variants
+
+### B3: Line/Brand Classification
+
+LINEA and MARCA are identical in vw_agentik_inventario:
+
+| Line | Refs | Existencia | Reservado | Disponible |
+|------|------|-----------|-----------|------------|
+| (null) | 1,396 | 557,513 | 26 | 557,487 |
+| CASTILLITOS | 441 | 58,141 | 640 | 57,501 |
+| LATIN KIDS | 560 | 46,280 | 5,307 | 40,973 |
+| IMPORTACION | 570 | 38,087 | 322 | 37,765 |
+| OTROS | 6 | 24,913 | 0 | 24,913 |
+| PIJAMAS DAMA | 14 | 1,768 | 0 | 1,768 |
+| POWER | 2 | 2 | 0 | 2 |
+
+**Castillitos/Latin Kids/Importacion = LINEA (same as MARCA).** Not bodegas.
+
+89,302 = NOT from SAG view. Likely from PIL/Prisma CommercialCoverageSnapshot at a prior point.
+
+### C: Reserved Source
+
+RESERVADO exists only in 2 bodegas:
+- B01 BODEGA PRINCIPAL: 5,947
+- B24 IMPORTACION: 348
+- Total: 6,295
+
+saldos_pedidos current period total_saldo: 6,345 (close match).
+
+### D: Production State Audit
+
+Only 2 states found in vw_agentik_produccion:
+- **Abierta**: 43 orders, programada=11,225, producida=0 (all null)
+- **Cerrada**: 3,387 orders, programada=1,390,479, producida=1,385,589
+
+No Teorica or Anulada states present.
+
+**1,327,589 formula**: Total programada (1,401,704) minus open (11,225) minus some subset = ~1,327,589. Exact formula cannot be reconstructed from current data — it was likely SUM(CANTIDAD_PROGRAMADA) at a prior snapshot when fewer closed orders existed.
+
+**D4: Open orders have CANTIDAD_PRODUCIDA = null.** SAG does not track production progress for open orders. truthState = SOURCE_INCOMPLETE.
+
+**D5: Bodega destino**: 38 open orders target "04" (B04 PRODUCTO EN PROCESO), 5 have empty destination. destinationVerified=false for empty ones.
+
+### CD-4273439 Reconciliation
+
+**Inventory by bodega**:
+| Bodega | Existencia | Reservado | Disponible |
+|--------|-----------|-----------|------------|
+| 00 - CENTRO | 34 | 0 | 34 |
+| 01 - PRINCIPAL | 525 | 0 | 525 |
+| 02 - SANDIEGO | 20 | 0 | 20 |
+| 09 - F3 BOLIVAR | 8 | 0 | 8 |
+| 15 - F10 IBAGUE | 8 | 0 | 8 |
+| 23 - GRAN PLAZA | 14 | 0 | 14 |
+| 29 - CALDAS | 13 | 0 | 13 |
+| 35 - VEND ORLANDO | 1 | 0 | 1 |
+| 38 - VEND NESTOR | 1 | 0 | 1 |
+
+**Production**: 11 closed orders, all fully produced (prog=prod), 2,972 total units, all dest=04.
+**Variants**: 88 rows in vw_agentik_productos (talla x color metadata — no quantities).
+
+### G1: SKU-Level Inventory Source
+
+**BLOCKED**: SAG has NO saldo at SKU/talla/color level.
+
+- saldos_articulos grain: article + bodega + period (no SKU/talla/color columns)
+- No saldos_skus, saldos_sku, STA_SKU_SALDO, or saldos_tallas tables
+- STA_SKU has ND_EXISTENCIA/ND_DISPONIBLE columns but values are 0 (not maintained)
+- movimientos has no SKU/talla/color columns
+
+**Verdict**: truthState = SKU_BALANCE_UNAVAILABLE. Display "Variantes registradas" list without quantities.

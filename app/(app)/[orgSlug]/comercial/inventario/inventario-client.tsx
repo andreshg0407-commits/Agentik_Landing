@@ -560,16 +560,10 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
           detailColor={C.inkGhost}
           onClick={() => switchTab("IMPORTACION")}
         />
-        {health.totalProductionInProcess > 0 && (
-          <KpiCard
-            label="En proceso"
-            value={health.totalProductionInProcess}
-            suffix=" uds"
-            color={C.amber}
-            detail="Producto en proceso"
-            detailColor={C.inkGhost}
-          />
-        )}
+        {/* Addendum D1: "En proceso" KPI removed — uncertified data.
+            Production has no progress tracking (CANTIDAD_PRODUCIDA=null for open orders).
+            Will be re-added after INVENTORY_CANONICAL_TRUTH_VERIFIED with
+            proper classification: Programado en ordenes abiertas / Produccion teorica. */}
       </div>
 
       {/* ── Sync Status Block ──────────────────────────────────────────── */}
@@ -685,8 +679,16 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
         </div>
       )}
 
-      {/* ── Line-based Tab Content (CASTILLITOS, LATIN_KIDS, IMPORTACION, SIN_CLASIFICAR) */}
-      {activeTab !== "VAULT" && activeTab !== "AGOTADOS" && (
+      {/* ── Subgrupo view REPLACES table (Addendum F) ────────────── */}
+      {filter === "subgrupos" && activeTab !== "VAULT" && activeTab !== "AGOTADOS" && subgrupoCoverage && subgrupoCoverage.length > 0 ? (
+        <SubgrupoCoveragePanel
+          coverage={subgrupoCoverage}
+          items={sortedItems}
+          originalItemsByRef={originalItemsByRef}
+          onRowClick={openDrawerFromCanonical}
+        />
+      ) : activeTab !== "VAULT" && activeTab !== "AGOTADOS" ? (
+        /* ── Line-based Tab Content (CASTILLITOS, LATIN_KIDS, IMPORTACION, SIN_CLASIFICAR) */
         <>
           {sortedItems.length === 0 ? (
             <EmptyState
@@ -718,7 +720,7 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
             />
           )}
         </>
-      )}
+      ) : null}
 
       {/* ── AGOTADOS Tab Content ──────────────────────────────────── */}
       {activeTab === "AGOTADOS" && (
@@ -741,11 +743,6 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
           setPage={setPage}
           onRowClick={openDrawerFromCanonical}
         />
-      )}
-
-      {/* ── Subgrupo Coverage Detail ──────────────────────────────── */}
-      {filter === "subgrupos" && activeTab !== "VAULT" && activeTab !== "AGOTADOS" && subgrupoCoverage && subgrupoCoverage.length > 0 && (
-        <SubgrupoCoveragePanel coverage={subgrupoCoverage} />
       )}
 
       {/* ── Accessory Low Stock Detail ────────────────────────────── */}
@@ -1981,7 +1978,25 @@ function PagButton({ label, disabled, onClick }: { label: string; disabled: bool
 
 // ── Subgrupo Coverage Panel ─────────────────────────────────────────────────
 
-function SubgrupoCoveragePanel({ coverage }: { coverage: SubgrupoCoverage[] }) {
+/**
+ * SubgrupoCoveragePanel — Addendum F: accordion-based subgroup view.
+ * REPLACES the main table when "Subgrupos" filter is active.
+ * All accordions start collapsed. Click to expand references inline.
+ */
+function SubgrupoCoveragePanel({
+  coverage,
+  items,
+  originalItemsByRef,
+  onRowClick,
+}: {
+  coverage: SubgrupoCoverage[];
+  items?: CanonicalInventoryItemStatus[];
+  originalItemsByRef?: Map<string, InventoryItem>;
+  onRowClick?: (ci: CanonicalInventoryItemStatus) => void;
+}) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [sgSearch, setSgSearch] = useState("");
+
   const stateColor: Record<string, string> = {
     cubierto: C.green,
     riesgo: C.amber,
@@ -1993,17 +2008,56 @@ function SubgrupoCoveragePanel({ coverage }: { coverage: SubgrupoCoverage[] }) {
     sin_cobertura: "Sin cobertura",
   };
 
+  const toggle = (key: string) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const collapseAll = () => setExpanded(new Set());
+
+  // Filter subgroups by search
+  const filteredCoverage = useMemo(() => {
+    if (!sgSearch.trim()) return coverage;
+    const q = sgSearch.toLowerCase();
+    return coverage.filter(sg =>
+      sg.subgrupoSag.toLowerCase().includes(q) ||
+      sg.subLinea.toLowerCase().includes(q)
+    );
+  }, [coverage, sgSearch]);
+
+  // Group items by subgrupo for expansion
+  const itemsBySubgrupo = useMemo(() => {
+    if (!items || !originalItemsByRef) return new Map<string, CanonicalInventoryItemStatus[]>();
+    const map = new Map<string, CanonicalInventoryItemStatus[]>();
+    for (const ci of items) {
+      const orig = originalItemsByRef.get(ci.reference);
+      if (!orig) continue;
+      const sg = orig.subgrupoSag ?? orig.subGrupo ?? "";
+      const list = map.get(sg) ?? [];
+      list.push(ci);
+      map.set(sg, list);
+    }
+    return map;
+  }, [items, originalItemsByRef]);
+
   return (
     <div style={{
-      marginTop: S[5],
       border: `1px solid ${C.line}`,
       borderRadius: R.sm,
       overflow: "hidden",
     }}>
+      {/* Header */}
       <div style={{
         padding: `${S[3]}px ${S[4]}px`,
         background: C.surfaceAlt ?? C.surface,
         borderBottom: `1px solid ${C.line}`,
+        display: "flex",
+        alignItems: "center",
+        gap: S[3],
       }}>
         <span style={{
           fontFamily: T.mono,
@@ -2017,108 +2071,176 @@ function SubgrupoCoveragePanel({ coverage }: { coverage: SubgrupoCoverage[] }) {
           fontFamily: T.mono,
           fontSize: T.sz["2xs"],
           color: C.inkLight,
-          marginLeft: S[3],
         }}>
-          {coverage.length} subgrupos
+          {filteredCoverage.length} subgrupos
         </span>
-      </div>
-
-      <div className="ag-op-row" style={{
-        display: "grid",
-        gridTemplateColumns: "1fr 80px 80px 80px 100px",
-        gap: S[2],
-        padding: `${S[2]}px ${S[4]}px`,
-        background: C.surfaceAlt ?? C.surface,
-        borderBottom: `1px solid ${C.line}`,
-      }}>
-        {["Subgrupo", "Refs", "Uds", "Tallas", "Estado"].map((h, i) => (
-          <span key={h} style={{
+        <div style={{ flex: 1 }} />
+        <input
+          type="text"
+          value={sgSearch}
+          onChange={e => setSgSearch(e.target.value)}
+          placeholder="Buscar subgrupo..."
+          style={{
             fontFamily: T.mono,
             fontSize: T.sz["2xs"],
-            fontWeight: T.wt.semibold,
-            color: C.inkLight,
-            textTransform: "uppercase" as const,
-            textAlign: i >= 1 && i <= 3 ? "center" as const : "left" as const,
-          }}>
-            {h}
-          </span>
-        ))}
+            padding: `3px ${S[2]}px`,
+            borderRadius: R.sm,
+            border: `1px solid ${C.line}`,
+            background: C.surface,
+            color: C.ink,
+            width: 180,
+            outline: "none",
+          }}
+        />
+        {expanded.size > 0 && (
+          <button
+            onClick={collapseAll}
+            className="ag-action-ghost"
+            style={{
+              fontFamily: T.mono,
+              fontSize: T.sz["2xs"],
+              padding: `3px ${S[2]}px`,
+              borderRadius: R.sm,
+              border: `1px solid ${C.line}`,
+              background: "transparent",
+              color: C.inkMid,
+              cursor: "pointer",
+            }}
+          >
+            Recoger todos
+          </button>
+        )}
       </div>
 
-      {coverage.map((sg, idx) => {
+      {/* Accordion rows */}
+      {filteredCoverage.map((sg, idx) => {
         const sc = stateColor[sg.estado] ?? C.inkGhost;
+        const isOpen = expanded.has(sg.subgrupoSag);
+        const sgItems = itemsBySubgrupo.get(sg.subgrupoSag) ?? [];
+
         return (
-          <div key={sg.subgrupoSag} className="ag-op-row" style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 80px 80px 80px 100px",
-            gap: S[2],
-            padding: `${S[2]}px ${S[4]}px`,
-            background: idx % 2 === 0 ? C.surface : "transparent",
-            borderBottom: `1px solid ${C.line}22`,
-            alignItems: "center",
-          }}>
-            <div>
+          <div key={sg.subgrupoSag}>
+            {/* Subgroup header row (clickable) */}
+            <div
+              className="ag-op-row"
+              onClick={() => toggle(sg.subgrupoSag)}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "24px 1fr 70px 70px 70px 70px 100px",
+                gap: S[2],
+                padding: `${S[2]}px ${S[4]}px`,
+                background: idx % 2 === 0 ? C.surface : "transparent",
+                borderBottom: `1px solid ${C.line}22`,
+                alignItems: "center",
+                cursor: "pointer",
+              }}
+            >
               <span style={{
                 fontFamily: T.mono,
                 fontSize: T.sz.xs,
-                fontWeight: T.wt.semibold,
-                color: C.ink,
+                color: C.inkLight,
+                textAlign: "center" as const,
               }}>
-                {sg.subgrupoSag}
+                {isOpen ? "\u25BC" : "\u25B6"}
               </span>
-              <span style={{
+              <div>
+                <span style={{
+                  fontFamily: T.mono,
+                  fontSize: T.sz.xs,
+                  fontWeight: T.wt.semibold,
+                  color: C.ink,
+                }}>
+                  {sg.subgrupoSag}
+                </span>
+                <span style={{
+                  fontFamily: T.mono,
+                  fontSize: T.sz["2xs"],
+                  color: C.inkGhost,
+                  marginLeft: S[2],
+                }}>
+                  {sg.subLinea}
+                </span>
+              </div>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, textAlign: "center" as const }}>
+                {sg.referenciasActivas}
+              </span>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, textAlign: "center" as const }}>
+                {sg.unidadesDisponibles > 0 ? sg.unidadesDisponibles.toLocaleString("es-CO") : "\u2014"}
+              </span>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, textAlign: "center" as const }}>
+                {sg.tallasDisponibles}
+              </span>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, textAlign: "center" as const }}>
+                {/* existencia placeholder — available via unidadesDisponibles already */}
+              </span>
+              <span className="ag-op-status" style={{
                 fontFamily: T.mono,
                 fontSize: T.sz["2xs"],
-                color: C.inkGhost,
-                marginLeft: S[2],
+                fontWeight: T.wt.semibold,
+                color: sc,
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
               }}>
-                {sg.subLinea}
+                <span style={{
+                  width: 6, height: 6, borderRadius: "50%",
+                  background: sc, display: "inline-block", flexShrink: 0,
+                }} />
+                {stateLabel[sg.estado] ?? sg.estado}
               </span>
             </div>
-            <span style={{
-              fontFamily: T.mono,
-              fontSize: T.sz.xs,
-              color: C.inkMid,
-              textAlign: "center" as const,
-            }}>
-              {sg.referenciasActivas}
-            </span>
-            <span style={{
-              fontFamily: T.mono,
-              fontSize: T.sz.xs,
-              fontWeight: T.wt.semibold,
-              color: sg.unidadesDisponibles <= 0 ? C.red : C.ink,
-              textAlign: "center" as const,
-            }}>
-              {sg.unidadesDisponibles > 0 ? sg.unidadesDisponibles.toLocaleString("es-CO") : "\u2014"}
-            </span>
-            <span style={{
-              fontFamily: T.mono,
-              fontSize: T.sz.xs,
-              color: C.inkMid,
-              textAlign: "center" as const,
-            }}>
-              {sg.tallasDisponibles}
-            </span>
-            <span className="ag-op-status" style={{
-              fontFamily: T.mono,
-              fontSize: T.sz["2xs"],
-              fontWeight: T.wt.semibold,
-              color: sc,
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-            }}>
-              <span style={{
-                width: 6,
-                height: 6,
-                borderRadius: "50%",
-                background: sc,
-                display: "inline-block",
-                flexShrink: 0,
-              }} />
-              {stateLabel[sg.estado] ?? sg.estado}
-            </span>
+
+            {/* Expanded references (Addendum F4) */}
+            {isOpen && sgItems.length > 0 && (
+              <div style={{
+                background: `${C.blueDark}04`,
+                borderBottom: `1px solid ${C.line}22`,
+              }}>
+                {sgItems.map(ci => {
+                  const orig = originalItemsByRef?.get(ci.reference);
+                  if (!orig) return null;
+                  const disp = orig.disponibleReal;
+                  const sColor = STATE_COLORS[orig.operationalState] ?? C.inkGhost;
+                  return (
+                    <div
+                      key={ci.reference}
+                      className="ag-op-row"
+                      onClick={() => onRowClick?.(ci)}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "24px 120px 1fr 80px 80px 100px",
+                        gap: S[2],
+                        padding: `${S[1]}px ${S[4]}px ${S[1]}px ${S[5]}px`,
+                        borderBottom: `1px solid ${C.line}11`,
+                        alignItems: "center",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <span />
+                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.ink }}>
+                        {ci.reference}
+                      </span>
+                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                        {orig.description ?? "\u2014"}
+                      </span>
+                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: disp <= 0 ? C.red : C.ink, textAlign: "right" as const }}>
+                        {disp > 0 ? disp.toLocaleString("es-CO") : "\u2014"}
+                      </span>
+                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, textAlign: "right" as const }}>
+                        {orig.pedidosPendientes > 0 ? orig.pedidosPendientes.toLocaleString("es-CO") : "\u2014"}
+                      </span>
+                      <span style={{
+                        fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                        color: sColor, display: "flex", alignItems: "center", gap: 3,
+                      }}>
+                        <span style={{ width: 5, height: 5, borderRadius: "50%", background: sColor, display: "inline-block" }} />
+                        {STATE_LABELS[orig.operationalState] ?? "\u2014"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         );
       })}

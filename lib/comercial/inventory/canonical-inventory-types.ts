@@ -72,12 +72,18 @@ export interface WarehouseProfile {
  * - STALE: from an older SAG period (bodega didn't post in current period)
  * - DERIVED: computed by Agentik (e.g., reserved qty from CRM orders)
  * - UNVERIFIED: data exists but hasn't been cross-checked with SAG
+ * - SOURCE_DOWN: SAG unreachable — reserved=null, not 0
+ * - SOURCE_INCOMPLETE: partial data (e.g., production with no progress tracking)
+ * - SKU_BALANCE_UNAVAILABLE: SAG has no saldo at talla/color/SKU level
  */
 export type InventoryTruthState =
   | "CERTIFIED"
   | "STALE"
   | "DERIVED"
-  | "UNVERIFIED";
+  | "UNVERIFIED"
+  | "SOURCE_DOWN"
+  | "SOURCE_INCOMPLETE"
+  | "SKU_BALANCE_UNAVAILABLE";
 
 export interface CanonicalInventoryLevel {
   /** Product reference code (e.g., "CD-4243339") */
@@ -172,12 +178,77 @@ export interface CanonicalInventorySnapshot {
   /** Pending production units */
   pendingProductionUnits: number;
 
+  // ── Production detail (Addendum D) ──
+  productionSummary?: CanonicalProductionSummary;
+
+  // ── Line breakdown (Addendum B3) ──
+  /** Inventory breakdown by LINEA for reconciliation */
+  lineBreakdown?: Array<{
+    line: string;
+    refCount: number;
+    existencia: number;
+    reservado: number;
+    disponible: number;
+  }>;
+
   // ── Warehouse breakdown ──
   warehouseProfiles: WarehouseProfile[];
 
   // ── Per-product detail (optional, only when requested) ──
   products?: CanonicalProductInventory[];
 }
+
+// ── Production Order Classification (Addendum D3) ─────────────────────────
+
+/**
+ * Production order state from vw_agentik_produccion.ESTADO_PRODUCCION.
+ * Addendum D2: CANTIDAD_PRODUCIDA is only populated for Cerrada.
+ * Open orders have null producida — cannot determine real progress.
+ */
+export type ProductionOrderState =
+  | "OPEN"       // Abierta — scheduled, no progress data
+  | "THEORETICAL" // Teorica — planning only (not yet observed in LUDISAM)
+  | "CLOSED"     // Cerrada — completed
+  | "CANCELLED"; // Anulada — excluded (not yet observed in LUDISAM)
+
+export interface CanonicalProductionOrder {
+  productCode: string;
+  productName: string;
+  state: ProductionOrderState;
+  quantityScheduled: number;
+  quantityProduced: number | null; // null when SAG doesn't track progress
+  destinationWarehouseCode: string | null; // null = ambiguous (D5)
+  destinationVerified: boolean; // false when dest is empty or non-deterministic
+  truthState: InventoryTruthState;
+}
+
+/**
+ * Aggregated production summary for the snapshot.
+ */
+export interface CanonicalProductionSummary {
+  openOrders: number;
+  openScheduledUnits: number;
+  /** truthState for open orders: SOURCE_INCOMPLETE when SAG has no progress */
+  openTruthState: InventoryTruthState;
+  closedOrders: number;
+  closedProducedUnits: number;
+  destinationVerifiedCount: number;
+  destinationUnverifiedCount: number;
+}
+
+// ── Canonical Item Status (Addendum D7) ────────────────────────────────────
+
+/**
+ * Operational status for a single product reference.
+ * Production is a SECONDARY indicator — never modifies disponible.
+ */
+export type CanonicalItemStatus =
+  | "DISPONIBLE"         // available > 0 and above critical threshold
+  | "BAJO"               // available > 0 but below critical threshold
+  | "SIN_COBERTURA"      // available = 0 across all commercial bodegas
+  | "AGOTADO"            // existencia = 0 in commercial bodegas
+  | "SOBRECOMPROMETIDO"  // reserved > existencia (negative available)
+  | "DATOS_NO_VERIFICADOS"; // data not yet cross-checked
 
 // ── Transfer tracking ───────────────────────────────────────────────────────
 

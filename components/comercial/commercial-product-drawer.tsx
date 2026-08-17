@@ -309,7 +309,7 @@ export function CommercialProductDrawer({ open, onClose, product, children }: Pr
         )}
       </Section>
 
-      {/* ── Inventario comercial ─────────────────────────────────────── */}
+      {/* ── Inventario comercial (Addendum H: section 2+3) ─────────── */}
       <Section title="Inventario comercial">
         <InfoGrid>
           <InfoField
@@ -318,33 +318,41 @@ export function CommercialProductDrawer({ open, onClose, product, children }: Pr
             highlight={product.disponible <= 0}
           />
           <InfoField
-            label="Reservado"
+            label="Reservado en pedidos"
             value={product.reservado != null && product.reservado > 0
               ? fmtNum(product.reservado)
               : "\u2014"}
           />
-          {product.totalStock != null && (
-            <InfoField
-              label="Stock fisico bodega"
-              value={product.totalStock > 0 ? fmtNum(product.totalStock) : "\u2014"}
-            />
-          )}
         </InfoGrid>
+        {product.reservado != null && product.reservado > 0 && (
+          <div style={{
+            fontFamily: T.mono,
+            fontSize: T.sz["2xs"],
+            color: C.inkGhost,
+            marginTop: S[1],
+          }}>
+            Pedidos pendientes por facturar/despachar
+          </div>
+        )}
       </Section>
 
-      {/* ── Produccion ─────────────────────────────────────────────── */}
+      {/* ── Produccion (Addendum D7: secondary indicator only) ───── */}
       {product.productionInProcess != null && product.productionInProcess > 0 && (
-        <Section title="Produccion">
+        <Section title="Produccion abierta">
           <InfoGrid>
             <InfoField
-              label="En proceso"
+              label="Programado en ordenes abiertas"
               value={fmtNum(product.productionInProcess)}
             />
-            <InfoField
-              label="Bodega"
-              value="B04 — Producto en proceso"
-            />
           </InfoGrid>
+          <div style={{
+            fontFamily: T.mono,
+            fontSize: T.sz["2xs"],
+            color: C.inkGhost,
+            marginTop: S[1],
+          }}>
+            No incluido en disponible actual
+          </div>
         </Section>
       )}
 
