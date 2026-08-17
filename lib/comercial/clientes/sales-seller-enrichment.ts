@@ -120,7 +120,10 @@ export interface SellerEnrichmentResult {
 /**
  * Direct MOVIMIENTOS+FUENTES+TERCEROS query for a single client.
  * Returns one row per document header (GROUP BY on header fields).
- * Includes seller via LEFT JOIN to TERCEROS for the seller tercero.
+ *
+ * Seller resolution (03A8G3R): two-layer fallback mirroring vw_agentik_ventas:
+ *   1. Header-level: MOVIMIENTOS.ka_nl_tercero_vend (F2 remisiones carry seller here)
+ *   2. Invoice-level: movimientos_facturas.ka_nl_tercero (FE facturas carry seller here)
  *
  * Authorized by Section D of 03A8G3: vw_agentik_ventas does not expose
  * fuente code, making collision-safe identity impossible via the view alone.
@@ -134,13 +137,15 @@ function buildClientDocumentsQuery(sagTerceroId: number): string {
     "  m.n_numero_documento,",
     "  m.d_fecha_documento,",
     "  m.sc_anulado,",
-    "  ISNULL(m.ka_nl_tercero_vend, 0) AS vendedor_id,",
-    "  tv.sc_nombre AS vendedor_nombre,",
+    "  COALESCE(NULLIF(m.ka_nl_tercero_vend, 0), NULLIF(mf.ka_nl_tercero, 0), 0) AS vendedor_id,",
+    "  COALESCE(tv_header.sc_nombre, tv_mf.sc_nombre) AS vendedor_nombre,",
     "  SUM(ISNULL(mi.n_valor, 0)) AS total_valor",
     "FROM MOVIMIENTOS m",
     "LEFT JOIN FUENTES f ON f.ka_ni_fuente = m.ka_ni_fuente",
     "LEFT JOIN MOVIMIENTOS_ITEMS mi ON mi.ka_nl_movimiento = m.ka_nl_movimiento",
-    "LEFT JOIN TERCEROS tv ON tv.ka_nl_tercero = m.ka_nl_tercero_vend",
+    "LEFT JOIN TERCEROS tv_header ON tv_header.ka_nl_tercero = m.ka_nl_tercero_vend AND m.ka_nl_tercero_vend > 0",
+    "LEFT JOIN movimientos_facturas mf ON mf.ka_nl_movimiento = m.ka_nl_movimiento",
+    "LEFT JOIN TERCEROS tv_mf ON tv_mf.ka_nl_tercero = mf.ka_nl_tercero AND mf.ka_nl_tercero > 0",
     `WHERE m.ka_nl_tercero = ${Number(sagTerceroId)}`,
     "  AND f.sc_cobrar_pagar = 'C'",        // receivables only (not payables)
     "  AND f.k_n_clase_fuente IN (1, 2, 3)", // exclude class 4 (orders)
@@ -148,7 +153,8 @@ function buildClientDocumentsQuery(sagTerceroId: number): string {
     "  m.ka_nl_movimiento, m.ka_ni_fuente,",
     "  f.k_sc_codigo_fuente, m.n_numero_documento,",
     "  m.d_fecha_documento, m.sc_anulado,",
-    "  m.ka_nl_tercero_vend, tv.sc_nombre",
+    "  m.ka_nl_tercero_vend, tv_header.sc_nombre,",
+    "  mf.ka_nl_tercero, tv_mf.sc_nombre",
     "ORDER BY m.d_fecha_documento DESC",
   ].join(" ");
 }
