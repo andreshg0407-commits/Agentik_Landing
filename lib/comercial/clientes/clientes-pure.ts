@@ -7,8 +7,8 @@
  * Production code and tests import from this same file.
  */
 
-import { resolveCanonicalDocumentKind, resolveCollectionTarget, isDocumentCreditNote } from "./document-source-profiles";
-import type { CollectionTarget } from "./document-source-profiles";
+import { resolveCanonicalDocumentKind, isDocumentCreditNote } from "./document-source-profiles";
+import type { CollectionTarget, CanonicalDocumentKind } from "./document-source-profiles";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -550,6 +550,12 @@ export type CollectionsTruthState =
   | "IDENTITY_MISSING"
   | "PROFILE_UNRESOLVED";
 
+export type CollectionCoverageState =
+  | "APPLICATIONS_ONLY_PARTIAL"
+  | "COMPLETE"
+  | "SOURCE_DOWN"
+  | "IDENTITY_MISSING";
+
 export type RecaudoLinkageState =
   | "APPLIED"
   | "PARTIALLY_LINKED"
@@ -607,6 +613,7 @@ export interface CollectionBucket {
 
 export interface CustomerCollectionsResult {
   truthState: CollectionsTruthState;
+  coverageState: CollectionCoverageState;
   normalizationState: GlobalNormalizationState | null;
   source: "vw_agentik_recaudos";
   asOf: string | null;
@@ -640,6 +647,15 @@ export interface CollectionAppInput {
   valorRecaudado: number;
   montoNoAplicado: number;
   banco: string;
+}
+
+/** Map canonical document kind to collection target bucket. */
+export function canonicalKindToCollectionTarget(kind: CanonicalDocumentKind): CollectionTarget {
+  switch (kind) {
+    case "SALES_INVOICE": return "OFFICIAL_INVOICE";
+    case "SALES_REMISSION": return "REMISSION";
+    default: return "UNCLASSIFIED";
+  }
 }
 
 /**
@@ -699,10 +715,10 @@ export function normalizeCollectionReceipts(
       normState = "AMBIGUOUS";
     }
 
-    // Resolve collection target from the first document prefix
+    // Resolve collection target via canonical document kind
     const firstDoc = docs[0] ?? "";
-    const prefix = firstDoc.slice(0, 2).toUpperCase();
-    const target = resolveCollectionTarget(sourceProfileId, prefix) ?? "UNCLASSIFIED";
+    const docKind = resolveCanonicalDocumentKind(sourceProfileId, { documento: firstDoc, tipoDocumento: "" });
+    const target = canonicalKindToCollectionTarget(docKind.kind);
 
     // Determine per-receipt linkage
     let linkage: RecaudoLinkageState;
@@ -780,15 +796,15 @@ export function classifyCollections(
   };
 
   if (!hasSagIdentity) {
-    return { ...base, ...emptyResult, truthState: "IDENTITY_MISSING",
+    return { ...base, ...emptyResult, truthState: "IDENTITY_MISSING", coverageState: "IDENTITY_MISSING",
       reason: "Cliente sin identidad SAG — no se puede consultar recaudos" };
   }
   if (!querySucceeded) {
-    return { ...base, ...emptyResult, truthState: "SOURCE_DOWN",
+    return { ...base, ...emptyResult, truthState: "SOURCE_DOWN", coverageState: "SOURCE_DOWN",
       reason: "Consulta de recaudos fallida" };
   }
   if (!sourceProfileId) {
-    return { ...base, ...emptyResult, truthState: "PROFILE_UNRESOLVED",
+    return { ...base, ...emptyResult, truthState: "PROFILE_UNRESOLVED", coverageState: "SOURCE_DOWN",
       reason: "Perfil documental no configurado para esta organización" };
   }
 
@@ -802,7 +818,7 @@ export function classifyCollections(
 
   if (validApps.length === 0) {
     return {
-      ...base, ...emptyResult, truthState: "EMPTY_CERTIFIED",
+      ...base, ...emptyResult, truthState: "EMPTY_CERTIFIED", coverageState: "APPLICATIONS_ONLY_PARTIAL",
       windowLabel: "Sin recaudos registrados",
       linkageState: "HISTORY_ONLY",
       normalizationState: "ALL_CERTIFIED",
@@ -865,8 +881,9 @@ export function classifyCollections(
   let linkedCount = 0;
   const items: CollectionApplicationItem[] = validApps.map((a, i) => {
     const docRef = a.documentoRelacionado || "";
+    const docKind = resolveCanonicalDocumentKind(sourceProfileId, { documento: docRef, tipoDocumento: "" });
+    const target = canonicalKindToCollectionTarget(docKind.kind);
     const prefix = docRef.slice(0, 2).toUpperCase();
-    const target = resolveCollectionTarget(sourceProfileId, prefix) ?? "UNCLASSIFIED";
     const hasDocLink = docRef.length > 0;
     if (hasDocLink) linkedCount++;
 
@@ -889,7 +906,11 @@ export function classifyCollections(
       unappliedAmount: a.montoNoAplicado,
       appliedToDocument: hasDocLink ? docRef : null,
       collectionTarget: target,
-      linkageLabel: hasDocLink ? `Aplicado a ${docRef}` : "Sin vínculo documental certificado",
+      linkageLabel: hasDocLink
+        ? (target === "OFFICIAL_INVOICE" ? `Aplicado a factura ${docRef}`
+          : target === "REMISSION" ? `Aplicado a remisión ${docRef}`
+          : `Documento no clasificado ${docRef}`)
+        : "Sin vínculo documental certificado",
       applicationLinkage: appLinkage,
     };
   });
@@ -919,6 +940,7 @@ export function classifyCollections(
   return {
     ...base,
     truthState: "CERTIFIED",
+    coverageState: "APPLICATIONS_ONLY_PARTIAL",
     normalizationState: normState,
     windowLabel: `${certifiedReceipts.length} recibos / ${items.length} aplicaciones`,
     linkageState,

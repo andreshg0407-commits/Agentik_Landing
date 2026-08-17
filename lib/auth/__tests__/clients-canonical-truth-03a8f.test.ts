@@ -165,8 +165,8 @@ describe("classifyCollections — CustomerCollectionsResult", () => {
     expect(r.reason).toContain("Perfil documental");
   });
 
-  test("R1 receipt → OFFICIAL_INVOICE bucket", () => {
-    const apps = [makeApp({ documentoRelacionado: "R1-5001", valorRecaudado: 2_000_000 })];
+  test("FE document target → OFFICIAL_INVOICE bucket (03A8F3: canonical kind)", () => {
+    const apps = [makeApp({ documentoRelacionado: "FE-5001", valorRecaudado: 2_000_000 })];
     const r = classifyCollections(apps, true, true, "castillitos", NOW);
     expect(r.truthState).toBe("CERTIFIED");
     expect(r.officialInvoiceCollections!.count).toBe(1);
@@ -174,19 +174,19 @@ describe("classifyCollections — CustomerCollectionsResult", () => {
     expect(r.remissionCollections!.count).toBe(0);
   });
 
-  test("R2 receipt → REMISSION bucket", () => {
-    const apps = [makeApp({ documentoRelacionado: "R2-5002", valorRecaudado: 1_500_000 })];
+  test("F2 document target → REMISSION bucket (03A8F3: canonical kind)", () => {
+    const apps = [makeApp({ documentoRelacionado: "F2-5002", valorRecaudado: 1_500_000 })];
     const r = classifyCollections(apps, true, true, "castillitos", NOW);
     expect(r.remissionCollections!.count).toBe(1);
     expect(r.remissionCollections!.amount).toBe(1_500_000);
     expect(r.officialInvoiceCollections!.count).toBe(0);
   });
 
-  test("AN receipt → CUSTOMER_ADVANCE bucket", () => {
-    const apps = [makeApp({ documentoRelacionado: "AN-100", valorRecaudado: 500_000 })];
+  test("R1 receipt code → UNCLASSIFIED bucket (03A8F3: receipt codes are not targets)", () => {
+    const apps = [makeApp({ documentoRelacionado: "R1-100", valorRecaudado: 500_000 })];
     const r = classifyCollections(apps, true, true, "castillitos", NOW);
-    expect(r.advances!.count).toBe(1);
-    expect(r.advances!.amount).toBe(500_000);
+    expect(r.unclassified!.count).toBe(1);
+    expect(r.unclassified!.amount).toBe(500_000);
   });
 
   test("D2 credit note is EXCLUDED from collections entirely", () => {
@@ -219,10 +219,10 @@ describe("classifyCollections — CustomerCollectionsResult", () => {
     expect(r.items.length).toBe(0);
   });
 
-  test("Ludisam 1R → OFFICIAL_INVOICE, 2R → REMISSION", () => {
+  test("Ludisam F7 → OFFICIAL_INVOICE, RE → REMISSION (03A8F3: canonical kind)", () => {
     const apps = [
-      makeApp({ idRecaudo: 1, documentoRelacionado: "1R-001", valorRecaudado: 1_000_000 }),
-      makeApp({ idRecaudo: 2, documentoRelacionado: "2R-002", valorRecaudado: 500_000 }),
+      makeApp({ idRecaudo: 1, documentoRelacionado: "F7-001", valorRecaudado: 1_000_000 }),
+      makeApp({ idRecaudo: 2, documentoRelacionado: "RE-002", valorRecaudado: 500_000 }),
     ];
     const r = classifyCollections(apps, true, true, "ludisam", NOW);
     expect(r.officialInvoiceCollections!.count).toBe(1);
@@ -243,10 +243,10 @@ describe("classifyCollections — CustomerCollectionsResult", () => {
     expect(r.items[0].appliedToDocument).toBeNull();
   });
 
-  test("receipt WITH document link → 'Aplicado a ...'", () => {
+  test("receipt WITH document link → target-semantic label (03A8F3)", () => {
     const apps = [makeApp({ documentoRelacionado: "FE-1234", valorRecaudado: 500_000 })];
     const r = classifyCollections(apps, true, true, "castillitos", NOW);
-    expect(r.items[0].linkageLabel).toBe("Aplicado a FE-1234");
+    expect(r.items[0].linkageLabel).toBe("Aplicado a factura FE-1234");
     expect(r.items[0].appliedToDocument).toBe("FE-1234");
   });
 
@@ -327,16 +327,16 @@ describe("classifyCollections — CustomerCollectionsResult", () => {
     expect(r.totalItems).toBe(200);
   });
 
-  test("reason string includes bucket counts", () => {
+  test("reason string includes bucket counts (03A8F3: canonical targets)", () => {
     const apps = [
-      makeApp({ idRecaudo: 1, documentoRelacionado: "R1-1", valorRecaudado: 100 }),
-      makeApp({ idRecaudo: 2, documentoRelacionado: "R2-2", valorRecaudado: 200 }),
-      makeApp({ idRecaudo: 3, documentoRelacionado: "AN-3", valorRecaudado: 300 }),
+      makeApp({ idRecaudo: 1, documentoRelacionado: "FE-1", valorRecaudado: 100 }),
+      makeApp({ idRecaudo: 2, documentoRelacionado: "F2-2", valorRecaudado: 200 }),
+      makeApp({ idRecaudo: 3, documentoRelacionado: "ZZ-3", valorRecaudado: 300 }),
     ];
     const r = classifyCollections(apps, true, true, "castillitos", NOW);
     expect(r.reason).toContain("1 facturación");
     expect(r.reason).toContain("1 remisiones");
-    expect(r.reason).toContain("1 anticipos");
+    expect(r.reason).toContain("1 sin clasificar");
   });
 });
 

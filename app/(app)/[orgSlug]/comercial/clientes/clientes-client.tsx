@@ -870,7 +870,7 @@ function TabRecaudos({ data }: { data: Cliente360Data }) {
     <div style={{ display: "flex", flexDirection: "column" as const, gap: S[4] }}>
       {/* Summary strip */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: S[2] }}>
-        <MiniStat label="Recaudo neto" value={fmtCurrency(cr.netCollected ?? 0)} />
+        <MiniStat label={cr.coverageState === "APPLICATIONS_ONLY_PARTIAL" ? "Recaudos aplicados visibles" : "Recaudo neto"} value={fmtCurrency(cr.netCollected ?? 0)} />
         <MiniStat label="Recaudo bruto" value={fmtCurrency(cr.grossCollected ?? 0)} />
         <MiniStat label="Reversiones" value={cr.certifiedReversals ? fmtCurrency(cr.certifiedReversals) : "\u2014"} />
         <MiniStat label="Recibos" value={cr.receiptCount != null ? String(cr.receiptCount) : "\u2014"} />
@@ -915,6 +915,13 @@ function TabRecaudos({ data }: { data: Cliente360Data }) {
       <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost }}>
         Fuente: {cr.source}. {cr.reason}. {cr.windowLabel ?? ""}
       </div>
+
+      {/* Coverage disclaimer */}
+      {cr.coverageState === "APPLICATIONS_ONLY_PARTIAL" && (
+        <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.amber, marginTop: S[1] }}>
+          Cobertura parcial: solo recaudos con aplicaciones documentales visibles. Recaudos sin vínculo documental pueden no aparecer.
+        </div>
+      )}
     </div>
   );
 }

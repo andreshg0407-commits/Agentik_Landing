@@ -472,7 +472,7 @@ export function Cliente360Client({ orgSlug, data }: Props) {
             <div style={{ display: "flex", flexDirection: "column" as const, gap: S[4] }}>
               {/* Summary strip */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: S[3] }}>
-                <MiniStat label="Recaudo neto" value={fmtCurrency(data.collectionsResult.netCollected ?? 0)} />
+                <MiniStat label={data.collectionsResult.coverageState === "APPLICATIONS_ONLY_PARTIAL" ? "Recaudos aplicados visibles" : "Recaudo neto"} value={fmtCurrency(data.collectionsResult.netCollected ?? 0)} />
                 <MiniStat label="Recaudo bruto" value={fmtCurrency(data.collectionsResult.grossCollected ?? 0)} />
                 <MiniStat label="Reversiones" value={data.collectionsResult.certifiedReversals ? fmtCurrency(data.collectionsResult.certifiedReversals) : "\u2014"} />
                 <MiniStat label="Recibos" value={data.collectionsResult.receiptCount != null ? String(data.collectionsResult.receiptCount) : "\u2014"} />
@@ -523,6 +523,13 @@ export function Cliente360Client({ orgSlug, data }: Props) {
               <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost }}>
                 Fuente: {data.collectionsResult.source}. {data.collectionsResult.reason}. {data.collectionsResult.windowLabel ?? ""}
               </div>
+
+              {/* Coverage disclaimer */}
+              {data.collectionsResult.coverageState === "APPLICATIONS_ONLY_PARTIAL" && (
+                <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.amber, marginTop: S[1] }}>
+                  Cobertura parcial: solo recaudos con aplicaciones documentales visibles. Recaudos sin vínculo documental pueden no aparecer.
+                </div>
+              )}
             </div>
           )}
         </WorkspaceSection>
