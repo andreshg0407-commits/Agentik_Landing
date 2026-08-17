@@ -516,6 +516,14 @@ function deriveStoreName(code: string | null, channel: string): string {
  * k_sc_codigo_fuente cannot be included in the SAG GROUP BY on the full dataset.
  *
  * Returns null for payables (sc_cobrar_pagar='P') and orders (k_n_clase_fuente=4).
+ *
+ * LOSSY PATH (CLIENT-SALES-SELLER-PROVENANCE-03A8G2):
+ * This mapper does NOT populate sellerCode, sellerName, productCode, productLine,
+ * productName, units, unitPrice, costo, or lineItemId. Storage.ts fills fallbacks:
+ *   sellerName = "Sin Vendedor", sellerSlug = "sin-vendedor"
+ * Use mapSagVentasRow() (vw_agentik_ventas) for enriched data.
+ * Runtime enrichment via fetchSalesSellerEnrichment() recovers seller data
+ * for SaleRecords imported by this legacy path.
  */
 export function mapSagMovement(
   row: Record<string, unknown>,
@@ -978,6 +986,10 @@ export function mapSagVentasRow(
     storeName,
     storeSlug,
     // Enriched fields from vw_agentik_ventas (DATA-TRUST-REMEDIATION-01)
+    // NOTE (03A8G2): sellerCode stores VENDEDOR_ID (ka_nl_tercero PK, e.g. "211"),
+    // NOT a business vendor code like "V001". Schema documents sellerCode as
+    // "SAG code if available" but no sc_codigo_alterno is available in the view.
+    // Schema lacks a dedicated sellerTerceroId field. Runtime uses this as identifier.
     sellerCode:        vendedorId,
     sellerName:        vendedorName,
     productCode,

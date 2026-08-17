@@ -28,6 +28,7 @@ import { resolveCity, resolveCrmCity } from "./city-resolver";
 import { getCustomerPrimarySeller } from "@/lib/comercial/foundation/client-seller-linker";
 import { fetchCustomerArWithStatus } from "@/lib/comercial/frontline/canonical-ar-service";
 import { fetchCertifiedCustomerRecaudos } from "@/lib/comercial/frontline/canonical-recaudos-service";
+import { fetchSalesSellerEnrichment, type SagVentasSellerRow } from "./sales-seller-enrichment";
 import type { CertifiedReceivableDocument } from "@/lib/comercial/frontline/canonical-ar-types";
 import type { ReceivableTruthStatus } from "@/lib/comercial/frontline/receivable-truth-contract";
 import {
@@ -324,7 +325,7 @@ export async function loadCliente360(
 
   const tP2 = performance.now();
 
-  const [crmQuotesRaw, sagOrdersRaw, salesRaw] = await Promise.all([
+  const [crmQuotesRaw, sagOrdersRaw, salesRaw, sellerEnrichment] = await Promise.all([
     // CRM Quotes — use raw SQL with JSON path filter to avoid loading all org quotes
     (async () => {
       const t = performance.now();
@@ -393,6 +394,17 @@ export async function loadCliente360(
       }
       timing.sales = ms(t);
       return { rows, queryOk };
+    })(),
+
+    // SAG ventas seller enrichment — single batch query for all documents of this client
+    // Recovers seller data that legacy MOVIMIENTOS import lost
+    (async () => {
+      const t = performance.now();
+      const result = await fetchSalesSellerEnrichment(
+        p.sagTerceroId != null && p.sagTerceroId > 0 ? p.sagTerceroId : null,
+      );
+      timing.sellerEnrichment = ms(t);
+      return result;
     })(),
   ]);
 
@@ -555,6 +567,10 @@ export async function loadCliente360(
   );
 
   // Build classified sale items for sales history F1/F2 separation
+  // SAG seller enrichment: build lookup map keyed by NUMERO_DOCUMENTO+TIPO
+  // so we can recover seller data lost by legacy MOVIMIENTOS import
+  const sagSellerMap = sellerEnrichment.buildDocumentSellerMap();
+
   const classifiedSales: ClassifiedSaleItem[] = salesRaw.rows.map((s: any) => {
     const code = (s.comprobanteCode as string) ?? "";
     const num = (s.comprobante as string) ?? "";
@@ -563,14 +579,58 @@ export async function loadCliente360(
       documento: docRef,
       tipoDocumento: "",
     });
-    // Seller truth: "Sin Vendedor" is a fallback injected by storage.ts, not real SAG data
+
+    // Seller resolution: SAG enrichment > persisted data > fallback
+    // Step 1: Try SAG runtime enrichment (recovers seller lost by legacy import)
+    const sagSeller = sagSellerMap.get(num);
+    // Step 2: Check persisted data quality
     const rawSellerName = (s.sellerName as string) ?? "";
     const rawSellerCode = (s.sellerCode as string) ?? null;
     const isFallbackSeller = rawSellerName === "Sin Vendedor" || rawSellerName === "";
-    const sellerTruthState: import("./clientes-pure").SellerTruthState =
-      !isFallbackSeller ? "CERTIFIED"
-      : rawSellerCode ? "IDENTITY_ONLY"
-      : "NOT_REPORTED_BY_SOURCE";
+
+    let sellerId: string | null;
+    let sellerName: string | null;
+    let sellerTruthState: import("./clientes-pure").SellerTruthState;
+
+    if (sellerEnrichment.sourceDown) {
+      // SAG enrichment failed — use persisted data with appropriate truth state
+      if (!isFallbackSeller) {
+        sellerTruthState = "CERTIFIED";
+        sellerId = rawSellerCode;
+        sellerName = rawSellerName;
+      } else {
+        // Cannot determine — SAG is down AND persisted is fallback
+        sellerTruthState = "SOURCE_DOWN";
+        sellerId = null;
+        sellerName = null;
+      }
+    } else if (sagSeller) {
+      // SAG enrichment found seller for this document
+      if (sagSeller.vendedor) {
+        sellerTruthState = "CERTIFIED";
+        sellerId = sagSeller.vendedorId;
+        sellerName = sagSeller.vendedor;
+      } else if (sagSeller.vendedorId) {
+        sellerTruthState = "IDENTITY_ONLY";
+        sellerId = sagSeller.vendedorId;
+        sellerName = null;
+      } else {
+        // SAG returned null for both — genuinely not reported
+        sellerTruthState = "NOT_REPORTED_BY_SOURCE";
+        sellerId = null;
+        sellerName = null;
+      }
+    } else if (!isFallbackSeller) {
+      // SAG enrichment didn't cover this doc (e.g. remisiones not in view) but persisted is real
+      sellerTruthState = "CERTIFIED";
+      sellerId = rawSellerCode;
+      sellerName = rawSellerName;
+    } else {
+      // No SAG enrichment + persisted is fallback — document not in view scope
+      sellerTruthState = "NOT_REPORTED_BY_SOURCE";
+      sellerId = null;
+      sellerName = null;
+    }
 
     return {
       id: s.id,
@@ -579,8 +639,8 @@ export async function loadCliente360(
       rawDocumentNumber: docRef || null,
       issueDate: s.saleDate instanceof Date ? s.saleDate.toISOString() : (s.saleDate ?? null),
       seller: s.sellerSlug ?? null,
-      sellerId: rawSellerCode,
-      sellerName: isFallbackSeller ? null : rawSellerName,
+      sellerId,
+      sellerName,
       sellerTruthState,
       grossAmount: Number(s.amount ?? 0),
       productLine: s.productLine ?? null,
