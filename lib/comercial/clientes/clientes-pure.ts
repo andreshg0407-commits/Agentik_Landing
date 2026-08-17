@@ -7,6 +7,8 @@
  * Production code and tests import from this same file.
  */
 
+import { resolveCanonicalDocumentKind } from "./document-source-profiles";
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type ClienteCarteraState = "HAS_OPEN_AR" | "CERTIFIED_ZERO" | "CERTIFIED_CREDIT_BALANCE" | "UNVERIFIED";
@@ -101,17 +103,15 @@ export interface ReceivableOutput {
 
 /**
  * Classifies tipoDocumento from SAG into a display label.
- * FUENTES contract: F2=Remisión, D2=Nota crédito, R2/R1=Recibo de caja.
+ *
+ * Delegates to resolveCanonicalDocumentKind with the specified source profile.
+ * Default profile: "castillitos" (current active tenant).
+ *
+ * FUENTES contract enforced per-tenant via document-source-profiles.ts.
  */
-export function classifyDocumentType(tipoDocumento: string, documento: string): string {
-  const prefix = documento.slice(0, 2).toUpperCase();
-  if (prefix === "D2" || prefix === "NC") return "Nota crédito";
-  if (prefix === "R2" || prefix === "R1") return "Recibo de caja";
-  if (prefix === "F2") return "Remisión";
-  if (prefix === "FE" || prefix === "F1") return "Factura";
-  if (tipoDocumento === "Nota Crédito") return "Nota crédito";
-  if (tipoDocumento === "Factura") return "Factura";
-  return tipoDocumento || "Documento";
+export function classifyDocumentType(tipoDocumento: string, documento: string, profileId: string = "castillitos"): string {
+  const result = resolveCanonicalDocumentKind(profileId, { documento, tipoDocumento });
+  return result.label;
 }
 
 export function mapCertifiedDocToReceivable(doc: CertifiedDocInput): ReceivableOutput {
