@@ -21,6 +21,7 @@ import { C, T, S, R, E } from "@/lib/ui/tokens";
 import { OperationalWorkspaceHeader } from "@/components/workspace/operational-workspace-header";
 import { EmptyOperationalState, WorkspaceSection } from "@/components/shell/operational-primitives";
 import type { Cliente360Data } from "@/lib/comercial/clientes/cliente-360-loader";
+import { kpiDisplayValue } from "@/lib/comercial/clientes/clientes-pure";
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -251,10 +252,15 @@ export function Cliente360Client({ orgSlug, data }: Props) {
         }}
       >
         <KpiCard label="Pedidos CRM" value={crmQuotes.items.length} />
-        <KpiCard label="Pedidos SAG" value={sagOrders.items.length} />
+        <KpiCard
+          label="Pedidos SAG"
+          textValue={kpiDisplayValue(data.sagOrdersMeta)}
+          color={data.sagOrdersMeta.truthState === "SOURCE_DOWN" ? C.red : data.sagOrdersMeta.truthState === "IDENTITY_MISSING" ? C.inkGhost : undefined}
+        />
         <KpiCard
           label="Facturas"
-          value={sales.items.filter(s => s.sagSourceType === "OFICIAL").length}
+          textValue={kpiDisplayValue(data.invoicesMeta)}
+          color={data.invoicesMeta.truthState === "SOURCE_DOWN" ? C.red : data.invoicesMeta.truthState === "IDENTITY_MISSING" ? C.inkGhost : undefined}
         />
         <KpiCard
           label="Cartera vencida"

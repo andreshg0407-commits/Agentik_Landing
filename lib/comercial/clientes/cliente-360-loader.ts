@@ -36,8 +36,11 @@ import {
   computeAgingCompleteness,
   resolveOverdueDisplay,
   resolveCollectionContext,
+  resolveSagOrdersKpi,
+  resolveInvoiceKpi,
 } from "./clientes-pure";
-import type { AgingCompleteness, CollectionContext } from "./clientes-pure";
+import type { AgingCompleteness, CollectionContext, KpiSourceMeta } from "./clientes-pure";
+import { resolveCanonicalDocumentKind } from "./document-source-profiles";
 import { resolveOrgSourceProfileId } from "./document-source-profiles";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -168,6 +171,10 @@ export interface Cliente360Data {
   sales: { state: BlockState; items: Cliente360SaleRecord[] };
   collections: { state: BlockState; items: Cliente360CollectionRecord[] };
   opportunities: Cliente360Opportunity[];
+  /** SAG orders KPI source metadata — truthState, reason, windowLabel */
+  sagOrdersMeta: KpiSourceMeta;
+  /** Invoice KPI source metadata — truthState, reason, windowLabel */
+  invoicesMeta: KpiSourceMeta;
   loadedAt: string;
 }
 
@@ -325,42 +332,55 @@ export async function loadCliente360(
       return rows;
     })(),
 
-    // SAG Orders (via NIT)
+    // SAG Orders (via sagTerceroId — canonical SAG identity, NOT NIT)
+    // CustomerOrderRecord.customerNit stores ka_nl_tercero as string
     (async () => {
       const t = performance.now();
       let rows: any[] = [];
-      if (p.nit) {
-        rows = await db.customerOrderRecord.findMany({
-          where: { organizationId, customerNit: p.nit },
-          select: {
-            id: true, erpMovId: true, orderNumber: true,
-            orderDate: true, amount: true, status: true, customerName: true,
-          },
-          orderBy: { orderDate: "desc" },
-          take: 50,
-        });
+      let queryOk = false;
+      if (p.sagTerceroId != null && p.sagTerceroId > 0) {
+        try {
+          rows = await db.customerOrderRecord.findMany({
+            where: { organizationId, customerNit: String(p.sagTerceroId) },
+            select: {
+              id: true, erpMovId: true, orderNumber: true,
+              orderDate: true, amount: true, status: true, customerName: true,
+            },
+            orderBy: { orderDate: "desc" },
+            take: 50,
+          });
+          queryOk = true;
+        } catch {
+          queryOk = false;
+        }
       }
       timing.sagOrders = ms(t);
-      return rows;
+      return { rows, queryOk };
     })(),
 
-    // Sales (via NIT)
+    // Sales (via NIT — SaleRecord.customerNit is the real NIT)
     (async () => {
       const t = performance.now();
       let rows: any[] = [];
+      let queryOk = false;
       if (p.nit) {
-        rows = await db.saleRecord.findMany({
-          where: { organizationId, customerNit: p.nit },
-          select: {
-            id: true, comprobanteCode: true, amount: true,
-            saleDate: true, productLine: true, sagSourceType: true, sellerSlug: true,
-          },
-          orderBy: { saleDate: "desc" },
-          take: 50,
-        });
+        try {
+          rows = await db.saleRecord.findMany({
+            where: { organizationId, customerNit: p.nit },
+            select: {
+              id: true, comprobanteCode: true, comprobante: true, amount: true,
+              saleDate: true, productLine: true, sagSourceType: true, sellerSlug: true,
+            },
+            orderBy: { saleDate: "desc" },
+            take: 50,
+          });
+          queryOk = true;
+        } catch {
+          queryOk = false;
+        }
       }
       timing.sales = ms(t);
-      return rows;
+      return { rows, queryOk };
     })(),
   ]);
 
@@ -380,7 +400,7 @@ export async function loadCliente360(
     sagOrderId: q.sagOrderId || null,
   }));
 
-  const sagOrders: Cliente360SagOrder[] = sagOrdersRaw.map((o: any) => ({
+  const sagOrders: Cliente360SagOrder[] = sagOrdersRaw.rows.map((o: any) => ({
     id: o.id,
     erpMovId: o.erpMovId,
     orderNumber: o.orderNumber,
@@ -389,6 +409,11 @@ export async function loadCliente360(
     status: o.status,
     customerName: o.customerName,
   }));
+
+  // SAG orders KPI metadata
+  const sagOrdersMeta = resolveSagOrdersKpi(
+    p.sagTerceroId, sagOrdersRaw.queryOk, sagOrders.length, new Date(),
+  );
 
   // ── Canonical AR from SAG — ONLY source of receivable truth ──────────────
   // NO legacy CustomerReceivable is queried or used. All cartera data
@@ -478,7 +503,7 @@ export async function loadCliente360(
     // receivableTruthStatus stays "UNVERIFIED"
   }
 
-  const salesItems: Cliente360SaleRecord[] = salesRaw.map((s: any) => ({
+  const salesItems: Cliente360SaleRecord[] = salesRaw.rows.map((s: any) => ({
     id: s.id,
     comprobanteCode: s.comprobanteCode,
     amount: Number(s.amount ?? 0),
@@ -487,6 +512,29 @@ export async function loadCliente360(
     sagSourceType: s.sagSourceType,
     sellerSlug: s.sellerSlug,
   }));
+
+  // Invoice KPI — count only SALES_INVOICE via canonical document kind
+  // Use comprobante prefix (document number) resolved through source profile
+  const excludedKindLabels: string[] = [];
+  let invoiceCount = 0;
+  for (const s of salesRaw.rows) {
+    const comprobante = (s.comprobante as string) ?? "";
+    const kind = resolveCanonicalDocumentKind(sourceProfileId, {
+      documento: comprobante,
+      tipoDocumento: "",
+    });
+    if (kind.kind === "SALES_INVOICE") {
+      invoiceCount++;
+    } else if (kind.kind !== "UNKNOWN_DOCUMENT") {
+      if (!excludedKindLabels.includes(kind.label)) {
+        excludedKindLabels.push(kind.label);
+      }
+    }
+  }
+  const invoicesMeta = resolveInvoiceKpi(
+    p.nit, salesRaw.queryOk, invoiceCount, salesRaw.rows.length,
+    excludedKindLabels, new Date(),
+  );
 
   const collectionItems: Cliente360CollectionRecord[] = rawCollections.map((c: any) => ({
     id: c.id,
@@ -538,6 +586,8 @@ export async function loadCliente360(
       items: collectionItems,
     },
     opportunities,
+    sagOrdersMeta,
+    invoicesMeta,
     loadedAt: new Date().toISOString(),
   };
 

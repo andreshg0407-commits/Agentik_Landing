@@ -246,6 +246,120 @@ export function resolveReceivableDisplayStatus(
   return status;
 }
 
+// ── Header KPI source metadata ───────────────────────────────────────────────
+
+export type KpiTruthState =
+  | "CERTIFIED"          // query succeeded, records found
+  | "EMPTY_CERTIFIED"    // query succeeded, zero records confirmed
+  | "SOURCE_DOWN"        // query failed / timeout
+  | "IDENTITY_MISSING"   // customer has no SAG identity
+  | "PENDING_VALIDATION"; // state cannot be determined
+
+export interface KpiSourceMeta {
+  count: number | null;
+  source: string;
+  sourceAsOf: string | null;
+  windowLabel: string;
+  truthState: KpiTruthState;
+  reason: string;
+}
+
+/** Display text for a KPI based on its truth state */
+export function kpiDisplayValue(meta: KpiSourceMeta): string {
+  switch (meta.truthState) {
+    case "CERTIFIED":       return String(meta.count);
+    case "EMPTY_CERTIFIED": return "0";
+    case "SOURCE_DOWN":     return "No disponible";
+    case "IDENTITY_MISSING": return "Cliente no vinculado con SAG";
+    case "PENDING_VALIDATION": return "Pendiente de validación";
+  }
+}
+
+/**
+ * Resolve SAG orders KPI metadata.
+ * sagTerceroId is the canonical join key — NOT NIT.
+ */
+export function resolveSagOrdersKpi(
+  sagTerceroId: number | null,
+  querySucceeded: boolean,
+  orderCount: number,
+  queryAsOf: Date | null,
+): KpiSourceMeta {
+  if (sagTerceroId == null || sagTerceroId <= 0) {
+    return {
+      count: null, source: "CustomerOrderRecord", sourceAsOf: null,
+      windowLabel: "\u2014", truthState: "IDENTITY_MISSING",
+      reason: "Cliente sin sagTerceroId — no se puede consultar pedidos SAG",
+    };
+  }
+  if (!querySucceeded) {
+    return {
+      count: null, source: "CustomerOrderRecord", sourceAsOf: null,
+      windowLabel: "\u2014", truthState: "SOURCE_DOWN",
+      reason: "Consulta de pedidos SAG fallida",
+    };
+  }
+  if (orderCount === 0) {
+    return {
+      count: 0, source: "CustomerOrderRecord", sourceAsOf: queryAsOf?.toISOString() ?? null,
+      windowLabel: "Sin pedidos SAG", truthState: "EMPTY_CERTIFIED",
+      reason: `Consulta exitosa para sagTerceroId=${sagTerceroId} — 0 registros`,
+    };
+  }
+  return {
+    count: orderCount, source: "CustomerOrderRecord", sourceAsOf: queryAsOf?.toISOString() ?? null,
+    windowLabel: `${orderCount} pedido${orderCount !== 1 ? "s" : ""} SAG`,
+    truthState: "CERTIFIED",
+    reason: `${orderCount} pedidos encontrados para sagTerceroId=${sagTerceroId}`,
+  };
+}
+
+/**
+ * Resolve invoice KPI metadata.
+ * Only counts SALES_INVOICE canonical kind from sales history.
+ */
+export function resolveInvoiceKpi(
+  nit: string | null,
+  querySucceeded: boolean,
+  invoiceCount: number,
+  totalSalesCount: number,
+  excludedKinds: string[],
+  queryAsOf: Date | null,
+): KpiSourceMeta {
+  if (!nit) {
+    return {
+      count: null, source: "SaleRecord", sourceAsOf: null,
+      windowLabel: "\u2014", truthState: "IDENTITY_MISSING",
+      reason: "Cliente sin NIT — no se puede consultar historial de ventas",
+    };
+  }
+  if (!querySucceeded) {
+    return {
+      count: null, source: "SaleRecord", sourceAsOf: null,
+      windowLabel: "\u2014", truthState: "SOURCE_DOWN",
+      reason: "Consulta de historial de ventas fallida",
+    };
+  }
+  if (invoiceCount === 0 && totalSalesCount === 0) {
+    return {
+      count: 0, source: "SaleRecord", sourceAsOf: queryAsOf?.toISOString() ?? null,
+      windowLabel: "Facturación no disponible", truthState: "EMPTY_CERTIFIED",
+      reason: `Consulta exitosa — 0 registros de venta para NIT ${nit}`,
+    };
+  }
+  const excluded = excludedKinds.length > 0
+    ? ` (excluidos: ${excludedKinds.join(", ")})`
+    : "";
+  return {
+    count: invoiceCount, source: "SaleRecord", sourceAsOf: queryAsOf?.toISOString() ?? null,
+    windowLabel: invoiceCount === 0
+      ? "Facturación no disponible"
+      : `${invoiceCount} factura${invoiceCount !== 1 ? "s" : ""}`,
+    truthState: invoiceCount > 0 ? "CERTIFIED" : "EMPTY_CERTIFIED",
+    reason: `${invoiceCount} facturas de ${totalSalesCount} registros${excluded}`,
+  };
+}
+
 // ── carteraTrafficLight ──────────────────────────────────────────────────────
 
 export interface CarteraTrafficLightInput {

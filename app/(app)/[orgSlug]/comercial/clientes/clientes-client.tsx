@@ -23,6 +23,7 @@ import { UNVERIFIED_RECEIVABLE_LABEL } from "@/lib/comercial/frontline/receivabl
 import {
   carteraTrafficLight as carteraTrafficLightPure,
   computeClientScore as computeClientScorePure,
+  kpiDisplayValue,
 } from "@/lib/comercial/clientes/clientes-pure";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -556,8 +557,8 @@ function DrawerContent({
       {/* ── KPI Strip ────────────────────────────────────────────────── */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: S[2], marginBottom: S[5] }}>
         <DrawerKpi label="Pedidos CRM" value={crmQuotes.items.length} />
-        <DrawerKpi label="Pedidos SAG" value={sagOrders.items.length} />
-        <DrawerKpi label="Facturas" value={facturaCount} />
+        <DrawerKpi label="Pedidos SAG" textValue={kpiDisplayValue(data.sagOrdersMeta)} color={data.sagOrdersMeta.truthState === "SOURCE_DOWN" ? C.red : data.sagOrdersMeta.truthState === "IDENTITY_MISSING" ? C.inkGhost : undefined} />
+        <DrawerKpi label="Facturas" textValue={kpiDisplayValue(data.invoicesMeta)} color={data.invoicesMeta.truthState === "SOURCE_DOWN" ? C.red : data.invoicesMeta.truthState === "IDENTITY_MISSING" ? C.inkGhost : undefined} />
         <DrawerKpi label="Saldo cartera" textValue={receivables.truthStatus !== "CERTIFIED" ? "No verificado" : receivables.totalBalance !== null && receivables.totalBalance > 0 ? fmtCurrency(receivables.totalBalance) : "$0"} color={receivables.truthStatus !== "CERTIFIED" ? C.inkGhost : (receivables.totalOverdue ?? 0) > 0 ? C.red : undefined} />
         <DrawerKpi label="Ultima compra" textValue={fmtDaysAgo(lastActivity)} />
         <DrawerKpi label="Salud cartera" textValue={carteraTrafficLight(receivables).label} color={carteraTrafficLight(receivables).color} />
@@ -572,7 +573,7 @@ function DrawerContent({
           // Badge counts
           let badge: number | null = null;
           if (tab.key === "pedidos") badge = totalOrders || null;
-          if (tab.key === "facturas") badge = facturaCount || null;
+          if (tab.key === "facturas") badge = (data.invoicesMeta.count ?? 0) > 0 ? data.invoicesMeta.count : null;
           if (tab.key === "cartera" && (receivables.openCount ?? 0) > 0) badge = receivables.openCount;
           if (tab.key === "inteligencia" && opportunities.length > 0) badge = opportunities.length;
 
@@ -905,8 +906,8 @@ function TabInteligencia({ data }: { data: Cliente360Data }) {
         <SectionLabel label="Comportamiento" />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[3] }}>
           <FieldRow label="Pedidos CRM" value={String(crmQuotes.items.length || "\u2014")} />
-          <FieldRow label="Pedidos SAG" value={String(sagOrders.items.length || "\u2014")} />
-          <FieldRow label="Facturas" value={String(sales.items.filter(s => s.sagSourceType === "OFICIAL").length || "\u2014")} />
+          <FieldRow label="Pedidos SAG" value={kpiDisplayValue(data.sagOrdersMeta)} />
+          <FieldRow label="Facturas" value={kpiDisplayValue(data.invoicesMeta)} />
           <FieldRow label="Cobros registrados" value={String(data.collections.items.length || "\u2014")} />
         </div>
       </div>
