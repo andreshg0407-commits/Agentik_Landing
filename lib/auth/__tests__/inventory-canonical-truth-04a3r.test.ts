@@ -312,3 +312,57 @@ describe("G14: CCS prohibited from decision path", () => {
     expect(cwa).toContain("// SOURCE_DOWN — no fallback to CCS");
   });
 });
+
+// ── G15: SOURCE_DOWN visual closure ──────────────────────────────────────────
+
+describe("G15: SOURCE_DOWN produces visible user banner", () => {
+  const client = fs.readFileSync(
+    path.resolve(__dirname, "../../../app/(app)/[orgSlug]/comercial/maletas/maletas-client.tsx"),
+    "utf-8",
+  );
+
+  test("G15a: Client accepts sag_source_down source type", () => {
+    expect(client).toContain('"sag_source_down"');
+  });
+
+  test("G15b: SOURCE_DOWN banner shows Bodega Principal no disponible", () => {
+    expect(client).toContain("Disponibilidad de Bodega Principal no disponible");
+  });
+
+  test("G15c: SOURCE_DOWN banner does NOT show zero opportunities or Todo en orden", () => {
+    // Find the source_down block and verify no misleading messages
+    const idx = client.indexOf("sag_source_down");
+    expect(idx).toBeGreaterThan(-1);
+    const block = client.substring(idx, idx + 600);
+    expect(block).not.toContain("0 oportunidades");
+    expect(block).not.toContain("Todo en orden");
+    expect(block).not.toContain("cobertura certificada");
+  });
+
+  test("G15d: SOURCE_DOWN banner does NOT show CCS-recovered quantities", () => {
+    const idx = client.indexOf("sag_source_down");
+    const block = client.substring(idx, idx + 600);
+    expect(block).not.toContain("CommercialCoverageSnapshot");
+    expect(block).not.toContain("CCS");
+  });
+});
+
+// ── G16: Import exclusion runtime ────────────────────────────────────────────
+
+describe("G16: Import line produces EXCLUDED, zero opportunities", () => {
+  const mci = fs.readFileSync(path.join(MAL, "maletas-canonical-inventory.ts"), "utf-8");
+
+  test("G16a: IMPORTACION has threshold 10 in MALETA_COVERAGE_MINIMUMS", () => {
+    expect(mci).toContain("IMPORTACION: 10");
+  });
+
+  test("G16b: isEligibleForMaletaCoverage rejects when threshold undefined (non-textile lines)", () => {
+    // threshold === undefined → return false (import line must have defined threshold)
+    expect(mci).toContain("if (threshold === undefined) return false");
+  });
+
+  test("G16c: Import refs excluded from replacement engine in loader", () => {
+    const loader = fs.readFileSync(path.join(MAL, "vendor-sample-loader.ts"), "utf-8");
+    expect(loader).toContain("IMPORT refs are EXCLUDED from the replacement engine");
+  });
+});

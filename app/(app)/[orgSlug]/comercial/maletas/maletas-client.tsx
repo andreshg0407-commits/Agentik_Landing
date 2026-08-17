@@ -67,7 +67,7 @@ interface MaletasClientProps {
   productionSuggestions: ProductionSuggestion[];
   intelligence: MaletasCommercialIntelligenceResult;
   accessorySummary: AccessorySummary;
-  source: "sag" | "prisma" | "empty";
+  source: "sag" | "prisma" | "empty" | "sag_source_down";
   loadedAt: string;
   // MALLETS-FUNCTIONAL-RECOVERY-01
   assortmentEvaluations: VendorAssortmentResult[];
@@ -511,6 +511,24 @@ export function MaletasClient({
         flex: 1, overflow: "auto", padding: S[5],
         background: C.blueLight,
       }}>
+        {/* ── SOURCE_DOWN banner (04A3R-V) ── */}
+        {source === "sag_source_down" && (
+          <div style={{
+            padding: S[4], marginBottom: S[4],
+            background: C.red + "10", border: `1px solid ${C.red}40`,
+            borderRadius: R.lg, display: "flex", alignItems: "center", gap: S[3],
+          }}>
+            <span style={{ fontSize: 18 }}>&#x26A0;</span>
+            <div>
+              <div style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: C.red }}>
+                Disponibilidad de Bodega Principal no disponible
+              </div>
+              <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint, marginTop: 2 }}>
+                SAG CURRENT B01 no responde. No se muestran oportunidades ni cobertura hasta que la fuente se restablezca.
+              </div>
+            </div>
+          </div>
+        )}
         {/* ── Quick access bar (GO-LIVE-MALETAS-HOME-NAV-COLLAPSIBLE-01) ── */}
         <div style={{
           display: "flex", alignItems: "center", gap: S[2],
