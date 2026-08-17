@@ -53,6 +53,8 @@ describe("resolveRowCartera — CERTIFIED context", () => {
     dataState: "CERTIFIED",
     arLookup: new Map([
       [526, { clienteId: 526, totalPendiente: 912400, totalVencido: 912400 }],
+      [700, { clienteId: 700, totalPendiente: 0, totalVencido: 0 }],
+      [800, { clienteId: 800, totalPendiente: -150000, totalVencido: 0 }],
     ]),
   };
 
@@ -63,11 +65,25 @@ describe("resolveRowCartera — CERTIFIED context", () => {
     expect(result.overdueReceivable).toBe(0);
   });
 
-  test("Diana (526) — in arLookup → HAS_OPEN_AR with real amounts", () => {
+  test("Diana (526) — totalPendiente>0 → HAS_OPEN_AR with real amounts", () => {
     const result = resolveRowCartera(arCtx, 526);
     expect(result.carteraState).toBe("HAS_OPEN_AR");
     expect(result.totalReceivable).toBe(912400);
     expect(result.overdueReceivable).toBe(912400);
+  });
+
+  test("(700) — in arLookup but totalPendiente=0 → CERTIFIED_ZERO", () => {
+    const result = resolveRowCartera(arCtx, 700);
+    expect(result.carteraState).toBe("CERTIFIED_ZERO");
+    expect(result.totalReceivable).toBe(0);
+    expect(result.overdueReceivable).toBe(0);
+  });
+
+  test("(800) — totalPendiente<0 → CERTIFIED_CREDIT_BALANCE", () => {
+    const result = resolveRowCartera(arCtx, 800);
+    expect(result.carteraState).toBe("CERTIFIED_CREDIT_BALANCE");
+    expect(result.totalReceivable).toBe(-150000);
+    expect(result.overdueReceivable).toBe(0);
   });
 
   test("sagTerceroId=null → UNVERIFIED (even when CERTIFIED)", () => {
@@ -194,6 +210,11 @@ describe("carteraTrafficLight — four-state contract", () => {
 
   test("CERTIFIED + balance=0 → 'Sin cartera' (genuine $0)", () => {
     expect(carteraTrafficLight({ truthStatus: "CERTIFIED", totalBalance: 0, items: [] }).label).toBe("Sin cartera");
+  });
+
+  test("CERTIFIED + balance<0 → 'Saldo a favor' (credit balance)", () => {
+    const result = carteraTrafficLight({ truthStatus: "CERTIFIED", totalBalance: -150000, items: [] });
+    expect(result.label).toBe("Saldo a favor");
   });
 
   test("CERTIFIED + balance>0 + no known mora → 'Mora no disponible'", () => {
@@ -506,44 +527,127 @@ describe("loadClientesSummaryCoreLogic — distinct KPI counting", () => {
 
 // ── loadArContextCore — successful certified snapshot ────────────────────────
 
-describe("loadArContextCore — SAG success", () => {
+// ── 03A5: POSITIVE-BALANCE SEMANTICS — 5-customer scenario ──────────────────
+
+describe("loadArContextCore — 5-customer positive-balance scenario", () => {
+  // A: totalPendiente=1_000_000 (open AR)
+  // B: totalPendiente=105_000 (open AR, no overdue)
+  // C: totalPendiente=0 (zero balance)
+  // D: totalPendiente=0 (zero balance)
+  // E: totalPendiente=-250_000 (credit/saldo a favor)
   const deps: LoadArContextDeps = {
     isCertified: () => true,
     fetchSnapshot: async () => ({
       ok: true as const,
       snapshot: {
         customers: [
-          { clienteId: 526, totalPendiente: 912400, totalVencido: 912400 },
-          { clienteId: 100, totalPendiente: 500000, totalVencido: 0 },
+          { clienteId: 10, totalPendiente: 1_000_000, totalVencido: 300_000 },
+          { clienteId: 20, totalPendiente: 105_000, totalVencido: 0 },
+          { clienteId: 30, totalPendiente: 0, totalVencido: 0 },
+          { clienteId: 40, totalPendiente: 0, totalVencido: 0 },
+          { clienteId: 50, totalPendiente: -250_000, totalVencido: 0 },
         ],
         asOf: new Date("2026-08-16T12:00:00Z"),
       },
     }),
   };
 
-  test("returns CERTIFIED with populated lookup", async () => {
+  test("arLookup contains ALL 5 customers", async () => {
     const ctx = await loadArContextCore("org-1", deps);
-    expect(ctx.dataState).toBe("CERTIFIED");
-    expect(ctx.arLookup.size).toBe(2);
-    expect(ctx.arCustomerIds.size).toBe(2);
+    expect(ctx.arLookup.size).toBe(5);
   });
 
-  test("overdueCustomerIds only includes customers with totalVencido>0", async () => {
+  test("arCustomerIds contains ONLY positive-balance customers (A, B)", async () => {
+    const ctx = await loadArContextCore("org-1", deps);
+    expect(ctx.arCustomerIds.size).toBe(2);
+    expect(ctx.arCustomerIds.has(10)).toBe(true);
+    expect(ctx.arCustomerIds.has(20)).toBe(true);
+    expect(ctx.arCustomerIds.has(30)).toBe(false);
+    expect(ctx.arCustomerIds.has(40)).toBe(false);
+    expect(ctx.arCustomerIds.has(50)).toBe(false);
+  });
+
+  test("overdueCustomerIds only includes A (totalVencido>0 AND totalPendiente>0)", async () => {
     const ctx = await loadArContextCore("org-1", deps);
     expect(ctx.overdueCustomerIds.size).toBe(1);
-    expect(ctx.overdueCustomerIds.has(526)).toBe(true);
-    expect(ctx.overdueCustomerIds.has(100)).toBe(false);
+    expect(ctx.overdueCustomerIds.has(10)).toBe(true);
   });
 
-  test("resolveRowCartera produces correct results from this context", async () => {
+  test("resolveRowCartera: A → HAS_OPEN_AR", async () => {
     const ctx = await loadArContextCore("org-1", deps);
-    const diana = resolveRowCartera(ctx, 526);
-    expect(diana.carteraState).toBe("HAS_OPEN_AR");
-    expect(diana.totalReceivable).toBe(912400);
+    const r = resolveRowCartera(ctx, 10);
+    expect(r.carteraState).toBe("HAS_OPEN_AR");
+    expect(r.totalReceivable).toBe(1_000_000);
+  });
 
-    const amv = resolveRowCartera(ctx, 856);
-    expect(amv.carteraState).toBe("CERTIFIED_ZERO");
-    expect(amv.totalReceivable).toBe(0);
+  test("resolveRowCartera: B → HAS_OPEN_AR", async () => {
+    const ctx = await loadArContextCore("org-1", deps);
+    const r = resolveRowCartera(ctx, 20);
+    expect(r.carteraState).toBe("HAS_OPEN_AR");
+    expect(r.totalReceivable).toBe(105_000);
+  });
+
+  test("resolveRowCartera: C → CERTIFIED_ZERO", async () => {
+    const ctx = await loadArContextCore("org-1", deps);
+    const r = resolveRowCartera(ctx, 30);
+    expect(r.carteraState).toBe("CERTIFIED_ZERO");
+    expect(r.totalReceivable).toBe(0);
+  });
+
+  test("resolveRowCartera: D → CERTIFIED_ZERO", async () => {
+    const ctx = await loadArContextCore("org-1", deps);
+    const r = resolveRowCartera(ctx, 40);
+    expect(r.carteraState).toBe("CERTIFIED_ZERO");
+    expect(r.totalReceivable).toBe(0);
+  });
+
+  test("resolveRowCartera: E → CERTIFIED_CREDIT_BALANCE", async () => {
+    const ctx = await loadArContextCore("org-1", deps);
+    const r = resolveRowCartera(ctx, 50);
+    expect(r.carteraState).toBe("CERTIFIED_CREDIT_BALANCE");
+    expect(r.totalReceivable).toBe(-250_000);
+    expect(r.overdueReceivable).toBe(0);
+  });
+
+  test("resolveRowCartera: unknown customer → CERTIFIED_ZERO", async () => {
+    const ctx = await loadArContextCore("org-1", deps);
+    const r = resolveRowCartera(ctx, 999);
+    expect(r.carteraState).toBe("CERTIFIED_ZERO");
+  });
+
+  test("con_cartera filter only returns A and B", async () => {
+    const ctx = await loadArContextCore("org-1", deps);
+    const guard = resolveConCarteraFilter(ctx);
+    expect(guard.allowed).toBe(true);
+    if (guard.allowed) {
+      expect(guard.sagIds.sort()).toEqual([10, 20]);
+    }
+  });
+
+  test("withCartera KPI matches positive-balance count", async () => {
+    const ctx = await loadArContextCore("org-1", deps);
+    const result = await loadClientesSummaryCoreLogic("org-1", ctx, {
+      queryProfileAgg: async () => ({
+        total: 100, active: 80, inactive: 20, withSeller: 50, sinCompra90d: 10, withCrm: 30,
+      }),
+      countDistinctProfiles: async (_orgId, sagIds) => sagIds.length,
+    });
+    expect(result.withCartera).toBe(2); // Only A and B
+    expect(result.withOverdue).toBe(1); // Only A
+  });
+
+  test("no filtered row has totalReceivable <= 0", async () => {
+    const ctx = await loadArContextCore("org-1", deps);
+    // Simulate all 5 customers going through resolveRowCartera
+    const allIds = [10, 20, 30, 40, 50, 999];
+    const rows = allIds.map(id => ({ id, ...resolveRowCartera(ctx, id) }));
+    // Only HAS_OPEN_AR rows should appear in con_cartera
+    const openAr = rows.filter(r => r.carteraState === "HAS_OPEN_AR");
+    expect(openAr.length).toBe(2);
+    for (const r of openAr) {
+      expect(r.totalReceivable).not.toBeNull();
+      expect(r.totalReceivable!).toBeGreaterThan(0);
+    }
   });
 });
 
@@ -599,6 +703,11 @@ describe("clientes-client.tsx — UI wiring", () => {
   test("con_cartera button has disabled and aria-disabled attributes", () => {
     expect(src).toContain("disabled={carteraDisabled}");
     expect(src).toContain("aria-disabled={carteraDisabled");
+  });
+
+  test("row shows 'Saldo a favor' for CERTIFIED_CREDIT_BALANCE", () => {
+    expect(src).toContain("CERTIFIED_CREDIT_BALANCE");
+    expect(src).toContain("Saldo a favor");
   });
 });
 

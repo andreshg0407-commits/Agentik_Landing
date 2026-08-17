@@ -1190,8 +1190,8 @@ function ClienteRowItem({ client, even, selected, onClick }: {
       <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: client.customerType ? C.inkMid : C.inkGhost, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
         {client.customerType ?? "\u2014"}
       </span>
-      <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: (client.overdueReceivable ?? 0) > 0 ? T.wt.semibold : T.wt.normal, color: (client.overdueReceivable ?? 0) > 0 ? C.red : C.inkGhost, textAlign: "right" as const }}>
-        {client.overdueReceivable != null ? fmtCurrency(client.overdueReceivable) : "\u2014"}
+      <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: (client.overdueReceivable ?? 0) > 0 ? T.wt.semibold : T.wt.normal, color: (client.overdueReceivable ?? 0) > 0 ? C.red : client.carteraState === "CERTIFIED_CREDIT_BALANCE" ? C.inkMid : C.inkGhost, textAlign: "right" as const }}>
+        {client.carteraState === "CERTIFIED_CREDIT_BALANCE" ? "Saldo a favor" : client.overdueReceivable != null ? fmtCurrency(client.overdueReceivable) : "\u2014"}
       </span>
       <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, textAlign: "center" as const }}>
         {fmtDaysAgo(client.lastPurchaseAt)}

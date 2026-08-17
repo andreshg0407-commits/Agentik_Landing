@@ -9,7 +9,7 @@
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export type ClienteCarteraState = "HAS_OPEN_AR" | "CERTIFIED_ZERO" | "UNVERIFIED";
+export type ClienteCarteraState = "HAS_OPEN_AR" | "CERTIFIED_ZERO" | "CERTIFIED_CREDIT_BALANCE" | "UNVERIFIED";
 
 export type ArDataState = "CERTIFIED" | "UNVERIFIED" | "UNAVAILABLE";
 
@@ -35,11 +35,23 @@ export function resolveRowCartera(
 
   const arSnap = arCtx.arLookup.get(sagTerceroId);
   if (arSnap) {
-    return {
-      totalReceivable: arSnap.totalPendiente,
-      overdueReceivable: arSnap.totalVencido,
-      carteraState: "HAS_OPEN_AR",
-    };
+    if (arSnap.totalPendiente > 0) {
+      return {
+        totalReceivable: arSnap.totalPendiente,
+        overdueReceivable: arSnap.totalVencido,
+        carteraState: "HAS_OPEN_AR",
+      };
+    }
+    if (arSnap.totalPendiente < 0) {
+      // Credit balance / saldo a favor — not open receivables
+      return {
+        totalReceivable: arSnap.totalPendiente,
+        overdueReceivable: 0,
+        carteraState: "CERTIFIED_CREDIT_BALANCE",
+      };
+    }
+    // totalPendiente === 0 — present in snapshot but fully paid
+    return { totalReceivable: 0, overdueReceivable: 0, carteraState: "CERTIFIED_ZERO" };
   }
 
   // Customer exists in SAG but not in cartera → CERTIFIED_ZERO
@@ -120,6 +132,10 @@ export function carteraTrafficLight(receivables: CarteraTrafficLightInput): { la
   // CERTIFIED_ZERO — genuinely no cartera ($0 confirmed by SAG)
   if (receivables.totalBalance === 0) {
     return { label: "Sin cartera", color: "inkGhost" };
+  }
+  // Credit balance — customer has saldo a favor, not open receivables
+  if (receivables.totalBalance < 0) {
+    return { label: "Saldo a favor", color: "inkMid" };
   }
   // HAS_OPEN_AR — assess overdue status from items with known mora
   const itemsWithKnownMora = receivables.items.filter(r => r.daysOverdue != null);
@@ -287,9 +303,12 @@ export async function loadArContextCore(
 
   for (const c of arResult.snapshot.customers) {
     arLookup.set(c.clienteId, c);
-    arCustomerIds.add(c.clienteId);
-    if (c.totalVencido > 0) {
-      overdueCustomerIds.add(c.clienteId);
+    // Only customers with positive pending balance count as "open AR"
+    if (c.totalPendiente > 0) {
+      arCustomerIds.add(c.clienteId);
+      if (c.totalVencido > 0) {
+        overdueCustomerIds.add(c.clienteId);
+      }
     }
   }
 
