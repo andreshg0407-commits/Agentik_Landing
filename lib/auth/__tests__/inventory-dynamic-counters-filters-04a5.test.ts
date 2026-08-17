@@ -125,8 +125,9 @@ describe("G5 — Sin cobertura filter", () => {
 // ── G6: Result count is post-filter, pre-pagination ─────────────────────
 
 describe("G6 — Result count semantics", () => {
-  test("T6a: Result count uses filteredPanelItems.length", () => {
-    expect(src).toContain("filteredPanelItems.length} referencia");
+  test("T6a: Result count uses hierarchy visibleRefCount or filteredPanelItems (04A5H)", () => {
+    // 04A5H: hierarchy ref count for non-subgrupos filters, filteredPanelItems for subgrupos
+    expect(src).toContain("filteredHierarchyResult.visibleRefCount");
   });
 
   test("T6b: PAGE_SIZE exists for pagination", () => {

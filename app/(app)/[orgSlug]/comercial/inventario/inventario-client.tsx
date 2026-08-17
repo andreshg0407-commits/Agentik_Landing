@@ -183,6 +183,9 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
     () => new Set(["CASTILLITOS"]),
   );
   const [pageMap, setPageMap] = useState<Record<string, number>>({});
+  // 04A5H: Hierarchy expand state (cleared on tab switch)
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [expandedSubgroups, setExpandedSubgroups] = useState<Set<string>>(new Set());
 
   const { health, dataQuality, items, subgrupoCoverage, accesoriosBajaCantidad } = snapshot;
   const { panels, canonicalItems } = canonicalSnapshot;
@@ -344,6 +347,51 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
     return sorted;
   }, [filteredPanelItems, originalItemsByRef]);
 
+  // ── 04A5H: Line-scoped canonical items (no filter, no search) ───────
+  const lineScopedCanonicalItems = useMemo(() => {
+    if (activeTab === "VAULT" || activeTab === "AGOTADOS" || activeTab === "EXTERNAL_EXCLUDED") return [];
+    return canonicalItems.filter(ci => ci.canonicalLine === activeTab && !ci.exclusionReason);
+  }, [canonicalItems, activeTab]);
+
+  // ── 04A5H: Hierarchy tree (full, before filter/search) ────────────
+  const hierarchyNodes = useMemo(() => {
+    if (activeTab === "VAULT" || activeTab === "AGOTADOS") return [];
+    return resolveInventoryHierarchy(activeTab as PanelDestination, lineScopedCanonicalItems, originalItemsByRef);
+  }, [activeTab, lineScopedCanonicalItems, originalItemsByRef]);
+
+  // ── 04A5H: Filtered hierarchy (with filter + search applied) ──────
+  const filteredHierarchyResult = useMemo(() => {
+    return filterHierarchy(hierarchyNodes, filter, search, originalItemsByRef);
+  }, [hierarchyNodes, filter, search, originalItemsByRef]);
+
+  // 04A5H: Hierarchy expand/collapse handlers
+  const toggleGroup = useCallback((key: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, []);
+  const toggleSubgroup = useCallback((key: string) => {
+    setExpandedSubgroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, []);
+  const expandAllHierarchy = useCallback(() => {
+    setExpandedGroups(new Set(filteredHierarchyResult.nodes.map(g => g.key)));
+    if (activeTab === "CASTILLITOS") {
+      setExpandedSubgroups(new Set(
+        filteredHierarchyResult.nodes.flatMap(g => g.children.map(c => c.key))
+      ));
+    }
+  }, [filteredHierarchyResult, activeTab]);
+  const collapseAllHierarchy = useCallback(() => {
+    setExpandedGroups(new Set());
+    setExpandedSubgroups(new Set());
+  }, []);
+
   // ── Vault subcategory groups ──────────────────────────────────────────
   const vaultGroups = useMemo(() => {
     if (activeTab !== "VAULT") return new Map<VaultSubcategory, CanonicalInventoryItemStatus[]>();
@@ -377,6 +425,8 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
     setFilter("todos");
     setSearch("");
     setPageMap({});
+    setExpandedGroups(new Set());    // 04A5H
+    setExpandedSubgroups(new Set()); // 04A5H
   };
 
   // ── Drawer state + enrichment ────────────────────────────────────
@@ -670,7 +720,8 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
             color: C.inkLight,
             flexShrink: 0,
           }}>
-            {filteredPanelItems.length} referencia{filteredPanelItems.length !== 1 ? "s" : ""}
+            {/* 04A5H: Use hierarchy ref count except for subgrupos filter */}
+            {(filter === "subgrupos" ? filteredPanelItems.length : filteredHierarchyResult.visibleRefCount)} referencia{(filter === "subgrupos" ? filteredPanelItems.length : filteredHierarchyResult.visibleRefCount) !== 1 ? "s" : ""}
           </span>
         </div>
       )}
@@ -721,9 +772,9 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
           onRowClick={openDrawerFromCanonical}
         />
       ) : activeTab !== "VAULT" && activeTab !== "AGOTADOS" ? (
-        /* ── Line-based Tab Content (CASTILLITOS, LATIN_KIDS, IMPORTACION, SIN_CLASIFICAR) */
+        /* ── 04A5H: Hierarchical Tab Content (CASTILLITOS, LATIN_KIDS, IMPORTACION, SIN_CLASIFICAR) */
         <>
-          {sortedItems.length === 0 ? (
+          {filteredHierarchyResult.nodes.length === 0 ? (
             <EmptyState
               message={
                 search.trim()
@@ -741,14 +792,17 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
               }
             />
           ) : (
-            <LineBasedTable
-              items={sortedItems}
+            <HierarchicalTable
+              hierarchy={filteredHierarchyResult.nodes}
+              lineProfile={activeTab}
               originalItemsByRef={originalItemsByRef}
-              canonicalByRef={canonicalByRef}
-              isAccessoryTab={activeTab === "IMPORTACION"}
-              getPage={getPage}
-              setPage={setPage}
-              tabKey={activeTab}
+              expandedGroups={expandedGroups}
+              expandedSubgroups={expandedSubgroups}
+              toggleGroup={toggleGroup}
+              toggleSubgroup={toggleSubgroup}
+              expandAll={expandAllHierarchy}
+              collapseAll={collapseAllHierarchy}
+              hasSearch={!!search.trim()}
               onRowClick={openDrawerFromCanonical}
             />
           )}
@@ -2006,6 +2060,551 @@ function PagButton({ label, disabled, onClick }: { label: string; disabled: bool
     >
       {label}
     </button>
+  );
+}
+
+// ── 04A5H: Hierarchy Types and Resolver ──────────────────────────────────────
+
+/**
+ * HierarchyGroup — Node in the line-specific inventory hierarchy.
+ *
+ * For CS (3-level): grupo → subgrupo → refs. Top-level has children[], no items.
+ * For LT (2-level): subgrupo → refs. Top-level has items[], no children.
+ * For IMP (2-level): tamaño → refs. Uses handlingUnit field.
+ * For SIN (2-level): dimension bucket → refs.
+ *
+ * Invariants (04A5H-F):
+ *   refCount = items.length (leaf) or SUM(children.refCount) (parent)
+ *   availability = SUM(descendant disponibleReal)
+ *   refsWithAvail = COUNT(descendants where disponibleReal > 0)
+ */
+interface HierarchyGroup {
+  key: string;
+  label: string;
+  items: CanonicalInventoryItemStatus[];
+  children: HierarchyGroup[];
+  refCount: number;
+  availability: number;
+  refsWithAvail: number;
+}
+
+function computeGroupAggregates(
+  items: CanonicalInventoryItemStatus[],
+  children: HierarchyGroup[],
+  originalItemsByRef: Map<string, InventoryItem>,
+): { refCount: number; availability: number; refsWithAvail: number } {
+  if (children.length > 0) {
+    return {
+      refCount: children.reduce((s, c) => s + c.refCount, 0),
+      availability: children.reduce((s, c) => s + c.availability, 0),
+      refsWithAvail: children.reduce((s, c) => s + c.refsWithAvail, 0),
+    };
+  }
+  return {
+    refCount: items.length,
+    availability: items.reduce((s, ci) => {
+      const orig = originalItemsByRef.get(ci.reference);
+      return s + (orig?.disponibleReal ?? 0);
+    }, 0),
+    refsWithAvail: items.filter(ci => {
+      const orig = originalItemsByRef.get(ci.reference);
+      return orig != null && orig.disponibleReal > 0;
+    }).length,
+  };
+}
+
+function makeHGroup(
+  key: string, label: string,
+  items: CanonicalInventoryItemStatus[],
+  children: HierarchyGroup[],
+  originalItemsByRef: Map<string, InventoryItem>,
+): HierarchyGroup {
+  const agg = computeGroupAggregates(items, children, originalItemsByRef);
+  return { key, label, items, children, ...agg };
+}
+
+/**
+ * resolveInventoryHierarchy — Line-profile-specific hierarchy resolver (04A5H-A).
+ * Prohibited: universal groupBy by subgrupo.
+ */
+function resolveInventoryHierarchy(
+  lineProfile: PanelDestination,
+  lineScopedItems: CanonicalInventoryItemStatus[],
+  originalItemsByRef: Map<string, InventoryItem>,
+): HierarchyGroup[] {
+  switch (lineProfile) {
+    case "CASTILLITOS":
+      return buildCastillitosHierarchy(lineScopedItems, originalItemsByRef);
+    case "LATIN_KIDS":
+      return buildLatinKidsHierarchy(lineScopedItems, originalItemsByRef);
+    case "IMPORTACION":
+      return buildImportacionHierarchy(lineScopedItems, originalItemsByRef);
+    case "SIN_CLASIFICAR":
+      return buildSinClasificarHierarchy(lineScopedItems, originalItemsByRef);
+    default:
+      return [];
+  }
+}
+
+// ── CASTILLITOS: GRUPO → SUBGRUPO → REFS (3 levels) ──
+function buildCastillitosHierarchy(
+  items: CanonicalInventoryItemStatus[],
+  orig: Map<string, InventoryItem>,
+): HierarchyGroup[] {
+  const grupoMap = new Map<string, Map<string, CanonicalInventoryItemStatus[]>>();
+  for (const ci of items) {
+    const o = orig.get(ci.reference);
+    const grupo = o?.grupoSag ?? "Sin grupo";
+    const sg = o?.subgrupoSag ?? "Sin subgrupo";
+    if (!grupoMap.has(grupo)) grupoMap.set(grupo, new Map());
+    const sgMap = grupoMap.get(grupo)!;
+    if (!sgMap.has(sg)) sgMap.set(sg, []);
+    sgMap.get(sg)!.push(ci);
+  }
+  return [...grupoMap.entries()]
+    .map(([grupo, sgMap]) => {
+      const children = [...sgMap.entries()]
+        .map(([sg, refs]) => makeHGroup(`S::${grupo}::${sg}`, sg, refs, [], orig))
+        .sort((a, b) => a.label.localeCompare(b.label));
+      return makeHGroup(`G::${grupo}`, grupo, [], children, orig);
+    })
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+// ── LATIN KIDS: SUBGRUPO → REFS (2 levels, no grupo) ──
+function buildLatinKidsHierarchy(
+  items: CanonicalInventoryItemStatus[],
+  orig: Map<string, InventoryItem>,
+): HierarchyGroup[] {
+  const sgMap = new Map<string, CanonicalInventoryItemStatus[]>();
+  for (const ci of items) {
+    const o = orig.get(ci.reference);
+    const sg = o?.subgrupoSag ?? "Sin subgrupo";
+    if (!sgMap.has(sg)) sgMap.set(sg, []);
+    sgMap.get(sg)!.push(ci);
+  }
+  return [...sgMap.entries()]
+    .map(([sg, refs]) => makeHGroup(`G::${sg}`, sg, refs, [], orig))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+// ── IMPORTACION: TAMAÑO → REFS (2 levels, uses handlingUnit) ──
+function buildImportacionHierarchy(
+  items: CanonicalInventoryItemStatus[],
+  orig: Map<string, InventoryItem>,
+): HierarchyGroup[] {
+  const sizeMap = new Map<string, CanonicalInventoryItemStatus[]>();
+  for (const ci of items) {
+    const o = orig.get(ci.reference);
+    const size = o?.handlingUnit ?? "Sin tamano";
+    if (!sizeMap.has(size)) sizeMap.set(size, []);
+    sizeMap.get(size)!.push(ci);
+  }
+  return [...sizeMap.entries()]
+    .map(([sz, refs]) => makeHGroup(`G::${sz}`, sz, refs, [], orig))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+// ── SIN CLASIFICAR: DIMENSION FALTANTE → REFS (2 levels) ──
+function buildSinClasificarHierarchy(
+  items: CanonicalInventoryItemStatus[],
+  orig: Map<string, InventoryItem>,
+): HierarchyGroup[] {
+  const dimMap = new Map<string, CanonicalInventoryItemStatus[]>();
+  for (const ci of items) {
+    const o = orig.get(ci.reference);
+    let dim = "Sin clasificar";
+    if (!o?.grupoSag && !o?.subgrupoSag) dim = "Sin grupo ni subgrupo";
+    else if (!o?.grupoSag) dim = "Sin grupo";
+    else dim = o.grupoSag;
+    if (!dimMap.has(dim)) dimMap.set(dim, []);
+    dimMap.get(dim)!.push(ci);
+  }
+  return [...dimMap.entries()]
+    .map(([d, refs]) => makeHGroup(`G::${d}`, d, refs, [], orig))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+// ── 04A5H: Hierarchy filter (filter + search → pruned tree) ────────────────
+
+function isRefPassesFilter(
+  ci: CanonicalInventoryItemStatus,
+  filter: FilterKey,
+  originalItemsByRef: Map<string, InventoryItem>,
+): boolean {
+  if (filter === "todos" || filter === "subgrupos") return true;
+  const orig = originalItemsByRef.get(ci.reference);
+  if (!orig) return false;
+  switch (filter) {
+    case "con_disponibilidad": return orig.disponibleReal > 0;
+    case "cobertura_suficiente": return orig.threshold != null && orig.disponibleReal > orig.threshold;
+    case "bajo": return orig.threshold != null && orig.disponibleReal > 0 && orig.disponibleReal <= orig.threshold;
+    case "sin_cobertura": return orig.disponibleReal <= 0;
+    case "accesorios_bajo": return orig.isAccessory && orig.disponibleReal > 0 && orig.disponibleReal < 10;
+    default: return true;
+  }
+}
+
+function filterHierarchy(
+  nodes: HierarchyGroup[],
+  filter: FilterKey,
+  search: string,
+  originalItemsByRef: Map<string, InventoryItem>,
+): { nodes: HierarchyGroup[]; visibleRefCount: number } {
+  const q = search.trim().toLowerCase();
+  let totalRefs = 0;
+
+  const matchesSearch = (text: string) => !q || text.toLowerCase().includes(q);
+  const refMatchesSearch = (ci: CanonicalInventoryItemStatus) =>
+    !q || ci.reference.toLowerCase().includes(q) || ci.description.toLowerCase().includes(q);
+
+  const filtered = nodes
+    .map(group => {
+      const groupMatch = matchesSearch(group.label);
+
+      if (group.children.length > 0) {
+        // 3-level (CS): filter children, then children's items
+        const visibleChildren = group.children
+          .map(child => {
+            const childMatch = matchesSearch(child.label);
+            const visibleItems = child.items.filter(ci =>
+              isRefPassesFilter(ci, filter, originalItemsByRef) &&
+              (groupMatch || childMatch || refMatchesSearch(ci))
+            );
+            if (visibleItems.length === 0) return null;
+            return makeHGroup(child.key, child.label, visibleItems, [], originalItemsByRef);
+          })
+          .filter((c): c is HierarchyGroup => c !== null);
+        if (visibleChildren.length === 0) return null;
+        const parent = makeHGroup(group.key, group.label, [], visibleChildren, originalItemsByRef);
+        totalRefs += parent.refCount;
+        return parent;
+      }
+
+      // 2-level (LT, IMP, SIN)
+      const visibleItems = group.items.filter(ci =>
+        isRefPassesFilter(ci, filter, originalItemsByRef) &&
+        (groupMatch || refMatchesSearch(ci))
+      );
+      if (visibleItems.length === 0) return null;
+      const leaf = makeHGroup(group.key, group.label, visibleItems, [], originalItemsByRef);
+      totalRefs += leaf.refCount;
+      return leaf;
+    })
+    .filter((g): g is HierarchyGroup => g !== null);
+
+  return { nodes: filtered, visibleRefCount: totalRefs };
+}
+
+// ── 04A5H: HierarchicalTable Component ──────────────────────────────────────
+
+const HIERARCHY_REF_GRID = "36px 110px 1fr 100px 80px 100px";
+
+function HierarchicalTable({
+  hierarchy,
+  lineProfile,
+  originalItemsByRef,
+  expandedGroups,
+  expandedSubgroups,
+  toggleGroup,
+  toggleSubgroup,
+  expandAll,
+  collapseAll,
+  hasSearch,
+  onRowClick,
+}: {
+  hierarchy: HierarchyGroup[];
+  lineProfile: PanelDestination;
+  originalItemsByRef: Map<string, InventoryItem>;
+  expandedGroups: Set<string>;
+  expandedSubgroups: Set<string>;
+  toggleGroup: (key: string) => void;
+  toggleSubgroup: (key: string) => void;
+  expandAll: () => void;
+  collapseAll: () => void;
+  hasSearch: boolean;
+  onRowClick: (ci: CanonicalInventoryItemStatus) => void;
+}) {
+  const is3Level = lineProfile === "CASTILLITOS";
+  const anyExpanded = expandedGroups.size > 0 || expandedSubgroups.size > 0;
+
+  return (
+    <div className="ag-op-table" style={{
+      border: `1px solid ${C.line}`,
+      borderRadius: R.sm,
+      overflow: "hidden",
+      marginBottom: S[4],
+    }}>
+      {/* Toolbar */}
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        gap: S[3],
+        padding: `${S[3]}px ${S[4]}px`,
+        background: C.surfaceAlt ?? C.surface,
+        borderBottom: `1px solid ${C.line}`,
+      }}>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold, color: C.ink }}>
+          {TAB_LABELS[lineProfile]}
+        </span>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight }}>
+          {hierarchy.length} {is3Level ? "grupos" : lineProfile === "IMPORTACION" ? "tamanos" : "subgrupos"}
+        </span>
+        <div style={{ flex: 1 }} />
+        {!anyExpanded && (
+          <button onClick={expandAll} className="ag-action-ghost" style={{
+            fontFamily: T.mono, fontSize: T.sz["2xs"], padding: `3px ${S[2]}px`,
+            borderRadius: R.sm, border: `1px solid ${C.line}`,
+            background: "transparent", color: C.inkMid, cursor: "pointer",
+          }}>
+            Expandir todos
+          </button>
+        )}
+        {anyExpanded && (
+          <button onClick={collapseAll} className="ag-action-ghost" style={{
+            fontFamily: T.mono, fontSize: T.sz["2xs"], padding: `3px ${S[2]}px`,
+            borderRadius: R.sm, border: `1px solid ${C.line}`,
+            background: "transparent", color: C.inkMid, cursor: "pointer",
+          }}>
+            Recoger todos
+          </button>
+        )}
+      </div>
+
+      {/* Groups */}
+      {hierarchy.map((group, gIdx) => {
+        // Auto-expand on search
+        const isGroupExpanded = hasSearch || expandedGroups.has(group.key);
+
+        return (
+          <div key={group.key}>
+            {/* Group header row */}
+            <HierarchyGroupHeader
+              group={group}
+              expanded={isGroupExpanded}
+              toggle={() => toggleGroup(group.key)}
+              level={1}
+              even={gIdx % 2 === 0}
+            />
+
+            {isGroupExpanded && is3Level && group.children.map((sub, sIdx) => {
+              const isSubExpanded = hasSearch || expandedSubgroups.has(sub.key);
+              return (
+                <div key={sub.key}>
+                  {/* Subgroup header */}
+                  <HierarchyGroupHeader
+                    group={sub}
+                    expanded={isSubExpanded}
+                    toggle={() => toggleSubgroup(sub.key)}
+                    level={2}
+                    even={sIdx % 2 === 0}
+                  />
+                  {/* Subgroup refs */}
+                  {isSubExpanded && (
+                    <HierarchyRefBlock
+                      items={sub.items}
+                      originalItemsByRef={originalItemsByRef}
+                      level={3}
+                      onRowClick={onRowClick}
+                    />
+                  )}
+                </div>
+              );
+            })}
+
+            {isGroupExpanded && !is3Level && (
+              <HierarchyRefBlock
+                items={group.items}
+                originalItemsByRef={originalItemsByRef}
+                level={2}
+                onRowClick={onRowClick}
+              />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Group Header Row ────────────────────────────────────────────────────────
+
+function HierarchyGroupHeader({
+  group,
+  expanded,
+  toggle,
+  level,
+  even,
+}: {
+  group: HierarchyGroup;
+  expanded: boolean;
+  toggle: () => void;
+  level: 1 | 2 | 3;
+  even: boolean;
+}) {
+  const indent = level === 1 ? S[4] : level === 2 ? S[6] : S[8];
+  const isParent = group.children.length > 0;
+
+  return (
+    <div
+      className="ag-op-row"
+      role="button"
+      aria-expanded={expanded}
+      tabIndex={0}
+      onClick={toggle}
+      onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } }}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: S[3],
+        padding: `${S[2]}px ${S[4]}px ${S[2]}px ${indent}px`,
+        background: level === 1 ? (even ? `${C.ink}04` : "transparent") : `${C.blueDark}03`,
+        borderBottom: `1px solid ${C.line}22`,
+        cursor: "pointer",
+      }}
+    >
+      {/* Chevron */}
+      <span style={{
+        fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight,
+        width: 16, textAlign: "center" as const,
+      }}>
+        {expanded ? "\u25BC" : "\u25B6"}
+      </span>
+
+      {/* Label */}
+      <span style={{
+        fontFamily: T.mono,
+        fontSize: level === 1 ? T.sz.sm : T.sz.xs,
+        fontWeight: level === 1 ? T.wt.bold : T.wt.semibold,
+        color: C.ink,
+        flex: 1,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap" as const,
+      }}>
+        {group.label}
+      </span>
+
+      {/* Ref count */}
+      <span style={{
+        fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight,
+        minWidth: 60, textAlign: "right" as const,
+      }}>
+        {group.refCount} ref{group.refCount !== 1 ? "s" : ""}
+      </span>
+
+      {/* Availability sum */}
+      <span style={{
+        fontFamily: T.mono, fontSize: T.sz["2xs"],
+        fontWeight: T.wt.semibold,
+        color: group.availability > 0 ? C.ink : C.inkGhost,
+        minWidth: 80, textAlign: "right" as const,
+      }}>
+        {group.availability > 0 ? group.availability.toLocaleString("es-CO") + " uds" : "\u2014"}
+      </span>
+
+      {/* Refs with availability */}
+      <span style={{
+        fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid,
+        minWidth: 80, textAlign: "right" as const,
+      }}>
+        {group.refsWithAvail}/{group.refCount} con disp.
+      </span>
+
+      {/* Expand indicator */}
+      <span style={{
+        fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost,
+        width: 16, textAlign: "center" as const,
+      }}>
+        {expanded ? "\u2212" : "+"}
+      </span>
+    </div>
+  );
+}
+
+// ── Reference Block (items within a leaf group) ─────────────────────────────
+
+function HierarchyRefBlock({
+  items,
+  originalItemsByRef,
+  level,
+  onRowClick,
+}: {
+  items: CanonicalInventoryItemStatus[];
+  originalItemsByRef: Map<string, InventoryItem>;
+  level: 2 | 3;
+  onRowClick: (ci: CanonicalInventoryItemStatus) => void;
+}) {
+  const indent = level === 2 ? S[6] : S[8];
+
+  return (
+    <div style={{ background: `${C.blueDark}02` }}>
+      {/* Ref column headers */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: HIERARCHY_REF_GRID,
+        gap: S[2],
+        padding: `${S[1]}px ${S[4]}px ${S[1]}px ${indent}px`,
+        borderBottom: `1px solid ${C.line}22`,
+      }}>
+        <span />
+        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.inkMid, textTransform: "uppercase" as const }}>Referencia</span>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.inkMid, textTransform: "uppercase" as const }}>Descripcion</span>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.inkMid, textTransform: "uppercase" as const, textAlign: "right" as const }}>Disp. comercial</span>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.inkMid, textTransform: "uppercase" as const, textAlign: "right" as const }}>Reservado</span>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.inkMid, textTransform: "uppercase" as const, textAlign: "left" as const }}>Estado</span>
+      </div>
+
+      {/* Ref rows */}
+      {items.map(ci => {
+        const orig = originalItemsByRef.get(ci.reference);
+        if (!orig) return null;
+        const disp = orig.disponibleReal;
+        const reserved = orig.reservedReal;
+        const sColor = STATE_COLORS[orig.operationalState] ?? C.inkGhost;
+
+        return (
+          <div
+            key={ci.reference}
+            className="ag-op-row"
+            onClick={() => onRowClick(ci)}
+            style={{
+              display: "grid",
+              gridTemplateColumns: HIERARCHY_REF_GRID,
+              gap: S[2],
+              padding: `${S[1]}px ${S[4]}px ${S[1]}px ${indent}px`,
+              borderBottom: `1px solid ${C.line}11`,
+              alignItems: "center",
+              cursor: "pointer",
+            }}
+          >
+            <ProductThumbnail reference={ci.reference} size={24} />
+            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.blueDark }}>
+              {ci.reference}
+            </span>
+            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+              {orig.description}
+            </span>
+            <span style={{
+              fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+              color: disp <= 0 ? C.red : C.ink, textAlign: "right" as const,
+            }}>
+              {disp > 0 ? disp.toLocaleString("es-CO") : disp < 0 ? `(${Math.abs(disp).toLocaleString("es-CO")})` : "\u2014"}
+            </span>
+            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, textAlign: "right" as const }}>
+              {reserved > 0 ? reserved.toLocaleString("es-CO") : "\u2014"}
+            </span>
+            <span style={{
+              fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+              color: sColor, display: "flex", alignItems: "center", gap: 3,
+            }}>
+              <span style={{ width: 5, height: 5, borderRadius: "50%", background: sColor, display: "inline-block", flexShrink: 0 }} />
+              {STATE_LABELS[orig.operationalState] ?? "\u2014"}
+            </span>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
