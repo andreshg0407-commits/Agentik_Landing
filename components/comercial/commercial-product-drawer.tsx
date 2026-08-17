@@ -33,7 +33,7 @@
  * | disponible       | InventoryItem.disponibleReal         | REAL — PIL wh10 (textile) or wh33 (import), commercial only
  * | productionInProcess | InventoryItem.productionInProcess | REAL — PIL wh13 (PRODUCTO EN PROCESO)
  * | reservado        | InventoryItem.pedidosPendientes      | REAL — SAG pedidos pendientes de facturacion
- * | totalStock       | InventoryItem.existenciaBodega01     | REAL — CCS aggregate (may include production)
+ * | totalStock       | InventoryItem.existenciaBodega01     | REAL — vw_agentik_inventario EXISTENCIA B01
  * | enTransito       | (REMOVED — no certified source)      | —
  *
  * Sprint: COMERCIAL-INVENTARIO-MASTER-DATA-COMPLETION-02
@@ -253,6 +253,9 @@ export function CommercialProductDrawer({ open, onClose, product, children }: Pr
       </Section>
 
       {/* ── Variantes ───────────────────────────────────────────────── */}
+      {/* 04A6A: VARIANT_QUANTITY_SOURCE_BLOCKED — SAG does not expose
+          RESERVADO per talla×color. Show catalog variants without quantities.
+          Variant on-hand (MOVIMIENTOS_ITEMS) does not equal DISPONIBLE (requires RESERVADO split). */}
       {loading ? (
         <Section title="Variantes">
           <Muted>Cargando...</Muted>
@@ -269,13 +272,22 @@ export function CommercialProductDrawer({ open, onClose, product, children }: Pr
             </div>
           )}
           {product.colores && product.colores.length > 0 && (
-            <div>
+            <div style={{ marginBottom: S[2] }}>
               <FieldLabel>Colores</FieldLabel>
               <div style={{ display: "flex", gap: S[1], flexWrap: "wrap" as const }}>
                 {product.colores.map(c => <TagChip key={c} label={c} />)}
               </div>
             </div>
           )}
+          <div style={{
+            fontFamily: T.mono,
+            fontSize: T.sz["2xs"],
+            color: C.inkGhost,
+            fontStyle: "italic",
+            marginTop: S[1],
+          }}>
+            Variantes de catalogo {"\u2014"} SAG no expone cantidades certificadas por talla y color
+          </div>
         </Section>
       ) : product.isAccessory && product.handlingUnit ? (
         <Section title="Variantes">
@@ -309,31 +321,38 @@ export function CommercialProductDrawer({ open, onClose, product, children }: Pr
         )}
       </Section>
 
-      {/* ── Inventario comercial (Addendum H: section 2+3) ─────────── */}
-      <Section title="Inventario comercial">
+      {/* ── Inventario comercial (04A6A: certified SAG fields) ──────── */}
+      <Section title="Inventario B01 \u2014 Bodega Principal">
         <InfoGrid>
+          {/* 04A6A: Existencia = on-hand from vw_agentik_inventario */}
           <InfoField
-            label="Disponible comercial"
-            value={product.disponible > 0 ? fmtNum(product.disponible) : "\u2014"}
-            highlight={product.disponible <= 0}
+            label="Existencia B01"
+            value={product.totalStock != null && product.totalStock > 0
+              ? fmtNum(product.totalStock)
+              : "\u2014"}
           />
+          {/* 04A6A: Reservado SAG = pedidos pendientes from vw_agentik_inventario */}
           <InfoField
-            label="Reservado en pedidos"
+            label="Reservado SAG"
             value={product.reservado != null && product.reservado > 0
               ? fmtNum(product.reservado)
               : "\u2014"}
           />
+          {/* 04A6A: Disponible SAG = Existencia - Reservado */}
+          <InfoField
+            label="Disponible SAG"
+            value={product.disponible > 0 ? fmtNum(product.disponible) : product.disponible < 0 ? `(${fmtNum(Math.abs(product.disponible))})` : "\u2014"}
+            highlight={product.disponible <= 0}
+          />
         </InfoGrid>
-        {product.reservado != null && product.reservado > 0 && (
-          <div style={{
-            fontFamily: T.mono,
-            fontSize: T.sz["2xs"],
-            color: C.inkGhost,
-            marginTop: S[1],
-          }}>
-            Pedidos pendientes por facturar/despachar
-          </div>
-        )}
+        <div style={{
+          fontFamily: T.mono,
+          fontSize: T.sz["2xs"],
+          color: C.inkGhost,
+          marginTop: S[1],
+        }}>
+          Fuente: vw_agentik_inventario {"\u2014"} B01 Bodega Principal
+        </div>
       </Section>
 
       {/* ── Produccion (Addendum D7: secondary indicator only) ───── */}
