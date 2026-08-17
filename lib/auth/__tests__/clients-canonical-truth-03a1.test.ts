@@ -229,24 +229,24 @@ describe("carteraTrafficLight — four-state contract", () => {
     }).label).toBe("Vencimiento no verificado");
   });
 
-  test("CERTIFIED + balance>0 + all mora=0 → 'Al dia'", () => {
+  test("CERTIFIED + balance>0 + all mora=0 + dueDate present → 'Al dia'", () => {
     expect(carteraTrafficLight({
       truthStatus: "CERTIFIED", totalBalance: 500_000,
-      items: [{ daysOverdue: 0, balanceDue: 500_000 }],
+      items: [{ daysOverdue: 0, dueDate: "2026-09-01", balanceDue: 500_000 }],
     }).label).toBe("Al dia");
   });
 
-  test("CERTIFIED + mora=45 + ratio<50% → 'En mora'", () => {
+  test("CERTIFIED + mora=45 + dueDate present + ratio<50% → 'En mora'", () => {
     expect(carteraTrafficLight({
       truthStatus: "CERTIFIED", totalBalance: 1_000_000,
-      items: [{ daysOverdue: 45, balanceDue: 400_000 }, { daysOverdue: 0, balanceDue: 600_000 }],
+      items: [{ daysOverdue: 45, dueDate: "2026-06-15", balanceDue: 400_000 }, { daysOverdue: 0, dueDate: "2026-09-01", balanceDue: 600_000 }],
     }).label).toBe("En mora");
   });
 
-  test("CERTIFIED + mora>90 → 'Critica'", () => {
+  test("CERTIFIED + mora>90 + dueDate present → 'Critica'", () => {
     expect(carteraTrafficLight({
       truthStatus: "CERTIFIED", totalBalance: 912_400,
-      items: [{ daysOverdue: 452, balanceDue: 529_900 }, { daysOverdue: 445, balanceDue: 382_500 }],
+      items: [{ daysOverdue: 452, dueDate: "2025-05-01", balanceDue: 529_900 }, { daysOverdue: 445, dueDate: "2025-05-15", balanceDue: 382_500 }],
     }).label).toBe("Critica");
   });
 });
@@ -1423,11 +1423,11 @@ describe("03A8: unknown mora does NOT produce 'Al día'", () => {
     expect(result.label).not.toBe("Al dia");
   });
 
-  test("known mora=0 → 'Al dia' (only with evidence)", () => {
+  test("known mora=0 + dueDate present → 'Al dia' (only with verified aging)", () => {
     const result = carteraTrafficLight({
       truthStatus: "CERTIFIED",
       totalBalance: 500_000,
-      items: [{ daysOverdue: 0, balanceDue: 500_000 }],
+      items: [{ daysOverdue: 0, dueDate: "2026-09-01", balanceDue: 500_000 }],
     });
     expect(result.label).toBe("Al dia");
   });

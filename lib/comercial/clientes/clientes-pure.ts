@@ -138,12 +138,120 @@ export function mapCertifiedDocToReceivable(doc: CertifiedDocInput, sourceProfil
   };
 }
 
+// ── Aging completeness ───────────────────────────────────────────────────────
+
+export type AgingCompleteness = "COMPLETE" | "PARTIAL" | "UNVERIFIED";
+
+export interface AgingItem {
+  daysOverdue: number | null;
+  dueDate: string | null;
+  balanceDue: number;
+}
+
+/**
+ * An item has verified aging only when BOTH daysOverdue is non-null AND dueDate is present.
+ * DIAS_MORA=0 with dueDate=null is NOT verified — SAG may not have computed mora.
+ */
+export function isAgingVerified(item: AgingItem): boolean {
+  return item.daysOverdue != null && item.dueDate != null;
+}
+
+/**
+ * Compute aging completeness from open (positive-balance) items.
+ */
+export function computeAgingCompleteness(items: AgingItem[]): AgingCompleteness {
+  const openItems = items.filter(i => i.balanceDue > 0);
+  if (openItems.length === 0) return "COMPLETE"; // no open items → nothing to verify
+  const verifiedCount = openItems.filter(isAgingVerified).length;
+  if (verifiedCount === openItems.length) return "COMPLETE";
+  if (verifiedCount > 0) return "PARTIAL";
+  return "UNVERIFIED";
+}
+
+/**
+ * Resolve overdue balance for display.
+ * When aging is not COMPLETE, overdue cannot be certified as 0 → return null.
+ */
+export function resolveOverdueDisplay(
+  totalVencido: number,
+  agingCompleteness: AgingCompleteness,
+): number | null {
+  if (agingCompleteness !== "COMPLETE") return null;
+  return totalVencido;
+}
+
+// ── Collection linkage ───────────────────────────────────────────────────────
+
+export type CollectionLinkageState =
+  | "APPLIED_TO_CURRENT_DOCUMENTS"
+  | "CUSTOMER_HISTORY_ONLY"
+  | "UNVERIFIED";
+
+export interface CollectionContext {
+  /** Human-readable label for the collection window */
+  collectionWindowLabel: string;
+  /** ISO timestamp when recaudos were fetched */
+  collectionAsOf: string | null;
+  /** Linkage state */
+  collectionLinkageState: CollectionLinkageState;
+}
+
+/**
+ * Determine collection linkage state from recaudos data.
+ * If any recaudo.documentoRelacionado matches an open AR document, state=APPLIED.
+ * Otherwise → CUSTOMER_HISTORY_ONLY.
+ */
+export function resolveCollectionContext(
+  recaudosOk: boolean,
+  recaudosAsOf: Date | null,
+  recaudoDocuments: string[],
+  openArDocuments: string[],
+): CollectionContext {
+  if (!recaudosOk || !recaudosAsOf) {
+    return {
+      collectionWindowLabel: "\u2014",
+      collectionAsOf: null,
+      collectionLinkageState: "UNVERIFIED",
+    };
+  }
+
+  const openArSet = new Set(openArDocuments);
+  const hasLinkedDocs = recaudoDocuments.some(d => openArSet.has(d));
+
+  return {
+    collectionWindowLabel: "Recaudos históricos",
+    collectionAsOf: recaudosAsOf.toISOString(),
+    collectionLinkageState: hasLinkedDocs
+      ? "APPLIED_TO_CURRENT_DOCUMENTS"
+      : "CUSTOMER_HISTORY_ONLY",
+  };
+}
+
+// ── NC display status ────────────────────────────────────────────────────────
+
+/**
+ * Resolve display status for a credit note (CREDIT status).
+ * If the NC's documentoRelacionado links to an open AR document, it's "NC aplicada".
+ * Otherwise it's "Saldo a favor".
+ *
+ * For non-CREDIT items, returns the standard status label.
+ */
+export function resolveReceivableDisplayStatus(
+  status: string,
+  isLinkedToOpenAr: boolean,
+): string {
+  if (status === "CREDIT") {
+    return isLinkedToOpenAr ? "NC aplicada" : "Saldo a favor";
+  }
+  return status;
+}
+
 // ── carteraTrafficLight ──────────────────────────────────────────────────────
 
 export interface CarteraTrafficLightInput {
   truthStatus: string;
   totalBalance: number | null;
-  items: { daysOverdue: number | null; balanceDue: number }[];
+  items: AgingItem[];
 }
 
 export function carteraTrafficLight(receivables: CarteraTrafficLightInput): { label: string; color: string } {
@@ -163,12 +271,13 @@ export function carteraTrafficLight(receivables: CarteraTrafficLightInput): { la
   if (receivables.totalBalance < 0) {
     return { label: "Saldo a favor", color: "inkMid" };
   }
-  // HAS_OPEN_AR — assess overdue status from items with known mora
-  const itemsWithKnownMora = receivables.items.filter(r => r.daysOverdue != null);
-  if (itemsWithKnownMora.length === 0) {
+  // HAS_OPEN_AR — assess overdue status from items with VERIFIED aging
+  // Verified = daysOverdue != null AND dueDate != null
+  const verifiedItems = receivables.items.filter(isAgingVerified);
+  if (verifiedItems.length === 0) {
     return { label: "Vencimiento no verificado", color: "inkMid" };
   }
-  const overdueItems = itemsWithKnownMora.filter(r => r.daysOverdue! > 0);
+  const overdueItems = verifiedItems.filter(r => r.daysOverdue! > 0);
   if (overdueItems.length === 0) {
     return { label: "Al dia", color: "green" };
   }

@@ -203,7 +203,7 @@ function carteraTrafficLight(receivables: Cliente360Data["receivables"]): { labe
   const result = carteraTrafficLightPure({
     truthStatus: receivables.truthStatus,
     totalBalance: receivables.totalBalance,
-    items: receivables.items.map(r => ({ daysOverdue: r.daysOverdue, balanceDue: r.balanceDue })),
+    items: receivables.items.map(r => ({ daysOverdue: r.daysOverdue, dueDate: r.dueDate, balanceDue: r.balanceDue })),
   });
   // Map color token names to actual C.* values
   const colorMap: Record<string, string> = {
@@ -810,7 +810,12 @@ function TabCartera({ receivables }: { receivables: Cliente360Data["receivables"
       }}>
         <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.green }}>CERTIFICADO SAG</span>
         <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
-          Saldos certificados desde vw_agentik_cartera. Recaudos y aplicaciones monetarias provienen de vw_agentik_recaudos.
+          Saldos certificados desde vw_agentik_cartera.
+          {receivables.collectionContext.collectionLinkageState === "APPLIED_TO_CURRENT_DOCUMENTS"
+            ? " Recaudos vinculados a documentos abiertos (vw_agentik_recaudos)."
+            : receivables.collectionContext.collectionLinkageState === "CUSTOMER_HISTORY_ONLY"
+            ? " Recaudos historicos del cliente (vw_agentik_recaudos) — sin vinculacion a documentos abiertos."
+            : ""}
         </span>
       </div>
 
@@ -818,9 +823,9 @@ function TabCartera({ receivables }: { receivables: Cliente360Data["receivables"
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: S[2] }}>
         <MiniStat label="Cartera bruta" value={receivables.grossReceivable !== null ? fmtCurrency(receivables.grossReceivable) : "\u2014"} />
         <MiniStat label="NC aplicadas" value={(receivables.creditBalance ?? 0) > 0 ? `-${fmtCurrency(receivables.creditBalance!)}` : "\u2014"} color={C.inkMid} />
-        <MiniStat label="Recaudos" value={receivables.collectedAmount != null ? fmtCurrency(receivables.collectedAmount) : "\u2014"} color={C.green} />
+        <MiniStat label={receivables.collectionContext.collectionWindowLabel} value={receivables.collectedAmount != null ? fmtCurrency(receivables.collectedAmount) : "\u2014"} color={C.green} />
         <MiniStat label="Saldo cobrable" value={receivables.totalBalance !== null ? fmtCurrency(receivables.totalBalance) : "\u2014"} />
-        <MiniStat label="Vencida" value={receivables.totalOverdue !== null ? fmtCurrency(receivables.totalOverdue) : "\u2014"} color={(receivables.totalOverdue ?? 0) > 0 ? C.red : undefined} />
+        <MiniStat label={receivables.agingCompleteness === "COMPLETE" ? "Vencida" : "Vencida (parcial)"} value={receivables.totalOverdue !== null ? fmtCurrency(receivables.totalOverdue) : "\u2014"} color={(receivables.totalOverdue ?? 0) > 0 ? C.red : undefined} />
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: S[2], marginTop: S[1] }}>
         <MiniStat label="Documentos con saldo" value={receivables.openCount !== null ? String(receivables.openCount) : "\u2014"} />

@@ -177,7 +177,7 @@ describe("Diana (NIT 901383501) — HAS_OPEN_AR structural invariants", () => {
     );
     expect(hasOpenBlock).toContain("mapCertifiedDocToReceivable(d, sourceProfileId)");
     expect(hasOpenBlock).toContain("totalBalance = arResult.snapshot.netReceivable");
-    expect(hasOpenBlock).toContain("totalOverdue = arResult.snapshot.totalVencido");
+    expect(hasOpenBlock).toContain("resolveOverdueDisplay(arResult.snapshot.totalVencido, agingCompleteness)");
     expect(hasOpenBlock).toContain("openCount = arResult.snapshot.documentCount");
   });
 

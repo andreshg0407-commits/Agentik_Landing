@@ -30,7 +30,14 @@ import { fetchCustomerArWithStatus } from "@/lib/comercial/frontline/canonical-a
 import { fetchCertifiedCustomerRecaudos } from "@/lib/comercial/frontline/canonical-recaudos-service";
 import type { CertifiedReceivableDocument } from "@/lib/comercial/frontline/canonical-ar-types";
 import type { ReceivableTruthStatus } from "@/lib/comercial/frontline/receivable-truth-contract";
-import { classifyAgingBand, mapCertifiedDocToReceivable as mapDocPure } from "./clientes-pure";
+import {
+  classifyAgingBand,
+  mapCertifiedDocToReceivable as mapDocPure,
+  computeAgingCompleteness,
+  resolveOverdueDisplay,
+  resolveCollectionContext,
+} from "./clientes-pure";
+import type { AgingCompleteness, CollectionContext } from "./clientes-pure";
 import { resolveOrgSourceProfileId } from "./document-source-profiles";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -153,6 +160,10 @@ export interface Cliente360Data {
     /** Count of documents with non-zero balance. Null when SAG unavailable */
     openCount: number | null;
     truthStatus: ReceivableTruthStatus;
+    /** Aging completeness across open items — COMPLETE only when ALL have daysOverdue + dueDate */
+    agingCompleteness: AgingCompleteness;
+    /** Collection context — window label, asOf, linkage state */
+    collectionContext: CollectionContext;
   };
   sales: { state: BlockState; items: Cliente360SaleRecord[] };
   collections: { state: BlockState; items: Cliente360CollectionRecord[] };
@@ -390,6 +401,12 @@ export async function loadCliente360(
   let openCount: number | null;
   let receivableTruthStatus: ReceivableTruthStatus = "UNVERIFIED";
   let receivableItems: Cliente360Receivable[] = [];
+  let agingCompleteness: AgingCompleteness = "UNVERIFIED";
+  let collectionCtx: CollectionContext = {
+    collectionWindowLabel: "\u2014",
+    collectionAsOf: null,
+    collectionLinkageState: "UNVERIFIED",
+  };
 
   if (p.sagTerceroId != null && p.sagTerceroId > 0) {
     // Fetch cartera and recaudos in parallel from SAG
@@ -400,8 +417,13 @@ export async function loadCliente360(
     ]);
     timing.canonicalAr = ms(tAr);
 
-    // Recaudos: totalRecaudado from vw_agentik_recaudos (actual cash received)
+    // Recaudos: totalRecaudado from vw_agentik_recaudos (actual cash received — NO date filter)
     collectedAmount = recaudosResult?.ok ? recaudosResult.snapshot.totalRecaudado : null;
+
+    // Resolve collection context — linkage between recaudos and open AR documents
+    const recaudoDocuments = recaudosResult?.ok
+      ? recaudosResult.snapshot.applications.map((a: any) => a.documentoRelacionado).filter(Boolean) as string[]
+      : [];
 
     if (arResult.status === "CERTIFIED_ZERO") {
       totalBalance = 0;
@@ -410,16 +432,30 @@ export async function loadCliente360(
       totalOverdue = 0;
       openCount = 0;
       receivableTruthStatus = "CERTIFIED";
+      agingCompleteness = "COMPLETE"; // no open items → nothing to verify
+      collectionCtx = resolveCollectionContext(
+        !!recaudosResult?.ok, recaudosResult?.ok ? new Date() : null,
+        recaudoDocuments, [],
+      );
       // receivableItems stays [] — genuinely no open documents
     } else if (arResult.status === "HAS_OPEN_AR") {
       grossReceivable = arResult.snapshot.totalPendiente;
       creditBalance = arResult.snapshot.creditBalance;
       totalBalance = arResult.snapshot.netReceivable;
-      totalOverdue = arResult.snapshot.totalVencido;
       openCount = arResult.snapshot.documentCount;
       receivableTruthStatus = "CERTIFIED";
       // Convert SAG certified documents to Cliente360Receivable[]
       receivableItems = arResult.snapshot.documents.map(d => mapCertifiedDocToReceivable(d, sourceProfileId));
+      // Compute aging completeness — requires BOTH daysOverdue AND dueDate
+      agingCompleteness = computeAgingCompleteness(receivableItems);
+      // totalOverdue is null-safe: only show when aging is fully verified
+      totalOverdue = resolveOverdueDisplay(arResult.snapshot.totalVencido, agingCompleteness);
+      // Collection linkage
+      const openArDocs = arResult.snapshot.documents.map(d => d.documento);
+      collectionCtx = resolveCollectionContext(
+        !!recaudosResult?.ok, recaudosResult?.ok ? new Date() : null,
+        recaudoDocuments, openArDocs,
+      );
     } else {
       // SAG_UNAVAILABLE or IDENTITY_UNKNOWN — all values null/unknown
       totalBalance = null;
@@ -490,6 +526,8 @@ export async function loadCliente360(
       totalOverdue,
       openCount,
       truthStatus: receivableTruthStatus,
+      agingCompleteness,
+      collectionContext: collectionCtx,
     },
     sales: {
       state: salesItems.length > 0 ? "disponible" : "no_disponible",
