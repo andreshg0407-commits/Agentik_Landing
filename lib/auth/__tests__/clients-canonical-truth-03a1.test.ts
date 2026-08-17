@@ -154,7 +154,7 @@ describe("mapCertifiedDocToReceivable — Diana documents", () => {
   };
 
   test("doc1 → daysOverdue=452, 365+, OVERDUE", () => {
-    const r = mapCertifiedDocToReceivable(doc1);
+    const r = mapCertifiedDocToReceivable(doc1, "castillitos");
     expect(r.daysOverdue).toBe(452);
     expect(r.agingBucket).toBe("365+");
     expect(r.status).toBe("OVERDUE");
@@ -163,17 +163,17 @@ describe("mapCertifiedDocToReceivable — Diana documents", () => {
   });
 
   test("doc1 → documentType = 'Remisión' (F2 prefix)", () => {
-    expect(mapCertifiedDocToReceivable(doc1).documentType).toBe("Remisión");
+    expect(mapCertifiedDocToReceivable(doc1, "castillitos").documentType).toBe("Remisión");
   });
 
   test("doc2 → daysOverdue=445, 365+, OVERDUE", () => {
-    const r = mapCertifiedDocToReceivable(doc2);
+    const r = mapCertifiedDocToReceivable(doc2, "castillitos");
     expect(r.daysOverdue).toBe(445);
     expect(r.status).toBe("OVERDUE");
   });
 
   test("id = sag-{documento}", () => {
-    expect(mapCertifiedDocToReceivable(doc1).id).toBe("sag-F2-6639");
+    expect(mapCertifiedDocToReceivable(doc1, "castillitos").id).toBe("sag-F2-6639");
   });
 });
 
@@ -183,11 +183,11 @@ describe("mapCertifiedDocToReceivable — null DIAS_MORA", () => {
     diasMora: null, fechaDocumento: new Date("2026-01-15"), fechaVencimiento: null,
   };
 
-  test("daysOverdue = null", () => { expect(mapCertifiedDocToReceivable(doc).daysOverdue).toBeNull(); });
-  test("agingBucket = null", () => { expect(mapCertifiedDocToReceivable(doc).agingBucket).toBeNull(); });
-  test("status = OPEN", () => { expect(mapCertifiedDocToReceivable(doc).status).toBe("OPEN"); });
-  test("paidAmount = null (never inferred by difference)", () => { expect(mapCertifiedDocToReceivable(doc).paidAmount).toBeNull(); });
-  test("documentType = 'Nota crédito' (NC prefix)", () => { expect(mapCertifiedDocToReceivable(doc).documentType).toBe("Nota crédito"); });
+  test("daysOverdue = null", () => { expect(mapCertifiedDocToReceivable(doc, "castillitos").daysOverdue).toBeNull(); });
+  test("agingBucket = null", () => { expect(mapCertifiedDocToReceivable(doc, "castillitos").agingBucket).toBeNull(); });
+  test("status = OPEN", () => { expect(mapCertifiedDocToReceivable(doc, "castillitos").status).toBe("OPEN"); });
+  test("paidAmount = null (never inferred by difference)", () => { expect(mapCertifiedDocToReceivable(doc, "castillitos").paidAmount).toBeNull(); });
+  test("documentType = 'Nota crédito' (NC prefix)", () => { expect(mapCertifiedDocToReceivable(doc, "castillitos").documentType).toBe("Nota crédito"); });
 });
 
 describe("mapCertifiedDocToReceivable — fully paid", () => {
@@ -195,7 +195,7 @@ describe("mapCertifiedDocToReceivable — fully paid", () => {
     const r = mapCertifiedDocToReceivable({
       documento: "FE-001", tipoDocumento: "Factura", valorDocumento: 1_000_000, saldoPendiente: 0,
       diasMora: 0, fechaDocumento: new Date("2026-06-01"), fechaVencimiento: new Date("2026-07-01"),
-    });
+    }, "castillitos");
     expect(r.status).toBe("CLOSED");
   });
 });
@@ -1195,7 +1195,7 @@ describe("03A7: mapCertifiedDocToReceivable — negative saldo is CREDIT, not CL
     const r = mapCertifiedDocToReceivable({
       documento: "D2-849", tipoDocumento: "Nota Crédito", valorDocumento: -80_900, saldoPendiente: -80_900,
       diasMora: null, fechaDocumento: new Date("2026-07-15"), fechaVencimiento: null,
-    });
+    }, "castillitos");
     expect(r.status).toBe("CREDIT");
     expect(r.status).not.toBe("CLOSED");
     expect(r.balanceDue).toBe(-80_900);
@@ -1205,7 +1205,7 @@ describe("03A7: mapCertifiedDocToReceivable — negative saldo is CREDIT, not CL
     const r = mapCertifiedDocToReceivable({
       documento: "FE-100", tipoDocumento: "Factura", valorDocumento: 500_000, saldoPendiente: 0,
       diasMora: 0, fechaDocumento: new Date("2026-06-01"), fechaVencimiento: new Date("2026-07-01"),
-    });
+    }, "castillitos");
     expect(r.status).toBe("CLOSED");
   });
 
@@ -1213,7 +1213,7 @@ describe("03A7: mapCertifiedDocToReceivable — negative saldo is CREDIT, not CL
     const r = mapCertifiedDocToReceivable({
       documento: "F2-8653", tipoDocumento: "Factura", valorDocumento: 1_500_000, saldoPendiente: 1_500_000,
       diasMora: 45, fechaDocumento: new Date("2026-06-01"), fechaVencimiento: new Date("2026-07-01"),
-    });
+    }, "castillitos");
     expect(r.status).toBe("OVERDUE");
   });
 
@@ -1221,7 +1221,7 @@ describe("03A7: mapCertifiedDocToReceivable — negative saldo is CREDIT, not CL
     const r = mapCertifiedDocToReceivable({
       documento: "FE-200", tipoDocumento: "Factura", valorDocumento: 300_000, saldoPendiente: 300_000,
       diasMora: 0, fechaDocumento: new Date("2026-08-01"), fechaVencimiento: new Date("2026-09-01"),
-    });
+    }, "castillitos");
     expect(r.status).toBe("OPEN");
   });
 });
@@ -1332,7 +1332,7 @@ describe("03A8: D2 nota crédito reduces collectibleBalance, never increases pai
     const r = mapCertifiedDocToReceivable({
       documento: "D2-849", tipoDocumento: "Nota Crédito", valorDocumento: -80_900, saldoPendiente: -80_900,
       diasMora: null, fechaDocumento: new Date("2026-07-15"), fechaVencimiento: null,
-    });
+    }, "castillitos");
     expect(r.status).toBe("CREDIT");
     expect(r.paidAmount).toBeNull(); // D2 never produces paidAmount
     expect(r.documentType).toBe("Nota crédito");
@@ -1344,17 +1344,17 @@ describe("03A8: D2 nota crédito reduces collectibleBalance, never increases pai
     const r = mapCertifiedDocToReceivable({
       documento: "D2-100", tipoDocumento: "Nota Crédito", valorDocumento: -500_000, saldoPendiente: -500_000,
       diasMora: null, fechaDocumento: new Date("2026-01-01"), fechaVencimiento: null,
-    });
+    }, "castillitos");
     expect(r.paidAmount).toBeNull(); // paidAmount must NEVER be populated from cartera view
   });
 });
 
 describe("03A8: R1/R2 are recaudos (from vw_agentik_recaudos only)", () => {
   test("R2 classified as 'Recibo de caja'", () => {
-    expect(classifyDocumentType("", "R2-500")).toBe("Recibo de caja");
+    expect(classifyDocumentType("", "R2-500", "castillitos")).toBe("Recibo de caja");
   });
   test("R1 classified as 'Recibo de caja'", () => {
-    expect(classifyDocumentType("", "R1-300")).toBe("Recibo de caja");
+    expect(classifyDocumentType("", "R1-300", "castillitos")).toBe("Recibo de caja");
   });
 });
 
@@ -1407,7 +1407,7 @@ describe("03A8: missing recaudos produces em dash, not zero", () => {
     const invoice = mapCertifiedDocToReceivable({
       documento: "F2-8653", tipoDocumento: "Factura", valorDocumento: 1_500_000, saldoPendiente: 1_500_000,
       diasMora: 0, fechaDocumento: new Date("2026-06-01"), fechaVencimiento: new Date("2026-09-01"),
-    });
+    }, "castillitos");
     expect(invoice.paidAmount).toBeNull(); // NOT $0
   });
 });
@@ -1434,15 +1434,15 @@ describe("03A8: unknown mora does NOT produce 'Al día'", () => {
 });
 
 describe("03A8: classifyDocumentType — FUENTES contract", () => {
-  test("F2 prefix → 'Remisión'", () => { expect(classifyDocumentType("Factura", "F2-8653")).toBe("Remisión"); });
-  test("FE prefix → 'Factura'", () => { expect(classifyDocumentType("Factura", "FE-100")).toBe("Factura"); });
-  test("D2 prefix → 'Nota crédito'", () => { expect(classifyDocumentType("Nota Crédito", "D2-849")).toBe("Nota crédito"); });
-  test("NC prefix → 'Nota crédito'", () => { expect(classifyDocumentType("Nota Crédito", "NC-50")).toBe("Nota crédito"); });
-  test("R2 prefix → 'Recibo de caja'", () => { expect(classifyDocumentType("", "R2-400")).toBe("Recibo de caja"); });
-  test("R1 prefix → 'Recibo de caja'", () => { expect(classifyDocumentType("", "R1-200")).toBe("Recibo de caja"); });
-  test("unknown prefix with tipoDocumento='Factura' → 'Factura'", () => { expect(classifyDocumentType("Factura", "XX-1")).toBe("Factura"); });
-  test("unknown prefix with tipoDocumento='Nota Crédito' → 'Nota crédito'", () => { expect(classifyDocumentType("Nota Crédito", "XX-2")).toBe("Nota crédito"); });
-  test("empty tipoDocumento and unknown prefix → 'Documento'", () => { expect(classifyDocumentType("", "XX-3")).toBe("Documento"); });
+  test("F2 prefix → 'Remisión'", () => { expect(classifyDocumentType("Factura", "F2-8653", "castillitos")).toBe("Remisión"); });
+  test("FE prefix → 'Factura'", () => { expect(classifyDocumentType("Factura", "FE-100", "castillitos")).toBe("Factura"); });
+  test("D2 prefix → 'Nota crédito'", () => { expect(classifyDocumentType("Nota Crédito", "D2-849", "castillitos")).toBe("Nota crédito"); });
+  test("NC prefix → 'Nota crédito'", () => { expect(classifyDocumentType("Nota Crédito", "NC-50", "castillitos")).toBe("Nota crédito"); });
+  test("R2 prefix → 'Recibo de caja'", () => { expect(classifyDocumentType("", "R2-400", "castillitos")).toBe("Recibo de caja"); });
+  test("R1 prefix → 'Recibo de caja'", () => { expect(classifyDocumentType("", "R1-200", "castillitos")).toBe("Recibo de caja"); });
+  test("unknown prefix with tipoDocumento='Factura' → 'Factura'", () => { expect(classifyDocumentType("Factura", "XX-1", "castillitos")).toBe("Factura"); });
+  test("unknown prefix with tipoDocumento='Nota Crédito' → 'Nota crédito'", () => { expect(classifyDocumentType("Nota Crédito", "XX-2", "castillitos")).toBe("Nota crédito"); });
+  test("empty tipoDocumento and unknown prefix → 'Documento'", () => { expect(classifyDocumentType("", "XX-3", "castillitos")).toBe("Documento"); });
 });
 
 describe("03A8: provenance message", () => {

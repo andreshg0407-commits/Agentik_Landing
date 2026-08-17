@@ -15,7 +15,7 @@ export async function GET(
   const { orgSlug, clienteId } = await params;
   const { organization } = await requireCommercialAccess(orgSlug);
 
-  const data = await loadCliente360(organization.id, clienteId);
+  const data = await loadCliente360(organization.id, clienteId, orgSlug);
   if (!data) {
     return NextResponse.json({ error: "not_found" }, { status: 404 });
   }

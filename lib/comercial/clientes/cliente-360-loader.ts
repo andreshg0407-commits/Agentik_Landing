@@ -31,6 +31,7 @@ import { fetchCertifiedCustomerRecaudos } from "@/lib/comercial/frontline/canoni
 import type { CertifiedReceivableDocument } from "@/lib/comercial/frontline/canonical-ar-types";
 import type { ReceivableTruthStatus } from "@/lib/comercial/frontline/receivable-truth-contract";
 import { classifyAgingBand, mapCertifiedDocToReceivable as mapDocPure } from "./clientes-pure";
+import { resolveOrgSourceProfileId } from "./document-source-profiles";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -170,10 +171,23 @@ function ms(start: number): string {
 export async function loadCliente360(
   organizationId: string,
   clienteId: string,
+  orgSlug?: string,
 ): Promise<Cliente360Data | null> {
   const db = prisma as any;
   const t0 = performance.now();
   const timing: Record<string, string> = {};
+
+  // Resolve source profile server-side — fail-closed to empty string (→ UNKNOWN_DOCUMENT)
+  // orgSlug may be passed explicitly; if not, resolve from DB
+  let resolvedOrgSlug = orgSlug;
+  if (!resolvedOrgSlug) {
+    const org = await db.organization.findUnique({
+      where: { id: organizationId },
+      select: { slug: true },
+    });
+    resolvedOrgSlug = org?.slug ?? "";
+  }
+  const sourceProfileId = resolveOrgSourceProfileId(resolvedOrgSlug) ?? "";
 
   // ── Resolve clienteId: may be UUID (id) or slug (from alerts entityKey) ───
   let resolvedId = clienteId;
@@ -405,7 +419,7 @@ export async function loadCliente360(
       openCount = arResult.snapshot.documentCount;
       receivableTruthStatus = "CERTIFIED";
       // Convert SAG certified documents to Cliente360Receivable[]
-      receivableItems = arResult.snapshot.documents.map(mapCertifiedDocToReceivable);
+      receivableItems = arResult.snapshot.documents.map(d => mapCertifiedDocToReceivable(d, sourceProfileId));
     } else {
       // SAG_UNAVAILABLE or IDENTITY_UNKNOWN — all values null/unknown
       totalBalance = null;
@@ -510,9 +524,10 @@ export async function loadCliente360(
 
 // ── SAG document → Cliente360Receivable mapper ───────────────────────────────
 // Logic lives in clientes-pure.ts — same code tested directly by behavioral tests
+// sourceProfileId resolved server-side via resolveOrgSourceProfileId — NEVER defaulted
 
-function mapCertifiedDocToReceivable(doc: CertifiedReceivableDocument): Cliente360Receivable {
-  return mapDocPure(doc) as Cliente360Receivable;
+function mapCertifiedDocToReceivable(doc: CertifiedReceivableDocument, sourceProfileId: string): Cliente360Receivable {
+  return mapDocPure(doc, sourceProfileId) as Cliente360Receivable;
 }
 
 // classifyAgingBand imported from clientes-pure.ts

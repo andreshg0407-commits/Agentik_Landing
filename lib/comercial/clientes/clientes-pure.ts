@@ -105,20 +105,25 @@ export interface ReceivableOutput {
  * Classifies tipoDocumento from SAG into a display label.
  *
  * Delegates to resolveCanonicalDocumentKind with the specified source profile.
- * Default profile: "castillitos" (current active tenant).
+ * profileId is MANDATORY — no default. Callers must resolve it server-side
+ * via resolveOrgSourceProfileId(orgSlug).
  *
  * FUENTES contract enforced per-tenant via document-source-profiles.ts.
  */
-export function classifyDocumentType(tipoDocumento: string, documento: string, profileId: string = "castillitos"): string {
+export function classifyDocumentType(tipoDocumento: string, documento: string, profileId: string): string {
   const result = resolveCanonicalDocumentKind(profileId, { documento, tipoDocumento });
   return result.label;
 }
 
-export function mapCertifiedDocToReceivable(doc: CertifiedDocInput): ReceivableOutput {
+/**
+ * Map a SAG certified document to a ReceivableOutput.
+ * sourceProfileId is MANDATORY — resolved server-side via resolveOrgSourceProfileId().
+ */
+export function mapCertifiedDocToReceivable(doc: CertifiedDocInput, sourceProfileId: string): ReceivableOutput {
   return {
     id: `sag-${doc.documento}`,
     erpId: doc.documento,
-    documentType: classifyDocumentType(doc.tipoDocumento, doc.documento),
+    documentType: classifyDocumentType(doc.tipoDocumento, doc.documento, sourceProfileId),
     originalAmount: doc.valorDocumento,
     paidAmount: null,  // NEVER infer by difference — must come from vw_agentik_recaudos
     balanceDue: doc.saldoPendiente,

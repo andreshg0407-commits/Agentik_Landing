@@ -109,7 +109,7 @@ describe("cliente-360-loader.ts — canonical AR only", () => {
 
   test("HAS_OPEN_AR maps SAG documents via mapCertifiedDocToReceivable", () => {
     expect(src).toContain("mapCertifiedDocToReceivable");
-    expect(src).toContain("arResult.snapshot.documents.map(mapCertifiedDocToReceivable)");
+    expect(src).toContain("mapCertifiedDocToReceivable(d, sourceProfileId)");
   });
 
   test("CERTIFIED_ZERO leaves receivableItems empty", () => {
@@ -159,7 +159,7 @@ describe("AMV LLANO (NIT 900469068) — structural invariants", () => {
 
   test("cliente-360-loader only shows documents from SAG snapshot", () => {
     // The receivableItems are only populated from arResult.snapshot.documents
-    expect(loader360).toContain("arResult.snapshot.documents.map(mapCertifiedDocToReceivable)");
+    expect(loader360).toContain("mapCertifiedDocToReceivable(d, sourceProfileId)");
     // No legacy CustomerReceivable.findMany
     expect(loader360).not.toContain("customerReceivable.findMany");
   });
@@ -175,7 +175,7 @@ describe("Diana (NIT 901383501) — HAS_OPEN_AR structural invariants", () => {
       loader360.indexOf('"HAS_OPEN_AR"'),
       loader360.indexOf("} else {", loader360.indexOf('"HAS_OPEN_AR"')),
     );
-    expect(hasOpenBlock).toContain("arResult.snapshot.documents.map(mapCertifiedDocToReceivable)");
+    expect(hasOpenBlock).toContain("mapCertifiedDocToReceivable(d, sourceProfileId)");
     expect(hasOpenBlock).toContain("totalBalance = arResult.snapshot.netReceivable");
     expect(hasOpenBlock).toContain("totalOverdue = arResult.snapshot.totalVencido");
     expect(hasOpenBlock).toContain("openCount = arResult.snapshot.documentCount");

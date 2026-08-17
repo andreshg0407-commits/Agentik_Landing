@@ -232,3 +232,31 @@ export function resolveCanonicalDocumentKind(
     pending: false,
   };
 }
+
+// ── Organization → Source Profile registry ───────────────────────────────────
+//
+// Static mapping from organization slug → source profile ID.
+// Same pattern as TENANT_TRUTH_STATUS in receivable-truth-status.ts.
+//
+// A new tenant MUST be explicitly registered here to get document classification.
+// Unknown org → null → UNKNOWN_DOCUMENT for all documents (fail-closed).
+//
+// This is a pure function — NO Prisma, NO DB. Server-side callers resolve
+// the orgSlug before calling, just like isReceivableDataCertified().
+
+const ORG_SOURCE_PROFILE_REGISTRY: Record<string, string> = {
+  castillitos: "castillitos",
+  // Future tenants register here explicitly:
+  // "ludisam-direct": "ludisam",
+};
+
+/**
+ * Resolve the source profile ID for a given organization slug.
+ * Returns null for unknown orgs (fail-closed — documents will classify as UNKNOWN_DOCUMENT).
+ *
+ * This is the ONLY authorized way to obtain a sourceProfileId.
+ * Callers MUST NOT hardcode profile IDs or use orgSlug as a profile ID directly.
+ */
+export function resolveOrgSourceProfileId(orgSlug: string): string | null {
+  return ORG_SOURCE_PROFILE_REGISTRY[orgSlug] ?? null;
+}

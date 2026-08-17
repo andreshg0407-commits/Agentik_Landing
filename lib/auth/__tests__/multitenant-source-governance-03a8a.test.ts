@@ -28,6 +28,7 @@ import {
   CASTILLITOS_PROFILE,
   LUDISAM_PROFILE,
   DOCUMENT_KIND_LABELS,
+  resolveOrgSourceProfileId,
   type CanonicalDocumentKind,
   type DocumentClassificationResult,
 } from "@/lib/comercial/clientes/document-source-profiles";
@@ -279,31 +280,35 @@ describe("Profile registry — case-insensitive", () => {
 
 // ── 7. classifyDocumentType delegates to resolver ────────────────────────────
 
-describe("classifyDocumentType — delegates to resolver", () => {
-  test("default profile (castillitos): F2 → 'Remisión'", () => {
-    expect(classifyDocumentType("", "F2-100")).toBe("Remisión");
+describe("classifyDocumentType — mandatory profileId, no default", () => {
+  test("castillitos profile: F2 → 'Remisión'", () => {
+    expect(classifyDocumentType("", "F2-100", "castillitos")).toBe("Remisión");
   });
 
-  test("default profile (castillitos): D2 → 'Nota crédito'", () => {
-    expect(classifyDocumentType("Nota Crédito", "D2-100")).toBe("Nota crédito");
+  test("castillitos profile: D2 → 'Nota crédito'", () => {
+    expect(classifyDocumentType("Nota Crédito", "D2-100", "castillitos")).toBe("Nota crédito");
   });
 
-  test("explicit ludisam profile: RE → 'Remisión'", () => {
+  test("ludisam profile: RE → 'Remisión'", () => {
     expect(classifyDocumentType("", "RE-200", "ludisam")).toBe("Remisión");
   });
 
-  test("explicit ludisam profile: F7 → 'Factura'", () => {
+  test("ludisam profile: F7 → 'Factura'", () => {
     expect(classifyDocumentType("", "F7-300", "ludisam")).toBe("Factura");
   });
 
   test("unknown profile: any document → 'Documento'", () => {
     expect(classifyDocumentType("Factura", "FE-100", "unknown-tenant")).toBe("Documento");
   });
+
+  test("empty profile: any document → 'Documento' (fail-closed)", () => {
+    expect(classifyDocumentType("Factura", "FE-100", "")).toBe("Documento");
+  });
 });
 
 // ── 8. mapCertifiedDocToReceivable uses classifyDocumentType ──────────────────
 
-describe("mapCertifiedDocToReceivable — document type via resolver", () => {
+describe("mapCertifiedDocToReceivable — mandatory sourceProfileId", () => {
   const baseDoc = {
     valorDocumento: 1_000_000,
     saldoPendiente: 500_000,
@@ -312,24 +317,39 @@ describe("mapCertifiedDocToReceivable — document type via resolver", () => {
     fechaVencimiento: new Date("2026-02-15"),
   };
 
-  test("F2 document → documentType='Remisión'", () => {
-    const r = mapCertifiedDocToReceivable({ ...baseDoc, documento: "F2-8484", tipoDocumento: "Remisión" });
+  test("castillitos F2 → documentType='Remisión'", () => {
+    const r = mapCertifiedDocToReceivable({ ...baseDoc, documento: "F2-8484", tipoDocumento: "Remisión" }, "castillitos");
     expect(r.documentType).toBe("Remisión");
   });
 
-  test("D2 document → documentType='Nota crédito'", () => {
-    const r = mapCertifiedDocToReceivable({ ...baseDoc, documento: "D2-1234", tipoDocumento: "Nota Crédito", saldoPendiente: -200_000 });
+  test("castillitos D2 → documentType='Nota crédito'", () => {
+    const r = mapCertifiedDocToReceivable({ ...baseDoc, documento: "D2-1234", tipoDocumento: "Nota Crédito", saldoPendiente: -200_000 }, "castillitos");
     expect(r.documentType).toBe("Nota crédito");
     expect(r.status).toBe("CREDIT");
   });
 
-  test("FE document → documentType='Factura'", () => {
-    const r = mapCertifiedDocToReceivable({ ...baseDoc, documento: "FE-7688", tipoDocumento: "Factura" });
+  test("castillitos FE → documentType='Factura'", () => {
+    const r = mapCertifiedDocToReceivable({ ...baseDoc, documento: "FE-7688", tipoDocumento: "Factura" }, "castillitos");
     expect(r.documentType).toBe("Factura");
   });
 
+  test("ludisam RE → documentType='Remisión'", () => {
+    const r = mapCertifiedDocToReceivable({ ...baseDoc, documento: "RE-200", tipoDocumento: "" }, "ludisam");
+    expect(r.documentType).toBe("Remisión");
+  });
+
+  test("ludisam F2 → documentType='Documento' (NOT Remisión — cross-tenant isolation)", () => {
+    const r = mapCertifiedDocToReceivable({ ...baseDoc, documento: "F2-8484", tipoDocumento: "" }, "ludisam");
+    expect(r.documentType).toBe("Documento");
+  });
+
+  test("empty profileId → documentType='Documento' (fail-closed)", () => {
+    const r = mapCertifiedDocToReceivable({ ...baseDoc, documento: "FE-7688", tipoDocumento: "Factura" }, "");
+    expect(r.documentType).toBe("Documento");
+  });
+
   test("paidAmount remains null (NEVER inferred by difference)", () => {
-    const r = mapCertifiedDocToReceivable({ ...baseDoc, documento: "FE-7688", tipoDocumento: "Factura" });
+    const r = mapCertifiedDocToReceivable({ ...baseDoc, documento: "FE-7688", tipoDocumento: "Factura" }, "castillitos");
     expect(r.paidAmount).toBeNull();
   });
 });
@@ -351,16 +371,14 @@ describe("NIT 24296154 — behavior preserved via Castillitos profile", () => {
 
 // ── 10. No hardcoded codes in classifyDocumentType ───────────────────────────
 
-describe("classifyDocumentType — no hardcoded codes in source", () => {
+describe("classifyDocumentType — no hardcoded codes, no default", () => {
   const src = readFile("lib/comercial/clientes/clientes-pure.ts");
 
   test("classifyDocumentType body does NOT contain hardcoded prefix checks", () => {
-    // Extract the function body
     const fnStart = src.indexOf("export function classifyDocumentType");
     const fnEnd = src.indexOf("}", fnStart);
     const fnBody = src.slice(fnStart, fnEnd + 1);
 
-    // Should NOT contain direct prefix comparisons like 'prefix === "D2"'
     expect(fnBody).not.toContain('"D2"');
     expect(fnBody).not.toContain('"F2"');
     expect(fnBody).not.toContain('"R1"');
@@ -372,6 +390,32 @@ describe("classifyDocumentType — no hardcoded codes in source", () => {
   test("classifyDocumentType delegates to resolveCanonicalDocumentKind", () => {
     expect(src).toContain("resolveCanonicalDocumentKind");
     expect(src).toContain('from "./document-source-profiles"');
+  });
+
+  test("classifyDocumentType has NO default parameter for profileId", () => {
+    const fnLine = src.match(/export function classifyDocumentType\([^)]+\)/);
+    expect(fnLine).not.toBeNull();
+    expect(fnLine![0]).not.toContain('= "castillitos"');
+    expect(fnLine![0]).not.toContain("= 'castillitos'");
+  });
+
+  test("mapCertifiedDocToReceivable has NO default parameter for sourceProfileId", () => {
+    const fnLine = src.match(/export function mapCertifiedDocToReceivable\([^)]+\)/);
+    expect(fnLine).not.toBeNull();
+    expect(fnLine![0]).not.toContain('= "castillitos"');
+    expect(fnLine![0]).not.toContain("= 'castillitos'");
+  });
+
+  test("zero occurrences of ?? 'castillitos' or ?? \"castillitos\" in pure module", () => {
+    expect(src).not.toContain('?? "castillitos"');
+    expect(src).not.toContain("?? 'castillitos'");
+  });
+
+  test("zero occurrences of = \"castillitos\" default in pure module", () => {
+    // Only allowed in comments, not in code
+    const codeLines = src.split("\n").filter(l => !l.trim().startsWith("*") && !l.trim().startsWith("//"));
+    const joined = codeLines.join("\n");
+    expect(joined).not.toContain('= "castillitos"');
   });
 });
 
@@ -437,13 +481,110 @@ describe("document-source-profiles.ts — no server-only dependencies", () => {
 
   test("does NOT import from server-only modules", () => {
     expect(src).not.toContain('from "server-only"');
-    expect(src).not.toContain("canonical-ar-service");
-    expect(src).not.toContain("receivable-truth-status");
+    expect(src).not.toContain('from "./canonical-ar-service"');
+    expect(src).not.toContain('from "@/lib/comercial/frontline/receivable-truth-status"');
   });
 
   test("is a pure module (no async, no fetch, no DB)", () => {
     expect(src).not.toContain("async ");
     expect(src).not.toContain("fetch(");
     expect(src).not.toContain("import { db");
+  });
+});
+
+// ── 14. resolveOrgSourceProfileId — org→profile registry ─────────────────────
+
+describe("resolveOrgSourceProfileId — org→profile registry", () => {
+  test("castillitos → 'castillitos'", () => {
+    expect(resolveOrgSourceProfileId("castillitos")).toBe("castillitos");
+  });
+
+  test("unknown org → null (fail-closed)", () => {
+    expect(resolveOrgSourceProfileId("acme-corp")).toBeNull();
+  });
+
+  test("empty org → null", () => {
+    expect(resolveOrgSourceProfileId("")).toBeNull();
+  });
+
+  test("orgSlug is NOT used directly as profileId fallback", () => {
+    // If org "ludisam-direct" is not registered, it must return null even
+    // though "ludisam" is a valid profileId — no orgSlug→profileId passthrough
+    expect(resolveOrgSourceProfileId("ludisam")).toBeNull();
+  });
+});
+
+// ── 15. Production wiring — mandatory profileId in loaders ───────────────────
+
+describe("Production wiring — mandatory profileId", () => {
+  const loaderSrc = readFile("lib/comercial/clientes/cliente-360-loader.ts");
+
+  test("cliente-360-loader imports resolveOrgSourceProfileId", () => {
+    expect(loaderSrc).toContain("resolveOrgSourceProfileId");
+    expect(loaderSrc).toContain('from "./document-source-profiles"');
+  });
+
+  test("cliente-360-loader resolves sourceProfileId server-side", () => {
+    expect(loaderSrc).toContain("resolveOrgSourceProfileId(");
+    expect(loaderSrc).toContain("sourceProfileId");
+  });
+
+  test("cliente-360-loader passes sourceProfileId to mapCertifiedDocToReceivable", () => {
+    expect(loaderSrc).toContain("mapCertifiedDocToReceivable(d, sourceProfileId)");
+  });
+
+  test("cliente-360-loader does NOT hardcode 'castillitos' as default", () => {
+    const codeLines = loaderSrc.split("\n").filter(l => !l.trim().startsWith("*") && !l.trim().startsWith("//"));
+    const joined = codeLines.join("\n");
+    expect(joined).not.toContain('= "castillitos"');
+    expect(joined).not.toContain("?? \"castillitos\"");
+  });
+
+  test("no client component decides the profile (no resolveOrgSourceProfileId in app/ client files)", () => {
+    const clientesSrc = readFile("app/(app)/[orgSlug]/comercial/clientes/clientes-client.tsx");
+    const detailSrc = readFile("app/(app)/[orgSlug]/comercial/clientes/[clienteId]/cliente-360-client.tsx");
+    expect(clientesSrc).not.toContain("resolveOrgSourceProfileId");
+    expect(clientesSrc).not.toContain("document-source-profiles");
+    expect(detailSrc).not.toContain("resolveOrgSourceProfileId");
+    expect(detailSrc).not.toContain("document-source-profiles");
+  });
+});
+
+// ── 16. Production wiring — page callers pass orgSlug ────────────────────────
+
+describe("Page callers pass orgSlug to loadCliente360", () => {
+  test("desktop page passes orgSlug", () => {
+    const src = readFile("app/(app)/[orgSlug]/comercial/clientes/[clienteId]/page.tsx");
+    expect(src).toContain("loadCliente360(organization.id, clienteId, orgSlug)");
+  });
+
+  test("API route passes orgSlug", () => {
+    const src = readFile("app/api/orgs/[orgSlug]/comercial/clientes/[clienteId]/360/route.ts");
+    expect(src).toContain("loadCliente360(organization.id, clienteId, orgSlug)");
+  });
+
+  test("manager page passes orgSlug", () => {
+    const src = readFile("app/(app)/[orgSlug]/manager/comercial/clientes/[clienteId]/page.tsx");
+    expect(src).toContain("loadCliente360(orgId, clienteId, orgSlug)");
+  });
+});
+
+// ── 17. Structural gate — zero global classification by code ─────────────────
+
+describe("Structural gate — zero global classification by code", () => {
+  const pureSrc = readFile("lib/comercial/clientes/clientes-pure.ts");
+
+  test("clientes-pure.ts has zero '= \"castillitos\"' defaults in code lines", () => {
+    const codeLines = pureSrc.split("\n").filter(l => !l.trim().startsWith("*") && !l.trim().startsWith("//"));
+    const joined = codeLines.join("\n");
+    expect(joined).not.toContain('= "castillitos"');
+  });
+
+  test("clientes-pure.ts has zero '?? \"castillitos\"' fallbacks", () => {
+    expect(pureSrc).not.toContain('?? "castillitos"');
+  });
+
+  test("document-source-profiles.ts resolveOrgSourceProfileId returns null for unregistered org", () => {
+    expect(resolveOrgSourceProfileId("some-random-org")).toBeNull();
   });
 });
