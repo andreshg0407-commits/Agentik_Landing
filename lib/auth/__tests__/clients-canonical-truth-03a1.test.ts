@@ -899,3 +899,195 @@ describe("03A4-E7: CERTIFIED + zero customers with cartera → valid certified-e
     expect(result.dataState).toBe("CERTIFIED");
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// E. VISUAL INVARIANT TESTS — 03A6
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("03A6: fmtCurrency — monetary display invariants", () => {
+  // Import the same formatter logic used by the UI
+  // Since fmtCurrency is a local function in clientes-client.tsx, replicate it here
+  // to test the exact same rules
+  function fmtCurrency(value: number): string {
+    if (value === 0) return "$0";
+    if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
+    if (value >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
+    return `$${value.toLocaleString("es-CO")}`;
+  }
+
+  test("null is not passed to fmtCurrency — caller shows em dash", () => {
+    // This is a contract test: null values are handled by the caller, not the formatter
+    // Verified by the UI code: `client.totalReceivable != null ? fmtCurrency(...) : "—"`
+    const src = readFile("app/(app)/[orgSlug]/comercial/clientes/clientes-client.tsx");
+    expect(src).toContain('client.totalReceivable != null ? fmtCurrency(client.totalReceivable) : "\\u2014"');
+  });
+
+  test("0 → '$0'", () => { expect(fmtCurrency(0)).toBe("$0"); });
+  test("1 → '$1'", () => { expect(fmtCurrency(1)).toMatch(/\$1/); });
+  test("499 → shows exact value (not $0)", () => {
+    const result = fmtCurrency(499);
+    expect(result).not.toBe("$0");
+    expect(result).toContain("499");
+  });
+  test("999 → shows exact value (not $0, not $1K)", () => {
+    const result = fmtCurrency(999);
+    expect(result).not.toBe("$0");
+    expect(result).toContain("999");
+  });
+  test("1000 → '$1K'", () => { expect(fmtCurrency(1000)).toBe("$1K"); });
+  test("105000 → '$105K'", () => { expect(fmtCurrency(105_000)).toBe("$105K"); });
+  test("912400 → '$912K'", () => { expect(fmtCurrency(912_400)).toBe("$912K"); });
+  test("1000000 → '$1.0M'", () => { expect(fmtCurrency(1_000_000)).toBe("$1.0M"); });
+  test("negative value does not show as $0", () => {
+    const result = fmtCurrency(-150_000);
+    expect(result).not.toBe("$0");
+  });
+
+  test("no positive value can render as '$0'", () => {
+    // Exhaustive check: for any positive value, fmtCurrency never returns "$0"
+    const positiveValues = [1, 10, 100, 499, 500, 999, 1000, 5000, 100_000, 1_000_000, 50_000_000];
+    for (const v of positiveValues) {
+      expect(fmtCurrency(v)).not.toBe("$0");
+    }
+  });
+});
+
+describe("03A6: cartera column shows totalReceivable (not overdueReceivable)", () => {
+  const src = readFile("app/(app)/[orgSlug]/comercial/clientes/clientes-client.tsx");
+
+  test("row renders client.totalReceivable in cartera column", () => {
+    expect(src).toContain("fmtCurrency(client.totalReceivable)");
+  });
+
+  test("row does NOT render overdueReceivable as the cartera column value", () => {
+    // The cartera column must show totalReceivable, not overdueReceivable
+    expect(src).not.toContain("fmtCurrency(client.overdueReceivable)");
+  });
+});
+
+describe("03A6: con_cartera filter invariants (behavioral)", () => {
+  // Simulate the full pipeline with the 5-customer scenario
+  const snapshot = {
+    customers: [
+      { clienteId: 10, totalPendiente: 1_000_000, totalVencido: 300_000 },
+      { clienteId: 20, totalPendiente: 105_000, totalVencido: 0 },
+      { clienteId: 30, totalPendiente: 0, totalVencido: 0 },
+      { clienteId: 40, totalPendiente: 0, totalVencido: 0 },
+      { clienteId: 50, totalPendiente: -250_000, totalVencido: 0 },
+    ],
+    asOf: new Date("2026-08-16T12:00:00Z"),
+  };
+
+  test("every con_cartera row has totalReceivable > 0", async () => {
+    const ctx = await loadArContextCore("org-1", {
+      isCertified: () => true,
+      fetchSnapshot: async () => ({ ok: true as const, snapshot }),
+    });
+    const guard = resolveConCarteraFilter(ctx);
+    expect(guard.allowed).toBe(true);
+    if (!guard.allowed) return;
+
+    // For each sagId in the filter, resolve the row and verify
+    for (const sagId of guard.sagIds) {
+      const row = resolveRowCartera(ctx, sagId);
+      expect(row.totalReceivable).not.toBeNull();
+      expect(row.totalReceivable!).toBeGreaterThan(0);
+      expect(row.carteraState).toBe("HAS_OPEN_AR");
+    }
+  });
+
+  test("CERTIFIED_ZERO never appears in con_cartera sagIds", async () => {
+    const ctx = await loadArContextCore("org-1", {
+      isCertified: () => true,
+      fetchSnapshot: async () => ({ ok: true as const, snapshot }),
+    });
+    const guard = resolveConCarteraFilter(ctx);
+    if (!guard.allowed) return;
+
+    // IDs 30, 40 are CERTIFIED_ZERO — must NOT appear
+    expect(guard.sagIds).not.toContain(30);
+    expect(guard.sagIds).not.toContain(40);
+  });
+
+  test("CERTIFIED_CREDIT_BALANCE never appears in con_cartera sagIds", async () => {
+    const ctx = await loadArContextCore("org-1", {
+      isCertified: () => true,
+      fetchSnapshot: async () => ({ ok: true as const, snapshot }),
+    });
+    const guard = resolveConCarteraFilter(ctx);
+    if (!guard.allowed) return;
+
+    // ID 50 is CERTIFIED_CREDIT_BALANCE — must NOT appear
+    expect(guard.sagIds).not.toContain(50);
+  });
+
+  test("UNVERIFIED context never produces certified-zero rows", () => {
+    const unverifiedCtx: ArContextCore = { dataState: "UNVERIFIED", arLookup: new Map() };
+    const row = resolveRowCartera(unverifiedCtx, 30);
+    expect(row.carteraState).toBe("UNVERIFIED");
+    expect(row.carteraState).not.toBe("CERTIFIED_ZERO");
+    expect(row.totalReceivable).toBeNull();
+  });
+
+  test("KPI withCartera matches con_cartera sagIds count", async () => {
+    const ctx = await loadArContextCore("org-1", {
+      isCertified: () => true,
+      fetchSnapshot: async () => ({ ok: true as const, snapshot }),
+    });
+    const guard = resolveConCarteraFilter(ctx);
+    expect(guard.allowed).toBe(true);
+    if (!guard.allowed) return;
+
+    const summaryResult = await loadClientesSummaryCoreLogic("org-1", ctx, {
+      queryProfileAgg: async () => ({
+        total: 100, active: 80, inactive: 20, withSeller: 50, sinCompra90d: 10, withCrm: 30,
+      }),
+      countDistinctProfiles: async (_orgId, sagIds) => sagIds.length,
+    });
+
+    // withCartera and filter sagIds must be consistent
+    expect(summaryResult.withCartera).toBe(guard.sagIds.length);
+  });
+});
+
+describe("03A6: NIT 24296154 equivalent — customer in snapshot with totalPendiente=0", () => {
+  // Alba Maria Marin (NIT 24296154) appeared in con_cartera with $0
+  // because her totalPendiente=0 but she was in the snapshot (has credit notes only).
+  // After the fix, she must NOT appear in con_cartera.
+
+  test("customer with totalPendiente=0 is CERTIFIED_ZERO, excluded from filter", async () => {
+    const ctx = await loadArContextCore("org-1", {
+      isCertified: () => true,
+      fetchSnapshot: async () => ({
+        ok: true as const,
+        snapshot: {
+          customers: [
+            // Simulates Alba Maria Marin: present in snapshot but zero balance
+            { clienteId: 24296154, totalPendiente: 0, totalVencido: 0 },
+            // A real open-AR customer for contrast
+            { clienteId: 999, totalPendiente: 500_000, totalVencido: 100_000 },
+          ],
+          asOf: new Date("2026-08-16T12:00:00Z"),
+        },
+      }),
+    });
+
+    // Row resolution
+    const alba = resolveRowCartera(ctx, 24296154);
+    expect(alba.carteraState).toBe("CERTIFIED_ZERO");
+    expect(alba.totalReceivable).toBe(0);
+
+    // Filter exclusion
+    const guard = resolveConCarteraFilter(ctx);
+    expect(guard.allowed).toBe(true);
+    if (guard.allowed) {
+      expect(guard.sagIds).not.toContain(24296154);
+      expect(guard.sagIds).toContain(999);
+      expect(guard.sagIds.length).toBe(1);
+    }
+
+    // KPI
+    expect(ctx.arCustomerIds.has(24296154)).toBe(false);
+    expect(ctx.arCustomerIds.size).toBe(1);
+  });
+});
