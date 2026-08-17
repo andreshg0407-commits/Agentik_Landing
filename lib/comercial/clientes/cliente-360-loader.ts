@@ -38,9 +38,13 @@ import {
   resolveCollectionContext,
   resolveSagOrdersKpi,
   resolveInvoiceKpi,
+  classifySalesHistory,
 } from "./clientes-pure";
-import type { AgingCompleteness, CollectionContext, KpiSourceMeta } from "./clientes-pure";
-import { resolveCanonicalDocumentKind } from "./document-source-profiles";
+import type {
+  AgingCompleteness, CollectionContext, KpiSourceMeta,
+  SalesHistoryResult, ClassifiedSaleItem, SalesProfileLabels,
+} from "./clientes-pure";
+import { resolveCanonicalDocumentKind, getSalesProfileLabels } from "./document-source-profiles";
 import { resolveOrgSourceProfileId } from "./document-source-profiles";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -175,6 +179,10 @@ export interface Cliente360Data {
   sagOrdersMeta: KpiSourceMeta;
   /** Invoice KPI source metadata — truthState, reason, windowLabel */
   invoicesMeta: KpiSourceMeta;
+  /** Classified sales history — F1/F2 separated */
+  salesHistory: SalesHistoryResult;
+  /** Profile-specific section labels (e.g. "Facturación oficial (F1)") */
+  salesProfileLabels: SalesProfileLabels;
   loadedAt: string;
 }
 
@@ -197,7 +205,7 @@ export async function loadCliente360(
 
   // Resolve source profile server-side — fail-closed to empty string (→ UNKNOWN_DOCUMENT)
   // orgSlug may be passed explicitly; if not, resolve from DB
-  let resolvedOrgSlug = orgSlug;
+  let resolvedOrgSlug: string = orgSlug ?? "";
   if (!resolvedOrgSlug) {
     const org = await db.organization.findUnique({
       where: { id: organizationId },
@@ -536,6 +544,37 @@ export async function loadCliente360(
     excludedKindLabels, new Date(),
   );
 
+  // Build classified sale items for sales history F1/F2 separation
+  const classifiedSales: ClassifiedSaleItem[] = salesRaw.rows.map((s: any) => {
+    const comprobante = (s.comprobante as string) ?? "";
+    const kind = resolveCanonicalDocumentKind(sourceProfileId, {
+      documento: comprobante,
+      tipoDocumento: "",
+    });
+    return {
+      id: s.id,
+      canonicalKind: kind.kind,
+      rawSourceCode: s.comprobanteCode ?? null,
+      rawDocumentNumber: comprobante || null,
+      issueDate: s.saleDate instanceof Date ? s.saleDate.toISOString() : (s.saleDate ?? null),
+      seller: s.sellerSlug ?? null,
+      grossAmount: Number(s.amount ?? 0),
+      productLine: s.productLine ?? null,
+      sourceProfileId,
+    };
+  });
+
+  const hasProfile = sourceProfileId.length > 0;
+  const salesHistory = classifySalesHistory(
+    classifiedSales,
+    salesRaw.queryOk,
+    p.nit != null, // hasSagIdentity for sales = has NIT
+    hasProfile,
+    new Date(),
+  );
+
+  const salesProfileLabels = getSalesProfileLabels(sourceProfileId);
+
   const collectionItems: Cliente360CollectionRecord[] = rawCollections.map((c: any) => ({
     id: c.id,
     documentNumber: c.documentNumber,
@@ -588,6 +627,8 @@ export async function loadCliente360(
     opportunities,
     sagOrdersMeta,
     invoicesMeta,
+    salesHistory,
+    salesProfileLabels,
     loadedAt: new Date().toISOString(),
   };
 

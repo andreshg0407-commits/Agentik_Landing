@@ -119,11 +119,12 @@ function carteraStatusLabel(status: string): string {
 const ORDER_GRID = "60px 1fr 90px 90px 90px 80px";
 const RECEIVABLE_GRID = "100px 1fr 100px 100px 70px 90px";
 const HISTORY_GRID = "90px 1fr 100px 80px";
+const SALES_GRID = "80px 80px 1fr 90px 80px";
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function Cliente360Client({ orgSlug, data }: Props) {
-  const { profile, seller, crmQuotes, sagOrders, receivables, sales, collections, opportunities } = data;
+  const { profile, seller, crmQuotes, sagOrders, receivables, sales, collections, opportunities, salesHistory: sh } = data;
 
   // Determine last activity across all sources
   const allDates: number[] = [];
@@ -258,9 +259,13 @@ export function Cliente360Client({ orgSlug, data }: Props) {
           color={data.sagOrdersMeta.truthState === "SOURCE_DOWN" ? C.red : data.sagOrdersMeta.truthState === "IDENTITY_MISSING" ? C.inkGhost : undefined}
         />
         <KpiCard
-          label="Facturas"
+          label="Facturas oficiales"
           textValue={kpiDisplayValue(data.invoicesMeta)}
           color={data.invoicesMeta.truthState === "SOURCE_DOWN" ? C.red : data.invoicesMeta.truthState === "IDENTITY_MISSING" ? C.inkGhost : undefined}
+        />
+        <KpiCard
+          label="Remisiones"
+          textValue={data.salesHistory.truthState === "CERTIFIED" || data.salesHistory.truthState === "EMPTY_CERTIFIED" ? String(data.salesHistory.remissions.length) : "\u2014"}
         />
         <KpiCard
           label="Cartera vencida"
@@ -268,8 +273,8 @@ export function Cliente360Client({ orgSlug, data }: Props) {
           color={receivables.truthStatus === "CERTIFIED" && (receivables.totalOverdue ?? 0) > 0 ? C.red : undefined}
         />
         <KpiCard
-          label="Ultima compra"
-          textValue={fmtDaysAgo(lastActivity)}
+          label="Última venta"
+          textValue={data.salesHistory.lastSaleDate ? `${fmtDaysAgo(data.salesHistory.lastSaleDate)} (${data.salesHistory.lastSaleKind})` : "\u2014"}
         />
         <KpiCard
           label="Vendedor"
@@ -372,38 +377,55 @@ export function Cliente360Client({ orgSlug, data }: Props) {
         </WorkspaceSection>
       </div>
 
-      {/* ── Phase 7: Historial comercial ─────────────────────────────────── */}
+      {/* ── Phase 7: Ventas (F1/F2 separated) ────────────────────────────── */}
       <div style={{ marginTop: S[6] }}>
-        <WorkspaceSection title="Historial comercial" subtitle={sales.state === "disponible" ? `${sales.items.length} registros` : undefined}>
-          {sales.state === "no_disponible" && collections.state === "no_disponible" ? (
-            <EmptyOperationalState message="Sin historial comercial" detail="No hay facturas, remisiones ni cobros registrados para este cliente." />
+        <WorkspaceSection title="Ventas" subtitle={sh.truthState === "CERTIFIED" ? `${sh.officialInvoices.length + sh.remissions.length} documentos` : undefined}>
+          {sh.truthState === "IDENTITY_MISSING" ? (
+            <EmptyOperationalState message="Cliente no vinculado con SAG" detail={sh.reason} />
+          ) : sh.truthState === "SOURCE_DOWN" ? (
+            <EmptyOperationalState message="No disponible" detail={sh.reason} />
+          ) : sh.truthState === "EMPTY_CERTIFIED" ? (
+            <EmptyOperationalState message="Sin ventas registradas" detail="No hay facturas ni remisiones registradas para este cliente." />
           ) : (
-            <div className="ag-op-table" style={{ border: `1px solid ${C.line}`, borderRadius: R.sm, overflow: "hidden" }}>
-              <div className="ag-op-row" style={{ display: "grid", gridTemplateColumns: HISTORY_GRID, gap: S[2], padding: `${S[2]}px ${S[4]}px`, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}` }}>
-                {["Fecha", "Tipo", "Valor", "Ref"].map(h => (
-                  <span key={h} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkLight, textTransform: "uppercase" as const }}>{h}</span>
-                ))}
+            <div style={{ display: "flex", flexDirection: "column" as const, gap: S[4] }}>
+              {/* Summary strip */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: S[3] }}>
+                <MiniStat label="Ventas netas" value={fmtCurrency(sh.officialNet + sh.remissionNet)} />
+                <MiniStat label={data.salesProfileLabels.invoiceLabel} value={sh.officialInvoices.length > 0 ? `${sh.officialInvoices.length} / ${fmtCurrency(sh.officialNet)}` : "0"} />
+                <MiniStat label={data.salesProfileLabels.remissionLabel} value={sh.remissions.length > 0 ? `${sh.remissions.length} / ${fmtCurrency(sh.remissionNet)}` : "0"} />
+                <MiniStat label="Notas crédito" value={sh.creditNotes.length > 0 ? String(sh.creditNotes.length) : "\u2014"} color={sh.creditNotes.length > 0 ? C.red : undefined} />
+                <MiniStat label="Última venta" value={sh.lastSaleDate ? `${fmtDate(sh.lastSaleDate)} (${sh.lastSaleKind})` : "\u2014"} />
               </div>
-              {/* Sales */}
-              {sales.items.slice(0, 30).map(s => (
-                <div key={s.id} className="ag-op-row" style={{ display: "grid", gridTemplateColumns: HISTORY_GRID, gap: S[2], padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}22`, alignItems: "center" }}>
-                  <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{fmtDate(s.saleDate)}</span>
-                  <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink }}>
-                    {s.sagSourceType === "OFICIAL" ? "Factura" : s.sagSourceType === "REMISION" ? "Remision" : s.sagSourceType ?? "Venta"}
-                  </span>
-                  <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink }}>{fmtCurrency(s.amount)}</span>
-                  <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{s.comprobanteCode ?? "\u2014"}</span>
+
+              {/* Sales table — all items combined */}
+              <div className="ag-op-table" style={{ border: `1px solid ${C.line}`, borderRadius: R.sm, overflow: "hidden" }}>
+                <div className="ag-op-row" style={{ display: "grid", gridTemplateColumns: SALES_GRID, gap: S[2], padding: `${S[2]}px ${S[4]}px`, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}` }}>
+                  {["Fecha", "Tipo", "Documento", "Valor", "Vendedor"].map(h => (
+                    <span key={h} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkLight, textTransform: "uppercase" as const }}>{h}</span>
+                  ))}
                 </div>
-              ))}
-              {/* Collections */}
-              {collections.items.slice(0, 20).map(c => (
-                <div key={c.id} className="ag-op-row" style={{ display: "grid", gridTemplateColumns: HISTORY_GRID, gap: S[2], padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}22`, alignItems: "center" }}>
-                  <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{fmtDate(c.collectionDate)}</span>
-                  <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.green }}>Cobro</span>
-                  <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.green }}>{fmtCurrency(c.amount)}</span>
-                  <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight }}>{c.documentNumber ?? "\u2014"}</span>
-                </div>
-              ))}
+                {[...sh.officialInvoices, ...sh.remissions, ...sh.creditNotes]
+                  .sort((a, b) => (b.issueDate ?? "").localeCompare(a.issueDate ?? ""))
+                  .slice(0, 50)
+                  .map(s => {
+                    const isNC = s.canonicalKind === "SALES_CREDIT_NOTE";
+                    const kindLabel = s.canonicalKind === "SALES_INVOICE" ? "Factura" : s.canonicalKind === "SALES_REMISSION" ? "Remisión" : "NC";
+                    return (
+                      <div key={s.id} className="ag-op-row" style={{ display: "grid", gridTemplateColumns: SALES_GRID, gap: S[2], padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}22`, alignItems: "center" }}>
+                        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{fmtDate(s.issueDate)}</span>
+                        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: isNC ? C.red : C.inkMid }}>{kindLabel} ({s.rawSourceCode ?? "\u2014"})</span>
+                        <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{s.rawDocumentNumber ?? "\u2014"}</span>
+                        <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: isNC ? C.red : C.ink }}>{isNC ? `-${fmtCurrency(Math.abs(s.grossAmount))}` : fmtCurrency(s.grossAmount)}</span>
+                        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{s.seller ?? "\u2014"}</span>
+                      </div>
+                    );
+                  })}
+              </div>
+
+              {/* Source provenance */}
+              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost }}>
+                Fuente: {sh.source}. {sh.reason}. {sh.excludedCount > 0 ? `${sh.excludedCount} documentos excluidos (recibos, anticipos).` : ""}
+              </div>
             </div>
           )}
         </WorkspaceSection>

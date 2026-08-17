@@ -360,6 +360,186 @@ export function resolveInvoiceKpi(
   };
 }
 
+// ── Sales history F1/F2 separation ───────────────────────────────────────────
+
+export type SalesHistoryTruthState =
+  | "CERTIFIED"
+  | "EMPTY_CERTIFIED"
+  | "SOURCE_DOWN"
+  | "IDENTITY_MISSING"
+  | "PROFILE_MISSING"
+  | "PARTIAL"
+  | "UNVERIFIED";
+
+export interface ClassifiedSaleItem {
+  id: string;
+  canonicalKind: string; // CanonicalDocumentKind
+  rawSourceCode: string | null;
+  rawDocumentNumber: string | null;
+  issueDate: string | null;
+  seller: string | null;
+  grossAmount: number;
+  productLine: string | null;
+  sourceProfileId: string;
+}
+
+export interface SalesHistoryResult {
+  truthState: SalesHistoryTruthState;
+  reason: string;
+  source: string;
+  sourceAsOf: string | null;
+  windowLabel: string;
+  officialInvoices: ClassifiedSaleItem[];
+  remissions: ClassifiedSaleItem[];
+  creditNotes: ClassifiedSaleItem[];
+  unclassifiedDocuments: ClassifiedSaleItem[];
+  /** Excluded kinds (receipts, advances) — not in any section */
+  excludedCount: number;
+  /** Summary KPIs */
+  officialGross: number;
+  officialCreditTotal: number;
+  officialNet: number;
+  remissionGross: number;
+  remissionCreditTotal: number;
+  remissionNet: number;
+  lastSaleDate: string | null;
+  lastSaleKind: string | null;
+}
+
+/** Profile-specific section labels */
+export interface SalesProfileLabels {
+  invoiceLabel: string;
+  remissionLabel: string;
+  profileName: string;
+}
+
+export function getDefaultSalesProfileLabels(): SalesProfileLabels {
+  return {
+    invoiceLabel: "Facturación oficial",
+    remissionLabel: "Remisiones",
+    profileName: "Desconocido",
+  };
+}
+
+/**
+ * Classify sales items by canonical document kind and compute summaries.
+ */
+export function classifySalesHistory(
+  items: ClassifiedSaleItem[],
+  querySucceeded: boolean,
+  hasSagIdentity: boolean,
+  hasProfile: boolean,
+  queryAsOf: Date | null,
+): SalesHistoryResult {
+  const base = {
+    source: "SaleRecord (vw_agentik_ventas)",
+    sourceAsOf: queryAsOf?.toISOString() ?? null,
+  };
+
+  if (!hasSagIdentity) {
+    return {
+      ...base, truthState: "IDENTITY_MISSING",
+      reason: "Cliente sin identidad SAG — no se puede consultar historial de ventas",
+      windowLabel: "\u2014",
+      officialInvoices: [], remissions: [], creditNotes: [], unclassifiedDocuments: [],
+      excludedCount: 0,
+      officialGross: 0, officialCreditTotal: 0, officialNet: 0,
+      remissionGross: 0, remissionCreditTotal: 0, remissionNet: 0,
+      lastSaleDate: null, lastSaleKind: null,
+    };
+  }
+
+  if (!querySucceeded) {
+    return {
+      ...base, truthState: "SOURCE_DOWN",
+      reason: "Consulta de historial de ventas fallida",
+      windowLabel: "\u2014",
+      officialInvoices: [], remissions: [], creditNotes: [], unclassifiedDocuments: [],
+      excludedCount: 0,
+      officialGross: 0, officialCreditTotal: 0, officialNet: 0,
+      remissionGross: 0, remissionCreditTotal: 0, remissionNet: 0,
+      lastSaleDate: null, lastSaleKind: null,
+    };
+  }
+
+  if (!hasProfile) {
+    return {
+      ...base, truthState: "PROFILE_MISSING",
+      reason: "Perfil de clasificación documental no configurado para esta organización",
+      windowLabel: "Clasificación no disponible",
+      officialInvoices: [], remissions: [], creditNotes: [], unclassifiedDocuments: items,
+      excludedCount: 0,
+      officialGross: 0, officialCreditTotal: 0, officialNet: 0,
+      remissionGross: 0, remissionCreditTotal: 0, remissionNet: 0,
+      lastSaleDate: null, lastSaleKind: null,
+    };
+  }
+
+  const officialInvoices: ClassifiedSaleItem[] = [];
+  const remissions: ClassifiedSaleItem[] = [];
+  const creditNotes: ClassifiedSaleItem[] = [];
+  const unclassifiedDocuments: ClassifiedSaleItem[] = [];
+  let excludedCount = 0;
+
+  for (const item of items) {
+    switch (item.canonicalKind) {
+      case "SALES_INVOICE":    officialInvoices.push(item); break;
+      case "SALES_REMISSION":  remissions.push(item); break;
+      case "SALES_CREDIT_NOTE": creditNotes.push(item); break;
+      case "CUSTOMER_RECEIPT":
+      case "CUSTOMER_ADVANCE": excludedCount++; break;
+      default:                 unclassifiedDocuments.push(item); break;
+    }
+  }
+
+  const officialGross = officialInvoices.reduce((s, i) => s + i.grossAmount, 0);
+  const remissionGross = remissions.reduce((s, i) => s + i.grossAmount, 0);
+  // Credit notes reduce the world they belong to — for now attribute all to gross
+  const officialCreditTotal = creditNotes
+    .filter(cn => isOfficialCreditNote(cn.rawSourceCode))
+    .reduce((s, cn) => s + Math.abs(cn.grossAmount), 0);
+  const remissionCreditTotal = creditNotes
+    .filter(cn => !isOfficialCreditNote(cn.rawSourceCode))
+    .reduce((s, cn) => s + Math.abs(cn.grossAmount), 0);
+  const officialNet = officialGross - officialCreditTotal;
+  const remissionNet = remissionGross - remissionCreditTotal;
+
+  // Last sale: most recent invoice or remission
+  const salesDates = [...officialInvoices, ...remissions]
+    .filter(i => i.issueDate)
+    .sort((a, b) => new Date(b.issueDate!).getTime() - new Date(a.issueDate!).getTime());
+  const lastSale = salesDates[0] ?? null;
+
+  const total = officialInvoices.length + remissions.length;
+  const truthState: SalesHistoryTruthState = total === 0 && creditNotes.length === 0
+    ? "EMPTY_CERTIFIED" : "CERTIFIED";
+
+  return {
+    ...base, truthState,
+    reason: `${officialInvoices.length} facturas, ${remissions.length} remisiones, ${creditNotes.length} NC, ${excludedCount} excluidos`,
+    windowLabel: total > 0 ? "Histórico disponible" : "Sin ventas registradas",
+    officialInvoices, remissions, creditNotes, unclassifiedDocuments, excludedCount,
+    officialGross, officialCreditTotal, officialNet,
+    remissionGross, remissionCreditTotal, remissionNet,
+    lastSaleDate: lastSale?.issueDate ?? null,
+    lastSaleKind: lastSale ? (lastSale.canonicalKind === "SALES_INVOICE" ? "Factura" : "Remisión") : null,
+  };
+}
+
+/**
+ * Determine if a credit note belongs to official invoicing or remissions.
+ * Official NC codes: NE, NC, ND, NF, NS, NT, NG, NA, NW, NX, D1, D3
+ * Remission NC codes: D2, 2D, 3D, 4D, 5D, 6D
+ * This is a Castillitos-specific heuristic — should be profile-driven in future.
+ */
+function isOfficialCreditNote(rawSourceCode: string | null): boolean {
+  if (!rawSourceCode) return true; // default to official if unknown
+  const prefix = rawSourceCode.slice(0, 2).toUpperCase();
+  // D2 and xD (2D-6D) are remission credit notes
+  if (prefix === "D2" || /^[2-6]D$/.test(prefix)) return false;
+  return true;
+}
+
 // ── carteraTrafficLight ──────────────────────────────────────────────────────
 
 export interface CarteraTrafficLightInput {

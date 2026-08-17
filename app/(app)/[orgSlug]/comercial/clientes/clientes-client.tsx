@@ -25,6 +25,7 @@ import {
   computeClientScore as computeClientScorePure,
   kpiDisplayValue,
 } from "@/lib/comercial/clientes/clientes-pure";
+import type { ClassifiedSaleItem } from "@/lib/comercial/clientes/clientes-pure";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -63,12 +64,12 @@ const TABLE_GRID = "1.2fr 90px 90px 110px 75px 80px 70px 60px 40px";
 
 // ── Drawer tab type ──────────────────────────────────────────────────────────
 
-type DrawerTab = "perfil" | "pedidos" | "facturas" | "cartera" | "inteligencia" | "timeline";
+type DrawerTab = "perfil" | "pedidos" | "ventas" | "cartera" | "inteligencia" | "timeline";
 
 const DRAWER_TABS: { key: DrawerTab; label: string }[] = [
   { key: "perfil",       label: "PERFIL" },
   { key: "pedidos",      label: "PEDIDOS" },
-  { key: "facturas",     label: "FACTURAS" },
+  { key: "ventas",       label: "VENTAS" },
   { key: "cartera",      label: "CARTERA" },
   { key: "inteligencia", label: "INTELIGENCIA" },
   { key: "timeline",     label: "LINEA" },
@@ -555,12 +556,13 @@ function DrawerContent({
       </div>
 
       {/* ── KPI Strip ────────────────────────────────────────────────── */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: S[2], marginBottom: S[5] }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: S[2], marginBottom: S[5] }}>
         <DrawerKpi label="Pedidos CRM" value={crmQuotes.items.length} />
         <DrawerKpi label="Pedidos SAG" textValue={kpiDisplayValue(data.sagOrdersMeta)} color={data.sagOrdersMeta.truthState === "SOURCE_DOWN" ? C.red : data.sagOrdersMeta.truthState === "IDENTITY_MISSING" ? C.inkGhost : undefined} />
-        <DrawerKpi label="Facturas" textValue={kpiDisplayValue(data.invoicesMeta)} color={data.invoicesMeta.truthState === "SOURCE_DOWN" ? C.red : data.invoicesMeta.truthState === "IDENTITY_MISSING" ? C.inkGhost : undefined} />
+        <DrawerKpi label="Facturas oficiales" textValue={kpiDisplayValue(data.invoicesMeta)} color={data.invoicesMeta.truthState === "SOURCE_DOWN" ? C.red : data.invoicesMeta.truthState === "IDENTITY_MISSING" ? C.inkGhost : undefined} />
+        <DrawerKpi label="Remisiones" textValue={data.salesHistory.truthState === "CERTIFIED" || data.salesHistory.truthState === "EMPTY_CERTIFIED" ? String(data.salesHistory.remissions.length) : "\u2014"} />
         <DrawerKpi label="Saldo cartera" textValue={receivables.truthStatus !== "CERTIFIED" ? "No verificado" : receivables.totalBalance !== null && receivables.totalBalance > 0 ? fmtCurrency(receivables.totalBalance) : "$0"} color={receivables.truthStatus !== "CERTIFIED" ? C.inkGhost : (receivables.totalOverdue ?? 0) > 0 ? C.red : undefined} />
-        <DrawerKpi label="Ultima compra" textValue={fmtDaysAgo(lastActivity)} />
+        <DrawerKpi label="Ultima venta" textValue={data.salesHistory.lastSaleDate ? `${fmtDaysAgo(data.salesHistory.lastSaleDate)} (${data.salesHistory.lastSaleKind})` : "\u2014"} />
         <DrawerKpi label="Salud cartera" textValue={carteraTrafficLight(receivables).label} color={carteraTrafficLight(receivables).color} />
       </div>
 
@@ -573,7 +575,7 @@ function DrawerContent({
           // Badge counts
           let badge: number | null = null;
           if (tab.key === "pedidos") badge = totalOrders || null;
-          if (tab.key === "facturas") badge = (data.invoicesMeta.count ?? 0) > 0 ? data.invoicesMeta.count : null;
+          if (tab.key === "ventas") badge = (data.salesHistory.officialInvoices.length + data.salesHistory.remissions.length) || null;
           if (tab.key === "cartera" && (receivables.openCount ?? 0) > 0) badge = receivables.openCount;
           if (tab.key === "inteligencia" && opportunities.length > 0) badge = opportunities.length;
 
@@ -607,7 +609,7 @@ function DrawerContent({
       {/* ── Tab Content ──────────────────────────────────────────────── */}
       {activeTab === "perfil" && <TabPerfil profile={profile} seller={seller} />}
       {activeTab === "pedidos" && <TabPedidos crmQuotes={crmQuotes} sagOrders={sagOrders} />}
-      {activeTab === "facturas" && <TabFacturas sales={sales} collections={collections} />}
+      {activeTab === "ventas" && <TabVentas data={data} />}
       {activeTab === "cartera" && <TabCartera receivables={receivables} />}
       {activeTab === "inteligencia" && <TabInteligencia data={data} />}
       {activeTab === "timeline" && <TabTimeline data={data} />}
@@ -726,57 +728,86 @@ function TabPedidos({ crmQuotes, sagOrders }: {
   );
 }
 
-// ── Tab: FACTURAS ────────────────────────────────────────────────────────────
+// ── Tab: VENTAS (F1/F2 separated) ───────────────────────────────────────────
 
-function TabFacturas({ sales, collections }: {
-  sales: Cliente360Data["sales"];
-  collections: Cliente360Data["collections"];
-}) {
-  const facturas = sales.items.filter(s => s.sagSourceType === "OFICIAL");
-  const remisiones = sales.items.filter(s => s.sagSourceType === "REMISION");
-  const totalFacturado = facturas.reduce((s, f) => s + f.amount, 0);
+function TabVentas({ data }: { data: Cliente360Data }) {
+  const { salesHistory: sh, salesProfileLabels: labels } = data;
 
-  if (sales.state === "no_disponible" && collections.state === "no_disponible") {
-    return <EmptyOperationalState message="Sin historial comercial" detail="No hay facturas ni cobros registrados para este cliente." />;
+  if (sh.truthState === "IDENTITY_MISSING") {
+    return <EmptyOperationalState message="Cliente no vinculado con SAG" detail={sh.reason} />;
   }
+  if (sh.truthState === "SOURCE_DOWN") {
+    return <EmptyOperationalState message="No disponible" detail={sh.reason} />;
+  }
+  if (sh.truthState === "PROFILE_MISSING") {
+    return <EmptyOperationalState message="Clasificación no disponible" detail={sh.reason} />;
+  }
+  if (sh.truthState === "EMPTY_CERTIFIED" && sh.officialInvoices.length === 0 && sh.remissions.length === 0) {
+    return <EmptyOperationalState message="Sin ventas registradas" detail="No hay facturas ni remisiones registradas para este cliente." />;
+  }
+
+  const SALES_GRID = "80px 80px 1fr 80px 80px";
 
   return (
     <div style={{ display: "flex", flexDirection: "column" as const, gap: S[4] }}>
       {/* Summary strip */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: S[2] }}>
-        <MiniStat label="Total facturado" value={fmtCurrency(totalFacturado)} />
-        <MiniStat label="Facturas" value={String(facturas.length || "\u2014")} />
-        <MiniStat label="Cobros" value={String(collections.items.length || "\u2014")} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: S[2] }}>
+        <MiniStat label="Ventas netas" value={fmtCurrency(sh.officialNet + sh.remissionNet)} />
+        <MiniStat label={labels.invoiceLabel} value={sh.officialInvoices.length > 0 ? `${sh.officialInvoices.length} / ${fmtCurrency(sh.officialNet)}` : "0"} />
+        <MiniStat label={labels.remissionLabel} value={sh.remissions.length > 0 ? `${sh.remissions.length} / ${fmtCurrency(sh.remissionNet)}` : "0"} />
+        <MiniStat label="Notas crédito" value={sh.creditNotes.length > 0 ? String(sh.creditNotes.length) : "\u2014"} color={sh.creditNotes.length > 0 ? C.red : undefined} />
+        <MiniStat label="Última venta" value={sh.lastSaleDate ? `${fmtDate(sh.lastSaleDate)} (${sh.lastSaleKind})` : "\u2014"} />
       </div>
 
-      {/* History table */}
-      <div className="ag-op-table" style={{ border: `1px solid ${C.line}`, borderRadius: R.sm, overflow: "hidden" }}>
-        <div className="ag-op-row" style={{ display: "grid", gridTemplateColumns: HISTORY_GRID, gap: S[2], padding: `${S[2]}px ${S[3]}px`, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}` }}>
-          {["Fecha", "Tipo", "Valor", "Ref"].map(h => (
-            <span key={h} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkLight, textTransform: "uppercase" as const }}>{h}</span>
-          ))}
+      {/* Official invoices section */}
+      {sh.officialInvoices.length > 0 && (
+        <>
+          <SectionLabel label={labels.invoiceLabel} />
+          <SalesTable items={sh.officialInvoices} grid={SALES_GRID} />
+        </>
+      )}
+
+      {/* Remissions section */}
+      {sh.remissions.length > 0 && (
+        <>
+          <SectionLabel label={labels.remissionLabel} />
+          <SalesTable items={sh.remissions} grid={SALES_GRID} />
+        </>
+      )}
+
+      {/* Credit notes — shown if any */}
+      {sh.creditNotes.length > 0 && (
+        <>
+          <SectionLabel label="Notas crédito / devoluciones" />
+          <SalesTable items={sh.creditNotes} grid={SALES_GRID} isCreditNote />
+        </>
+      )}
+
+      {/* Source provenance */}
+      <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost, marginTop: S[2] }}>
+        Fuente: {sh.source}. {sh.reason}. {sh.excludedCount > 0 ? `${sh.excludedCount} documentos excluidos (recibos, anticipos).` : ""}
+      </div>
+    </div>
+  );
+}
+
+function SalesTable({ items, grid, isCreditNote }: { items: ClassifiedSaleItem[]; grid: string; isCreditNote?: boolean }) {
+  return (
+    <div className="ag-op-table" style={{ border: `1px solid ${C.line}`, borderRadius: R.sm, overflow: "hidden" }}>
+      <div className="ag-op-row" style={{ display: "grid", gridTemplateColumns: grid, gap: S[2], padding: `${S[2]}px ${S[3]}px`, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}` }}>
+        {["Fecha", "Fuente", "Documento", "Valor", "Vendedor"].map(h => (
+          <span key={h} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkLight, textTransform: "uppercase" as const }}>{h}</span>
+        ))}
+      </div>
+      {items.slice(0, 30).map(s => (
+        <div key={s.id} className="ag-op-row" style={{ display: "grid", gridTemplateColumns: grid, gap: S[2], padding: `${S[2]}px ${S[3]}px`, borderBottom: `1px solid ${C.line}22`, alignItems: "center" }}>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{fmtDate(s.issueDate)}</span>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{s.rawSourceCode ?? "\u2014"}</span>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{s.rawDocumentNumber ?? "\u2014"}</span>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: isCreditNote ? C.red : C.ink }}>{isCreditNote ? `-${fmtCurrency(Math.abs(s.grossAmount))}` : fmtCurrency(s.grossAmount)}</span>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{s.seller ?? "\u2014"}</span>
         </div>
-
-        {sales.items.slice(0, 30).map(s => (
-          <div key={s.id} className="ag-op-row" style={{ display: "grid", gridTemplateColumns: HISTORY_GRID, gap: S[2], padding: `${S[2]}px ${S[3]}px`, borderBottom: `1px solid ${C.line}22`, alignItems: "center" }}>
-            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{fmtDate(s.saleDate)}</span>
-            <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink }}>
-              {s.sagSourceType === "OFICIAL" ? "Factura" : s.sagSourceType === "REMISION" ? "Remision" : s.sagSourceType ?? "Venta"}
-            </span>
-            <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink }}>{fmtCurrency(s.amount)}</span>
-            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{s.comprobanteCode ?? "\u2014"}</span>
-          </div>
-        ))}
-
-        {collections.items.slice(0, 20).map(c => (
-          <div key={c.id} className="ag-op-row" style={{ display: "grid", gridTemplateColumns: HISTORY_GRID, gap: S[2], padding: `${S[2]}px ${S[3]}px`, borderBottom: `1px solid ${C.line}22`, alignItems: "center" }}>
-            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{fmtDate(c.collectionDate)}</span>
-            <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.green }}>Cobro</span>
-            <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.green }}>{fmtCurrency(c.amount)}</span>
-            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight }}>{c.documentNumber ?? "\u2014"}</span>
-          </div>
-        ))}
-      </div>
+      ))}
     </div>
   );
 }

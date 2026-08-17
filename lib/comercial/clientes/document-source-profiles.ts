@@ -49,6 +49,11 @@ export interface DocumentSourceProfile {
   profileId: string;
   /** Human-readable profile name */
   name: string;
+  /** Profile-specific labels for sales sections */
+  salesLabels?: {
+    invoiceLabel: string;
+    remissionLabel: string;
+  };
   /**
    * Map from document prefix (uppercase, from k_sc_codigo_fuente or documento prefix)
    * to canonical document kind.
@@ -67,6 +72,10 @@ export interface DocumentSourceProfile {
 export const CASTILLITOS_PROFILE: DocumentSourceProfile = {
   profileId: "castillitos",
   name: "Castillitos (LUDISAM)",
+  salesLabels: {
+    invoiceLabel: "Facturación oficial (F1)",
+    remissionLabel: "Remisiones (F2)",
+  },
   prefixMap: {
     // Remisiones
     "F2": { kind: "SALES_REMISSION" },
@@ -129,6 +138,10 @@ export const CASTILLITOS_PROFILE: DocumentSourceProfile = {
 export const LUDISAM_PROFILE: DocumentSourceProfile = {
   profileId: "ludisam",
   name: "Ludisam",
+  salesLabels: {
+    invoiceLabel: "Facturación oficial (F7)",
+    remissionLabel: "Remisiones (RE)",
+  },
   prefixMap: {
     "RE": { kind: "SALES_REMISSION" },
     "F7": { kind: "SALES_INVOICE" },
@@ -158,6 +171,23 @@ const PROFILE_REGISTRY = new Map<string, DocumentSourceProfile>([
  */
 export function getDocumentSourceProfile(profileId: string): DocumentSourceProfile | null {
   return PROFILE_REGISTRY.get(profileId.toLowerCase()) ?? null;
+}
+
+/**
+ * Get sales section labels for a profile. Returns defaults for unknown profiles.
+ */
+export function getSalesProfileLabels(profileId: string): {
+  invoiceLabel: string; remissionLabel: string; profileName: string;
+} {
+  const profile = getDocumentSourceProfile(profileId);
+  if (!profile) {
+    return { invoiceLabel: "Facturación oficial", remissionLabel: "Remisiones", profileName: "Desconocido" };
+  }
+  return {
+    invoiceLabel: profile.salesLabels?.invoiceLabel ?? "Facturación oficial",
+    remissionLabel: profile.salesLabels?.remissionLabel ?? "Remisiones",
+    profileName: profile.name,
+  };
 }
 
 // ── Resolver ─────────────────────────────────────────────────────────────────
