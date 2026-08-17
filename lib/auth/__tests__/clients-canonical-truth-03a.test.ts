@@ -176,15 +176,16 @@ describe("Diana (NIT 901383501) — HAS_OPEN_AR structural invariants", () => {
       loader360.indexOf("} else {", loader360.indexOf('"HAS_OPEN_AR"')),
     );
     expect(hasOpenBlock).toContain("arResult.snapshot.documents.map(mapCertifiedDocToReceivable)");
-    expect(hasOpenBlock).toContain("totalBalance = arResult.snapshot.totalPendiente");
+    expect(hasOpenBlock).toContain("totalBalance = arResult.snapshot.netReceivable");
     expect(hasOpenBlock).toContain("totalOverdue = arResult.snapshot.totalVencido");
     expect(hasOpenBlock).toContain("openCount = arResult.snapshot.documentCount");
   });
 
-  test("mapCertifiedDocToReceivable computes paidAmount = valorDocumento - saldoPendiente", () => {
-    // Logic now in clientes-pure.ts
+  test("mapCertifiedDocToReceivable sets paidAmount=null (never inferred by difference)", () => {
+    // 03A8: paidAmount must come from vw_agentik_recaudos, never from cartera
     const pureSrc = readFile("lib/comercial/clientes/clientes-pure.ts");
-    expect(pureSrc).toContain("paidAmount: doc.valorDocumento - doc.saldoPendiente");
+    expect(pureSrc).toContain("paidAmount: null");
+    expect(pureSrc).not.toContain("doc.valorDocumento - doc.saldoPendiente");
   });
 
   test("mapCertifiedDocToReceivable preserves SAG diasMora as-is (nullable)", () => {

@@ -75,6 +75,7 @@ export function classifyAgingBand(diasMora: number | null): string | null {
 
 export interface CertifiedDocInput {
   documento: string;
+  tipoDocumento: string;
   valorDocumento: number;
   saldoPendiente: number;
   diasMora: number | null;
@@ -85,8 +86,11 @@ export interface CertifiedDocInput {
 export interface ReceivableOutput {
   id: string;
   erpId: string | null;
+  /** Document type label for display (e.g. "Factura F2", "Nota crédito D2") */
+  documentType: string;
   originalAmount: number;
-  paidAmount: number;
+  /** Paid amount from vw_agentik_recaudos evidence. Null when no recaudos data available */
+  paidAmount: number | null;
   balanceDue: number;
   invoiceDate: string | null;
   dueDate: string | null;
@@ -95,12 +99,28 @@ export interface ReceivableOutput {
   status: string;
 }
 
+/**
+ * Classifies tipoDocumento from SAG into a display label.
+ * FUENTES contract: F2=Remisión, D2=Nota crédito, R2/R1=Recibo de caja.
+ */
+export function classifyDocumentType(tipoDocumento: string, documento: string): string {
+  const prefix = documento.slice(0, 2).toUpperCase();
+  if (prefix === "D2" || prefix === "NC") return "Nota crédito";
+  if (prefix === "R2" || prefix === "R1") return "Recibo de caja";
+  if (prefix === "F2") return "Remisión";
+  if (prefix === "FE" || prefix === "F1") return "Factura";
+  if (tipoDocumento === "Nota Crédito") return "Nota crédito";
+  if (tipoDocumento === "Factura") return "Factura";
+  return tipoDocumento || "Documento";
+}
+
 export function mapCertifiedDocToReceivable(doc: CertifiedDocInput): ReceivableOutput {
   return {
     id: `sag-${doc.documento}`,
     erpId: doc.documento,
+    documentType: classifyDocumentType(doc.tipoDocumento, doc.documento),
     originalAmount: doc.valorDocumento,
-    paidAmount: doc.valorDocumento - doc.saldoPendiente,
+    paidAmount: null,  // NEVER infer by difference — must come from vw_agentik_recaudos
     balanceDue: doc.saldoPendiente,
     invoiceDate: doc.fechaDocumento.toISOString(),
     dueDate: doc.fechaVencimiento?.toISOString() ?? null,
@@ -141,7 +161,7 @@ export function carteraTrafficLight(receivables: CarteraTrafficLightInput): { la
   // HAS_OPEN_AR — assess overdue status from items with known mora
   const itemsWithKnownMora = receivables.items.filter(r => r.daysOverdue != null);
   if (itemsWithKnownMora.length === 0) {
-    return { label: "Mora no disponible", color: "inkMid" };
+    return { label: "Vencimiento no verificado", color: "inkMid" };
   }
   const overdueItems = itemsWithKnownMora.filter(r => r.daysOverdue! > 0);
   if (overdueItems.length === 0) {

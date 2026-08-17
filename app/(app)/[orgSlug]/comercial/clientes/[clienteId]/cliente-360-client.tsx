@@ -116,7 +116,7 @@ function carteraStatusLabel(status: string): string {
 // ── Grid constants ────────────────────────────────────────────────────────────
 
 const ORDER_GRID = "60px 1fr 90px 90px 90px 80px";
-const RECEIVABLE_GRID = "1fr 100px 100px 100px 80px 80px";
+const RECEIVABLE_GRID = "100px 1fr 100px 100px 70px 90px";
 const HISTORY_GRID = "90px 1fr 100px 80px";
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -313,30 +313,43 @@ export function Cliente360Client({ orgSlug, data }: Props) {
 
       {/* ── Phase 6: Cartera ─────────────────────────────────────────────── */}
       <div id="cartera" style={{ marginTop: S[6] }}>
-        <WorkspaceSection title="Cartera" subtitle={receivables.state === "disponible" ? `${receivables.openCount} facturas abiertas` : undefined}>
+        <WorkspaceSection title="Cartera" subtitle={receivables.state === "disponible" ? `${receivables.openCount} documentos con saldo` : undefined}>
           {receivables.state === "no_disponible" ? (
-            <EmptyOperationalState message="Sin cartera registrada" detail="No hay facturas pendientes de cobro para este cliente." />
+            <EmptyOperationalState message="Sin cartera registrada" detail="No hay documentos con saldo pendiente para este cliente." />
           ) : (
             <>
+              {/* Source provenance */}
+              <div style={{
+                padding: `${S[2]}px ${S[3]}px`, borderRadius: R.sm, marginBottom: S[3],
+                background: `${C.green}11`, border: `1px solid ${C.green}33`,
+                display: "flex", alignItems: "center", gap: S[2],
+              }}>
+                <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.green }}>CERTIFICADO SAG</span>
+                <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
+                  Saldos certificados desde vw_agentik_cartera. Recaudos y aplicaciones monetarias provienen de vw_agentik_recaudos.
+                </span>
+              </div>
               {/* Cartera summary strip */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: S[3], marginBottom: S[4] }}>
-                <MiniStat label="Total cartera" value={receivables.totalBalance !== null ? fmtCurrency(receivables.totalBalance) : "\u2014"} />
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: S[3], marginBottom: S[4] }}>
+                <MiniStat label="Cartera bruta" value={receivables.grossReceivable !== null ? fmtCurrency(receivables.grossReceivable) : "\u2014"} />
+                <MiniStat label="NC aplicadas" value={(receivables.creditBalance ?? 0) > 0 ? `-${fmtCurrency(receivables.creditBalance!)}` : "\u2014"} color={C.inkMid} />
+                <MiniStat label="Recaudos" value={receivables.collectedAmount != null ? fmtCurrency(receivables.collectedAmount) : "\u2014"} color={C.green} />
+                <MiniStat label="Saldo cobrable" value={receivables.totalBalance !== null ? fmtCurrency(receivables.totalBalance) : "\u2014"} />
                 <MiniStat label="Vencida" value={receivables.totalOverdue !== null ? fmtCurrency(receivables.totalOverdue) : "\u2014"} color={(receivables.totalOverdue ?? 0) > 0 ? C.red : undefined} />
-                <MiniStat label="Documentos con saldo" value={receivables.openCount !== null ? String(receivables.openCount) : "\u2014"} />
               </div>
               {/* Receivables table */}
               <div className="ag-op-table" style={{ border: `1px solid ${C.line}`, borderRadius: R.sm, overflow: "hidden" }}>
                 <div className="ag-op-row" style={{ display: "grid", gridTemplateColumns: RECEIVABLE_GRID, gap: S[2], padding: `${S[2]}px ${S[4]}px`, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}` }}>
-                  {["Documento", "Monto", "Pagado", "Saldo", "Mora", "Estado"].map(h => (
+                  {["Tipo", "Documento", "Monto", "Saldo", "Mora", "Estado"].map(h => (
                     <span key={h} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkLight, textTransform: "uppercase" as const }}>{h}</span>
                   ))}
                 </div>
                 {receivables.items.map(r => (
                   <div key={r.id} className={`ag-op-row${(r.daysOverdue ?? 0) > 90 ? " ag-op-row--critical" : (r.daysOverdue ?? 0) > 30 ? " ag-op-row--warning" : ""}`}
                     style={{ display: "grid", gridTemplateColumns: RECEIVABLE_GRID, gap: S[2], padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}22`, alignItems: "center" }}>
+                    <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{r.documentType}</span>
                     <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{r.erpId ?? r.id.slice(0, 8)}</span>
                     <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink }}>{fmtCurrency(r.originalAmount)}</span>
-                    <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.green }}>{fmtCurrency(r.paidAmount)}</span>
                     <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: r.balanceDue > 0 ? C.red : C.ink }}>{fmtCurrency(r.balanceDue)}</span>
                     <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: r.daysOverdue == null ? C.inkGhost : r.daysOverdue > 30 ? C.red : r.daysOverdue > 0 ? C.amber : C.inkGhost }}>{r.daysOverdue != null && r.daysOverdue > 0 ? `${r.daysOverdue}d` : "\u2014"}</span>
                     <span className={`ag-op-status ag-op-status--${receivableStatusVariant(r.status)}`} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold }}>{carteraStatusLabel(r.status)}</span>

@@ -145,11 +145,11 @@ describe("classifyAgingBand — nullable mora contract", () => {
 
 describe("mapCertifiedDocToReceivable — Diana documents", () => {
   const doc1: CertifiedDocInput = {
-    documento: "F2-6639", valorDocumento: 529900, saldoPendiente: 529900,
+    documento: "F2-6639", tipoDocumento: "Factura", valorDocumento: 529900, saldoPendiente: 529900,
     diasMora: 452, fechaDocumento: new Date("2025-05-01"), fechaVencimiento: new Date("2025-05-31"),
   };
   const doc2: CertifiedDocInput = {
-    documento: "F2-6668", valorDocumento: 382500, saldoPendiente: 382500,
+    documento: "F2-6668", tipoDocumento: "Factura", valorDocumento: 382500, saldoPendiente: 382500,
     diasMora: 445, fechaDocumento: new Date("2025-05-08"), fechaVencimiento: new Date("2025-06-07"),
   };
 
@@ -159,7 +159,11 @@ describe("mapCertifiedDocToReceivable — Diana documents", () => {
     expect(r.agingBucket).toBe("365+");
     expect(r.status).toBe("OVERDUE");
     expect(r.balanceDue).toBe(529900);
-    expect(r.paidAmount).toBe(0);
+    expect(r.paidAmount).toBeNull(); // NEVER inferred — must come from vw_agentik_recaudos
+  });
+
+  test("doc1 → documentType = 'Remisión' (F2 prefix)", () => {
+    expect(mapCertifiedDocToReceivable(doc1).documentType).toBe("Remisión");
   });
 
   test("doc2 → daysOverdue=445, 365+, OVERDUE", () => {
@@ -175,20 +179,21 @@ describe("mapCertifiedDocToReceivable — Diana documents", () => {
 
 describe("mapCertifiedDocToReceivable — null DIAS_MORA", () => {
   const doc: CertifiedDocInput = {
-    documento: "NC-100", valorDocumento: 5_000_000, saldoPendiente: 3_000_000,
+    documento: "NC-100", tipoDocumento: "Nota Crédito", valorDocumento: 5_000_000, saldoPendiente: 3_000_000,
     diasMora: null, fechaDocumento: new Date("2026-01-15"), fechaVencimiento: null,
   };
 
   test("daysOverdue = null", () => { expect(mapCertifiedDocToReceivable(doc).daysOverdue).toBeNull(); });
   test("agingBucket = null", () => { expect(mapCertifiedDocToReceivable(doc).agingBucket).toBeNull(); });
   test("status = OPEN", () => { expect(mapCertifiedDocToReceivable(doc).status).toBe("OPEN"); });
-  test("paidAmount = 2M", () => { expect(mapCertifiedDocToReceivable(doc).paidAmount).toBe(2_000_000); });
+  test("paidAmount = null (never inferred by difference)", () => { expect(mapCertifiedDocToReceivable(doc).paidAmount).toBeNull(); });
+  test("documentType = 'Nota crédito' (NC prefix)", () => { expect(mapCertifiedDocToReceivable(doc).documentType).toBe("Nota crédito"); });
 });
 
 describe("mapCertifiedDocToReceivable — fully paid", () => {
   test("saldoPendiente=0 → CLOSED", () => {
     const r = mapCertifiedDocToReceivable({
-      documento: "FE-001", valorDocumento: 1_000_000, saldoPendiente: 0,
+      documento: "FE-001", tipoDocumento: "Factura", valorDocumento: 1_000_000, saldoPendiente: 0,
       diasMora: 0, fechaDocumento: new Date("2026-06-01"), fechaVencimiento: new Date("2026-07-01"),
     });
     expect(r.status).toBe("CLOSED");
@@ -217,11 +222,11 @@ describe("carteraTrafficLight — four-state contract", () => {
     expect(result.label).toBe("Saldo a favor");
   });
 
-  test("CERTIFIED + balance>0 + no known mora → 'Mora no disponible'", () => {
+  test("CERTIFIED + balance>0 + no known mora → 'Vencimiento no verificado'", () => {
     expect(carteraTrafficLight({
       truthStatus: "CERTIFIED", totalBalance: 500_000,
       items: [{ daysOverdue: null, balanceDue: 500_000 }],
-    }).label).toBe("Mora no disponible");
+    }).label).toBe("Vencimiento no verificado");
   });
 
   test("CERTIFIED + balance>0 + all mora=0 → 'Al dia'", () => {
@@ -1188,7 +1193,7 @@ describe("03A7: groupByCustomer signed balance — neto cero", () => {
 describe("03A7: mapCertifiedDocToReceivable — negative saldo is CREDIT, not CLOSED", () => {
   test("negative saldoPendiente → status=CREDIT", () => {
     const r = mapCertifiedDocToReceivable({
-      documento: "D2-849", valorDocumento: -80_900, saldoPendiente: -80_900,
+      documento: "D2-849", tipoDocumento: "Nota Crédito", valorDocumento: -80_900, saldoPendiente: -80_900,
       diasMora: null, fechaDocumento: new Date("2026-07-15"), fechaVencimiento: null,
     });
     expect(r.status).toBe("CREDIT");
@@ -1198,7 +1203,7 @@ describe("03A7: mapCertifiedDocToReceivable — negative saldo is CREDIT, not CL
 
   test("zero saldoPendiente → status=CLOSED (not CREDIT)", () => {
     const r = mapCertifiedDocToReceivable({
-      documento: "FE-100", valorDocumento: 500_000, saldoPendiente: 0,
+      documento: "FE-100", tipoDocumento: "Factura", valorDocumento: 500_000, saldoPendiente: 0,
       diasMora: 0, fechaDocumento: new Date("2026-06-01"), fechaVencimiento: new Date("2026-07-01"),
     });
     expect(r.status).toBe("CLOSED");
@@ -1206,7 +1211,7 @@ describe("03A7: mapCertifiedDocToReceivable — negative saldo is CREDIT, not CL
 
   test("positive saldoPendiente with mora → status=OVERDUE", () => {
     const r = mapCertifiedDocToReceivable({
-      documento: "F2-8653", valorDocumento: 1_500_000, saldoPendiente: 1_500_000,
+      documento: "F2-8653", tipoDocumento: "Factura", valorDocumento: 1_500_000, saldoPendiente: 1_500_000,
       diasMora: 45, fechaDocumento: new Date("2026-06-01"), fechaVencimiento: new Date("2026-07-01"),
     });
     expect(r.status).toBe("OVERDUE");
@@ -1214,7 +1219,7 @@ describe("03A7: mapCertifiedDocToReceivable — negative saldo is CREDIT, not CL
 
   test("positive saldoPendiente without mora → status=OPEN", () => {
     const r = mapCertifiedDocToReceivable({
-      documento: "FE-200", valorDocumento: 300_000, saldoPendiente: 300_000,
+      documento: "FE-200", tipoDocumento: "Factura", valorDocumento: 300_000, saldoPendiente: 300_000,
       diasMora: 0, fechaDocumento: new Date("2026-08-01"), fechaVencimiento: new Date("2026-09-01"),
     });
     expect(r.status).toBe("OPEN");
@@ -1246,14 +1251,14 @@ describe("03A7: UI structural — document semantics", () => {
   const clientesSrc = readFile("app/(app)/[orgSlug]/comercial/clientes/clientes-client.tsx");
   const detailSrc = readFile("app/(app)/[orgSlug]/comercial/clientes/[clienteId]/cliente-360-client.tsx");
 
-  test("drawer table header says 'Documento' not 'Factura'", () => {
-    expect(clientesSrc).toContain('"Documento", "Monto", "Pagado", "Saldo", "Mora", "Estado"');
-    expect(clientesSrc).not.toContain('"Factura", "Monto", "Pagado", "Saldo", "Mora", "Estado"');
+  test("drawer table header: Tipo, Documento (no 'Pagado' column)", () => {
+    expect(clientesSrc).toContain('"Tipo", "Documento", "Monto", "Saldo", "Mora", "Estado"');
+    expect(clientesSrc).not.toContain('"Pagado"');
   });
 
-  test("360 detail table header says 'Documento' not 'Factura'", () => {
-    expect(detailSrc).toContain('"Documento", "Monto", "Pagado", "Saldo", "Mora", "Estado"');
-    expect(detailSrc).not.toContain('"Factura", "Monto", "Pagado", "Saldo", "Mora", "Estado"');
+  test("360 detail table header: Tipo, Documento (no 'Pagado' column)", () => {
+    expect(detailSrc).toContain('"Tipo", "Documento", "Monto", "Saldo", "Mora", "Estado"');
+    expect(detailSrc).not.toContain('"Pagado"');
   });
 
   test("CREDIT status maps to 'Saldo a favor' label", () => {
@@ -1268,7 +1273,7 @@ describe("03A7: UI structural — document semantics", () => {
 
   test("drawer shows 'Documentos con saldo' (not 'Facturas abiertas')", () => {
     expect(clientesSrc).toContain("Documentos con saldo");
-    expect(detailSrc).toContain("Documentos con saldo");
+    expect(detailSrc).toContain("documentos con saldo");
   });
 });
 
@@ -1313,5 +1318,164 @@ describe("03A7: canonical-ar-service groupByCustomer computes creditBalance", ()
     expect(fnBody).toContain("creditBalance");
     expect(fnBody).toContain("netReceivable");
     expect(fnBody).toContain("totalPendiente - creditBalance");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// G. SOURCE-AWARE AR APPLICATION — 03A8
+// ═══════════════════════════════════════════════════════════════════════════════
+
+import { classifyDocumentType } from "@/lib/comercial/clientes/clientes-pure";
+
+describe("03A8: D2 nota crédito reduces collectibleBalance, never increases paidAmount", () => {
+  test("D2 document → status=CREDIT, paidAmount=null", () => {
+    const r = mapCertifiedDocToReceivable({
+      documento: "D2-849", tipoDocumento: "Nota Crédito", valorDocumento: -80_900, saldoPendiente: -80_900,
+      diasMora: null, fechaDocumento: new Date("2026-07-15"), fechaVencimiento: null,
+    });
+    expect(r.status).toBe("CREDIT");
+    expect(r.paidAmount).toBeNull(); // D2 never produces paidAmount
+    expect(r.documentType).toBe("Nota crédito");
+  });
+
+  test("D2 does NOT increase collectedAmount (never treated as recaudo)", () => {
+    // collectedAmount comes exclusively from vw_agentik_recaudos
+    // D2 is a nota crédito, not a collection
+    const r = mapCertifiedDocToReceivable({
+      documento: "D2-100", tipoDocumento: "Nota Crédito", valorDocumento: -500_000, saldoPendiente: -500_000,
+      diasMora: null, fechaDocumento: new Date("2026-01-01"), fechaVencimiento: null,
+    });
+    expect(r.paidAmount).toBeNull(); // paidAmount must NEVER be populated from cartera view
+  });
+});
+
+describe("03A8: R1/R2 are recaudos (from vw_agentik_recaudos only)", () => {
+  test("R2 classified as 'Recibo de caja'", () => {
+    expect(classifyDocumentType("", "R2-500")).toBe("Recibo de caja");
+  });
+  test("R1 classified as 'Recibo de caja'", () => {
+    expect(classifyDocumentType("", "R1-300")).toBe("Recibo de caja");
+  });
+});
+
+describe("03A8: vw_agentik_pagos never enters AR calculation", () => {
+  // Structural: the cliente-360-loader must NOT import or reference vw_agentik_pagos
+  test("cliente-360-loader does not reference vw_agentik_pagos", () => {
+    const src = readFile("lib/comercial/clientes/cliente-360-loader.ts");
+    expect(src).not.toContain("vw_agentik_pagos");
+    expect(src).not.toContain("agentik_pagos");
+  });
+});
+
+describe("03A8: SALDO_PENDIENTE is not double-subtracted", () => {
+  test("mapCertifiedDocToReceivable does NOT compute paidAmount by difference", () => {
+    const src = readFile("lib/comercial/clientes/clientes-pure.ts");
+    const fnStart = src.indexOf("export function mapCertifiedDocToReceivable");
+    const fnBody = src.slice(fnStart, src.indexOf("\n}\n", fnStart) + 3);
+    // Must NOT contain valorDocumento - saldoPendiente (the old inference)
+    expect(fnBody).not.toContain("valorDocumento - doc.saldoPendiente");
+    expect(fnBody).not.toContain("doc.valorDocumento - doc.saldoPendiente");
+    // Must contain paidAmount: null
+    expect(fnBody).toContain("paidAmount: null");
+  });
+});
+
+describe("03A8: nota crédito and recaudo shown separately in UI", () => {
+  const clientesSrc = readFile("app/(app)/[orgSlug]/comercial/clientes/clientes-client.tsx");
+  const detailSrc = readFile("app/(app)/[orgSlug]/comercial/clientes/[clienteId]/cliente-360-client.tsx");
+
+  test("drawer strip shows NC aplicadas and Recaudos as separate stats", () => {
+    expect(clientesSrc).toContain("NC aplicadas");
+    expect(clientesSrc).toContain("Recaudos");
+  });
+
+  test("360 page strip shows NC aplicadas and Recaudos as separate stats", () => {
+    expect(detailSrc).toContain("NC aplicadas");
+    expect(detailSrc).toContain("Recaudos");
+  });
+
+  test("no mixed 'Pagado' column in receivables table", () => {
+    // The table must NOT have a 'Pagado' header that mixes NC and recaudos
+    expect(clientesSrc).not.toContain('"Pagado"');
+    expect(detailSrc).not.toContain('"Pagado"');
+  });
+});
+
+describe("03A8: missing recaudos produces em dash, not zero", () => {
+  test("paidAmount=null for any document from cartera view", () => {
+    // Every document from vw_agentik_cartera gets paidAmount=null
+    const invoice = mapCertifiedDocToReceivable({
+      documento: "F2-8653", tipoDocumento: "Factura", valorDocumento: 1_500_000, saldoPendiente: 1_500_000,
+      diasMora: 0, fechaDocumento: new Date("2026-06-01"), fechaVencimiento: new Date("2026-09-01"),
+    });
+    expect(invoice.paidAmount).toBeNull(); // NOT $0
+  });
+});
+
+describe("03A8: unknown mora does NOT produce 'Al día'", () => {
+  test("all items with daysOverdue=null → 'Vencimiento no verificado'", () => {
+    const result = carteraTrafficLight({
+      truthStatus: "CERTIFIED",
+      totalBalance: 1_500_000,
+      items: [{ daysOverdue: null, balanceDue: 1_500_000 }],
+    });
+    expect(result.label).toBe("Vencimiento no verificado");
+    expect(result.label).not.toBe("Al dia");
+  });
+
+  test("known mora=0 → 'Al dia' (only with evidence)", () => {
+    const result = carteraTrafficLight({
+      truthStatus: "CERTIFIED",
+      totalBalance: 500_000,
+      items: [{ daysOverdue: 0, balanceDue: 500_000 }],
+    });
+    expect(result.label).toBe("Al dia");
+  });
+});
+
+describe("03A8: classifyDocumentType — FUENTES contract", () => {
+  test("F2 prefix → 'Remisión'", () => { expect(classifyDocumentType("Factura", "F2-8653")).toBe("Remisión"); });
+  test("FE prefix → 'Factura'", () => { expect(classifyDocumentType("Factura", "FE-100")).toBe("Factura"); });
+  test("D2 prefix → 'Nota crédito'", () => { expect(classifyDocumentType("Nota Crédito", "D2-849")).toBe("Nota crédito"); });
+  test("NC prefix → 'Nota crédito'", () => { expect(classifyDocumentType("Nota Crédito", "NC-50")).toBe("Nota crédito"); });
+  test("R2 prefix → 'Recibo de caja'", () => { expect(classifyDocumentType("", "R2-400")).toBe("Recibo de caja"); });
+  test("R1 prefix → 'Recibo de caja'", () => { expect(classifyDocumentType("", "R1-200")).toBe("Recibo de caja"); });
+  test("unknown prefix with tipoDocumento='Factura' → 'Factura'", () => { expect(classifyDocumentType("Factura", "XX-1")).toBe("Factura"); });
+  test("unknown prefix with tipoDocumento='Nota Crédito' → 'Nota crédito'", () => { expect(classifyDocumentType("Nota Crédito", "XX-2")).toBe("Nota crédito"); });
+  test("empty tipoDocumento and unknown prefix → 'Documento'", () => { expect(classifyDocumentType("", "XX-3")).toBe("Documento"); });
+});
+
+describe("03A8: provenance message", () => {
+  const clientesSrc = readFile("app/(app)/[orgSlug]/comercial/clientes/clientes-client.tsx");
+  const detailSrc = readFile("app/(app)/[orgSlug]/comercial/clientes/[clienteId]/cliente-360-client.tsx");
+
+  test("drawer provenance references both vw_agentik_cartera and vw_agentik_recaudos", () => {
+    expect(clientesSrc).toContain("vw_agentik_cartera");
+    expect(clientesSrc).toContain("vw_agentik_recaudos");
+  });
+
+  test("360 provenance references both vw_agentik_cartera and vw_agentik_recaudos", () => {
+    expect(detailSrc).toContain("vw_agentik_cartera");
+    expect(detailSrc).toContain("vw_agentik_recaudos");
+  });
+});
+
+describe("03A8: cliente-360-loader sources collectedAmount from recaudos", () => {
+  const src = readFile("lib/comercial/clientes/cliente-360-loader.ts");
+
+  test("imports fetchCertifiedCustomerRecaudos", () => {
+    expect(src).toContain("fetchCertifiedCustomerRecaudos");
+  });
+
+  test("receivables block includes collectedAmount field", () => {
+    const typeBlock = src.slice(
+      src.indexOf("receivables: {"),
+      src.indexOf("truthStatus:", src.indexOf("receivables: {")) + 30,
+    );
+    expect(typeBlock).toContain("collectedAmount:");
+  });
+
+  test("does NOT reference vw_agentik_pagos", () => {
+    expect(src).not.toContain("vw_agentik_pagos");
   });
 });

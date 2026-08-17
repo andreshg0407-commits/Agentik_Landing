@@ -27,6 +27,7 @@ import { prisma } from "@/lib/prisma";
 import { resolveCity, resolveCrmCity } from "./city-resolver";
 import { getCustomerPrimarySeller } from "@/lib/comercial/foundation/client-seller-linker";
 import { fetchCustomerArWithStatus } from "@/lib/comercial/frontline/canonical-ar-service";
+import { fetchCertifiedCustomerRecaudos } from "@/lib/comercial/frontline/canonical-recaudos-service";
 import type { CertifiedReceivableDocument } from "@/lib/comercial/frontline/canonical-ar-types";
 import type { ReceivableTruthStatus } from "@/lib/comercial/frontline/receivable-truth-contract";
 import { classifyAgingBand, mapCertifiedDocToReceivable as mapDocPure } from "./clientes-pure";
@@ -90,8 +91,11 @@ export interface Cliente360SagOrder {
 export interface Cliente360Receivable {
   id: string;
   erpId: string | null;
+  /** Document type label (e.g. "Factura", "Nota crédito", "Remisión") */
+  documentType: string;
   originalAmount: number;
-  paidAmount: number;
+  /** From vw_agentik_recaudos evidence only. Null when no recaudos data available */
+  paidAmount: number | null;
   balanceDue: number;
   invoiceDate: string | null;
   dueDate: string | null;
@@ -141,6 +145,8 @@ export interface Cliente360Data {
     grossReceivable: number | null;
     /** Credit balance (absolute value of negative saldos). Null when SAG unavailable */
     creditBalance: number | null;
+    /** Total collected from vw_agentik_recaudos. Null when SAG unavailable */
+    collectedAmount: number | null;
     /** Null when SAG unavailable — do NOT show Prisma saldo */
     totalOverdue: number | null;
     /** Count of documents with non-zero balance. Null when SAG unavailable */
@@ -365,15 +371,23 @@ export async function loadCliente360(
   let totalBalance: number | null;
   let grossReceivable: number | null;
   let creditBalance: number | null;
+  let collectedAmount: number | null;
   let totalOverdue: number | null;
   let openCount: number | null;
   let receivableTruthStatus: ReceivableTruthStatus = "UNVERIFIED";
   let receivableItems: Cliente360Receivable[] = [];
 
   if (p.sagTerceroId != null && p.sagTerceroId > 0) {
+    // Fetch cartera and recaudos in parallel from SAG
     const tAr = performance.now();
-    const arResult = await fetchCustomerArWithStatus(p.sagTerceroId);
+    const [arResult, recaudosResult] = await Promise.all([
+      fetchCustomerArWithStatus(p.sagTerceroId),
+      fetchCertifiedCustomerRecaudos(p.sagTerceroId).catch(() => null),
+    ]);
     timing.canonicalAr = ms(tAr);
+
+    // Recaudos: totalRecaudado from vw_agentik_recaudos (actual cash received)
+    collectedAmount = recaudosResult?.ok ? recaudosResult.snapshot.totalRecaudado : null;
 
     if (arResult.status === "CERTIFIED_ZERO") {
       totalBalance = 0;
@@ -397,6 +411,7 @@ export async function loadCliente360(
       totalBalance = null;
       grossReceivable = null;
       creditBalance = null;
+      collectedAmount = null;
       totalOverdue = null;
       openCount = null;
       // receivableItems stays [] — no data to show
@@ -407,6 +422,7 @@ export async function loadCliente360(
     totalBalance = null;
     grossReceivable = null;
     creditBalance = null;
+    collectedAmount = null;
     totalOverdue = null;
     openCount = null;
     // receivableTruthStatus stays "UNVERIFIED"
@@ -456,6 +472,7 @@ export async function loadCliente360(
       totalBalance,
       grossReceivable,
       creditBalance,
+      collectedAmount,
       totalOverdue,
       openCount,
       truthStatus: receivableTruthStatus,
