@@ -36,8 +36,9 @@ describe("G1 — Tab counts derive from canonical B01 universe", () => {
     expect(src).toContain('SIN_CLASIFICAR: lineCounts["SIN_CLASIFICAR"]');
   });
 
-  test("T1c: AGOTADOS/VAULT still use panels length", () => {
-    expect(src).toContain("AGOTADOS: panels.AGOTADOS.length");
+  test("T1c: AGOTADOS computed from canonical refs, VAULT still uses panels length", () => {
+    // 04A5I: AGOTADOS count is computed inline from canonical refs with disp <= 0
+    expect(src).toContain("AGOTADOS: agotadosCount");
     expect(src).toContain("VAULT: panels.VAULT.length");
   });
 
@@ -45,26 +46,29 @@ describe("G1 — Tab counts derive from canonical B01 universe", () => {
     expect(src).toContain("if (ci.exclusionReason) continue");
   });
 
-  test("T1e: tabCounts depends on canonicalItems (not only panels)", () => {
-    expect(src).toContain("[canonicalItems, panels]");
+  test("T1e: tabCounts depends on canonicalItems, panels, and originalItemsByRef", () => {
+    // 04A5I: tabCounts also needs originalItemsByRef for disponibleReal lookups
+    expect(src).toContain("[canonicalItems, panels, originalItemsByRef]");
   });
 });
 
 // ── G2: Line tab items derive from canonicalItems by canonicalLine ──────
 
 describe("G2 — Line tab items use canonical B01 universe", () => {
-  test("T2a: Line tabs filter canonicalItems by canonicalLine", () => {
-    expect(src).toContain(
-      "canonicalItems.filter(\n      ci => ci.canonicalLine === activeTab && !ci.exclusionReason,"
-    );
+  test("T2a: Line tabs filter canonicalItems by canonicalLine and disponibleReal > 0", () => {
+    // 04A5I: Line tabs only show ACTIVE_AVAILABLE partition
+    expect(src).toContain("ci.canonicalLine !== activeTab || ci.exclusionReason");
+    expect(src).toContain("disp > 0; // 04A5I: ACTIVE_AVAILABLE partition");
   });
 
-  test("T2b: VAULT/AGOTADOS still use panels[activeTab]", () => {
+  test("T2b: VAULT still uses panels[activeTab]", () => {
+    // 04A5I: AGOTADOS no longer uses panels — builds from canonicalItems
     expect(src).toContain("let result = panels[activeTab]");
   });
 
-  test("T2c: panelItems depends on canonicalItems", () => {
-    expect(src).toContain("[canonicalItems, panels, activeTab, search]");
+  test("T2c: panelItems depends on canonicalItems and originalItemsByRef", () => {
+    // 04A5I: originalItemsByRef added for disponibleReal lookups
+    expect(src).toContain("[canonicalItems, panels, activeTab, search, originalItemsByRef]");
   });
 });
 
@@ -111,14 +115,16 @@ describe("G4 — Bajo filter uses pure threshold", () => {
   });
 });
 
-// ── G5: Sin cobertura filter unchanged ──────────────────────────────────
+// ── G5: Sin cobertura removed (04A5I) ───────────────────────────────────
 
-describe("G5 — Sin cobertura filter", () => {
-  test("T5a: Sin cobertura uses disponibleReal <= 0", () => {
-    const scStart = src.indexOf('case "sin_cobertura"');
-    const scEnd = src.indexOf("break;", scStart);
-    const scBlock = src.slice(scStart, scEnd);
-    expect(scBlock).toContain("orig.disponibleReal <= 0");
+describe("G5 — Sin cobertura removed from line tabs (04A5I)", () => {
+  test("T5a: Sin cobertura filter removed from FilterKey", () => {
+    // 04A5I: sin_cobertura no longer exists as a filter — those refs are in AGOTADAS
+    expect(src).not.toContain('| "sin_cobertura"');
+  });
+
+  test("T5b: Sin cobertura removed from FILTER_OPTIONS", () => {
+    expect(src).not.toContain('{ key: "sin_cobertura"');
   });
 });
 
@@ -138,18 +144,19 @@ describe("G6 — Result count semantics", () => {
 // ── G7: Cross-panel hint updated for canonical source ───────────────────
 
 describe("G7 — Cross-panel search hint", () => {
-  test("T7a: Line tabs in crossPanelHint use canonicalItems, not panels", () => {
-    expect(src).toContain(
-      "canonicalItems.filter(ci => ci.canonicalLine === tab && !ci.exclusionReason)"
-    );
+  test("T7a: Line tabs in crossPanelHint use canonicalItems filtered to disponibleReal > 0", () => {
+    // 04A5I: crossPanelHint for line tabs filters to disponibleReal > 0
+    expect(src).toContain("ci.canonicalLine !== tab || ci.exclusionReason");
+    expect(src).toContain("(orig?.disponibleReal ?? 0) > 0");
   });
 
   test("T7b: LINE_TABS set defined for tab classification", () => {
     expect(src).toContain('const LINE_TABS = new Set');
   });
 
-  test("T7c: crossPanelHint depends on canonicalItems", () => {
-    expect(src).toContain("[search, panelItems.length, activeTab, canonicalItems, panels]");
+  test("T7c: crossPanelHint depends on canonicalItems and originalItemsByRef", () => {
+    // 04A5I: crossPanelHint now also depends on originalItemsByRef for disponibleReal lookups
+    expect(src).toContain("[search, panelItems.length, activeTab, canonicalItems, panels, originalItemsByRef]");
   });
 });
 
@@ -192,11 +199,14 @@ describe("G9 — Structural invariants", () => {
     expect(cdBlock).toContain("orig.disponibleReal > 0");
   });
 
-  test("T9c: sin_cobertura filter still uses disponibleReal <= 0", () => {
-    const scStart = src.indexOf('case "sin_cobertura"');
-    const scEnd = src.indexOf("break;", scStart);
-    const scBlock = src.slice(scStart, scEnd);
-    expect(scBlock).toContain("orig.disponibleReal <= 0");
+  test("T9c: sin_cobertura filter removed from line tabs (04A5I)", () => {
+    // 04A5I: sin_cobertura removed — refs with disponibleReal <= 0 are exclusively in AGOTADAS
+    expect(src).toContain('04A5I: "sin_cobertura" removed');
+    // The filteredPanelItems switch must NOT have a sin_cobertura case anymore
+    const filterStart = src.indexOf("switch (filter)");
+    const filterEnd = src.indexOf("return result;", filterStart);
+    const filterBlock = src.slice(filterStart, filterEnd);
+    expect(filterBlock).not.toContain('case "sin_cobertura"');
   });
 
   test("T9d: switchTab resets filter, search, and pageMap", () => {
@@ -215,12 +225,14 @@ describe("G9 — Structural invariants", () => {
 // ── G10: Comment documentation ──────────────────────────────────────────
 
 describe("G10 — 04A5 documentation", () => {
-  test("T10a: tabCounts has 04A5 comment", () => {
-    expect(src).toContain("04A5: Line tab badges show the canonical B01 universe per line");
+  test("T10a: tabCounts has 04A5I comment", () => {
+    // 04A5I supersedes 04A5: line tabs now show ACTIVE_AVAILABLE only
+    expect(src).toContain("04A5I: Line tab badges show ONLY ACTIVE_AVAILABLE refs");
   });
 
-  test("T10b: panelItems has 04A5 comment", () => {
-    expect(src).toContain("04A5: Line tabs use ALL canonicalItems with matching canonicalLine");
+  test("T10b: panelItems has 04A5I comment", () => {
+    // 04A5I supersedes 04A5: line tabs now filter to disponibleReal > 0
+    expect(src).toContain("04A5I: Line tabs show ONLY ACTIVE_AVAILABLE refs");
   });
 
   test("T10c: cobertura_suficiente has 04A5 comment", () => {

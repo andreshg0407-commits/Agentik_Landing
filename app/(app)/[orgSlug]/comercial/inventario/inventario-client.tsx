@@ -67,9 +67,11 @@ type FilterKey =
   | "con_disponibilidad"
   | "cobertura_suficiente"
   | "bajo"
-  | "sin_cobertura"
   | "subgrupos"
   | "accesorios_bajo";
+
+// 04A5I: Agotados sub-filter for the AGOTADAS partition tab
+type AgotadosFilterKey = "todos" | "agotados" | "sobrecomprometidos";
 
 // 04A3: "Con disponibilidad" = disponibleReal > 0 (actual stock).
 // "Cobertura suficiente" = threshold-based operationalState (was "Disponibles").
@@ -78,9 +80,16 @@ const FILTER_OPTIONS: { key: FilterKey; label: string }[] = [
   { key: "con_disponibilidad",   label: "Con disponibilidad" },
   { key: "cobertura_suficiente", label: "Cobertura suficiente" },
   { key: "bajo",                 label: "Bajo" },
-  { key: "sin_cobertura",        label: "Sin cobertura" },
+  // 04A5I: "Sin cobertura" removed — refs with disponibleReal <= 0 are exclusively in AGOTADAS tab
   { key: "subgrupos",            label: "Subgrupos" },
   { key: "accesorios_bajo",      label: "Acc. bajo" },
+];
+
+// 04A5I: Agotados sub-filter options
+const AGOTADOS_FILTER_OPTIONS: { key: AgotadosFilterKey; label: string }[] = [
+  { key: "todos",                label: "Todos" },
+  { key: "agotados",            label: "Agotados (disp = 0)" },
+  { key: "sobrecomprometidos",  label: "Sobrecomprometidos (disp < 0)" },
 ];
 
 const STATE_COLORS: Record<InventoryOperationalState, string> = {
@@ -163,7 +172,8 @@ const TAB_ICONS: Record<PanelDestination, string> = {
 const TEXTILE_GRID = "36px 120px 1fr 120px 80px 90px";
 const ACCESSORY_GRID = "36px 100px 1fr 100px 70px 80px 80px";
 const VAULT_GRID = "120px 1fr 100px 100px 100px 90px 120px";
-const AGOTADOS_GRID = "36px 120px 1fr 100px 100px 80px";
+// 04A5I: Enhanced AGOTADOS grid — Thumb | Ref | Desc | Linea | Existencia | Reservado | Disponible | Estado
+const AGOTADOS_GRID = "36px 110px 1fr 90px 80px 80px 80px 90px";
 
 // ── Props ────────────────────────────────────────────────────────────────────
 
@@ -186,39 +196,60 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
   // 04A5H: Hierarchy expand state (cleared on tab switch)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [expandedSubgroups, setExpandedSubgroups] = useState<Set<string>>(new Set());
+  // 04A5I: Agotados sub-filter state
+  const [agotadosFilter, setAgotadosFilter] = useState<AgotadosFilterKey>("todos");
 
   const { health, dataQuality, items, subgrupoCoverage, accesoriosBajaCantidad } = snapshot;
   const { panels, canonicalItems } = canonicalSnapshot;
 
+  // ── Map canonical items to original items ──────────────────────────────
+  // 04A5I: Moved before tabCounts/panelItems — both now need disponibleReal lookups
+  const originalItemsByRef = useMemo(() => {
+    const map = new Map<string, InventoryItem>();
+    for (const item of items) {
+      map.set(item.reference, item);
+    }
+    return map;
+  }, [items]);
+
   // ── Compute tab counts ─────────────────────────────────────────────────
-  // 04A5: Line tab badges show the canonical B01 universe per line.
-  // Computed from canonicalItems grouped by canonicalLine, NOT from panels.
-  // Panels route some refs to VAULT/AGOTADOS — those still belong to their line's universe.
+  // 04A5I: Line tab badges show ONLY ACTIVE_AVAILABLE refs (disponibleReal > 0).
+  // Refs with disponibleReal <= 0 are counted exclusively in AGOTADAS.
+  // This guarantees zero intersection between line tabs and AGOTADAS.
   const tabCounts = useMemo(() => {
     const lineCounts: Record<string, number> = {};
+    let agotadosCount = 0;
     for (const ci of canonicalItems) {
       if (ci.exclusionReason) continue; // skip EXTERNAL_EXCLUDED (Jupiter Pets)
-      lineCounts[ci.canonicalLine] = (lineCounts[ci.canonicalLine] ?? 0) + 1;
+      const orig = originalItemsByRef.get(ci.reference);
+      const disp = orig?.disponibleReal ?? ci.originalItem?.disponibleReal ?? 0;
+      if (disp > 0) {
+        // 04A5I: ACTIVE_AVAILABLE — belongs to its line tab
+        lineCounts[ci.canonicalLine] = (lineCounts[ci.canonicalLine] ?? 0) + 1;
+      } else {
+        // 04A5I: EXHAUSTED or OVERCOMMITTED — belongs to AGOTADAS exclusively
+        agotadosCount++;
+      }
     }
     const counts: Record<PanelDestination, number> = {
       CASTILLITOS: lineCounts["CASTILLITOS"] ?? 0,
       LATIN_KIDS: lineCounts["LATIN_KIDS"] ?? 0,
       IMPORTACION: lineCounts["IMPORTACION"] ?? 0,
       SIN_CLASIFICAR: lineCounts["SIN_CLASIFICAR"] ?? 0,
-      AGOTADOS: panels.AGOTADOS.length,
+      AGOTADOS: agotadosCount,
       VAULT: panels.VAULT.length,
       EXTERNAL_EXCLUDED: panels.EXTERNAL_EXCLUDED.length,
     };
     return counts;
-  }, [canonicalItems, panels]);
+  }, [canonicalItems, panels, originalItemsByRef]);
 
   // ── Active panel items (filtered + searched) ───────────────────────────
-  // 04A5: Line tabs use ALL canonicalItems with matching canonicalLine.
-  // This includes refs that panel routing diverts to AGOTADOS/VAULT,
-  // so the tab universe matches the canonical B01 count per line.
+  // 04A5I: Line tabs show ONLY ACTIVE_AVAILABLE refs (disponibleReal > 0).
+  // AGOTADAS tab shows ALL canonical refs with disponibleReal <= 0, from ALL lines.
+  // Zero intersection: a ref appears in exactly one place.
 
   const panelItems = useMemo(() => {
-    if (activeTab === "VAULT" || activeTab === "AGOTADOS") {
+    if (activeTab === "VAULT") {
       let result = panels[activeTab];
       if (search.trim()) {
         const q = search.trim().toLowerCase();
@@ -229,10 +260,30 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
       return result;
     }
 
-    // 04A5: Line tab items = all canonical B01 refs for this line
-    let result = canonicalItems.filter(
-      ci => ci.canonicalLine === activeTab && !ci.exclusionReason,
-    );
+    if (activeTab === "AGOTADOS") {
+      // 04A5I: AGOTADAS = ALL canonical refs with disponibleReal <= 0, across ALL lines
+      let result = canonicalItems.filter(ci => {
+        if (ci.exclusionReason) return false;
+        const orig = originalItemsByRef.get(ci.reference);
+        const disp = orig?.disponibleReal ?? ci.originalItem?.disponibleReal ?? 0;
+        return disp <= 0;
+      });
+      if (search.trim()) {
+        const q = search.trim().toLowerCase();
+        result = result.filter(
+          ci => ci.reference.toLowerCase().includes(q) || ci.description.toLowerCase().includes(q),
+        );
+      }
+      return result;
+    }
+
+    // 04A5I: Line tab items = canonical B01 refs for this line WITH disponibleReal > 0 ONLY
+    let result = canonicalItems.filter(ci => {
+      if (ci.canonicalLine !== activeTab || ci.exclusionReason) return false;
+      const orig = originalItemsByRef.get(ci.reference);
+      const disp = orig?.disponibleReal ?? ci.originalItem?.disponibleReal ?? 0;
+      return disp > 0; // 04A5I: ACTIVE_AVAILABLE partition
+    });
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       result = result.filter(
@@ -240,7 +291,7 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
       );
     }
     return result;
-  }, [canonicalItems, panels, activeTab, search]);
+  }, [canonicalItems, panels, activeTab, search, originalItemsByRef]);
 
   // ── Cross-panel search hint (CANONICAL-INVENTORY-REFERENCE-LOOKUP-01) ──
   // When search yields 0 results in current tab, check OTHER tabs for an exact
@@ -255,9 +306,20 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
     ];
     for (const tab of TAB_ORDER) {
       if (tab === activeTab || tab === "EXTERNAL_EXCLUDED") continue;
-      // 04A5: Line tabs use canonicalItems by canonicalLine, not panels
+      // 04A5I: Line tabs use canonicalItems filtered to disponibleReal > 0;
+      // AGOTADOS uses all canonical refs with disponibleReal <= 0
       const pool = LINE_TABS.has(tab)
-        ? canonicalItems.filter(ci => ci.canonicalLine === tab && !ci.exclusionReason)
+        ? canonicalItems.filter(ci => {
+            if (ci.canonicalLine !== tab || ci.exclusionReason) return false;
+            const orig = originalItemsByRef.get(ci.reference);
+            return (orig?.disponibleReal ?? 0) > 0;
+          })
+        : tab === "AGOTADOS"
+        ? canonicalItems.filter(ci => {
+            if (ci.exclusionReason) return false;
+            const orig = originalItemsByRef.get(ci.reference);
+            return (orig?.disponibleReal ?? 0) <= 0;
+          })
         : panels[tab];
       const found = pool.find(ci => {
         const normRef = ci.reference.trim().toUpperCase().replace(/\s+/g, " ");
@@ -266,16 +328,7 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
       if (found) return { tab, label: TAB_LABELS[tab], reference: found.reference };
     }
     return null;
-  }, [search, panelItems.length, activeTab, canonicalItems, panels]);
-
-  // ── Map canonical items to original items for line-based tabs ──────────
-  const originalItemsByRef = useMemo(() => {
-    const map = new Map<string, InventoryItem>();
-    for (const item of items) {
-      map.set(item.reference, item);
-    }
-    return map;
-  }, [items]);
+  }, [search, panelItems.length, activeTab, canonicalItems, panels, originalItemsByRef]);
 
   // ── Filter active tab items by operational filter ─────────────────────
   const filteredPanelItems = useMemo(() => {
@@ -308,12 +361,7 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
           return orig.disponibleReal > 0 && orig.disponibleReal <= orig.threshold;
         });
         break;
-      case "sin_cobertura":
-        result = result.filter(ci => {
-          const orig = originalItemsByRef.get(ci.reference);
-          return orig && orig.disponibleReal <= 0;
-        });
-        break;
+      // 04A5I: "sin_cobertura" removed — those refs are exclusively in AGOTADAS tab
       case "accesorios_bajo":
         result = result.filter(ci => {
           const orig = originalItemsByRef.get(ci.reference);
@@ -347,11 +395,16 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
     return sorted;
   }, [filteredPanelItems, originalItemsByRef]);
 
-  // ── 04A5H: Line-scoped canonical items (no filter, no search) ───────
+  // ── 04A5H+04A5I: Line-scoped canonical items (no filter, no search) ──
+  // 04A5I: Only ACTIVE_AVAILABLE refs (disponibleReal > 0) enter the hierarchy
   const lineScopedCanonicalItems = useMemo(() => {
     if (activeTab === "VAULT" || activeTab === "AGOTADOS" || activeTab === "EXTERNAL_EXCLUDED") return [];
-    return canonicalItems.filter(ci => ci.canonicalLine === activeTab && !ci.exclusionReason);
-  }, [canonicalItems, activeTab]);
+    return canonicalItems.filter(ci => {
+      if (ci.canonicalLine !== activeTab || ci.exclusionReason) return false;
+      const orig = originalItemsByRef.get(ci.reference);
+      return (orig?.disponibleReal ?? ci.originalItem?.disponibleReal ?? 0) > 0;
+    });
+  }, [canonicalItems, activeTab, originalItemsByRef]);
 
   // ── 04A5H: Hierarchy tree (full, before filter/search) ────────────
   const hierarchyNodes = useMemo(() => {
@@ -427,6 +480,7 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
     setPageMap({});
     setExpandedGroups(new Set());    // 04A5H
     setExpandedSubgroups(new Set()); // 04A5H
+    setAgotadosFilter("todos");      // 04A5I
   };
 
   // ── Drawer state + enrichment ────────────────────────────────────
@@ -817,6 +871,8 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
           getPage={getPage}
           setPage={setPage}
           onRowClick={openDrawerFromCanonical}
+          agotadosFilter={agotadosFilter}
+          setAgotadosFilter={setAgotadosFilter}
         />
       )}
 
@@ -934,22 +990,52 @@ function LineBasedTable({
 
 // ── Agotados Tab Content ──────────────────────────────────────────────────────
 
+// 04A5I: Enhanced AGOTADAS tab — exclusive partition for refs with disponibleReal <= 0
 function AgotadosTabContent({
   items,
   originalItemsByRef,
   getPage,
   setPage,
   onRowClick,
+  agotadosFilter,
+  setAgotadosFilter,
 }: {
   items: CanonicalInventoryItemStatus[];
   originalItemsByRef: Map<string, InventoryItem>;
   getPage: (key: string) => number;
   setPage: (key: string, page: number) => void;
   onRowClick: (ci: CanonicalInventoryItemStatus) => void;
+  agotadosFilter: AgotadosFilterKey;
+  setAgotadosFilter: (f: AgotadosFilterKey) => void;
 }) {
+  // 04A5I: Sub-filter: agotados (disp = 0) vs sobrecomprometidos (disp < 0)
+  const filteredItems = useMemo(() => {
+    if (agotadosFilter === "todos") return items;
+    return items.filter(ci => {
+      const orig = originalItemsByRef.get(ci.reference);
+      const disp = orig?.disponibleReal ?? 0;
+      if (agotadosFilter === "agotados") return disp === 0;
+      if (agotadosFilter === "sobrecomprometidos") return disp < 0;
+      return true;
+    });
+  }, [items, agotadosFilter, originalItemsByRef]);
+
   const page = getPage("AGOTADOS_TAB");
-  const totalPages = Math.ceil(items.length / PAGE_SIZE);
-  const pageItems = items.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalPages = Math.ceil(filteredItems.length / PAGE_SIZE);
+  const pageItems = filteredItems.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  // 04A5I: Partition counts for display
+  const partitionCounts = useMemo(() => {
+    let exhausted = 0;
+    let overcommitted = 0;
+    for (const ci of items) {
+      const orig = originalItemsByRef.get(ci.reference);
+      const disp = orig?.disponibleReal ?? 0;
+      if (disp === 0) exhausted++;
+      else if (disp < 0) overcommitted++;
+    }
+    return { total: items.length, exhausted, overcommitted };
+  }, [items, originalItemsByRef]);
 
   if (items.length === 0) {
     return (
@@ -960,61 +1046,106 @@ function AgotadosTabContent({
     );
   }
 
+  const AGOTADOS_HEADERS = ["", "Referencia", "Descripcion", "Linea", "Existencia", "Reservado", "Disponible", "Estado"];
+
   return (
-    <div style={{
-      border: `1px solid ${C.line}`,
-      borderRadius: R.sm,
-      overflow: "hidden",
-      marginBottom: S[4],
-    }}>
-      {/* Header */}
-      <div className="ag-op-row" style={{
-        display: "grid",
-        gridTemplateColumns: AGOTADOS_GRID,
-        gap: S[2],
-        padding: `${S[2]}px ${S[4]}px`,
-        background: C.surfaceAlt ?? C.surface,
-        borderBottom: `1px solid ${C.line}`,
+    <div>
+      {/* 04A5I: Partition summary strip */}
+      <div style={{
+        display: "flex",
+        gap: S[4],
+        marginBottom: S[3],
+        padding: `${S[2]}px 0`,
       }}>
-        {["", "Referencia", "Descripcion", "Linea", "Subgrupo", "Disp. comercial"].map((h, i) => (
-          <span key={`${h}-${i}`} style={{
-            fontFamily: T.mono,
-            fontSize: T.sz["2xs"],
-            fontWeight: T.wt.semibold,
-            color: C.inkLight,
-            textTransform: "uppercase" as const,
-            textAlign: i === 5 ? "center" as const : "left" as const,
-          }}>
-            {h}
-          </span>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
+          Total: {partitionCounts.total}
+        </span>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.red }}>
+          Agotados: {partitionCounts.exhausted}
+        </span>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.amber }}>
+          Sobrecomprometidos: {partitionCounts.overcommitted}
+        </span>
+      </div>
+
+      {/* 04A5I: Sub-filter pills */}
+      <div style={{ display: "flex", gap: S[2], marginBottom: S[3], flexWrap: "wrap" as const }}>
+        {AGOTADOS_FILTER_OPTIONS.map(opt => (
+          <button
+            key={opt.key}
+            className={agotadosFilter === opt.key ? "ag-action-primary" : "ag-action-ghost"}
+            onClick={() => { setAgotadosFilter(opt.key); setPage("AGOTADOS_TAB", 1); }}
+            style={{
+              fontFamily: T.mono,
+              fontSize: T.sz["2xs"],
+              padding: `4px ${S[3]}px`,
+              borderRadius: R.sm,
+              border: `1px solid ${agotadosFilter === opt.key ? C.blueDark : C.line}`,
+              background: agotadosFilter === opt.key ? C.blueDark : "transparent",
+              color: agotadosFilter === opt.key ? C.surface : C.inkMid,
+              cursor: "pointer",
+            }}
+          >
+            {opt.label}
+          </button>
         ))}
       </div>
 
-      {/* Rows */}
-      {pageItems.map((ci, idx) => {
-        const orig = originalItemsByRef.get(ci.reference) ?? ci.originalItem;
-        return (
-          <AgotadoRow key={ci.reference} item={orig} even={idx % 2 === 0} onClick={() => onRowClick(ci)} />
-        );
-      })}
-
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
+      <div style={{
+        border: `1px solid ${C.line}`,
+        borderRadius: R.sm,
+        overflow: "hidden",
+        marginBottom: S[4],
+      }}>
+        {/* 04A5I: Enhanced header — Existencia, Reservado, Disponible, Estado */}
+        <div className="ag-op-row" style={{
+          display: "grid",
+          gridTemplateColumns: AGOTADOS_GRID,
           gap: S[2],
-          padding: `${S[3]}px ${S[4]}px`,
-          borderTop: `1px solid ${C.line}`,
+          padding: `${S[2]}px ${S[4]}px`,
+          background: C.surfaceAlt ?? C.surface,
+          borderBottom: `1px solid ${C.line}`,
         }}>
-          <PagButton label="Anterior" disabled={page <= 1} onClick={() => setPage("AGOTADOS_TAB", page - 1)} />
-          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
-            {page} / {totalPages}
-          </span>
-          <PagButton label="Siguiente" disabled={page >= totalPages} onClick={() => setPage("AGOTADOS_TAB", page + 1)} />
+          {AGOTADOS_HEADERS.map((h, i) => (
+            <span key={`${h}-${i}`} style={{
+              fontFamily: T.mono,
+              fontSize: T.sz["2xs"],
+              fontWeight: T.wt.semibold,
+              color: C.inkLight,
+              textTransform: "uppercase" as const,
+              textAlign: i >= 4 ? "right" as const : "left" as const,
+            }}>
+              {h}
+            </span>
+          ))}
         </div>
-      )}
+
+        {/* Rows */}
+        {pageItems.map((ci, idx) => {
+          const orig = originalItemsByRef.get(ci.reference) ?? ci.originalItem;
+          return (
+            <AgotadoRow key={ci.reference} item={orig} even={idx % 2 === 0} onClick={() => onRowClick(ci)} />
+          );
+        })}
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: S[2],
+            padding: `${S[3]}px ${S[4]}px`,
+            borderTop: `1px solid ${C.line}`,
+          }}>
+            <PagButton label="Anterior" disabled={page <= 1} onClick={() => setPage("AGOTADOS_TAB", page - 1)} />
+            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
+              {page} / {totalPages} ({filteredItems.length} refs)
+            </span>
+            <PagButton label="Siguiente" disabled={page >= totalPages} onClick={() => setPage("AGOTADOS_TAB", page + 1)} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1960,7 +2091,16 @@ function AccessoryRow({ item, even, onClick, lowActivity }: {
 
 // ── Agotado Row ──────────────────────────────────────────────────────────────
 
+// 04A5I: Enhanced AgotadoRow — shows Existencia, Reservado, Disponible, Estado
 function AgotadoRow({ item, even, onClick }: { item: InventoryItem; even: boolean; onClick: () => void }) {
+  const disp = item.disponibleReal;
+  const onHand = item.onHandReal ?? 0;
+  const reserved = item.reservedReal ?? 0;
+  // 04A5I: Partition state — EXHAUSTED (disp = 0) vs OVERCOMMITTED (disp < 0)
+  const isOvercommitted = disp < 0;
+  const partitionLabel = isOvercommitted ? "Sobrecompr." : "Agotado";
+  const partitionColor = isOvercommitted ? C.amber : C.red;
+
   return (
     <div
       className="ag-op-row"
@@ -1985,7 +2125,7 @@ function AgotadoRow({ item, even, onClick }: { item: InventoryItem; even: boolea
         fontFamily: T.mono,
         fontSize: T.sz.xs,
         fontWeight: T.wt.semibold,
-        color: C.inkMid,
+        color: C.blueDark,
         overflow: "hidden",
         textOverflow: "ellipsis",
         whiteSpace: "nowrap" as const,
@@ -2015,24 +2155,46 @@ function AgotadoRow({ item, even, onClick }: { item: InventoryItem; even: boolea
         {CANONICAL_LINE_LABELS[item.canonicalLine]}
       </span>
 
-      <span style={{
-        fontFamily: T.mono,
-        fontSize: T.sz["2xs"],
-        color: C.inkGhost,
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap" as const,
-      }}>
-        {item.subgrupoSag}
-      </span>
-
+      {/* 04A5I: Existencia (onHand) */}
       <span style={{
         fontFamily: T.mono,
         fontSize: T.sz.xs,
-        color: C.inkGhost,
-        textAlign: "center" as const,
+        color: onHand > 0 ? C.ink : C.inkGhost,
+        textAlign: "right" as const,
       }}>
-        {"\u2014"}
+        {onHand > 0 ? onHand.toLocaleString() : "\u2014"}
+      </span>
+
+      {/* 04A5I: Reservado */}
+      <span style={{
+        fontFamily: T.mono,
+        fontSize: T.sz.xs,
+        color: reserved > 0 ? C.amber : C.inkGhost,
+        textAlign: "right" as const,
+      }}>
+        {reserved > 0 ? reserved.toLocaleString() : "\u2014"}
+      </span>
+
+      {/* 04A5I: Disponible (negative = overcommitted) */}
+      <span style={{
+        fontFamily: T.mono,
+        fontSize: T.sz.xs,
+        fontWeight: T.wt.semibold,
+        color: disp < 0 ? C.red : C.inkGhost,
+        textAlign: "right" as const,
+      }}>
+        {disp < 0 ? `(${Math.abs(disp).toLocaleString()})` : disp === 0 ? "0" : disp.toLocaleString()}
+      </span>
+
+      {/* 04A5I: Partition state badge */}
+      <span style={{
+        fontFamily: T.mono,
+        fontSize: T.sz["2xs"],
+        color: partitionColor,
+        fontWeight: T.wt.semibold,
+        textAlign: "right" as const,
+      }}>
+        {partitionLabel}
       </span>
     </div>
   );
@@ -2239,7 +2401,7 @@ function isRefPassesFilter(
     case "con_disponibilidad": return orig.disponibleReal > 0;
     case "cobertura_suficiente": return orig.threshold != null && orig.disponibleReal > orig.threshold;
     case "bajo": return orig.threshold != null && orig.disponibleReal > 0 && orig.disponibleReal <= orig.threshold;
-    case "sin_cobertura": return orig.disponibleReal <= 0;
+    // 04A5I: "sin_cobertura" removed — those refs are exclusively in AGOTADAS tab
     case "accesorios_bajo": return orig.isAccessory && orig.disponibleReal > 0 && orig.disponibleReal < 10;
     default: return true;
   }

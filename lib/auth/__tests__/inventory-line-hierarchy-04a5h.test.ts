@@ -86,8 +86,10 @@ describe("T3 — Latin Kids 2-level hierarchy", () => {
 // ── T4: LT tab contains zero Castillitos nodes ─────────────────────────────
 
 describe("T4 — LT tab isolation from CS", () => {
-  test("T4a: Hierarchy built from lineScopedCanonicalItems filtered by canonicalLine", () => {
-    expect(src).toContain("canonicalItems.filter(ci => ci.canonicalLine === activeTab && !ci.exclusionReason)");
+  test("T4a: Hierarchy built from lineScopedCanonicalItems filtered by canonicalLine and disponibleReal > 0", () => {
+    // 04A5I: lineScopedCanonicalItems now filters to ACTIVE_AVAILABLE partition
+    expect(src).toContain("ci.canonicalLine !== activeTab || ci.exclusionReason");
+    expect(src).toContain("(orig?.disponibleReal ?? ci.originalItem?.disponibleReal ?? 0) > 0");
   });
 
   test("T4b: resolveInventoryHierarchy dispatches by lineProfile", () => {
@@ -252,14 +254,15 @@ describe("T12 — 04A5 regression: dynamic counters and filters preserved", () =
     expect(src).toContain("orig.disponibleReal > orig.threshold");
   });
 
-  test("T12c: isRefPassesFilter replicates 04A5 filter predicates", () => {
+  test("T12c: isRefPassesFilter replicates 04A5 filter predicates (04A5I: sin_cobertura removed)", () => {
     const fn = src.slice(
       src.indexOf("function isRefPassesFilter("),
       src.indexOf("function filterHierarchy(")
     );
     expect(fn).toContain("orig.threshold != null && orig.disponibleReal > orig.threshold");
     expect(fn).toContain("orig.threshold != null && orig.disponibleReal > 0 && orig.disponibleReal <= orig.threshold");
-    expect(fn).toContain("orig.disponibleReal <= 0");
+    // 04A5I: sin_cobertura removed from isRefPassesFilter — those refs are exclusively in AGOTADAS
+    expect(fn).not.toContain('case "sin_cobertura"');
   });
 
   test("T12d: HierarchicalTable replaces LineBasedTable in render", () => {
