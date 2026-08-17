@@ -381,7 +381,8 @@ export async function loadCliente360(
             where: { organizationId, customerNit: String(p.sagTerceroId) },
             select: {
               id: true, comprobanteCode: true, comprobante: true, amount: true,
-              saleDate: true, productLine: true, sagSourceType: true, sellerSlug: true,
+              saleDate: true, productLine: true, sagSourceType: true,
+              sellerSlug: true, sellerName: true, sellerCode: true,
             },
             orderBy: { saleDate: "desc" },
           });
@@ -562,6 +563,15 @@ export async function loadCliente360(
       documento: docRef,
       tipoDocumento: "",
     });
+    // Seller truth: "Sin Vendedor" is a fallback injected by storage.ts, not real SAG data
+    const rawSellerName = (s.sellerName as string) ?? "";
+    const rawSellerCode = (s.sellerCode as string) ?? null;
+    const isFallbackSeller = rawSellerName === "Sin Vendedor" || rawSellerName === "";
+    const sellerTruthState: import("./clientes-pure").SellerTruthState =
+      !isFallbackSeller ? "CERTIFIED"
+      : rawSellerCode ? "IDENTITY_ONLY"
+      : "NOT_REPORTED_BY_SOURCE";
+
     return {
       id: s.id,
       canonicalKind: kind.kind,
@@ -569,6 +579,9 @@ export async function loadCliente360(
       rawDocumentNumber: docRef || null,
       issueDate: s.saleDate instanceof Date ? s.saleDate.toISOString() : (s.saleDate ?? null),
       seller: s.sellerSlug ?? null,
+      sellerId: rawSellerCode,
+      sellerName: isFallbackSeller ? null : rawSellerName,
+      sellerTruthState,
       grossAmount: Number(s.amount ?? 0),
       productLine: s.productLine ?? null,
       sourceProfileId,

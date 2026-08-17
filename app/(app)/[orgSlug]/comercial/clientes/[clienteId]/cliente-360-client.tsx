@@ -426,7 +426,9 @@ export function Cliente360Client({ orgSlug, data }: Props) {
                         <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: isNC ? C.red : C.inkMid }}>{kindLabel} ({s.rawSourceCode ?? "\u2014"})</span>
                         <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{s.rawDocumentNumber ?? "\u2014"}</span>
                         <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: isNC ? C.red : C.ink }}>{isNC ? `-${fmtCurrency(Math.abs(s.grossAmount))}` : fmtCurrency(s.grossAmount)}</span>
-                        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{s.seller ?? "\u2014"}</span>
+                        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: s.sellerTruthState === "CERTIFIED" ? C.inkMid : C.inkGhost, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                          {s.sellerTruthState === "CERTIFIED" ? s.sellerName : s.sellerTruthState === "NOT_REPORTED_BY_SOURCE" ? "No informado por SAG" : "\u2014"}
+                        </span>
                       </div>
                     );
                   });

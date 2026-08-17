@@ -817,7 +817,9 @@ function SalesTable({ items, grid, isCreditNote }: { items: ClassifiedSaleItem[]
             <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{s.rawSourceCode ?? "\u2014"}</span>
             <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{s.rawDocumentNumber ?? "\u2014"}</span>
             <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: isCreditNote ? C.red : C.ink }}>{isCreditNote ? `-${fmtCurrency(Math.abs(s.grossAmount))}` : fmtCurrency(s.grossAmount)}</span>
-            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{s.seller ?? "\u2014"}</span>
+            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: s.sellerTruthState === "CERTIFIED" ? C.inkMid : C.inkGhost, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+              {s.sellerTruthState === "CERTIFIED" ? s.sellerName : s.sellerTruthState === "NOT_REPORTED_BY_SOURCE" ? "No informado por SAG" : "\u2014"}
+            </span>
           </div>
         ))}
       </div>

@@ -374,6 +374,12 @@ export type SalesHistoryTruthState =
   | "PARTIAL"
   | "UNVERIFIED";
 
+export type SellerTruthState =
+  | "CERTIFIED"
+  | "IDENTITY_ONLY"
+  | "NOT_REPORTED_BY_SOURCE"
+  | "SOURCE_DOWN";
+
 export interface ClassifiedSaleItem {
   id: string;
   canonicalKind: string; // CanonicalDocumentKind
@@ -381,6 +387,9 @@ export interface ClassifiedSaleItem {
   rawDocumentNumber: string | null;
   issueDate: string | null;
   seller: string | null;
+  sellerId: string | null;
+  sellerName: string | null;
+  sellerTruthState: SellerTruthState;
   grossAmount: number;
   productLine: string | null;
   sourceProfileId: string;
