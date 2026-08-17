@@ -35,6 +35,7 @@ export default async function MaletasPage({
       productionThresholds={data.productionThresholds}
       coverageResult={data.coverageResult}
       supplyPlan={data.supplyPlan}
+      opportunityCandidates={data.opportunityCandidates}
     />
   );
 }

@@ -229,6 +229,30 @@ const BODEGA_NAMES: Record<number, string> = {
 // ── RIESGO_AGOTAMIENTO_BUFFER: refs within this range above minimum are flagged
 const RIESGO_BUFFER = 10;
 
+// ── Opportunity candidate (04A3R-V1) ─────────────────────────────────────────
+// Pure threshold-based eligibility from SAG CURRENT B01.
+// Independent of maleta shortfalls — coverageMatches enriches, never filters.
+
+export interface OpportunityCandidateRef {
+  reference: string;
+  description: string;
+  line: "CS" | "LT";
+  disponibleB01: number;
+  existenciaB01: number;
+  reservadoB01: number;
+  threshold: number;
+  /** How many maleta coverage needs this ref matches (0 = "Sin necesidad actual") */
+  coverageMatchCount: number;
+  /** Vendor names that need this ref */
+  coverageMatchVendors: string[];
+}
+
+export interface OpportunityCandidatesResult {
+  candidates: OpportunityCandidateRef[];
+  totalCS: number;
+  totalLT: number;
+}
+
 // ── Loader result ────────────────────────────────────────────────────────────
 
 export interface VendorSampleLoadResult {
@@ -252,6 +276,8 @@ export interface VendorSampleLoadResult {
   commercialScopeAudit: CommercialScopeAudit | null;
   /** AGENTIK-SALES-PORTFOLIO-SUPPLY-PLAN-02: Derrotero-driven supply plan */
   supplyPlan: SalesPortfolioSupplyPlan;
+  /** 04A3R-V1: All refs above threshold, independent of maleta needs */
+  opportunityCandidates: OpportunityCandidatesResult;
 }
 
 // ── Main loader ──────────────────────────────────────────────────────────────
@@ -302,6 +328,7 @@ export async function loadVendorSampleData(
       canonicalDiffReport: null,
       commercialScopeAudit: null,
       supplyPlan: { vendorPlans: [], totalMissingPositions: 0, totalExcessPositions: 0, globalCompletionPct: 0, coverageSummary: { bodega: 0, op: 0, produccion: 0, recompra: 0, sinCobertura: 0 } },
+      opportunityCandidates: { candidates: [], totalCS: 0, totalLT: 0 },
     };
   }
 
@@ -336,6 +363,7 @@ export async function loadVendorSampleData(
       canonicalDiffReport: null,
       commercialScopeAudit: null,
       supplyPlan: { vendorPlans: [], totalMissingPositions: 0, totalExcessPositions: 0, globalCompletionPct: 0, coverageSummary: { bodega: 0, op: 0, produccion: 0, recompra: 0, sinCobertura: 0 } },
+      opportunityCandidates: { candidates: [], totalCS: 0, totalLT: 0 },
     };
   }
 
@@ -869,6 +897,57 @@ export async function loadVendorSampleData(
     vendorRefSets,
   );
 
+  // ── 9g. Opportunity candidates (04A3R-V1) ─────────────────────────────────
+  // Pure threshold eligibility from SAG CURRENT B01. Independent of maleta needs.
+  // Only textile lines (CS>100, LT>200). Import excluded.
+  const OPPORTUNITY_THRESHOLDS: Record<string, number> = { CS: 100, LT: 200 };
+  const coverageMatchIndex = new Map<string, Set<string>>();
+  for (const tc of coverageResult.textileCoverage) {
+    const existing = coverageMatchIndex.get(tc.replacementReference) ?? new Set<string>();
+    for (const t of tc.targets) existing.add(t.vendorId);
+    coverageMatchIndex.set(tc.replacementReference, existing);
+  }
+  const vendorNameLookup = new Map<string, string>();
+  for (const v of vendors) vendorNameLookup.set(v.vendorId, v.vendorName);
+
+  const oppCandidates: OpportunityCandidateRef[] = [];
+  let oppTotalCS = 0;
+  let oppTotalLT = 0;
+  for (const ref of canonical.refs) {
+    const line = ref.line as "CS" | "LT";
+    const threshold = OPPORTUNITY_THRESHOLDS[line];
+    if (threshold === undefined) continue; // IMPORT, OTRO, PD, PW excluded
+    if (ref.available <= threshold) continue; // strict >
+    if (ref.truthState !== "CERTIFIED") continue;
+
+    const matchVendorIds = coverageMatchIndex.get(ref.reference);
+    const matchCount = matchVendorIds?.size ?? 0;
+    const matchVendorNames = matchVendorIds
+      ? [...matchVendorIds].map((id) => vendorNameLookup.get(id) ?? id)
+      : [];
+
+    oppCandidates.push({
+      reference: ref.reference,
+      description: ref.description,
+      line,
+      disponibleB01: ref.available,
+      existenciaB01: ref.existencia,
+      reservadoB01: ref.reservado,
+      threshold,
+      coverageMatchCount: matchCount,
+      coverageMatchVendors: matchVendorNames,
+    });
+
+    if (line === "CS") oppTotalCS++;
+    else oppTotalLT++;
+  }
+  oppCandidates.sort((a, b) => b.disponibleB01 - a.disponibleB01);
+  const opportunityCandidates: OpportunityCandidatesResult = {
+    candidates: oppCandidates,
+    totalCS: oppTotalCS,
+    totalLT: oppTotalLT,
+  };
+
   // ── 10. Canonical classification shadow diff ──────────────────────────────
   // Gated by MALETAS_CANONICAL_SHADOW_ENABLED. Default: false.
   // When false: zero additional queries, zero overhead.
@@ -1184,6 +1263,7 @@ export async function loadVendorSampleData(
     canonicalDiffReport,
     commercialScopeAudit,
     supplyPlan,
+    opportunityCandidates,
   };
 }
 

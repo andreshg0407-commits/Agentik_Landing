@@ -366,3 +366,88 @@ describe("G16: Import line produces EXCLUDED, zero opportunities", () => {
     expect(loader).toContain("IMPORT refs are EXCLUDED from the replacement engine");
   });
 });
+
+// ── G17: Opportunity eligibility separated from maleta needs (04A3R-V1) ──────
+
+describe("G17: opportunityCandidates is threshold-only, independent of maleta needs", () => {
+  const loader = fs.readFileSync(path.join(MAL, "vendor-sample-loader.ts"), "utf-8");
+  const client = fs.readFileSync(
+    path.resolve(__dirname, "../../../app/(app)/[orgSlug]/comercial/maletas/maletas-client.tsx"),
+    "utf-8",
+  );
+
+  test("G17a: OpportunityCandidateRef type exists in loader", () => {
+    expect(loader).toContain("export interface OpportunityCandidateRef");
+  });
+
+  test("G17b: Candidate CS >100 appears without maleta need", () => {
+    // Threshold check is pure: ref.available > threshold, no maleta dependency
+    expect(loader).toContain("if (ref.available <= threshold) continue");
+    expect(loader).toContain("if (ref.truthState !== \"CERTIFIED\") continue");
+  });
+
+  test("G17c: Candidate LT >200 uses same pure logic", () => {
+    expect(loader).toContain("OPPORTUNITY_THRESHOLDS");
+    expect(loader).toContain("CS: 100, LT: 200");
+  });
+
+  test("G17d: coverageMatches enriches but never filters candidates", () => {
+    // coverageMatchCount is set AFTER the candidate is already included
+    expect(loader).toContain("coverageMatchCount: matchCount");
+    // The candidate is pushed regardless of matchCount
+    expect(loader).toContain("oppCandidates.push");
+  });
+
+  test("G17e: coverageMatchCount=0 produces 'Sin necesidad actual' in UI", () => {
+    expect(client).toContain("Sin necesidad actual");
+  });
+
+  test("G17f: coverageMatchCount>0 shows 'Requerida por N maletas'", () => {
+    expect(client).toContain("Requerida por");
+  });
+
+  test("G17g: Import is excluded from OPPORTUNITY_THRESHOLDS", () => {
+    // OPPORTUNITY_THRESHOLDS only has CS and LT
+    const match = loader.match(/OPPORTUNITY_THRESHOLDS.*=.*\{([^}]+)\}/);
+    expect(match).toBeDefined();
+    expect(match![1]).not.toContain("IMPORT");
+  });
+
+  test("G17h: B04 never participates in opportunity candidates", () => {
+    // Candidates come from canonical.refs which is B01-only
+    const cwa = fs.readFileSync(path.join(MAL, "canonical-warehouse-availability.ts"), "utf-8");
+    expect(cwa).toContain('warehouseCode: "B01"');
+    expect(cwa).not.toContain("B04");
+  });
+
+  test("G17i: SOURCE_DOWN keeps fail-closed banner", () => {
+    expect(client).toContain("Disponibilidad de Bodega Principal no disponible");
+    expect(client).toContain("sag_source_down");
+  });
+
+  test("G17j: Thresholds 100/200 unchanged", () => {
+    expect(loader).toContain("CS: 100, LT: 200");
+  });
+
+  test("G17k: UI shows total count matching candidate count", () => {
+    expect(client).toContain("opportunityCandidates.candidates.length");
+  });
+
+  test("G17l: Pagination/Ver mas allows full access", () => {
+    expect(client).toContain("Ver todas");
+    expect(client).toContain("showAllGaps");
+  });
+
+  test("G17m: Old empty state removed from UI", () => {
+    expect(client).not.toContain("Sin faltantes de cobertura. Todos los subgrupos del derrotero estan completos");
+  });
+
+  test("G17n: New advisory for no-maleta-need case exists", () => {
+    expect(client).toContain("No hay faltantes actuales en las Maletas. Estas referencias permanecen disponibles como oportunidades comerciales.");
+  });
+
+  test("G17o: OpportunityCandidatesResult has totalCS and totalLT", () => {
+    expect(loader).toContain("totalCS: oppTotalCS");
+    expect(loader).toContain("totalLT: oppTotalLT");
+  });
+});
