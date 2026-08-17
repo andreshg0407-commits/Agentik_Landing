@@ -1207,6 +1207,10 @@ function computeDetailKpis(items: StoreDistributionItem[]): StoreDetailKpis {
     totalUnits += item.currentUnits;
 
     if (item.action === "SURTIR" || item.action === "SIN_STOCK_ORIGEN" || item.action === "SUGERIR_REEMPLAZO") criticalNeeds++;
+    // "Exceso" = items where currentUnits > maxUnits per distribution policy.
+    // action: "RETIRAR" means the distribution engine recommends withdrawal.
+    // This is a POLICY recommendation, not necessarily physical overstocking.
+    // The store may have valid reasons to keep these units (e.g., local demand).
     if (item.action === "RETIRAR") excessItems++;
 
     if (item.resolvedBy !== "default" && item.resolvedBy !== "textile_default") {

@@ -67,8 +67,9 @@ interface MaletasClientProps {
   productionSuggestions: ProductionSuggestion[];
   intelligence: MaletasCommercialIntelligenceResult;
   accessorySummary: AccessorySummary;
-  source: "sag" | "prisma" | "empty";
+  source: "sag" | "prisma" | "empty" | "sag_source_down";
   loadedAt: string;
+  opportunityCandidates: import("@/lib/comercial/maletas/vendor-sample-loader").OpportunityCandidatesResult;
   // MALLETS-FUNCTIONAL-RECOVERY-01
   assortmentEvaluations: VendorAssortmentResult[];
   productionThresholds: SubgroupProductionEval[];
@@ -171,6 +172,7 @@ export function MaletasClient({
   productionThresholds,
   coverageResult,
   supplyPlan,
+  opportunityCandidates,
 }: MaletasClientProps) {
   const [selectedVendor, setSelectedVendor] = useState<VendorSampleSnapshot | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -511,6 +513,24 @@ export function MaletasClient({
         flex: 1, overflow: "auto", padding: S[5],
         background: C.blueLight,
       }}>
+        {/* ── SOURCE_DOWN banner (04A3R-V) ── */}
+        {source === "sag_source_down" && (
+          <div style={{
+            padding: S[4], marginBottom: S[4],
+            background: C.red + "10", border: `1px solid ${C.red}40`,
+            borderRadius: R.lg, display: "flex", alignItems: "center", gap: S[3],
+          }}>
+            <span style={{ fontSize: 18 }}>&#x26A0;</span>
+            <div>
+              <div style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: C.red }}>
+                Disponibilidad de Bodega Principal no disponible
+              </div>
+              <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint, marginTop: 2 }}>
+                SAG CURRENT B01 no responde. No se muestran oportunidades ni cobertura hasta que la fuente se restablezca.
+              </div>
+            </div>
+          </div>
+        )}
         {/* ── Quick access bar (GO-LIVE-MALETAS-HOME-NAV-COLLAPSIBLE-01) ── */}
         <div style={{
           display: "flex", alignItems: "center", gap: S[2],
@@ -524,7 +544,7 @@ export function MaletasClient({
           </span>
           {[
             { label: "Produccion", ref: productionSectionRef, key: "produccion", count: prodImmediate.length },
-            { label: "Oportunidades", ref: coverageSectionRef, key: "cobertura", count: coverageResult.textileCoverage.length + coverageResult.importCoverage.length },
+            { label: "Oportunidades", ref: coverageSectionRef, key: "cobertura", count: opportunityCandidates.candidates.length },
           ].map(({ label, ref, key, count }) => (
             <button
               key={key}
@@ -876,29 +896,45 @@ export function MaletasClient({
           )}
         </SectionHeader>
 
-        {/* ── Oportunidades de cobertura (COVERAGE-BUSINESS-VIEW-08) ── */}
+        {/* ── Oportunidades de cobertura (04A3R-V1) ── */}
         <SectionHeader
           title="Oportunidades de cobertura"
-          subtitle="Referencias disponibles para completar faltantes del derrotero"
-          count={(coverageResult.textileCoverage.length + coverageResult.importCoverage.length) || undefined}
+          subtitle={`Referencias con disponibilidad certificada por encima del umbral \u2014 CS>${100}, LT>${200}`}
+          count={opportunityCandidates.candidates.length || undefined}
           open={sectionOpen.cobertura}
           onToggle={() => toggleSection("cobertura")}
           sectionRef={coverageSectionRef}
           statusHint={
-            (coverageResult.textileCoverage.length + coverageResult.importCoverage.length) > 0
-              ? `${coverageResult.textileCoverage.length + coverageResult.importCoverage.length} oportunidades`
-              : "sin faltantes"
+            opportunityCandidates.candidates.length > 0
+              ? `${opportunityCandidates.totalCS} CS + ${opportunityCandidates.totalLT} LT`
+              : "sin candidatos"
           }
         >
-          {/* ── Oportunidades Textiles ── */}
-          {coverageResult.textileCoverage.length > 0 && (
-            <div style={{ marginBottom: S[4] }}>
+          {/* No-faltantes advisory (informational only — does NOT hide the table) */}
+          {coverageResult.textileCoverage.length === 0 && coverageResult.importCoverage.length === 0 && opportunityCandidates.candidates.length > 0 && (
+            <div style={{
+              padding: S[3], marginBottom: S[3],
+              background: C.green + "08", border: `1px solid ${C.green}20`,
+              borderRadius: R.lg,
+            }}>
+              <div style={{ fontFamily: T.mono, fontSize: 10, color: C.green, fontWeight: 600 }}>
+                No hay faltantes actuales en las Maletas. Estas referencias permanecen disponibles como oportunidades comerciales.
+              </div>
+            </div>
+          )}
+
+          {/* ── Candidate table ── */}
+          {opportunityCandidates.candidates.length > 0 && (
+            <div>
               <div style={{
                 fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.titleDeep,
                 textTransform: "uppercase" as const, letterSpacing: "0.08em",
-                marginBottom: S[2],
+                marginBottom: S[2], display: "flex", gap: S[3],
               }}>
-                Textil ({coverageResult.textileCoverage.length})
+                <span>Candidatos ({opportunityCandidates.candidates.length})</span>
+                <span style={{ color: C.inkFaint, fontWeight: 500 }}>
+                  CS: {opportunityCandidates.totalCS} | LT: {opportunityCandidates.totalLT}
+                </span>
               </div>
               <div style={{
                 background: C.white, borderRadius: R.lg,
@@ -907,225 +943,76 @@ export function MaletasClient({
               }}>
                 <div style={{
                   display: "grid",
-                  gridTemplateColumns: "minmax(80px,0.9fr) minmax(90px,1fr) minmax(60px,0.6fr) minmax(60px,0.6fr) 90px 60px 60px 50px minmax(70px,0.8fr)",
+                  gridTemplateColumns: "minmax(80px,0.9fr) minmax(100px,1.2fr) 50px 80px 60px minmax(100px,1fr) minmax(90px,0.8fr)",
                   padding: `10px 16px`, background: C.surfaceAlt,
                   borderBottom: `1px solid ${C.line}`, gap: S[2], alignItems: "center",
                 }}>
-                  {["Referencia", "Descripcion", "Grupo", "Subgrupo", "Origen", "Disponible", "En prod.", "OP", "Sirve para"].map((h) => (
+                  {["Referencia", "Descripcion", "Linea", "Disponible B01", "Umbral", "Necesidad actual", "Estado"].map((h) => (
                     <div key={h} style={{
                       ...listHeaderCell,
-                      textAlign: (h === "Disponible" || h === "En prod.") ? "right" as const : undefined,
+                      textAlign: (h === "Disponible B01" || h === "Umbral") ? "right" as const : undefined,
                     }}>{h}</div>
                   ))}
                 </div>
-                {coverageResult.textileCoverage.slice(0, showAllGaps ? 100 : 10).map((opp, i) => {
-                  const sourceLabel = opp.source === "BODEGA" ? "Bodega principal" : "OP activa";
-                  const sourceColor = opp.source === "BODEGA" ? C.green : C.blueDark;
-                  const opDate = opp.operationalDate ? new Date(opp.operationalDate).toISOString().slice(0, 10) : null;
-                  const ageLabel = opp.ageDays != null ? `${opp.ageDays}d` : null;
-
-                  return (
-                  <div key={`${opp.replacementReference}-${opp.source}-${opp.opNumber ?? ""}-${i}`}>
-                    <div style={{
-                      display: "grid",
-                      gridTemplateColumns: "minmax(80px,0.9fr) minmax(90px,1fr) minmax(60px,0.6fr) minmax(60px,0.6fr) 90px 60px 60px 50px minmax(70px,0.8fr)",
-                      padding: ROW_PAD,
-                      borderBottom: `1px solid ${C.lineSubtle}`,
-                      gap: S[2], alignItems: "center",
-                    }}>
-                      <div style={{ ...listCell, fontWeight: 700, color: C.titleDeep }}>{opp.replacementReference}</div>
-                      <div style={{ ...listCell, color: C.inkMid, fontSize: 10 }}>{opp.replacementDescription}</div>
-                      <div style={{ ...listCell, color: C.ink }}>{opp.group}</div>
-                      <div style={{ ...listCell, color: C.inkMid }}>{opp.subgroup}</div>
-                      <div style={{ ...listCell }}>
-                        <span style={{
-                          fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: sourceColor,
-                          padding: "2px 6px", borderRadius: R.sm,
-                          background: `${sourceColor}12`,
-                        }}>{sourceLabel}</span>
-                      </div>
-                      <div style={{ ...listCell, fontWeight: 600, color: opp.availableNow != null ? C.green : C.inkFaint, textAlign: "right" as const }}>
-                        {opp.availableNow != null ? opp.availableNow : "\u2014"}
-                      </div>
-                      <div style={{ ...listCell, fontWeight: 600, color: opp.incomingUnits != null ? C.blueDark : C.inkFaint, textAlign: "right" as const }}>
-                        {opp.incomingUnits != null ? opp.incomingUnits : "\u2014"}
-                      </div>
-                      <div style={{ ...listCell, color: opp.opNumber ? C.ink : C.inkFaint }}>
-                        {opp.opNumber ? (
-                          <span>{opp.opNumber}{ageLabel && <span style={{ fontSize: 8, color: C.inkFaint, marginLeft: 2 }}>({ageLabel})</span>}</span>
-                        ) : "\u2014"}
-                      </div>
-                      <div style={{ ...listCell }}>
-                        <button
-                          onClick={() => setExpandedRef(expandedRef === opp.replacementReference ? null : opp.replacementReference)}
-                          style={{
-                            fontFamily: T.mono, fontSize: 9, fontWeight: 600, color: C.blueDark,
-                            background: "none", border: "none", cursor: "pointer", padding: 0,
-                            textDecoration: "underline", textUnderlineOffset: 2,
-                          }}
-                        >
-                          {opp.targets.length} referencia{opp.targets.length !== 1 ? "s" : ""}
-                        </button>
-                      </div>
+                {opportunityCandidates.candidates.slice(0, showAllGaps ? undefined : 20).map((cand, i) => (
+                  <div key={cand.reference} style={{
+                    display: "grid",
+                    gridTemplateColumns: "minmax(80px,0.9fr) minmax(100px,1.2fr) 50px 80px 60px minmax(100px,1fr) minmax(90px,0.8fr)",
+                    padding: ROW_PAD,
+                    borderBottom: `1px solid ${C.lineSubtle}`,
+                    gap: S[2], alignItems: "center",
+                  }}>
+                    <div style={{ ...listCell, fontWeight: 700, color: C.titleDeep }}>{cand.reference}</div>
+                    <div style={{ ...listCell, color: C.inkMid, fontSize: 10 }}>{cand.description}</div>
+                    <div style={{ ...listCell }}>
+                      <span style={{
+                        fontFamily: T.mono, fontSize: 9, fontWeight: 700,
+                        color: cand.line === "CS" ? C.blueDark : C.green,
+                        padding: "2px 6px", borderRadius: R.sm,
+                        background: (cand.line === "CS" ? C.blueDark : C.green) + "12",
+                      }}>{cand.line}</span>
                     </div>
-                    {/* Expanded targets */}
-                    {expandedRef === opp.replacementReference && (
-                      <div style={{
-                        padding: `${S[2]} ${S[4]}`, background: `${C.blueDark}06`,
-                        borderBottom: `1px solid ${C.lineSubtle}`,
-                      }}>
-                        <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 600, color: C.inkMid, marginBottom: S[1] }}>
-                          Sirve para reemplazar {opp.targets.length} necesidad{opp.targets.length !== 1 ? "es" : ""}:
-                        </div>
-                        {opp.targets.map((t, ti) => (
-                          <div key={ti} style={{
-                            fontFamily: T.mono, fontSize: 9, color: C.inkMid,
-                            display: "flex", gap: S[3], padding: "2px 0",
-                          }}>
-                            <span style={{ color: C.ink, fontWeight: 600 }}>{t.vendorId}</span>
-                            <span>{t.groupName} / {t.subgroupName}</span>
-                            <span style={{ color: C.red }}>faltan {t.faltante}</span>
-                          </div>
-                        ))}
-                        {opp.source === "OP_ACTIVA" && opDate && (
-                          <div style={{ fontFamily: T.mono, fontSize: 8, color: C.inkFaint, marginTop: S[1] }}>
-                            Ultima actividad: {opDate}
-                          </div>
-                        )}
-                      </div>
-                    )}
+                    <div style={{ ...listCell, fontWeight: 600, color: C.green, textAlign: "right" as const }}>{cand.disponibleB01}</div>
+                    <div style={{ ...listCell, color: C.inkFaint, textAlign: "right" as const }}>{cand.threshold}</div>
+                    <div style={{ ...listCell, fontSize: 10 }}>
+                      {cand.coverageMatchCount > 0 ? (
+                        <span style={{ color: C.blueDark, fontWeight: 600 }}>
+                          Requerida por {cand.coverageMatchCount} maleta{cand.coverageMatchCount !== 1 ? "s" : ""}
+                        </span>
+                      ) : (
+                        <span style={{ color: C.inkFaint }}>Sin necesidad actual</span>
+                      )}
+                    </div>
+                    <div style={{ ...listCell }}>
+                      <span style={{
+                        fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: C.green,
+                        padding: "2px 6px", borderRadius: R.sm, background: C.green + "12",
+                      }}>Oportunidad certificada</span>
+                    </div>
                   </div>
-                  );
-                })}
+                ))}
               </div>
-              {coverageResult.textileCoverage.length > 10 && !showAllGaps && (
+              {opportunityCandidates.candidates.length > 20 && !showAllGaps && (
                 <button onClick={() => setShowAllGaps(true)} style={showMoreBtnStyle}>
-                  Ver todas ({coverageResult.textileCoverage.length})
+                  Ver todas ({opportunityCandidates.candidates.length})
+                </button>
+              )}
+              {showAllGaps && opportunityCandidates.candidates.length > 20 && (
+                <button onClick={() => setShowAllGaps(false)} style={showMoreBtnStyle}>
+                  Mostrar menos
                 </button>
               )}
             </div>
           )}
 
-          {/* ── Oportunidades de Importacion (grouped by size) ── */}
-          {coverageResult.importCoverage.length > 0 && (() => {
-            const SIZE_ORDER = ["PEQUENO", "MEDIANO", "GRANDE"] as const;
-            const SIZE_LABELS: Record<string, string> = { PEQUENO: "Pequeno", MEDIANO: "Mediano", GRANDE: "Grande" };
-            const bySize = new Map<string, typeof coverageResult.importCoverage>();
-            for (const opp of coverageResult.importCoverage) {
-              const key = opp.sizeClass || "SIN_TAMANO";
-              const list = bySize.get(key) ?? [];
-              list.push(opp);
-              bySize.set(key, list);
-            }
-            const sizeGroups: { size: string; label: string; items: typeof coverageResult.importCoverage }[] = SIZE_ORDER
-              .filter((s) => bySize.has(s))
-              .map((s) => ({ size: s as string, label: SIZE_LABELS[s] ?? s, items: bySize.get(s)! }));
-            // Append any uncategorized
-            for (const [k, v] of bySize) {
-              if (!SIZE_ORDER.includes(k as any)) {
-                sizeGroups.push({ size: k, label: k, items: v });
-              }
-            }
-
-            return (
-              <div style={{ marginBottom: S[4] }}>
-                <div style={{
-                  fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.titleDeep,
-                  textTransform: "uppercase" as const, letterSpacing: "0.08em",
-                  marginBottom: S[2],
-                }}>
-                  Importacion ({coverageResult.importCoverage.length})
-                </div>
-                {sizeGroups.map((sg) => (
-                  <div key={sg.size} style={{ marginBottom: S[3] }}>
-                    <div style={{
-                      fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: C.blueDark,
-                      textTransform: "uppercase" as const, letterSpacing: "0.06em",
-                      marginBottom: S[1], paddingLeft: S[1],
-                    }}>
-                      {sg.label} ({sg.items.length})
-                    </div>
-                    <div style={{
-                      background: C.white, borderRadius: R.lg,
-                      border: `1px solid ${C.line}`, boxShadow: `0 1px 3px ${C.ink}06`,
-                      overflow: "hidden", overflowX: "auto", minWidth: 0,
-                    }}>
-                      <div style={{
-                        display: "grid",
-                        gridTemplateColumns: "minmax(80px,0.9fr) minmax(120px,1.5fr) 70px 70px minmax(80px,0.8fr)",
-                        padding: `10px 16px`, background: C.surfaceAlt,
-                        borderBottom: `1px solid ${C.line}`, gap: S[2], alignItems: "center",
-                      }}>
-                        {["Referencia", "Descripcion", "Disponible", "Confianza", "Sirve para"].map((h) => (
-                          <div key={h} style={{
-                            ...listHeaderCell,
-                            textAlign: h === "Disponible" ? "right" as const : undefined,
-                          }}>{h}</div>
-                        ))}
-                      </div>
-                      {sg.items.map((opp, i) => (
-                        <div key={`${opp.replacementReference}-${i}`}>
-                          <div style={{
-                            display: "grid",
-                            gridTemplateColumns: "minmax(80px,0.9fr) minmax(120px,1.5fr) 70px 70px minmax(80px,0.8fr)",
-                            padding: ROW_PAD,
-                            borderBottom: i === sg.items.length - 1 ? "none" : `1px solid ${C.lineSubtle}`,
-                            gap: S[2], alignItems: "center",
-                          }}>
-                            <div style={{ ...listCell, fontWeight: 700, color: C.titleDeep }}>{opp.replacementReference}</div>
-                            <div style={{ ...listCell, color: C.inkMid, fontSize: 10 }}>{opp.replacementDescription}</div>
-                            <div style={{ ...listCell, fontWeight: 600, color: C.green, textAlign: "right" as const }}>{opp.availableNow}</div>
-                            <div style={{
-                              ...listCell, fontWeight: 600, fontSize: 9,
-                              color: opp.confidence === "ALTA" ? C.green : opp.confidence === "MEDIA" ? C.amber : C.red,
-                            }}>{opp.confidence}</div>
-                            <div style={{ ...listCell }}>
-                              <button
-                                onClick={() => setExpandedRef(expandedRef === opp.replacementReference ? null : opp.replacementReference)}
-                                style={{
-                                  fontFamily: T.mono, fontSize: 9, fontWeight: 600, color: C.blueDark,
-                                  background: "none", border: "none", cursor: "pointer", padding: 0,
-                                  textDecoration: "underline", textUnderlineOffset: 2,
-                                }}
-                              >
-                                {opp.targets.length} vendedor{opp.targets.length !== 1 ? "es" : ""}
-                              </button>
-                            </div>
-                          </div>
-                          {expandedRef === opp.replacementReference && (
-                            <div style={{
-                              padding: `${S[2]} ${S[4]}`, background: `${C.blueDark}06`,
-                              borderBottom: `1px solid ${C.lineSubtle}`,
-                            }}>
-                              {opp.targets.map((t, ti) => (
-                                <div key={ti} style={{
-                                  fontFamily: T.mono, fontSize: 9, color: C.inkMid,
-                                  display: "flex", gap: S[3], padding: "2px 0",
-                                }}>
-                                  <span style={{ color: C.ink, fontWeight: 600 }}>{t.vendorId}</span>
-                                  <span>{t.subgroupName}</span>
-                                  <span style={{ color: C.red }}>faltan {t.faltante}</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            );
-          })()}
-
-          {/* Empty state — no opportunities at all */}
-          {coverageResult.textileCoverage.length === 0 && coverageResult.importCoverage.length === 0 && (
+          {/* Empty state — zero candidates above threshold */}
+          {opportunityCandidates.candidates.length === 0 && source !== "sag_source_down" && (
             <div style={{
               padding: S[5], background: C.white, borderRadius: R.lg,
               border: `1px solid ${C.line}`,
             }}>
-              <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, color: C.green }}>
-                Sin faltantes de cobertura. Todos los subgrupos del derrotero estan completos.
+              <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, color: C.inkFaint }}>
+                Sin referencias por encima del umbral de cobertura en Bodega Principal.
               </div>
             </div>
           )}

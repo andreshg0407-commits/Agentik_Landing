@@ -34,6 +34,7 @@ import type {
   CustomerHighlight,
   ChannelRow,
   InsightEjecutivo,
+  ControlPanelHealth,
 } from "@/lib/comercial/control/control-comercial-loader";
 
 // ── Props ────────────────────────────────────────────────────────────────────
@@ -50,13 +51,20 @@ export function ControlClient({ orgSlug, snapshot }: Props) {
 
   const hasCritical = s.alertas.some(a => a.severity === "critical");
   const hasWarning = s.alertas.some(a => a.severity === "warning");
+  const panelHealth = s.controlPanelHealth;
+  const isDataIncomplete = panelHealth?.controlPanelStatus === "DATA_INCOMPLETE" || panelHealth?.controlPanelStatus === "DATA_UNAVAILABLE";
+  const incompleteSources = panelHealth?.dataSources?.filter(d => d.status !== "available") ?? [];
+
   const headerStatus = hasCritical ? "critical" as const
     : hasWarning ? "warning" as const
+    : isDataIncomplete ? "warning" as const
     : "ok" as const;
   const headerLabel = hasCritical
     ? `${s.alertas.filter(a => a.severity === "critical").length} alerta(s) critica(s)`
     : hasWarning
     ? `${s.alertas.filter(a => a.severity === "warning").length} situacion(es) pendiente(s)`
+    : isDataIncomplete
+    ? `${incompleteSources.length} fuente(s) de datos incompleta(s)`
     : "Operacion normal";
 
   return (
@@ -71,6 +79,24 @@ export function ControlClient({ orgSlug, snapshot }: Props) {
         status={headerStatus}
         statusLabel={headerLabel}
       />
+
+      {isDataIncomplete && incompleteSources.length > 0 && (
+        <div style={{
+          padding: `${S[2]} ${S[3]}`,
+          marginBottom: S[3],
+          background: C.amberLight,
+          border: `1px solid ${C.amberBorder}`,
+          borderRadius: R.sm,
+          fontFamily: T.mono,
+          fontSize: T.sz.xs,
+          color: C.ink,
+        }}>
+          <span style={{ fontWeight: 600 }}>Integridad de datos:</span>{" "}
+          {incompleteSources.map(d =>
+            `${d.label} (${d.status === "unverified" ? "en validacion" : "no disponible"})`
+          ).join(" · ")}
+        </div>
+      )}
 
       {/* ═══════ 1. KPI Strip — Ventas ═══════════════════════════════════ */}
       <SectionLabel label={`Ventas \u2014 ${s.periodoVentas}`} source="SAG" />

@@ -61,18 +61,21 @@ export interface Vendedor360Risk {
   type: string;
   title: string;
   detail: string;
+  source: string; // e.g. "CRM quotes", "SAG vw_agentik_cartera", "Prisma CustomerReceivable"
 }
 
 export interface Vendedor360Opportunity {
   type: string;
   title: string;
   detail: string;
+  source: string;
 }
 
 export interface Vendedor360Recommendation {
   type: string;
   title: string;
   detail: string;
+  source: string;
 }
 
 export interface Vendedor360Intelligence {

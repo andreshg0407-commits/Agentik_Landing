@@ -27,8 +27,28 @@ import { prisma } from "@/lib/prisma";
 import { resolveCity, resolveCrmCity } from "./city-resolver";
 import { getCustomerPrimarySeller } from "@/lib/comercial/foundation/client-seller-linker";
 import { fetchCustomerArWithStatus } from "@/lib/comercial/frontline/canonical-ar-service";
-import type { ReceivableTruthStatus } from "@/lib/comercial/frontline/receivable-truth-status";
-import { UNVERIFIED_RECEIVABLE_LABEL } from "@/lib/comercial/frontline/receivable-truth-status";
+import { fetchCertifiedCustomerRecaudos } from "@/lib/comercial/frontline/canonical-recaudos-service";
+import { fetchSalesSellerEnrichment, computeSalesCoverage, buildCanonicalSalesDocumentKey, type SalesCoverage } from "./sales-seller-enrichment";
+import type { CertifiedReceivableDocument } from "@/lib/comercial/frontline/canonical-ar-types";
+import type { ReceivableTruthStatus } from "@/lib/comercial/frontline/receivable-truth-contract";
+import {
+  classifyAgingBand,
+  mapCertifiedDocToReceivable as mapDocPure,
+  computeAgingCompleteness,
+  resolveOverdueDisplay,
+  resolveCollectionContext,
+  resolveSagOrdersKpi,
+  resolveInvoiceKpi,
+  classifySalesHistory,
+  classifyCollections,
+} from "./clientes-pure";
+import type {
+  AgingCompleteness, CollectionContext, KpiSourceMeta,
+  SalesHistoryResult, ClassifiedSaleItem, SalesProfileLabels,
+  CustomerCollectionsResult,
+} from "./clientes-pure";
+import { resolveCanonicalDocumentKind, getSalesProfileLabels } from "./document-source-profiles";
+import { resolveOrgSourceProfileId } from "./document-source-profiles";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -89,12 +109,17 @@ export interface Cliente360SagOrder {
 export interface Cliente360Receivable {
   id: string;
   erpId: string | null;
+  /** Document type label (e.g. "Factura", "Nota crédito", "Remisión") */
+  documentType: string;
   originalAmount: number;
-  paidAmount: number;
+  /** From vw_agentik_recaudos evidence only. Null when no recaudos data available */
+  paidAmount: number | null;
   balanceDue: number;
   invoiceDate: string | null;
   dueDate: string | null;
-  daysOverdue: number;
+  /** Null when SAG DIAS_MORA is null — do NOT coerce to 0 */
+  daysOverdue: number | null;
+  /** Null when DIAS_MORA is null — do NOT classify as CURRENT */
   agingBucket: string | null;
   status: string;
 }
@@ -132,17 +157,39 @@ export interface Cliente360Data {
   receivables: {
     state: BlockState;
     items: Cliente360Receivable[];
-    /** Null when SAG unavailable — do NOT show Prisma saldo (paidAmount always 0) */
+    /** Net receivable (gross - credits). Null when SAG unavailable */
     totalBalance: number | null;
+    /** Gross receivable (positive saldos only). Null when SAG unavailable */
+    grossReceivable: number | null;
+    /** Credit balance (absolute value of negative saldos). Null when SAG unavailable */
+    creditBalance: number | null;
+    /** Total collected from vw_agentik_recaudos. Null when SAG unavailable */
+    collectedAmount: number | null;
     /** Null when SAG unavailable — do NOT show Prisma saldo */
     totalOverdue: number | null;
-    /** Null when SAG unavailable */
+    /** Count of documents with non-zero balance. Null when SAG unavailable */
     openCount: number | null;
     truthStatus: ReceivableTruthStatus;
+    /** Aging completeness across open items — COMPLETE only when ALL have daysOverdue + dueDate */
+    agingCompleteness: AgingCompleteness;
+    /** Collection context — window label, asOf, linkage state */
+    collectionContext: CollectionContext;
   };
   sales: { state: BlockState; items: Cliente360SaleRecord[] };
   collections: { state: BlockState; items: Cliente360CollectionRecord[] };
   opportunities: Cliente360Opportunity[];
+  /** SAG orders KPI source metadata — truthState, reason, windowLabel */
+  sagOrdersMeta: KpiSourceMeta;
+  /** Invoice KPI source metadata — truthState, reason, windowLabel */
+  invoicesMeta: KpiSourceMeta;
+  /** Classified sales history — F1/F2 separated */
+  salesHistory: SalesHistoryResult;
+  /** Profile-specific section labels (e.g. "Facturación oficial (F1)") */
+  salesProfileLabels: SalesProfileLabels;
+  /** Classified collections from vw_agentik_recaudos — F1/F2 separated */
+  collectionsResult: CustomerCollectionsResult;
+  /** Sales coverage reconciliation — COMPLETE, STORAGE_LAG, SOURCE_DOWN, etc. */
+  salesCoverage: SalesCoverage;
   loadedAt: string;
 }
 
@@ -157,10 +204,23 @@ function ms(start: number): string {
 export async function loadCliente360(
   organizationId: string,
   clienteId: string,
+  orgSlug?: string,
 ): Promise<Cliente360Data | null> {
   const db = prisma as any;
   const t0 = performance.now();
   const timing: Record<string, string> = {};
+
+  // Resolve source profile server-side — fail-closed to empty string (→ UNKNOWN_DOCUMENT)
+  // orgSlug may be passed explicitly; if not, resolve from DB
+  let resolvedOrgSlug: string = orgSlug ?? "";
+  if (!resolvedOrgSlug) {
+    const org = await db.organization.findUnique({
+      where: { id: organizationId },
+      select: { slug: true },
+    });
+    resolvedOrgSlug = org?.slug ?? "";
+  }
+  const sourceProfileId = resolveOrgSourceProfileId(resolvedOrgSlug) ?? "";
 
   // ── Resolve clienteId: may be UUID (id) or slug (from alerts entityKey) ───
   let resolvedId = clienteId;
@@ -180,7 +240,7 @@ export async function loadCliente360(
 
   const tP1 = performance.now();
 
-  const [profileResult, sellerResult, rawReceivables, rawCollections] = await Promise.all([
+  const [profileResult, sellerResult, rawCollections] = await Promise.all([
     // 1. Profile
     (async () => {
       const t = performance.now();
@@ -208,24 +268,7 @@ export async function loadCliente360(
       return r;
     })(),
 
-    // 3. Receivables (via customerId FK)
-    (async () => {
-      const t = performance.now();
-      const r = await db.customerReceivable.findMany({
-        where: { organizationId, customerId: resolvedId },
-        select: {
-          id: true, erpId: true, originalAmount: true, paidAmount: true,
-          balanceDue: true, invoiceDate: true, dueDate: true,
-          daysOverdue: true, agingBucket: true, status: true,
-        },
-        orderBy: { dueDate: "desc" },
-        take: 50,
-      });
-      timing.receivables = ms(t);
-      return r;
-    })(),
-
-    // 4. Collections (via customerId FK)
+    // 3. Collections (via customerId FK)
     (async () => {
       const t = performance.now();
       const r = await db.collectionRecord.findMany({
@@ -284,7 +327,7 @@ export async function loadCliente360(
 
   const tP2 = performance.now();
 
-  const [crmQuotesRaw, sagOrdersRaw, salesRaw] = await Promise.all([
+  const [crmQuotesRaw, sagOrdersRaw, salesRaw, sellerEnrichment] = await Promise.all([
     // CRM Quotes — use raw SQL with JSON path filter to avoid loading all org quotes
     (async () => {
       const t = performance.now();
@@ -304,42 +347,66 @@ export async function loadCliente360(
       return rows;
     })(),
 
-    // SAG Orders (via NIT)
+    // SAG Orders (via sagTerceroId — canonical SAG identity, NOT NIT)
+    // CustomerOrderRecord.customerNit stores ka_nl_tercero as string
     (async () => {
       const t = performance.now();
       let rows: any[] = [];
-      if (p.nit) {
-        rows = await db.customerOrderRecord.findMany({
-          where: { organizationId, customerNit: p.nit },
-          select: {
-            id: true, erpMovId: true, orderNumber: true,
-            orderDate: true, amount: true, status: true, customerName: true,
-          },
-          orderBy: { orderDate: "desc" },
-          take: 50,
-        });
+      let queryOk = false;
+      if (p.sagTerceroId != null && p.sagTerceroId > 0) {
+        try {
+          rows = await db.customerOrderRecord.findMany({
+            where: { organizationId, customerNit: String(p.sagTerceroId) },
+            select: {
+              id: true, erpMovId: true, orderNumber: true,
+              orderDate: true, amount: true, status: true, customerName: true,
+            },
+            orderBy: { orderDate: "desc" },
+            take: 50,
+          });
+          queryOk = true;
+        } catch {
+          queryOk = false;
+        }
       }
       timing.sagOrders = ms(t);
-      return rows;
+      return { rows, queryOk };
     })(),
 
-    // Sales (via NIT)
+    // Sales (via sagTerceroId — SaleRecord.customerNit stores SAG ka_nl_tercero as string)
     (async () => {
       const t = performance.now();
       let rows: any[] = [];
-      if (p.nit) {
-        rows = await db.saleRecord.findMany({
-          where: { organizationId, customerNit: p.nit },
-          select: {
-            id: true, comprobanteCode: true, amount: true,
-            saleDate: true, productLine: true, sagSourceType: true, sellerSlug: true,
-          },
-          orderBy: { saleDate: "desc" },
-          take: 50,
-        });
+      let queryOk = false;
+      if (p.sagTerceroId != null && p.sagTerceroId > 0) {
+        try {
+          rows = await db.saleRecord.findMany({
+            where: { organizationId, customerNit: String(p.sagTerceroId) },
+            select: {
+              id: true, comprobanteCode: true, comprobante: true, amount: true,
+              saleDate: true, productLine: true, sagSourceType: true,
+              sellerSlug: true, sellerName: true, sellerCode: true,
+            },
+            orderBy: { saleDate: "desc" },
+          });
+          queryOk = true;
+        } catch {
+          queryOk = false;
+        }
       }
       timing.sales = ms(t);
-      return rows;
+      return { rows, queryOk };
+    })(),
+
+    // SAG ventas seller enrichment — single batch query for all documents of this client
+    // Recovers seller data that legacy MOVIMIENTOS import lost
+    (async () => {
+      const t = performance.now();
+      const result = await fetchSalesSellerEnrichment(
+        p.sagTerceroId != null && p.sagTerceroId > 0 ? p.sagTerceroId : null,
+      );
+      timing.sellerEnrichment = ms(t);
+      return result;
     })(),
   ]);
 
@@ -359,7 +426,7 @@ export async function loadCliente360(
     sagOrderId: q.sagOrderId || null,
   }));
 
-  const sagOrders: Cliente360SagOrder[] = sagOrdersRaw.map((o: any) => ({
+  const sagOrders: Cliente360SagOrder[] = sagOrdersRaw.rows.map((o: any) => ({
     id: o.id,
     erpMovId: o.erpMovId,
     orderNumber: o.orderNumber,
@@ -369,63 +436,103 @@ export async function loadCliente360(
     customerName: o.customerName,
   }));
 
-  const receivableItems: Cliente360Receivable[] = rawReceivables.map((r: any) => ({
-    id: r.id,
-    erpId: r.erpId,
-    originalAmount: Number(r.originalAmount ?? 0),
-    paidAmount: Number(r.paidAmount ?? 0),
-    balanceDue: Number(r.balanceDue ?? 0),
-    invoiceDate: r.invoiceDate?.toISOString() ?? null,
-    dueDate: r.dueDate?.toISOString() ?? null,
-    daysOverdue: Number(r.daysOverdue ?? 0),
-    agingBucket: r.agingBucket,
-    status: r.status,
-  }));
+  // SAG orders KPI metadata
+  const sagOrdersMeta = resolveSagOrdersKpi(
+    p.sagTerceroId, sagOrdersRaw.queryOk, sagOrders.length, new Date(),
+  );
 
-  // ── Canonical AR from SAG (CERTIFIED) — overrides Prisma legacy totals ──
-  // CustomerReceivable.paidAmount is always 0 (legacy bug), so balanceDue
-  // over-reports. When sagTerceroId exists, fetch certified SALDO_PENDIENTE
-  // from vw_agentik_cartera which includes all applied collections.
+  // ── Canonical AR from SAG — ONLY source of receivable truth ──────────────
+  // NO legacy CustomerReceivable is queried or used. All cartera data
+  // comes exclusively from fetchCustomerArWithStatus → vw_agentik_cartera.
   let totalBalance: number | null;
+  let grossReceivable: number | null;
+  let creditBalance: number | null;
+  let collectedAmount: number | null;
   let totalOverdue: number | null;
   let openCount: number | null;
   let receivableTruthStatus: ReceivableTruthStatus = "UNVERIFIED";
+  let receivableItems: Cliente360Receivable[] = [];
+  let agingCompleteness: AgingCompleteness = "UNVERIFIED";
+  let collectionCtx: CollectionContext = {
+    collectionWindowLabel: "\u2014",
+    collectionAsOf: null,
+    collectionLinkageState: "UNVERIFIED",
+  };
+
+  let recaudosResult: Awaited<ReturnType<typeof fetchCertifiedCustomerRecaudos>> | null = null;
 
   if (p.sagTerceroId != null && p.sagTerceroId > 0) {
+    // Fetch cartera and recaudos in parallel from SAG
     const tAr = performance.now();
-    const arResult = await fetchCustomerArWithStatus(p.sagTerceroId);
+    const [arResult, recaudosResultLocal] = await Promise.all([
+      fetchCustomerArWithStatus(p.sagTerceroId),
+      fetchCertifiedCustomerRecaudos(p.sagTerceroId).catch(() => null),
+    ]);
+    recaudosResult = recaudosResultLocal;
     timing.canonicalAr = ms(tAr);
+
+    // Recaudos: totalRecaudado from vw_agentik_recaudos (actual cash received — NO date filter)
+    collectedAmount = recaudosResult?.ok ? recaudosResult.snapshot.totalRecaudado : null;
+
+    // Resolve collection context — linkage between recaudos and open AR documents
+    const recaudoDocuments = recaudosResult?.ok
+      ? recaudosResult.snapshot.applications.map((a: any) => a.documentoRelacionado).filter(Boolean) as string[]
+      : [];
 
     if (arResult.status === "CERTIFIED_ZERO") {
       totalBalance = 0;
+      grossReceivable = 0;
+      creditBalance = 0;
       totalOverdue = 0;
       openCount = 0;
       receivableTruthStatus = "CERTIFIED";
+      agingCompleteness = "COMPLETE"; // no open items → nothing to verify
+      collectionCtx = resolveCollectionContext(
+        !!recaudosResult?.ok, recaudosResult?.ok ? new Date() : null,
+        recaudoDocuments, [],
+      );
+      // receivableItems stays [] — genuinely no open documents
     } else if (arResult.status === "HAS_OPEN_AR") {
-      totalBalance = arResult.snapshot.totalPendiente;
-      totalOverdue = arResult.snapshot.totalVencido;
+      grossReceivable = arResult.snapshot.totalPendiente;
+      creditBalance = arResult.snapshot.creditBalance;
+      totalBalance = arResult.snapshot.netReceivable;
       openCount = arResult.snapshot.documentCount;
       receivableTruthStatus = "CERTIFIED";
+      // Convert SAG certified documents to Cliente360Receivable[]
+      receivableItems = arResult.snapshot.documents.map(d => mapCertifiedDocToReceivable(d, sourceProfileId));
+      // Compute aging completeness — requires BOTH daysOverdue AND dueDate
+      agingCompleteness = computeAgingCompleteness(receivableItems);
+      // totalOverdue is null-safe: only show when aging is fully verified
+      totalOverdue = resolveOverdueDisplay(arResult.snapshot.totalVencido, agingCompleteness);
+      // Collection linkage
+      const openArDocs = arResult.snapshot.documents.map(d => d.documento);
+      collectionCtx = resolveCollectionContext(
+        !!recaudosResult?.ok, recaudosResult?.ok ? new Date() : null,
+        recaudoDocuments, openArDocs,
+      );
     } else {
-      // SAG_UNAVAILABLE or IDENTITY_UNKNOWN — do NOT show Prisma saldo.
-      // CustomerReceivable.paidAmount is always 0 (legacy bug), so Prisma
-      // balanceDue over-reports. Showing it would present uncertified financial
-      // data as fact. Instead: null totals + UNVERIFIED status, and the Manager
-      // adapter renders "Cartera no disponible" or UNVERIFIED_RECEIVABLE_LABEL.
+      // SAG_UNAVAILABLE or IDENTITY_UNKNOWN — all values null/unknown
       totalBalance = null;
+      grossReceivable = null;
+      creditBalance = null;
+      collectedAmount = null;
       totalOverdue = null;
       openCount = null;
+      // receivableItems stays [] — no data to show
       // receivableTruthStatus stays "UNVERIFIED"
     }
   } else {
-    // No SAG identity — cannot certify cartera. Do NOT show Prisma saldo.
+    // No SAG identity — cannot certify. All values null/unknown.
     totalBalance = null;
+    grossReceivable = null;
+    creditBalance = null;
+    collectedAmount = null;
     totalOverdue = null;
     openCount = null;
     // receivableTruthStatus stays "UNVERIFIED"
   }
 
-  const salesItems: Cliente360SaleRecord[] = salesRaw.map((s: any) => ({
+  const salesItems: Cliente360SaleRecord[] = salesRaw.rows.map((s: any) => ({
     id: s.id,
     comprobanteCode: s.comprobanteCode,
     amount: Number(s.amount ?? 0),
@@ -434,6 +541,193 @@ export async function loadCliente360(
     sagSourceType: s.sagSourceType,
     sellerSlug: s.sellerSlug,
   }));
+
+  // Invoice KPI — count only SALES_INVOICE via canonical document kind
+  // Use comprobanteCode (fuente prefix) for classification, NOT bare comprobante number
+  const excludedKindLabels: string[] = [];
+  let invoiceCount = 0;
+  for (const s of salesRaw.rows) {
+    const code = (s.comprobanteCode as string) ?? "";
+    const num = (s.comprobante as string) ?? "";
+    const docRef = code ? `${code}-${num}` : num;
+    const kind = resolveCanonicalDocumentKind(sourceProfileId, {
+      documento: docRef,
+      tipoDocumento: "",
+    });
+    if (kind.kind === "SALES_INVOICE") {
+      invoiceCount++;
+    } else if (kind.kind !== "UNKNOWN_DOCUMENT") {
+      if (!excludedKindLabels.includes(kind.label)) {
+        excludedKindLabels.push(kind.label);
+      }
+    }
+  }
+  const invoicesMeta = resolveInvoiceKpi(
+    p.sagTerceroId != null ? String(p.sagTerceroId) : null,
+    salesRaw.queryOk, invoiceCount, salesRaw.rows.length,
+    excludedKindLabels, new Date(),
+  );
+
+  // Build classified sale items for sales history F1/F2 separation
+  // SAG seller enrichment: build lookup map keyed by composite "fuenteCode-numero"
+  // Collision-safe: FE-849 and D2-849 are different documents (03A8G3)
+  const sagSellerMap = sellerEnrichment.buildDocumentSellerMap();
+  // Bare-number fallback for records where comprobanteCode is null (legacy mappers)
+  const sagBareFallback = sellerEnrichment.buildBareNumberFallback();
+
+  // Build stored composite keys for coverage reconciliation
+  const storedCompositeKeys = new Set<string>();
+  for (const s of salesRaw.rows) {
+    const code = (s.comprobanteCode as string) ?? "";
+    const num = (s.comprobante as string) ?? "";
+    const key = buildCanonicalSalesDocumentKey(code, num);
+    if (key) storedCompositeKeys.add(key);
+  }
+
+  // Compute sales coverage (SAG source vs stored SaleRecords)
+  const hasSagIdentity = p.sagTerceroId != null && p.sagTerceroId > 0;
+  const salesCoverage = computeSalesCoverage(sellerEnrichment, storedCompositeKeys, hasSagIdentity);
+
+  const classifiedSales: ClassifiedSaleItem[] = salesRaw.rows.map((s: any) => {
+    const code = (s.comprobanteCode as string) ?? "";
+    const num = (s.comprobante as string) ?? "";
+    const docRef = code ? `${code}-${num}` : num;
+    const kind = resolveCanonicalDocumentKind(sourceProfileId, {
+      documento: docRef,
+      tipoDocumento: "",
+    });
+
+    // Seller resolution: SAG enrichment > persisted data > fallback
+    // Step 1: Try SAG runtime enrichment using canonical key (03A8G3R collision-safe)
+    const canonicalKey = buildCanonicalSalesDocumentKey(code, num);
+    let sagSeller = sagSellerMap.get(canonicalKey);
+    let bareNumberAmbiguous = false;
+    // Step 1b: Bare-number fallback when comprobanteCode is null (legacy mapper path 2)
+    if (!sagSeller && !canonicalKey.includes("-") && canonicalKey) {
+      const fallback = sagBareFallback.get(canonicalKey);
+      if (fallback === null) {
+        // Multiple fuentes share this number — ambiguous, cannot resolve
+        bareNumberAmbiguous = true;
+      } else if (fallback !== undefined) {
+        sagSeller = fallback;
+      }
+    }
+    // Step 2: Check persisted data quality
+    const rawSellerName = (s.sellerName as string) ?? "";
+    const rawSellerCode = (s.sellerCode as string) ?? null;
+    const isFallbackSeller = rawSellerName === "Sin Vendedor" || rawSellerName === "";
+
+    let sellerId: string | null;
+    let sellerName: string | null;
+    let sellerTruthState: import("./clientes-pure").SellerTruthState;
+
+    if (sellerEnrichment.sourceDown) {
+      // SAG enrichment failed — use persisted data with appropriate truth state
+      if (!isFallbackSeller) {
+        sellerTruthState = "CERTIFIED";
+        sellerId = rawSellerCode;
+        sellerName = rawSellerName;
+      } else {
+        // Cannot determine — SAG is down AND persisted is fallback
+        sellerTruthState = "SOURCE_DOWN";
+        sellerId = null;
+        sellerName = null;
+      }
+    } else if (sagSeller) {
+      // SAG enrichment found seller for this document
+      if (sagSeller.vendedor) {
+        sellerTruthState = "CERTIFIED";
+        sellerId = sagSeller.vendedorId;
+        sellerName = sagSeller.vendedor;
+      } else if (sagSeller.vendedorId) {
+        sellerTruthState = "IDENTITY_ONLY";
+        sellerId = sagSeller.vendedorId;
+        sellerName = null;
+      } else {
+        // SAG returned null for both — genuinely not reported
+        sellerTruthState = "NOT_REPORTED_BY_SOURCE";
+        sellerId = null;
+        sellerName = null;
+      }
+    } else if (bareNumberAmbiguous) {
+      // Bare number matched multiple fuentes — cannot resolve safely
+      sellerTruthState = "DOCUMENT_UNMATCHED";
+      sellerId = null;
+      sellerName = null;
+    } else if (!isFallbackSeller) {
+      // SAG enrichment didn't cover this doc (e.g. remisiones not in view) but persisted is real
+      sellerTruthState = "CERTIFIED";
+      sellerId = rawSellerCode;
+      sellerName = rawSellerName;
+    } else {
+      // No SAG enrichment + persisted is fallback — document not in view scope
+      sellerTruthState = "NOT_REPORTED_BY_SOURCE";
+      sellerId = null;
+      sellerName = null;
+    }
+
+    return {
+      id: s.id,
+      canonicalKind: kind.kind,
+      rawSourceCode: code || null,
+      rawDocumentNumber: docRef || null,
+      issueDate: s.saleDate instanceof Date ? s.saleDate.toISOString() : (s.saleDate ?? null),
+      seller: s.sellerSlug ?? null,
+      sellerId,
+      sellerName,
+      sellerTruthState,
+      grossAmount: Number(s.amount ?? 0),
+      productLine: s.productLine ?? null,
+      sourceProfileId,
+    };
+  });
+
+  // Inject source-only documents from SAG into classified sales (runtime recovery)
+  // These are documents SAG knows about but SaleRecord hasn't synced yet (STORAGE_LAG)
+  for (const pending of salesCoverage.pendingDocuments) {
+    const docRef = `${pending.fuenteCode}-${pending.numeroDocumento}`;
+    const kind = resolveCanonicalDocumentKind(sourceProfileId, {
+      documento: docRef,
+      tipoDocumento: "",
+    });
+    classifiedSales.push({
+      id: `sag-pending-${pending.idDocumento}`,
+      canonicalKind: kind.kind,
+      rawSourceCode: pending.fuenteCode,
+      rawDocumentNumber: docRef,
+      issueDate: pending.fechaDocumento || null,
+      seller: null,
+      sellerId: pending.vendedorId,
+      sellerName: pending.vendedor,
+      sellerTruthState: pending.vendedor ? "CERTIFIED" : pending.vendedorId ? "IDENTITY_ONLY" : "NOT_REPORTED_BY_SOURCE",
+      grossAmount: pending.amount,
+      productLine: null,
+      sourceProfileId,
+    });
+  }
+
+  const hasProfile = sourceProfileId.length > 0;
+  // Cartera document codes for cross-source mismatch detection
+  const carteraDocCodes: string[] = receivableItems.map(r => r.erpId).filter(Boolean) as string[];
+  const salesHistory = classifySalesHistory(
+    classifiedSales,
+    salesRaw.queryOk,
+    p.sagTerceroId != null && p.sagTerceroId > 0, // hasSagIdentity for sales = has sagTerceroId
+    hasProfile,
+    new Date(),
+    carteraDocCodes,
+  );
+
+  const salesProfileLabels = getSalesProfileLabels(sourceProfileId);
+
+  // Build certified collections result from vw_agentik_recaudos (canonical authority)
+  const collectionsResult = classifyCollections(
+    recaudosResult?.ok ? recaudosResult.snapshot.applications : [],
+    !!recaudosResult?.ok,
+    p.sagTerceroId != null && p.sagTerceroId > 0,
+    hasProfile ? sourceProfileId : null,
+    recaudosResult?.ok ? recaudosResult.snapshot.asOf : null,
+  );
 
   const collectionItems: Cliente360CollectionRecord[] = rawCollections.map((c: any) => ({
     id: c.id,
@@ -444,6 +738,7 @@ export async function loadCliente360(
   }));
 
   // Opportunities (synchronous, no DB)
+  // receivableItems come exclusively from canonical SAG — empty when UNVERIFIED/CERTIFIED_ZERO
   const opportunities = computeOpportunities(
     profile, seller, crmQuotes, sagOrders, receivableItems, salesItems,
   );
@@ -463,12 +758,17 @@ export async function loadCliente360(
       items: sagOrders,
     },
     receivables: {
-      state: receivableItems.length > 0 || receivableTruthStatus === "CERTIFIED" ? "disponible" : "no_disponible",
+      state: receivableTruthStatus === "CERTIFIED" ? "disponible" : "no_disponible",
       items: receivableItems,
       totalBalance,
+      grossReceivable,
+      creditBalance,
+      collectedAmount,
       totalOverdue,
       openCount,
       truthStatus: receivableTruthStatus,
+      agingCompleteness,
+      collectionContext: collectionCtx,
     },
     sales: {
       state: salesItems.length > 0 ? "disponible" : "no_disponible",
@@ -479,6 +779,12 @@ export async function loadCliente360(
       items: collectionItems,
     },
     opportunities,
+    sagOrdersMeta,
+    invoicesMeta,
+    salesHistory,
+    salesProfileLabels,
+    collectionsResult,
+    salesCoverage,
     loadedAt: new Date().toISOString(),
   };
 
@@ -494,12 +800,22 @@ export async function loadCliente360(
     `total=${timing.total} | ` +
     `payload=${payloadKb}KB | ` +
     `rows: quotes=${crmQuotes.length} sag=${sagOrders.length} ` +
-    `recv=${receivableItems.length} sales=${salesItems.length} ` +
+    `recv=${receivableItems.length}(${receivableTruthStatus}) sales=${salesItems.length} ` +
     `coll=${collectionItems.length} opps=${opportunities.length}`,
   );
 
   return result;
 }
+
+// ── SAG document → Cliente360Receivable mapper ───────────────────────────────
+// Logic lives in clientes-pure.ts — same code tested directly by behavioral tests
+// sourceProfileId resolved server-side via resolveOrgSourceProfileId — NEVER defaulted
+
+function mapCertifiedDocToReceivable(doc: CertifiedReceivableDocument, sourceProfileId: string): Cliente360Receivable {
+  return mapDocPure(doc, sourceProfileId) as Cliente360Receivable;
+}
+
+// classifyAgingBand imported from clientes-pure.ts
 
 // ── Opportunity Engine ────────────────────────────────────────────────────────
 
@@ -527,11 +843,11 @@ function computeOpportunities(
     });
   }
 
-  // 2. Cartera vencida
-  const overdue = receivables.filter(r => r.daysOverdue > 0);
+  // 2. Cartera vencida — only when daysOverdue is known (not null)
+  const overdue = receivables.filter(r => r.daysOverdue != null && r.daysOverdue > 0);
   if (overdue.length > 0) {
     const totalOverdue = overdue.reduce((s, r) => s + r.balanceDue, 0);
-    const maxDays = Math.max(...overdue.map(r => r.daysOverdue));
+    const maxDays = Math.max(...overdue.map(r => r.daysOverdue!));
     ops.push({
       id: "opp_cartera_vencida",
       type: "cartera",

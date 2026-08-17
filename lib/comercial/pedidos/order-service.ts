@@ -1613,6 +1613,12 @@ export interface ServerKpiStats {
   totalOrders: number;
   /** Orders loaded in the current page (for header context) */
   loadedOrders: number;
+  /** Source attribution breakdown for total orders */
+  sourceBreakdown: {
+    agentExecutions: number;
+    crmQuotes: number;
+    sagOrders: number;
+  };
   generatedAt: string;
   timezone: string;
   currency: string;
@@ -1639,6 +1645,9 @@ export async function computeServerKpiStats(
   let sincronizadosAgentik = 0;
   let conConflicto = 0;
   let totalOrders = 0;
+  let _srcAgentExecutions = 0;
+  let _srcCrmQuotes = 0;
+  let _srcSagOrders = 0;
 
   // ── AgentExecution (AGENTIK_NATIVE orders) — full scan, no take limit ──
   try {
@@ -1653,6 +1662,7 @@ export async function computeServerKpiStats(
 
     for (const r of rows as any[]) {
       totalOrders++;
+      _srcAgentExecutions++;
       const meta = (r.metadataJson ?? {}) as Record<string, unknown>;
       const status = (meta.status as string | undefined) ?? "borrador";
       const origin = (meta.origin as string | undefined) ?? "agentik";
@@ -1707,6 +1717,7 @@ export async function computeServerKpiStats(
       where: { organizationId: orgId },
     });
     totalOrders += crmCount;
+    _srcCrmQuotes += crmCount;
 
     // CRM today: check quotes issued today
     const crmToday = await prisma.cRMQuote.findMany({
@@ -1738,6 +1749,7 @@ export async function computeServerKpiStats(
       where: { organizationId: orgId },
     });
     totalOrders += corTotal;
+    _srcSagOrders += corTotal;
 
     // COR today (non-cancelled)
     const corTodayCount = await prisma.customerOrderRecord.count({
@@ -1771,6 +1783,11 @@ export async function computeServerKpiStats(
     conConflicto,
     totalOrders,
     loadedOrders: 0, // Set by caller after listOrders
+    sourceBreakdown: {
+      agentExecutions: _srcAgentExecutions,
+      crmQuotes: _srcCrmQuotes,
+      sagOrders: _srcSagOrders,
+    },
     generatedAt: now.toISOString(),
     timezone: "America/Bogota",
     currency: "COP",

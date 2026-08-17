@@ -83,8 +83,9 @@ export async function loadOrderAssistant(
 
   // ── Build credit from receivables ──────────────────────────────────────
   const receivables = cliente360.receivables;
-  const maxDaysPastDue = receivables.items.length > 0
-    ? Math.max(...receivables.items.map(r => r.daysOverdue))
+  const knownOverdue = receivables.items.filter(r => r.daysOverdue != null).map(r => r.daysOverdue!);
+  const maxDaysPastDue = knownOverdue.length > 0
+    ? Math.max(...knownOverdue)
     : 0;
 
   // When receivables are UNVERIFIED (SAG unavailable), totals are null.

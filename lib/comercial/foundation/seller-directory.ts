@@ -123,22 +123,61 @@ export async function buildSellerDirectory(
   const terceroMapping = await getSellerTerceroMapping(organizationId);
   const certifiedSlugs = new Set(terceroMapping.map(e => e.sellerSlug));
 
+  // COMMERCIAL-TRUTH-CLOSURE: supplement activity detection with SAG order counts.
+  // A seller with SAG orders but no recent CRM quotes should NOT be "inactivo".
+  // Query SAG order counts per sellerTerceroId, then map back to slugs.
+  const terceroIds = terceroMapping.map(e => e.sellerTerceroId);
+  const sagOrderCounts = new Map<string, number>(); // slug → SAG order count
+  if (terceroIds.length > 0) {
+    const sagRows = await db.customerOrderRecord.groupBy({
+      by: ["sellerTerceroId"],
+      where: {
+        organizationId,
+        sellerTerceroId: { in: terceroIds },
+      },
+      _count: { id: true },
+    });
+    // Build terceroId → slug map for reverse lookup
+    const terceroToSlug = new Map<number, string>();
+    for (const e of terceroMapping) {
+      terceroToSlug.set(e.sellerTerceroId, e.sellerSlug);
+    }
+    for (const row of sagRows) {
+      const slug = terceroToSlug.get(row.sellerTerceroId as number);
+      if (slug) sagOrderCounts.set(slug, row._count.id);
+    }
+  }
+
+  // Build SAG tercero name lookup for seller name fallback
+  const terceroNameBySlug = new Map<string, string>();
+  for (const e of terceroMapping) {
+    terceroNameBySlug.set(e.sellerSlug, e.sellerName);
+  }
+
+  // Activity status formula:
+  // activo    = CRM quote in last 90d
+  // atencion  = has quotes OR customers OR SAG orders, but no CRM quote in 90d
+  // inactivo  = 0 quotes + 0 customers + 0 SAG orders
   const sellers: CommercialSeller[] = [...sellerAgg.entries()]
     .filter(([, data]) => certifiedSlugs.has(data.slug))
     .sort((a, b) => b[1].count - a[1].count)
     .map(([, data]) => {
       const lastMs = data.lastAt ? new Date(data.lastAt).getTime() : 0;
       const recentActivity = lastMs > 0 && (now - lastMs) < ninetyDaysMs;
-      const hasCommercialPresence = data.count > 0 || data.customers.size > 0;
+      const sagOrders = sagOrderCounts.get(data.slug) ?? 0;
+      const hasCommercialPresence = data.count > 0 || data.customers.size > 0 || sagOrders > 0;
 
       let activityStatus: SellerActivityStatus;
       if (recentActivity) activityStatus = "activo";
       else if (hasCommercialPresence) activityStatus = "atencion";
       else activityStatus = "inactivo";
 
+      // Seller identity: prefer CRM quote name, fall back to SAG tercero name
+      const displayName = data.name || terceroNameBySlug.get(data.slug) || data.name;
+
       return {
-        sellerId: toSlug(data.name),
-        sellerName: data.name,
+        sellerId: toSlug(displayName),
+        sellerName: displayName,
         sellerSlug: data.slug,
         crmQuoteCount: data.count,
         customerCount: data.customers.size,

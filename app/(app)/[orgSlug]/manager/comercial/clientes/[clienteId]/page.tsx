@@ -28,7 +28,7 @@ export default async function ManagerClienteDetailPage({
     redirect(`/${orgSlug}/manager/comercial/clientes`);
   }
 
-  const data = await loadCliente360(orgId, clienteId);
+  const data = await loadCliente360(orgId, clienteId, orgSlug);
 
   if (!data) {
     redirect(`/${orgSlug}/manager/comercial/clientes`);

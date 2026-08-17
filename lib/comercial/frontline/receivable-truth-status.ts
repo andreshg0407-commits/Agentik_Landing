@@ -24,26 +24,9 @@
  * This file is pure types + deterministic resolver. No DB. No SAG. No side effects.
  */
 
-// ── Truth status enum ─────────────────────────────────────────────────────────
-
-/**
- * Receivable truth status determines whether overdue data may be presented
- * as certified financial fact.
- *
- * CERTIFIED           — Pipeline includes payment application reconciliation.
- *                       Overdue amounts are trustworthy.
- * UNVERIFIED          — Pipeline does NOT include payment applications.
- *                       Overdue amounts may be severely over-reported.
- * STALE               — Pipeline was certified but data is older than threshold.
- * SOURCE_CONFLICT     — Multiple sources disagree on balance.
- * MISSING_APPLICATION — Payment application data source is absent.
- */
-export type ReceivableTruthStatus =
-  | "CERTIFIED"
-  | "UNVERIFIED"
-  | "STALE"
-  | "SOURCE_CONFLICT"
-  | "MISSING_APPLICATION_DETAIL";
+// ── Re-export client-safe types from contract (server consumers get them here too) ──
+export type { ReceivableTruthStatus, ReceivableTruthState, CertifiedResult, UnverifiedResult, TruthGatedResult } from "./receivable-truth-contract";
+export { RECEIVABLE_NOT_CERTIFIED_REASON, UNVERIFIED_RECEIVABLE_LABEL, isTruthStateCertified } from "./receivable-truth-contract";
 
 // ── Per-tenant truth status registry ──────────────────────────────────────────
 
@@ -140,38 +123,5 @@ export function isReceivableDataCertified(
   return resolveReceivableTruthStatus(orgIdOrSlug) === "CERTIFIED";
 }
 
-// ── Semantic gate types ──────────────────────────────────────────────────────
-
-/**
- * DATA-TRUST-REMEDIATION-01B: Discriminated result envelope for AR data.
- *
- * Every consumer that returns receivable-derived data MUST use this
- * discriminated union. Bare `[]`, `0`, or empty objects are PROHIBITED —
- * they are indistinguishable from certified empty/zero.
- *
- * truthState is MANDATORY on every branch (certified AND uncertified).
- */
-export type ReceivableTruthState = "CERTIFIED" | "UNVERIFIED";
-
-export const RECEIVABLE_NOT_CERTIFIED_REASON = "RECEIVABLE_DATA_NOT_CERTIFIED" as const;
-
-export type CertifiedResult<T> = {
-  truthState: "CERTIFIED";
-  items: T;
-};
-
-export type UnverifiedResult<T> = {
-  truthState: "UNVERIFIED";
-  reason: string;
-  items: T;
-};
-
-export type TruthGatedResult<T> = CertifiedResult<T> | UnverifiedResult<T>;
-
-// ── UI copy for unverified state ──────────────────────────────────────────────
-
-/**
- * Non-accusatory label for unverified receivable data.
- * Use this instead of "Cartera vencida" when truth status != CERTIFIED.
- */
-export const UNVERIFIED_RECEIVABLE_LABEL = "Información de cartera en validación";
+// Types, constants, and discriminated result types are now in receivable-truth-contract.ts
+// and re-exported above. Server consumers continue importing from this file unchanged.

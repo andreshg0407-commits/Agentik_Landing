@@ -18,7 +18,7 @@ export default async function Cliente360Page({
   const { orgSlug, clienteId } = await params;
   const { organization } = await requireOrgAccess(orgSlug);
 
-  const data = await loadCliente360(organization.id, clienteId);
+  const data = await loadCliente360(organization.id, clienteId, orgSlug);
 
   if (!data) {
     return <NotFoundClient orgSlug={orgSlug} />;

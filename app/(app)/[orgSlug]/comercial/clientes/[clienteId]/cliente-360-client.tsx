@@ -17,10 +17,12 @@
  * Empty states per block — no false zeros.
  */
 
+import { useState } from "react";
 import { C, T, S, R, E } from "@/lib/ui/tokens";
 import { OperationalWorkspaceHeader } from "@/components/workspace/operational-workspace-header";
 import { EmptyOperationalState, WorkspaceSection } from "@/components/shell/operational-primitives";
 import type { Cliente360Data } from "@/lib/comercial/clientes/cliente-360-loader";
+import { kpiDisplayValue } from "@/lib/comercial/clientes/clientes-pure";
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -98,6 +100,7 @@ function receivableStatusVariant(status: string): StatusVariant {
     case "PARTIAL": return "pending";
     case "OVERDUE": return "critical";
     case "WRITTEN_OFF": case "CANCELLED": return "critical";
+    case "CREDIT": return "info";
     default: return "info";
   }
 }
@@ -107,6 +110,7 @@ function carteraStatusLabel(status: string): string {
     OPEN: "Pendiente", CLOSED: "Pagada", PAID: "Pagada",
     PARTIAL: "Pago parcial", OVERDUE: "Vencida",
     CANCELLED: "Anulada", WRITTEN_OFF: "Anulada",
+    CREDIT: "Saldo a favor",
   };
   return map[status] ?? status;
 }
@@ -114,13 +118,17 @@ function carteraStatusLabel(status: string): string {
 // ── Grid constants ────────────────────────────────────────────────────────────
 
 const ORDER_GRID = "60px 1fr 90px 90px 90px 80px";
-const RECEIVABLE_GRID = "1fr 100px 100px 100px 80px 80px";
+const RECEIVABLE_GRID = "100px 1fr 100px 100px 70px 90px";
 const HISTORY_GRID = "90px 1fr 100px 80px";
+const SALES_GRID = "80px 80px 1fr 90px 80px";
+const COLLECTIONS_GRID = "80px 80px 80px 1fr 90px 70px";
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function Cliente360Client({ orgSlug, data }: Props) {
-  const { profile, seller, crmQuotes, sagOrders, receivables, sales, collections, opportunities } = data;
+  const { profile, seller, crmQuotes, sagOrders, receivables, sales, collections, opportunities, salesHistory: sh } = data;
+  const [collVisibleCount, setCollVisibleCount] = useState(50);
+  const [salesVisibleCount, setSalesVisibleCount] = useState(50);
 
   // Determine last activity across all sources
   const allDates: number[] = [];
@@ -249,10 +257,23 @@ export function Cliente360Client({ orgSlug, data }: Props) {
         }}
       >
         <KpiCard label="Pedidos CRM" value={crmQuotes.items.length} />
-        <KpiCard label="Pedidos SAG" value={sagOrders.items.length} />
         <KpiCard
-          label="Facturas"
-          value={sales.items.filter(s => s.sagSourceType === "OFICIAL").length}
+          label="Pedidos SAG"
+          textValue={kpiDisplayValue(data.sagOrdersMeta)}
+          color={data.sagOrdersMeta.truthState === "SOURCE_DOWN" ? C.red : data.sagOrdersMeta.truthState === "IDENTITY_MISSING" ? C.inkGhost : undefined}
+        />
+        <KpiCard
+          label="Facturas oficiales"
+          textValue={kpiDisplayValue(data.invoicesMeta)}
+          color={data.invoicesMeta.truthState === "SOURCE_DOWN" ? C.red : data.invoicesMeta.truthState === "IDENTITY_MISSING" ? C.inkGhost : undefined}
+        />
+        <KpiCard
+          label="Remisiones"
+          textValue={data.salesHistory.truthState === "CERTIFIED" ? String(data.salesHistory.remissions.length) : data.salesHistory.truthState === "EMPTY_CERTIFIED" ? "0" : "\u2014"}
+        />
+        <KpiCard
+          label="Recaudos aplicados"
+          textValue={data.collectionsResult.truthState === "CERTIFIED" ? fmtCurrency(data.collectionsResult.netCollected ?? 0) : data.collectionsResult.truthState === "EMPTY_CERTIFIED" ? "$0" : "\u2014"}
         />
         <KpiCard
           label="Cartera vencida"
@@ -260,8 +281,8 @@ export function Cliente360Client({ orgSlug, data }: Props) {
           color={receivables.truthStatus === "CERTIFIED" && (receivables.totalOverdue ?? 0) > 0 ? C.red : undefined}
         />
         <KpiCard
-          label="Ultima compra"
-          textValue={fmtDaysAgo(lastActivity)}
+          label="Última venta"
+          textValue={data.salesHistory.lastSaleDate ? `${fmtDaysAgo(data.salesHistory.lastSaleDate)} (${data.salesHistory.lastSaleKind})` : "\u2014"}
         />
         <KpiCard
           label="Vendedor"
@@ -311,32 +332,50 @@ export function Cliente360Client({ orgSlug, data }: Props) {
 
       {/* ── Phase 6: Cartera ─────────────────────────────────────────────── */}
       <div id="cartera" style={{ marginTop: S[6] }}>
-        <WorkspaceSection title="Cartera" subtitle={receivables.state === "disponible" ? `${receivables.openCount} facturas abiertas` : undefined}>
+        <WorkspaceSection title="Cartera" subtitle={receivables.state === "disponible" ? `${receivables.openCount} documentos con saldo` : undefined}>
           {receivables.state === "no_disponible" ? (
-            <EmptyOperationalState message="Sin cartera registrada" detail="No hay facturas pendientes de cobro para este cliente." />
+            <EmptyOperationalState message="Sin cartera registrada" detail="No hay documentos con saldo pendiente para este cliente." />
           ) : (
             <>
+              {/* Source provenance */}
+              <div style={{
+                padding: `${S[2]}px ${S[3]}px`, borderRadius: R.sm, marginBottom: S[3],
+                background: `${C.green}11`, border: `1px solid ${C.green}33`,
+                display: "flex", alignItems: "center", gap: S[2],
+              }}>
+                <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.green }}>CERTIFICADO SAG</span>
+                <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
+                  Saldos certificados desde vw_agentik_cartera.
+                  {receivables.collectionContext.collectionLinkageState === "APPLIED_TO_CURRENT_DOCUMENTS"
+                    ? " Recaudos vinculados a documentos abiertos (vw_agentik_recaudos)."
+                    : receivables.collectionContext.collectionLinkageState === "CUSTOMER_HISTORY_ONLY"
+                    ? " Recaudos historicos del cliente (vw_agentik_recaudos) — sin vinculacion a documentos abiertos."
+                    : ""}
+                </span>
+              </div>
               {/* Cartera summary strip */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: S[3], marginBottom: S[4] }}>
-                <MiniStat label="Total cartera" value={receivables.totalBalance !== null ? fmtCurrency(receivables.totalBalance) : "\u2014"} />
-                <MiniStat label="Vencida" value={receivables.totalOverdue !== null ? fmtCurrency(receivables.totalOverdue) : "\u2014"} color={(receivables.totalOverdue ?? 0) > 0 ? C.red : undefined} />
-                <MiniStat label="Facturas abiertas" value={receivables.openCount !== null ? String(receivables.openCount) : "\u2014"} />
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: S[3], marginBottom: S[4] }}>
+                <MiniStat label="Cartera bruta" value={receivables.grossReceivable !== null ? fmtCurrency(receivables.grossReceivable) : "\u2014"} />
+                <MiniStat label="NC aplicadas" value={(receivables.creditBalance ?? 0) > 0 ? `-${fmtCurrency(receivables.creditBalance!)}` : "\u2014"} color={C.inkMid} />
+                <MiniStat label={receivables.collectionContext.collectionWindowLabel} value={receivables.collectedAmount != null ? fmtCurrency(receivables.collectedAmount) : "\u2014"} color={C.green} />
+                <MiniStat label="Saldo cobrable" value={receivables.totalBalance !== null ? fmtCurrency(receivables.totalBalance) : "\u2014"} />
+                <MiniStat label={receivables.agingCompleteness === "COMPLETE" ? "Vencida" : "Vencida (parcial)"} value={receivables.totalOverdue !== null ? fmtCurrency(receivables.totalOverdue) : "\u2014"} color={(receivables.totalOverdue ?? 0) > 0 ? C.red : undefined} />
               </div>
               {/* Receivables table */}
               <div className="ag-op-table" style={{ border: `1px solid ${C.line}`, borderRadius: R.sm, overflow: "hidden" }}>
                 <div className="ag-op-row" style={{ display: "grid", gridTemplateColumns: RECEIVABLE_GRID, gap: S[2], padding: `${S[2]}px ${S[4]}px`, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}` }}>
-                  {["Factura", "Monto", "Pagado", "Saldo", "Mora", "Estado"].map(h => (
+                  {["Tipo", "Documento", "Monto", "Saldo", "Mora", "Estado"].map(h => (
                     <span key={h} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkLight, textTransform: "uppercase" as const }}>{h}</span>
                   ))}
                 </div>
                 {receivables.items.map(r => (
-                  <div key={r.id} className={`ag-op-row${r.daysOverdue > 90 ? " ag-op-row--critical" : r.daysOverdue > 30 ? " ag-op-row--warning" : ""}`}
+                  <div key={r.id} className={`ag-op-row${(r.daysOverdue ?? 0) > 90 ? " ag-op-row--critical" : (r.daysOverdue ?? 0) > 30 ? " ag-op-row--warning" : ""}`}
                     style={{ display: "grid", gridTemplateColumns: RECEIVABLE_GRID, gap: S[2], padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}22`, alignItems: "center" }}>
+                    <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{r.documentType}</span>
                     <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{r.erpId ?? r.id.slice(0, 8)}</span>
                     <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink }}>{fmtCurrency(r.originalAmount)}</span>
-                    <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.green }}>{fmtCurrency(r.paidAmount)}</span>
                     <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: r.balanceDue > 0 ? C.red : C.ink }}>{fmtCurrency(r.balanceDue)}</span>
-                    <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: r.daysOverdue > 30 ? C.red : r.daysOverdue > 0 ? C.amber : C.inkGhost }}>{r.daysOverdue > 0 ? `${r.daysOverdue}d` : "\u2014"}</span>
+                    <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: r.daysOverdue == null ? C.inkGhost : r.daysOverdue > 30 ? C.red : r.daysOverdue > 0 ? C.amber : C.inkGhost }}>{r.daysOverdue != null && r.daysOverdue > 0 ? `${r.daysOverdue}d` : "\u2014"}</span>
                     <span className={`ag-op-status ag-op-status--${receivableStatusVariant(r.status)}`} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold }}>{carteraStatusLabel(r.status)}</span>
                   </div>
                 ))}
@@ -346,38 +385,169 @@ export function Cliente360Client({ orgSlug, data }: Props) {
         </WorkspaceSection>
       </div>
 
-      {/* ── Phase 7: Historial comercial ─────────────────────────────────── */}
+      {/* ── Phase 7: Ventas (F1/F2 separated) ────────────────────────────── */}
       <div style={{ marginTop: S[6] }}>
-        <WorkspaceSection title="Historial comercial" subtitle={sales.state === "disponible" ? `${sales.items.length} registros` : undefined}>
-          {sales.state === "no_disponible" && collections.state === "no_disponible" ? (
-            <EmptyOperationalState message="Sin historial comercial" detail="No hay facturas, remisiones ni cobros registrados para este cliente." />
+        <WorkspaceSection title="Ventas" subtitle={sh.truthState === "CERTIFIED" ? `${sh.officialInvoices.length + sh.remissions.length} documentos` : undefined}>
+          {/* STORAGE_LAG banner — source documents not yet synced */}
+          {data.salesCoverage.state === "STORAGE_LAG" && (
+            <div style={{
+              padding: `${S[2]}px ${S[3]}px`, borderRadius: R.sm, marginBottom: S[3],
+              background: `${C.amber}11`, border: `1px solid ${C.amber}33`,
+              display: "flex", alignItems: "center", gap: S[2],
+            }}>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.bold, color: C.amber }}>SINCRONIZACION PENDIENTE</span>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
+                {data.salesCoverage.sourceOnlyDocumentCount} documento(s) SAG pendiente(s) de sincronizacion.
+                {data.salesCoverage.pendingDocuments.length > 0 && ` Incluidos en runtime: ${data.salesCoverage.pendingDocuments.map(d => d.compositeKey).join(", ")}.`}
+              </span>
+            </div>
+          )}
+          {sh.truthState === "IDENTITY_MISSING" ? (
+            <EmptyOperationalState message="Cliente no vinculado con SAG" detail={sh.reason} />
+          ) : sh.truthState === "SOURCE_DOWN" ? (
+            <EmptyOperationalState message="No disponible" detail={sh.reason} />
+          ) : sh.truthState === "CROSS_SOURCE_MISMATCH" ? (
+            <EmptyOperationalState message="Historial de ventas no reconciliado" detail={sh.reason} />
+          ) : sh.truthState === "EMPTY_CERTIFIED" ? (
+            <EmptyOperationalState message="Sin ventas registradas" detail="No hay facturas ni remisiones registradas para este cliente." />
           ) : (
-            <div className="ag-op-table" style={{ border: `1px solid ${C.line}`, borderRadius: R.sm, overflow: "hidden" }}>
-              <div className="ag-op-row" style={{ display: "grid", gridTemplateColumns: HISTORY_GRID, gap: S[2], padding: `${S[2]}px ${S[4]}px`, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}` }}>
-                {["Fecha", "Tipo", "Valor", "Ref"].map(h => (
-                  <span key={h} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkLight, textTransform: "uppercase" as const }}>{h}</span>
-                ))}
+            <div style={{ display: "flex", flexDirection: "column" as const, gap: S[4] }}>
+              {/* Summary strip */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: S[3] }}>
+                <MiniStat label="Ventas netas" value={fmtCurrency(sh.officialNet + sh.remissionNet)} />
+                <MiniStat label={data.salesProfileLabels.invoiceLabel} value={sh.officialInvoices.length > 0 ? `${sh.officialInvoices.length} / ${fmtCurrency(sh.officialNet)}` : "0"} />
+                <MiniStat label={data.salesProfileLabels.remissionLabel} value={sh.remissions.length > 0 ? `${sh.remissions.length} / ${fmtCurrency(sh.remissionNet)}` : "0"} />
+                <MiniStat label="Notas crédito" value={sh.creditNotes.length > 0 ? String(sh.creditNotes.length) : "\u2014"} color={sh.creditNotes.length > 0 ? C.red : undefined} />
+                <MiniStat label="Última venta" value={sh.lastSaleDate ? `${fmtDate(sh.lastSaleDate)} (${sh.lastSaleKind})` : "\u2014"} />
               </div>
-              {/* Sales */}
-              {sales.items.slice(0, 30).map(s => (
-                <div key={s.id} className="ag-op-row" style={{ display: "grid", gridTemplateColumns: HISTORY_GRID, gap: S[2], padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}22`, alignItems: "center" }}>
-                  <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{fmtDate(s.saleDate)}</span>
-                  <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink }}>
-                    {s.sagSourceType === "OFICIAL" ? "Factura" : s.sagSourceType === "REMISION" ? "Remision" : s.sagSourceType ?? "Venta"}
-                  </span>
-                  <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink }}>{fmtCurrency(s.amount)}</span>
-                  <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{s.comprobanteCode ?? "\u2014"}</span>
+
+              {/* Sales table — all items combined */}
+              <div className="ag-op-table" style={{ border: `1px solid ${C.line}`, borderRadius: R.sm, overflow: "hidden" }}>
+                <div className="ag-op-row" style={{ display: "grid", gridTemplateColumns: SALES_GRID, gap: S[2], padding: `${S[2]}px ${S[4]}px`, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}` }}>
+                  {["Fecha", "Tipo", "Documento", "Valor", "Vendedor"].map(h => (
+                    <span key={h} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkLight, textTransform: "uppercase" as const }}>{h}</span>
+                  ))}
                 </div>
-              ))}
-              {/* Collections */}
-              {collections.items.slice(0, 20).map(c => (
-                <div key={c.id} className="ag-op-row" style={{ display: "grid", gridTemplateColumns: HISTORY_GRID, gap: S[2], padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}22`, alignItems: "center" }}>
-                  <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{fmtDate(c.collectionDate)}</span>
-                  <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.green }}>Cobro</span>
-                  <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.green }}>{fmtCurrency(c.amount)}</span>
-                  <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight }}>{c.documentNumber ?? "\u2014"}</span>
+                {(() => {
+                  const allSales = [...sh.officialInvoices, ...sh.remissions, ...sh.creditNotes]
+                    .sort((a, b) => (b.issueDate ?? "").localeCompare(a.issueDate ?? ""));
+                  return allSales.slice(0, salesVisibleCount).map(s => {
+                    const isNC = s.canonicalKind === "SALES_CREDIT_NOTE";
+                    const kindLabel = s.canonicalKind === "SALES_INVOICE" ? "Factura" : s.canonicalKind === "SALES_REMISSION" ? "Remisión" : "NC";
+                    return (
+                      <div key={s.id} className="ag-op-row" style={{ display: "grid", gridTemplateColumns: SALES_GRID, gap: S[2], padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}22`, alignItems: "center" }}>
+                        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{fmtDate(s.issueDate)}</span>
+                        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: isNC ? C.red : C.inkMid }}>{kindLabel} ({s.rawSourceCode ?? "\u2014"})</span>
+                        <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{s.rawDocumentNumber ?? "\u2014"}</span>
+                        <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: isNC ? C.red : C.ink }}>{isNC ? `-${fmtCurrency(Math.abs(s.grossAmount))}` : fmtCurrency(s.grossAmount)}</span>
+                        <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: s.sellerTruthState === "CERTIFIED" ? C.inkMid : C.inkGhost, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                          {s.sellerTruthState === "CERTIFIED" ? s.sellerName : s.sellerTruthState === "NOT_REPORTED_BY_SOURCE" ? "No informado por SAG" : "\u2014"}
+                        </span>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+
+              {/* Sales pagination footer */}
+              {(() => {
+                const total = sh.officialInvoices.length + sh.remissions.length + sh.creditNotes.length;
+                return total > 1 ? (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost }}>
+                      Mostrando {Math.min(salesVisibleCount, total)} de {total}
+                    </span>
+                    {total > salesVisibleCount && (
+                      <button onClick={() => setSalesVisibleCount(v => v + 50)} className="ag-action-ghost" style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.blueDark, background: "none", border: "none", cursor: "pointer" }}>
+                        Ver más
+                      </button>
+                    )}
+                  </div>
+                ) : null;
+              })()}
+
+              {/* Source provenance */}
+              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost }}>
+                Fuente: {sh.source}. {sh.reason}. {sh.excludedCount > 0 ? `${sh.excludedCount} documentos excluidos (recibos, anticipos).` : ""}
+              </div>
+            </div>
+          )}
+        </WorkspaceSection>
+      </div>
+
+      {/* ── Phase 7b: Recaudos (vw_agentik_recaudos) ─────────────────────── */}
+      <div style={{ marginTop: S[6] }}>
+        <WorkspaceSection title="Recaudos" subtitle={data.collectionsResult.truthState === "CERTIFIED" ? `${data.collectionsResult.receiptCount} recibos` : undefined}>
+          {data.collectionsResult.truthState === "IDENTITY_MISSING" ? (
+            <EmptyOperationalState message="Cliente no vinculado con SAG" detail={data.collectionsResult.reason} />
+          ) : data.collectionsResult.truthState === "SOURCE_DOWN" ? (
+            <EmptyOperationalState message="No disponible" detail={data.collectionsResult.reason} />
+          ) : data.collectionsResult.truthState === "PROFILE_UNRESOLVED" ? (
+            <EmptyOperationalState message="Perfil documental no configurado" detail={data.collectionsResult.reason} />
+          ) : data.collectionsResult.truthState === "EMPTY_CERTIFIED" ? (
+            <EmptyOperationalState message="Sin recaudos registrados" detail="No hay recaudos registrados para este cliente." />
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column" as const, gap: S[4] }}>
+              {/* Summary strip */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: S[3] }}>
+                <MiniStat label={data.collectionsResult.coverageState === "APPLICATIONS_ONLY_PARTIAL" ? "Recaudos aplicados visibles" : "Recaudo neto"} value={fmtCurrency(data.collectionsResult.netCollected ?? 0)} />
+                <MiniStat label="Recaudo bruto" value={fmtCurrency(data.collectionsResult.grossCollected ?? 0)} />
+                <MiniStat label="Reversiones" value={data.collectionsResult.certifiedReversals ? fmtCurrency(data.collectionsResult.certifiedReversals) : "\u2014"} />
+                <MiniStat label="Recibos" value={data.collectionsResult.receiptCount != null ? String(data.collectionsResult.receiptCount) : "\u2014"} />
+                <MiniStat label="No aplicado" value={data.collectionsResult.unappliedAmount ? fmtCurrency(data.collectionsResult.unappliedAmount) : "\u2014"} />
+                <MiniStat label="Último recaudo" value={data.collectionsResult.latestCollectionAt ? fmtDate(data.collectionsResult.latestCollectionAt) : "\u2014"} />
+              </div>
+
+              {/* Collections table */}
+              <div className="ag-op-table" style={{ border: `1px solid ${C.line}`, borderRadius: R.sm, overflow: "hidden" }}>
+                <div className="ag-op-row" style={{ display: "grid", gridTemplateColumns: COLLECTIONS_GRID, gap: S[2], padding: `${S[2]}px ${S[4]}px`, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}` }}>
+                  {["Fecha", "Tipo", "Recibo", "Aplicado a", "Valor", "Estado"].map(h => (
+                    <span key={h} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkLight, textTransform: "uppercase" as const }}>{h}</span>
+                  ))}
                 </div>
-              ))}
+                {data.collectionsResult.items.slice(0, collVisibleCount).map(c => {
+                  const tLabel = c.collectionTarget === "OFFICIAL_INVOICE" ? "Facturación"
+                    : c.collectionTarget === "REMISSION" ? "Remisión"
+                    : c.collectionTarget === "CUSTOMER_ADVANCE" ? "Anticipo"
+                    : "Sin clasificar";
+                  return (
+                    <div key={c.id} className="ag-op-row" style={{ display: "grid", gridTemplateColumns: COLLECTIONS_GRID, gap: S[2], padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}22`, alignItems: "center" }}>
+                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{fmtDate(c.date)}</span>
+                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{tLabel}</span>
+                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{c.receiptId}</span>
+                      <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: c.appliedToDocument ? C.ink : C.inkGhost, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{c.linkageLabel}</span>
+                      <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: c.amount < 0 ? C.red : C.ink }}>{fmtCurrency(c.amount)}</span>
+                      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: c.applicationLinkage === "APPLIED" ? C.green : c.applicationLinkage === "PARTIALLY_LINKED" ? C.amber : C.inkGhost }}>
+                        {c.applicationLinkage === "APPLIED" ? "Aplicado" : c.applicationLinkage === "PARTIALLY_LINKED" ? "Parcial" : c.applicationLinkage === "UNAPPLIED" ? "No aplicado" : "Histórico"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Pagination footer */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost }}>
+                  Mostrando {Math.min(collVisibleCount, data.collectionsResult.items.length)} de {data.collectionsResult.totalItems} aplicaciones
+                </span>
+                {data.collectionsResult.items.length > collVisibleCount && (
+                  <button onClick={() => setCollVisibleCount(v => v + 50)} className="ag-action-ghost" style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.blueDark, background: "none", border: "none", cursor: "pointer" }}>
+                    Ver más
+                  </button>
+                )}
+              </div>
+
+              {/* Source provenance */}
+              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost }}>
+                Fuente: {data.collectionsResult.source}. {data.collectionsResult.reason}. {data.collectionsResult.windowLabel ?? ""}
+              </div>
+
+              {/* Coverage disclaimer */}
+              {data.collectionsResult.coverageState === "APPLICATIONS_ONLY_PARTIAL" && (
+                <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.amber, marginTop: S[1] }}>
+                  Cobertura parcial: solo recaudos con aplicaciones documentales visibles. Recaudos sin vínculo documental pueden no aparecer.
+                </div>
+              )}
             </div>
           )}
         </WorkspaceSection>

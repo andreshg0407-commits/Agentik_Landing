@@ -166,6 +166,8 @@ export interface SizeInventorySnapshot {
 
 export interface OrderPolicyContext {
   tenantId: string;
+  /** Receivable truth state — passed from server. Missing = UNVERIFIED (fail-closed). */
+  receivableTruthState?: "CERTIFIED" | "UNVERIFIED";
   orderId: string;
   customerId: string;
   customerName: string;

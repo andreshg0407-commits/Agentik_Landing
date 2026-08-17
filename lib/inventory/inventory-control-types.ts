@@ -544,10 +544,40 @@ export interface NonCommercialPilRow {
   quantity: number;
 }
 
+/**
+ * Top-level balance source status for the snapshot.
+ * PIL_LEGACY:       Using internal PIL records, SAG comparison not available.
+ * SAG_OFFICIAL:     Using SAG vw_agentik_inventario as authority.
+ * SAG_UNAVAILABLE:  SAG was requested but query failed or returned no data.
+ *
+ * CASTILLITOS-COMMERCIAL-TRUTH-CLOSURE — Carril B.
+ */
+export type BalanceSourceStatus = "PIL_LEGACY" | "SAG_OFFICIAL" | "SAG_UNAVAILABLE";
+
 /** Complete inventory control center snapshot. */
 export interface InventoryControlSnapshot {
   orgSlug: string;
   computedAt: string;
+
+  /**
+   * Top-level balance source status. Indicates which authority governs
+   * the disponibleReal values across this snapshot.
+   * CASTILLITOS-COMMERCIAL-TRUTH-CLOSURE — Carril B.
+   */
+  balanceSourceStatus: BalanceSourceStatus;
+
+  /**
+   * Human-readable note explaining the balance source status.
+   * CASTILLITOS-COMMERCIAL-TRUTH-CLOSURE — Carril B.
+   */
+  balanceSourceNote: string;
+
+  /**
+   * ISO timestamp of the SAG balance snapshot, or null when PIL_LEGACY
+   * or SAG was unavailable.
+   * CASTILLITOS-COMMERCIAL-TRUTH-CLOSURE — Carril B.
+   */
+  sourceAsOf: string | null;
 
   /** All inventory items, enriched with criticality + production. */
   items: InventoryItem[];

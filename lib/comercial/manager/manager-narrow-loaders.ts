@@ -19,6 +19,7 @@
 
 import "server-only";
 import { prisma } from "@/lib/prisma";
+import { isReceivableDataCertified, warmTruthStatusCache } from "@/lib/comercial/frontline/receivable-truth-status";
 
 // ── Helpers (copied from control-comercial-loader.ts) ────────────────────────
 
@@ -224,6 +225,11 @@ export async function loadNarrowClientes(organizationId: string): Promise<Narrow
   const customerHighlights: NarrowClienteHighlight[] = [];
 
   try {
+    // DATA-TRUST-REMEDIATION-01 / Carril E: Gate receivable query behind certification.
+    // "Mayor cartera vencida" must not surface uncertified overdue data.
+    await warmTruthStatusCache();
+    const arCertified = isReceivableDataCertified(organizationId);
+
     // Run counts + aggregations in parallel
     const [activeCount, newCount, buyerGroups, riskGroups] = await Promise.all([
       db.customerProfile.count({ where: { organizationId, status: "ACTIVE" } }),
@@ -238,13 +244,16 @@ export async function loadNarrowClientes(organizationId: string): Promise<Narrow
         take: 3,
       }).catch(() => [] as any[]),
       // High risk: DB-level groupBy on overdue receivables
-      db.customerReceivable.groupBy({
-        by: ["customerId"],
-        where: { organizationId, balanceDue: { gt: 0 }, daysOverdue: { gt: 0 }, customerId: { not: null } },
-        _sum: { balanceDue: true },
-        orderBy: { _sum: { balanceDue: "desc" } },
-        take: 3,
-      }).catch(() => [] as any[]),
+      // Suppressed entirely when receivable data is not certified (fail-closed).
+      arCertified
+        ? db.customerReceivable.groupBy({
+            by: ["customerId"],
+            where: { organizationId, balanceDue: { gt: 0 }, daysOverdue: { gt: 0 }, customerId: { not: null } },
+            _sum: { balanceDue: true },
+            orderBy: { _sum: { balanceDue: "desc" } },
+            take: 3,
+          }).catch(() => [] as any[])
+        : ([] as any[]),
     ]);
 
     clientesActivos = activeCount;

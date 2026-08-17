@@ -231,3 +231,64 @@ export function buildShadowComparison(
     },
   };
 }
+
+// ── Shadow Comparison Convenience (CASTILLITOS-COMMERCIAL-TRUTH-CLOSURE — Carril B) ──
+
+/**
+ * Convenience function that wires SAG + PIL loading and calls buildShadowComparison().
+ *
+ * Loads SAG balances via the official balance loader, loads PIL data from Prisma,
+ * then runs the shadow comparison. Callable from a future API route or diagnostic
+ * script without additional wiring.
+ *
+ * Requires:
+ *   - loadSagOfficialInventoryBalances (sag-official-balance-loader.ts)
+ *   - Prisma for PIL data
+ *
+ * Note: This function uses dynamic imports for server-only dependencies (Prisma,
+ * sag-official-balance-loader) so that the adapter file remains a pure adapter
+ * importable from any context. Callers MUST ensure they run in a server context.
+ */
+export async function getShadowComparisonForOrg(
+  organizationId: string,
+): Promise<ShadowComparisonResult> {
+  // Dynamic imports — sag-official-balance-loader is server-only
+  const { loadSagOfficialInventoryBalances } = await import("./sag-official-balance-loader");
+  const { prisma } = await import("@/lib/prisma");
+
+  // 1. Load SAG official balances
+  const sagResult = await loadSagOfficialInventoryBalances({ organizationId });
+
+  // 2. Load PIL data — per warehouse × reference, with positive-only and net quantities
+  let pilRecords: PilRecord[] = [];
+  try {
+    const rows: any[] = await (prisma as any).$queryRawUnsafe(`
+      SELECT pe."sku" AS "referenceCode",
+             pil."warehouseId" AS "warehousePk",
+             SUM(GREATEST(0, pil."quantity"))::float AS "positiveOnly",
+             SUM(pil."quantity")::float AS "net"
+      FROM "ProductInventoryLevel" pil
+      JOIN "ProductEntity" pe ON pe."id" = pil."productId"
+        AND pe."organizationId" = pil."organizationId"
+      WHERE pe."organizationId" = $1
+      GROUP BY pe."sku", pil."warehouseId"
+    `, organizationId);
+
+    pilRecords = rows.map((r: any) => ({
+      referenceCode: r.referenceCode as string,
+      warehousePk: r.warehousePk as string,
+      positiveOnly: Number(r.positiveOnly) || 0,
+      net: Number(r.net) || 0,
+    }));
+  } catch {
+    // PIL query may fail — comparison proceeds with empty PIL
+  }
+
+  // 3. Run shadow comparison
+  return buildShadowComparison(
+    sagResult.balances,
+    pilRecords,
+    organizationId,
+    sagResult.sourcePeriod,
+  );
+}

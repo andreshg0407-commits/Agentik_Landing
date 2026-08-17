@@ -342,12 +342,14 @@ export function CommercialProductDrawer({ open, onClose, product, children }: Pr
       {/* ── Inventario B01 (04A6A: certified SAG fields) ──────────── */}
       <Section title={"Inventario B01 \u2014 Bodega Principal"}>
         <InfoGrid>
+          {/* 04A6A: Existencia = on-hand from vw_agentik_inventario */}
           <InfoField
             label="Existencia B01"
             value={product.totalStock != null && product.totalStock > 0
               ? fmtNum(product.totalStock)
               : "\u2014"}
           />
+          {/* 04A6A: Reservado SAG = pedidos pendientes from vw_agentik_inventario */}
           <InfoField
             label="Reservado SAG"
             value={product.reservado != null && product.reservado > 0
