@@ -39,10 +39,12 @@ import {
   resolveSagOrdersKpi,
   resolveInvoiceKpi,
   classifySalesHistory,
+  classifyCollections,
 } from "./clientes-pure";
 import type {
   AgingCompleteness, CollectionContext, KpiSourceMeta,
   SalesHistoryResult, ClassifiedSaleItem, SalesProfileLabels,
+  CustomerCollectionsResult,
 } from "./clientes-pure";
 import { resolveCanonicalDocumentKind, getSalesProfileLabels } from "./document-source-profiles";
 import { resolveOrgSourceProfileId } from "./document-source-profiles";
@@ -183,6 +185,8 @@ export interface Cliente360Data {
   salesHistory: SalesHistoryResult;
   /** Profile-specific section labels (e.g. "Facturación oficial (F1)") */
   salesProfileLabels: SalesProfileLabels;
+  /** Classified collections from vw_agentik_recaudos — F1/F2 separated */
+  collectionsResult: CustomerCollectionsResult;
   loadedAt: string;
 }
 
@@ -380,7 +384,6 @@ export async function loadCliente360(
               saleDate: true, productLine: true, sagSourceType: true, sellerSlug: true,
             },
             orderBy: { saleDate: "desc" },
-            take: 50,
           });
           queryOk = true;
         } catch {
@@ -441,13 +444,16 @@ export async function loadCliente360(
     collectionLinkageState: "UNVERIFIED",
   };
 
+  let recaudosResult: Awaited<ReturnType<typeof fetchCertifiedCustomerRecaudos>> | null = null;
+
   if (p.sagTerceroId != null && p.sagTerceroId > 0) {
     // Fetch cartera and recaudos in parallel from SAG
     const tAr = performance.now();
-    const [arResult, recaudosResult] = await Promise.all([
+    const [arResult, recaudosResultLocal] = await Promise.all([
       fetchCustomerArWithStatus(p.sagTerceroId),
       fetchCertifiedCustomerRecaudos(p.sagTerceroId).catch(() => null),
     ]);
+    recaudosResult = recaudosResultLocal;
     timing.canonicalAr = ms(tAr);
 
     // Recaudos: totalRecaudado from vw_agentik_recaudos (actual cash received — NO date filter)
@@ -575,6 +581,15 @@ export async function loadCliente360(
 
   const salesProfileLabels = getSalesProfileLabels(sourceProfileId);
 
+  // Build certified collections result from vw_agentik_recaudos (canonical authority)
+  const collectionsResult = classifyCollections(
+    recaudosResult?.ok ? recaudosResult.snapshot.applications : [],
+    !!recaudosResult?.ok,
+    p.sagTerceroId != null && p.sagTerceroId > 0,
+    hasProfile ? sourceProfileId : null,
+    recaudosResult?.ok ? recaudosResult.snapshot.asOf : null,
+  );
+
   const collectionItems: Cliente360CollectionRecord[] = rawCollections.map((c: any) => ({
     id: c.id,
     documentNumber: c.documentNumber,
@@ -629,6 +644,7 @@ export async function loadCliente360(
     invoicesMeta,
     salesHistory,
     salesProfileLabels,
+    collectionsResult,
     loadedAt: new Date().toISOString(),
   };
 

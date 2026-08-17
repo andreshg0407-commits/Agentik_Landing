@@ -7,7 +7,8 @@
  * Production code and tests import from this same file.
  */
 
-import { resolveCanonicalDocumentKind } from "./document-source-profiles";
+import { resolveCanonicalDocumentKind, resolveCollectionTarget, isDocumentCreditNote } from "./document-source-profiles";
+import type { CollectionTarget } from "./document-source-profiles";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -538,6 +539,241 @@ function isOfficialCreditNote(rawSourceCode: string | null): boolean {
   // D2 and xD (2D-6D) are remission credit notes
   if (prefix === "D2" || /^[2-6]D$/.test(prefix)) return false;
   return true;
+}
+
+// ── Customer collections (recaudos) ──────────────────────────────────────────
+
+export type CollectionsTruthState =
+  | "CERTIFIED"
+  | "EMPTY_CERTIFIED"
+  | "SOURCE_DOWN"
+  | "IDENTITY_MISSING"
+  | "PROFILE_UNRESOLVED";
+
+export type RecaudoLinkageState =
+  | "APPLIED"
+  | "PARTIALLY_LINKED"
+  | "HISTORY_ONLY"
+  | "UNVERIFIED";
+
+export interface CustomerCollectionItem {
+  id: string;
+  date: string | null;
+  receiptNumber: string;
+  rawSourceCode: string;
+  amount: number;
+  appliedToDocument: string | null;
+  collectionTarget: CollectionTarget;
+  linkageLabel: string;
+}
+
+export interface CollectionBucket {
+  amount: number;
+  count: number;
+}
+
+export interface CustomerCollectionsResult {
+  truthState: CollectionsTruthState;
+  source: "vw_agentik_recaudos";
+  asOf: string | null;
+  windowLabel: string | null;
+  linkageState: RecaudoLinkageState;
+  totalCollected: number | null;
+  receiptCount: number | null;
+  officialInvoiceCollections: CollectionBucket | null;
+  remissionCollections: CollectionBucket | null;
+  advances: CollectionBucket | null;
+  unclassified: CollectionBucket | null;
+  latestCollectionAt: string | null;
+  items: CustomerCollectionItem[];
+  totalItems: number;
+  reason: string;
+}
+
+/**
+ * Classify collection applications from vw_agentik_recaudos into the
+ * CustomerCollectionsResult contract.
+ *
+ * Each application from CertifiedCollectionApplication is mapped to:
+ * - A CollectionTarget based on the receipt document prefix via the profile
+ * - A linkage label based on DOCUMENTO_RELACIONADO presence
+ *
+ * Credit notes (SALES_CREDIT_NOTE by canonical kind) are EXCLUDED from
+ * collections — they belong in the sales domain.
+ */
+export function classifyCollections(
+  applications: Array<{
+    idRecaudo: number;
+    fechaRecaudo: Date;
+    documentoRelacionado: string;
+    valorRecaudado: number;
+    montoNoAplicado: number;
+    banco: string;
+  }>,
+  querySucceeded: boolean,
+  hasSagIdentity: boolean,
+  sourceProfileId: string | null,
+  queryAsOf: Date | null,
+): CustomerCollectionsResult {
+  const base = {
+    source: "vw_agentik_recaudos" as const,
+    asOf: queryAsOf?.toISOString() ?? null,
+  };
+
+  if (!hasSagIdentity) {
+    return {
+      ...base, truthState: "IDENTITY_MISSING",
+      windowLabel: null,
+      linkageState: "UNVERIFIED",
+      totalCollected: null, receiptCount: null,
+      officialInvoiceCollections: null, remissionCollections: null,
+      advances: null, unclassified: null,
+      latestCollectionAt: null, items: [], totalItems: 0,
+      reason: "Cliente sin identidad SAG — no se puede consultar recaudos",
+    };
+  }
+
+  if (!querySucceeded) {
+    return {
+      ...base, truthState: "SOURCE_DOWN",
+      windowLabel: null,
+      linkageState: "UNVERIFIED",
+      totalCollected: null, receiptCount: null,
+      officialInvoiceCollections: null, remissionCollections: null,
+      advances: null, unclassified: null,
+      latestCollectionAt: null, items: [], totalItems: 0,
+      reason: "Consulta de recaudos fallida",
+    };
+  }
+
+  if (!sourceProfileId) {
+    return {
+      ...base, truthState: "PROFILE_UNRESOLVED",
+      windowLabel: null,
+      linkageState: "UNVERIFIED",
+      totalCollected: null, receiptCount: null,
+      officialInvoiceCollections: null, remissionCollections: null,
+      advances: null, unclassified: null,
+      latestCollectionAt: null, items: [], totalItems: 0,
+      reason: "Perfil documental no configurado para esta organización",
+    };
+  }
+
+  // Filter out credit notes — they belong in sales, not collections
+  const validApps = applications.filter(a => {
+    // If the document prefix resolves to SALES_CREDIT_NOTE, exclude it
+    if (a.documentoRelacionado) {
+      if (isDocumentCreditNote(sourceProfileId, a.documentoRelacionado)) return false;
+    }
+    // Only include positive values (actual payments)
+    return a.valorRecaudado > 0;
+  });
+
+  if (validApps.length === 0) {
+    return {
+      ...base, truthState: "EMPTY_CERTIFIED",
+      windowLabel: "Sin recaudos registrados",
+      linkageState: "HISTORY_ONLY",
+      totalCollected: 0, receiptCount: 0,
+      officialInvoiceCollections: { amount: 0, count: 0 },
+      remissionCollections: { amount: 0, count: 0 },
+      advances: { amount: 0, count: 0 },
+      unclassified: { amount: 0, count: 0 },
+      latestCollectionAt: null, items: [], totalItems: 0,
+      reason: "0 recaudos, 0 anticipos",
+    };
+  }
+
+  const officialBucket: CollectionBucket = { amount: 0, count: 0 };
+  const remissionBucket: CollectionBucket = { amount: 0, count: 0 };
+  const advanceBucket: CollectionBucket = { amount: 0, count: 0 };
+  const unclassifiedBucket: CollectionBucket = { amount: 0, count: 0 };
+
+  let totalCollected = 0;
+  let latestDate: Date | null = null;
+  let linkedCount = 0;
+
+  const items: CustomerCollectionItem[] = validApps.map((a, i) => {
+    const docRef = a.documentoRelacionado || "";
+    const receiptPrefix = docRef.slice(0, 2).toUpperCase();
+
+    // Resolve collection target from profile
+    const target = resolveCollectionTarget(sourceProfileId, receiptPrefix) ?? "UNCLASSIFIED";
+
+    // Determine linkage
+    const hasDocLink = docRef.length > 0;
+    if (hasDocLink) linkedCount++;
+    const linkageLabel = hasDocLink
+      ? `Aplicado a ${docRef}`
+      : "Sin vínculo documental certificado";
+
+    totalCollected += a.valorRecaudado;
+
+    // Bucket assignment
+    switch (target) {
+      case "OFFICIAL_INVOICE":
+        officialBucket.amount += a.valorRecaudado;
+        officialBucket.count++;
+        break;
+      case "REMISSION":
+        remissionBucket.amount += a.valorRecaudado;
+        remissionBucket.count++;
+        break;
+      case "CUSTOMER_ADVANCE":
+        advanceBucket.amount += a.valorRecaudado;
+        advanceBucket.count++;
+        break;
+      default:
+        unclassifiedBucket.amount += a.valorRecaudado;
+        unclassifiedBucket.count++;
+        break;
+    }
+
+    if (!latestDate || a.fechaRecaudo > latestDate) {
+      latestDate = a.fechaRecaudo;
+    }
+
+    return {
+      id: `rec-${a.idRecaudo}-${i}`,
+      date: a.fechaRecaudo.toISOString(),
+      receiptNumber: `${a.idRecaudo}`,
+      rawSourceCode: receiptPrefix || "\u2014",
+      amount: a.valorRecaudado,
+      appliedToDocument: hasDocLink ? docRef : null,
+      collectionTarget: target,
+      linkageLabel,
+    };
+  });
+
+  // Determine linkage state
+  let linkageState: RecaudoLinkageState;
+  if (linkedCount === items.length && linkedCount > 0) {
+    linkageState = "APPLIED";
+  } else if (linkedCount > 0) {
+    linkageState = "PARTIALLY_LINKED";
+  } else {
+    linkageState = "HISTORY_ONLY";
+  }
+
+  // Distinct receipt IDs for count
+  const distinctReceipts = new Set(validApps.map(a => a.idRecaudo));
+
+  return {
+    ...base,
+    truthState: "CERTIFIED",
+    windowLabel: `${distinctReceipts.size} recibos / ${items.length} aplicaciones`,
+    linkageState,
+    totalCollected,
+    receiptCount: distinctReceipts.size,
+    officialInvoiceCollections: officialBucket,
+    remissionCollections: remissionBucket,
+    advances: advanceBucket,
+    unclassified: unclassifiedBucket,
+    latestCollectionAt: latestDate ? (latestDate as Date).toISOString() : null,
+    items,
+    totalItems: items.length,
+    reason: `${officialBucket.count} facturación, ${remissionBucket.count} remisiones, ${advanceBucket.count} anticipos, ${unclassifiedBucket.count} sin clasificar`,
+  };
 }
 
 // ── carteraTrafficLight ──────────────────────────────────────────────────────

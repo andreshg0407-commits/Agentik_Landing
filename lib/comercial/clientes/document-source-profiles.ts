@@ -15,6 +15,14 @@
  * Pure module — NO server-only, NO Prisma, NO infrastructure dependencies.
  */
 
+// ── Collection target classification ────────────────────────────────────────
+
+export type CollectionTarget =
+  | "OFFICIAL_INVOICE"
+  | "REMISSION"
+  | "CUSTOMER_ADVANCE"
+  | "UNCLASSIFIED";
+
 // ── Canonical document kinds ─────────────────────────────────────────────────
 
 export type CanonicalDocumentKind =
@@ -64,6 +72,12 @@ export interface DocumentSourceProfile {
    * Used when prefix is not in prefixMap.
    */
   tipoDocumentoMap?: Record<string, CanonicalDocumentKind>;
+  /**
+   * Map from receipt/collection prefix to the commercial world it applies to.
+   * Used to classify recaudos from vw_agentik_recaudos by their target domain.
+   * Only CUSTOMER_RECEIPT and CUSTOMER_ADVANCE prefixes should be here.
+   */
+  collectionTargetMap?: Record<string, CollectionTarget>;
 }
 
 // ── Castillitos profile ──────────────────────────────────────────────────────
@@ -130,6 +144,13 @@ export const CASTILLITOS_PROFILE: DocumentSourceProfile = {
     "Nota Crédito":  "SALES_CREDIT_NOTE",
     "Nota crédito":  "SALES_CREDIT_NOTE",
   },
+  collectionTargetMap: {
+    "R1": "OFFICIAL_INVOICE",
+    "R2": "REMISSION",
+    "RS": "OFFICIAL_INVOICE",
+    "AN": "CUSTOMER_ADVANCE",
+    "A1": "CUSTOMER_ADVANCE",
+  },
 };
 
 // ── Ludisam profile ──────────────────────────────────────────────────────────
@@ -155,6 +176,10 @@ export const LUDISAM_PROFILE: DocumentSourceProfile = {
     "Factura":       "SALES_INVOICE",
     "Nota Crédito":  "SALES_CREDIT_NOTE",
     "Nota crédito":  "SALES_CREDIT_NOTE",
+  },
+  collectionTargetMap: {
+    "2R": "REMISSION",
+    "1R": "OFFICIAL_INVOICE",
   },
 };
 
@@ -188,6 +213,31 @@ export function getSalesProfileLabels(profileId: string): {
     remissionLabel: profile.salesLabels?.remissionLabel ?? "Remisiones",
     profileName: profile.name,
   };
+}
+
+/**
+ * Resolve the collection target for a receipt document prefix.
+ * Uses the profile's collectionTargetMap. UNCLASSIFIED if prefix is unknown.
+ * Returns null for unknown profiles (caller should treat as PROFILE_UNRESOLVED).
+ */
+export function resolveCollectionTarget(
+  profileId: string,
+  documentPrefix: string,
+): CollectionTarget | null {
+  const profile = getDocumentSourceProfile(profileId);
+  if (!profile) return null; // unknown profile
+  if (!profile.collectionTargetMap) return "UNCLASSIFIED";
+  const prefix = documentPrefix.slice(0, 2).toUpperCase();
+  return profile.collectionTargetMap[prefix] ?? "UNCLASSIFIED";
+}
+
+/**
+ * Determine if a document prefix represents a credit note (NC) — never a recaudo.
+ * Uses the canonical document kind system: SALES_CREDIT_NOTE is not a collection.
+ */
+export function isDocumentCreditNote(profileId: string, documentPrefix: string): boolean {
+  const result = resolveCanonicalDocumentKind(profileId, { documento: documentPrefix, tipoDocumento: "" });
+  return result.kind === "SALES_CREDIT_NOTE";
 }
 
 // ── Resolver ─────────────────────────────────────────────────────────────────

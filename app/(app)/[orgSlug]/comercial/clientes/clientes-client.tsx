@@ -25,7 +25,7 @@ import {
   computeClientScore as computeClientScorePure,
   kpiDisplayValue,
 } from "@/lib/comercial/clientes/clientes-pure";
-import type { ClassifiedSaleItem } from "@/lib/comercial/clientes/clientes-pure";
+import type { ClassifiedSaleItem, CustomerCollectionItem } from "@/lib/comercial/clientes/clientes-pure";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -64,12 +64,13 @@ const TABLE_GRID = "1.2fr 90px 90px 110px 75px 80px 70px 60px 40px";
 
 // ── Drawer tab type ──────────────────────────────────────────────────────────
 
-type DrawerTab = "perfil" | "pedidos" | "ventas" | "cartera" | "inteligencia" | "timeline";
+type DrawerTab = "perfil" | "pedidos" | "ventas" | "recaudos" | "cartera" | "inteligencia" | "timeline";
 
 const DRAWER_TABS: { key: DrawerTab; label: string }[] = [
   { key: "perfil",       label: "PERFIL" },
   { key: "pedidos",      label: "PEDIDOS" },
   { key: "ventas",       label: "VENTAS" },
+  { key: "recaudos",     label: "RECAUDOS" },
   { key: "cartera",      label: "CARTERA" },
   { key: "inteligencia", label: "INTELIGENCIA" },
   { key: "timeline",     label: "LINEA" },
@@ -561,6 +562,7 @@ function DrawerContent({
         <DrawerKpi label="Pedidos SAG" textValue={kpiDisplayValue(data.sagOrdersMeta)} color={data.sagOrdersMeta.truthState === "SOURCE_DOWN" ? C.red : data.sagOrdersMeta.truthState === "IDENTITY_MISSING" ? C.inkGhost : undefined} />
         <DrawerKpi label="Facturas oficiales" textValue={kpiDisplayValue(data.invoicesMeta)} color={data.invoicesMeta.truthState === "SOURCE_DOWN" ? C.red : data.invoicesMeta.truthState === "IDENTITY_MISSING" ? C.inkGhost : undefined} />
         <DrawerKpi label="Remisiones" textValue={data.salesHistory.truthState === "CERTIFIED" || data.salesHistory.truthState === "EMPTY_CERTIFIED" ? String(data.salesHistory.remissions.length) : "\u2014"} />
+        <DrawerKpi label="Recaudos" textValue={data.collectionsResult.truthState === "CERTIFIED" ? fmtCurrency(data.collectionsResult.totalCollected ?? 0) : data.collectionsResult.truthState === "EMPTY_CERTIFIED" ? "$0" : "\u2014"} />
         <DrawerKpi label="Saldo cartera" textValue={receivables.truthStatus !== "CERTIFIED" ? "No verificado" : receivables.totalBalance !== null && receivables.totalBalance > 0 ? fmtCurrency(receivables.totalBalance) : "$0"} color={receivables.truthStatus !== "CERTIFIED" ? C.inkGhost : (receivables.totalOverdue ?? 0) > 0 ? C.red : undefined} />
         <DrawerKpi label="Ultima venta" textValue={data.salesHistory.lastSaleDate ? `${fmtDaysAgo(data.salesHistory.lastSaleDate)} (${data.salesHistory.lastSaleKind})` : "\u2014"} />
         <DrawerKpi label="Salud cartera" textValue={carteraTrafficLight(receivables).label} color={carteraTrafficLight(receivables).color} />
@@ -576,6 +578,7 @@ function DrawerContent({
           let badge: number | null = null;
           if (tab.key === "pedidos") badge = totalOrders || null;
           if (tab.key === "ventas") badge = (data.salesHistory.officialInvoices.length + data.salesHistory.remissions.length) || null;
+          if (tab.key === "recaudos" && data.collectionsResult.truthState === "CERTIFIED") badge = data.collectionsResult.receiptCount;
           if (tab.key === "cartera" && (receivables.openCount ?? 0) > 0) badge = receivables.openCount;
           if (tab.key === "inteligencia" && opportunities.length > 0) badge = opportunities.length;
 
@@ -610,6 +613,7 @@ function DrawerContent({
       {activeTab === "perfil" && <TabPerfil profile={profile} seller={seller} />}
       {activeTab === "pedidos" && <TabPedidos crmQuotes={crmQuotes} sagOrders={sagOrders} />}
       {activeTab === "ventas" && <TabVentas data={data} />}
+      {activeTab === "recaudos" && <TabRecaudos data={data} />}
       {activeTab === "cartera" && <TabCartera receivables={receivables} />}
       {activeTab === "inteligencia" && <TabInteligencia data={data} />}
       {activeTab === "timeline" && <TabTimeline data={data} />}
@@ -808,6 +812,73 @@ function SalesTable({ items, grid, isCreditNote }: { items: ClassifiedSaleItem[]
           <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{s.seller ?? "\u2014"}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+// ── Tab: RECAUDOS ────────────────────────────────────────────────────────────
+
+function TabRecaudos({ data }: { data: Cliente360Data }) {
+  const cr = data.collectionsResult;
+
+  if (cr.truthState === "IDENTITY_MISSING") {
+    return <EmptyOperationalState message="Cliente no vinculado con SAG" detail={cr.reason} />;
+  }
+  if (cr.truthState === "SOURCE_DOWN") {
+    return <EmptyOperationalState message="No disponible" detail={cr.reason} />;
+  }
+  if (cr.truthState === "PROFILE_UNRESOLVED") {
+    return <EmptyOperationalState message="Perfil documental no configurado" detail={cr.reason} />;
+  }
+  if (cr.truthState === "EMPTY_CERTIFIED") {
+    return <EmptyOperationalState message="Sin recaudos registrados" detail="No hay recaudos registrados para este cliente en vw_agentik_recaudos." />;
+  }
+
+  const COLL_GRID = "80px 80px 80px 1fr 80px 70px";
+  const targetLabel = (t: string) => {
+    switch (t) {
+      case "OFFICIAL_INVOICE": return "Facturación";
+      case "REMISSION": return "Remisión";
+      case "CUSTOMER_ADVANCE": return "Anticipo";
+      default: return "Sin clasificar";
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column" as const, gap: S[4] }}>
+      {/* Summary strip */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: S[2] }}>
+        <MiniStat label="Total recaudado" value={fmtCurrency(cr.totalCollected ?? 0)} />
+        <MiniStat label="Recibos" value={cr.receiptCount != null ? String(cr.receiptCount) : "\u2014"} />
+        <MiniStat label="Facturación oficial" value={cr.officialInvoiceCollections ? `${cr.officialInvoiceCollections.count} / ${fmtCurrency(cr.officialInvoiceCollections.amount)}` : "\u2014"} />
+        <MiniStat label="Remisiones" value={cr.remissionCollections ? `${cr.remissionCollections.count} / ${fmtCurrency(cr.remissionCollections.amount)}` : "\u2014"} />
+        <MiniStat label="Anticipos" value={cr.advances && cr.advances.count > 0 ? `${cr.advances.count} / ${fmtCurrency(cr.advances.amount)}` : "\u2014"} />
+        <MiniStat label="Último recaudo" value={cr.latestCollectionAt ? fmtDate(cr.latestCollectionAt) : "\u2014"} />
+      </div>
+
+      {/* Collections table */}
+      <div className="ag-op-table" style={{ border: `1px solid ${C.line}`, borderRadius: R.sm, overflow: "hidden" }}>
+        <div className="ag-op-row" style={{ display: "grid", gridTemplateColumns: COLL_GRID, gap: S[2], padding: `${S[2]}px ${S[3]}px`, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}` }}>
+          {["Fecha", "Tipo", "Recibo", "Aplicado a", "Valor", "Estado"].map(h => (
+            <span key={h} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkLight, textTransform: "uppercase" as const }}>{h}</span>
+          ))}
+        </div>
+        {cr.items.map(c => (
+          <div key={c.id} className="ag-op-row" style={{ display: "grid", gridTemplateColumns: COLL_GRID, gap: S[2], padding: `${S[2]}px ${S[3]}px`, borderBottom: `1px solid ${C.line}22`, alignItems: "center" }}>
+            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{fmtDate(c.date)}</span>
+            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{targetLabel(c.collectionTarget)}</span>
+            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>{c.receiptNumber}</span>
+            <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: c.appliedToDocument ? C.ink : C.inkGhost, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{c.linkageLabel}</span>
+            <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink }}>{fmtCurrency(c.amount)}</span>
+            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: c.appliedToDocument ? C.green : C.inkGhost }}>{c.appliedToDocument ? "Aplicado" : "Histórico"}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Source provenance */}
+      <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost, marginTop: S[2] }}>
+        Fuente: {cr.source}. {cr.reason}. {cr.windowLabel ?? ""}
+      </div>
     </div>
   );
 }
