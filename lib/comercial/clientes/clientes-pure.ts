@@ -369,6 +369,8 @@ export type SalesHistoryTruthState =
   | "SOURCE_DOWN"
   | "IDENTITY_MISSING"
   | "PROFILE_MISSING"
+  | "SOURCE_INCOMPLETE"
+  | "CROSS_SOURCE_MISMATCH"
   | "PARTIAL"
   | "UNVERIFIED";
 
@@ -431,6 +433,8 @@ export function classifySalesHistory(
   hasSagIdentity: boolean,
   hasProfile: boolean,
   queryAsOf: Date | null,
+  /** Document codes from cartera (e.g. ["FE-100", "F2-8653"]) for cross-source check */
+  carteraDocumentCodes?: string[],
 ): SalesHistoryResult {
   const base = {
     source: "SaleRecord (vw_agentik_ventas)",
@@ -512,13 +516,34 @@ export function classifySalesHistory(
   const lastSale = salesDates[0] ?? null;
 
   const total = officialInvoices.length + remissions.length;
-  const truthState: SalesHistoryTruthState = total === 0 && creditNotes.length === 0
-    ? "EMPTY_CERTIFIED" : "CERTIFIED";
+
+  // Cross-source mismatch: cartera has invoice/remission docs but sales returned none
+  const carteraSalesDocs = (carteraDocumentCodes ?? []).filter(doc => {
+    const kind = doc.slice(0, 2).toUpperCase();
+    // FE/FD/FC/FG/FA/FW/F1/F2/F3 are sales-related documents
+    return /^(FE|FD|FC|FG|FA|FW|F1|F2|F3|V[1-6C])$/.test(kind);
+  });
+  const hasCrossSourceMismatch = total === 0 && carteraSalesDocs.length > 0;
+
+  let truthState: SalesHistoryTruthState;
+  if (hasCrossSourceMismatch) {
+    truthState = "CROSS_SOURCE_MISMATCH";
+  } else if (total === 0 && creditNotes.length === 0) {
+    truthState = "EMPTY_CERTIFIED";
+  } else {
+    truthState = "CERTIFIED";
+  }
+
+  const windowLabel = hasCrossSourceMismatch
+    ? "Historial de ventas no reconciliado"
+    : total > 0 ? "Histórico disponible" : "Sin ventas registradas";
 
   return {
     ...base, truthState,
-    reason: `${officialInvoices.length} facturas, ${remissions.length} remisiones, ${creditNotes.length} NC, ${excludedCount} excluidos`,
-    windowLabel: total > 0 ? "Histórico disponible" : "Sin ventas registradas",
+    reason: hasCrossSourceMismatch
+      ? `0 ventas almacenadas, ${carteraSalesDocs.length} documentos de venta en cartera — posible gap de sincronización`
+      : `${officialInvoices.length} facturas, ${remissions.length} remisiones, ${creditNotes.length} NC, ${excludedCount} excluidos`,
+    windowLabel,
     officialInvoices, remissions, creditNotes, unclassifiedDocuments, excludedCount,
     officialGross, officialCreditTotal, officialNet,
     remissionGross, remissionCreditTotal, remissionNet,

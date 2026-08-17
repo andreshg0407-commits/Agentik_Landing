@@ -269,10 +269,10 @@ export function Cliente360Client({ orgSlug, data }: Props) {
         />
         <KpiCard
           label="Remisiones"
-          textValue={data.salesHistory.truthState === "CERTIFIED" || data.salesHistory.truthState === "EMPTY_CERTIFIED" ? String(data.salesHistory.remissions.length) : "\u2014"}
+          textValue={data.salesHistory.truthState === "CERTIFIED" ? String(data.salesHistory.remissions.length) : data.salesHistory.truthState === "EMPTY_CERTIFIED" ? "0" : "\u2014"}
         />
         <KpiCard
-          label="Recaudos"
+          label="Recaudos aplicados"
           textValue={data.collectionsResult.truthState === "CERTIFIED" ? fmtCurrency(data.collectionsResult.netCollected ?? 0) : data.collectionsResult.truthState === "EMPTY_CERTIFIED" ? "$0" : "\u2014"}
         />
         <KpiCard
@@ -392,6 +392,8 @@ export function Cliente360Client({ orgSlug, data }: Props) {
             <EmptyOperationalState message="Cliente no vinculado con SAG" detail={sh.reason} />
           ) : sh.truthState === "SOURCE_DOWN" ? (
             <EmptyOperationalState message="No disponible" detail={sh.reason} />
+          ) : sh.truthState === "CROSS_SOURCE_MISMATCH" ? (
+            <EmptyOperationalState message="Historial de ventas no reconciliado" detail={sh.reason} />
           ) : sh.truthState === "EMPTY_CERTIFIED" ? (
             <EmptyOperationalState message="Sin ventas registradas" detail="No hay facturas ni remisiones registradas para este cliente." />
           ) : (

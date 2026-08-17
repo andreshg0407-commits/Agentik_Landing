@@ -370,15 +370,15 @@ export async function loadCliente360(
       return { rows, queryOk };
     })(),
 
-    // Sales (via NIT — SaleRecord.customerNit is the real NIT)
+    // Sales (via sagTerceroId — SaleRecord.customerNit stores SAG ka_nl_tercero as string)
     (async () => {
       const t = performance.now();
       let rows: any[] = [];
       let queryOk = false;
-      if (p.nit) {
+      if (p.sagTerceroId != null && p.sagTerceroId > 0) {
         try {
           rows = await db.saleRecord.findMany({
-            where: { organizationId, customerNit: p.nit },
+            where: { organizationId, customerNit: String(p.sagTerceroId) },
             select: {
               id: true, comprobanteCode: true, comprobante: true, amount: true,
               saleDate: true, productLine: true, sagSourceType: true, sellerSlug: true,
@@ -528,13 +528,15 @@ export async function loadCliente360(
   }));
 
   // Invoice KPI — count only SALES_INVOICE via canonical document kind
-  // Use comprobante prefix (document number) resolved through source profile
+  // Use comprobanteCode (fuente prefix) for classification, NOT bare comprobante number
   const excludedKindLabels: string[] = [];
   let invoiceCount = 0;
   for (const s of salesRaw.rows) {
-    const comprobante = (s.comprobante as string) ?? "";
+    const code = (s.comprobanteCode as string) ?? "";
+    const num = (s.comprobante as string) ?? "";
+    const docRef = code ? `${code}-${num}` : num;
     const kind = resolveCanonicalDocumentKind(sourceProfileId, {
-      documento: comprobante,
+      documento: docRef,
       tipoDocumento: "",
     });
     if (kind.kind === "SALES_INVOICE") {
@@ -546,22 +548,25 @@ export async function loadCliente360(
     }
   }
   const invoicesMeta = resolveInvoiceKpi(
-    p.nit, salesRaw.queryOk, invoiceCount, salesRaw.rows.length,
+    p.sagTerceroId != null ? String(p.sagTerceroId) : null,
+    salesRaw.queryOk, invoiceCount, salesRaw.rows.length,
     excludedKindLabels, new Date(),
   );
 
   // Build classified sale items for sales history F1/F2 separation
   const classifiedSales: ClassifiedSaleItem[] = salesRaw.rows.map((s: any) => {
-    const comprobante = (s.comprobante as string) ?? "";
+    const code = (s.comprobanteCode as string) ?? "";
+    const num = (s.comprobante as string) ?? "";
+    const docRef = code ? `${code}-${num}` : num;
     const kind = resolveCanonicalDocumentKind(sourceProfileId, {
-      documento: comprobante,
+      documento: docRef,
       tipoDocumento: "",
     });
     return {
       id: s.id,
       canonicalKind: kind.kind,
-      rawSourceCode: s.comprobanteCode ?? null,
-      rawDocumentNumber: comprobante || null,
+      rawSourceCode: code || null,
+      rawDocumentNumber: docRef || null,
       issueDate: s.saleDate instanceof Date ? s.saleDate.toISOString() : (s.saleDate ?? null),
       seller: s.sellerSlug ?? null,
       grossAmount: Number(s.amount ?? 0),
@@ -571,12 +576,15 @@ export async function loadCliente360(
   });
 
   const hasProfile = sourceProfileId.length > 0;
+  // Cartera document codes for cross-source mismatch detection
+  const carteraDocCodes: string[] = receivableItems.map(r => r.erpId).filter(Boolean) as string[];
   const salesHistory = classifySalesHistory(
     classifiedSales,
     salesRaw.queryOk,
-    p.nit != null, // hasSagIdentity for sales = has NIT
+    p.sagTerceroId != null && p.sagTerceroId > 0, // hasSagIdentity for sales = has sagTerceroId
     hasProfile,
     new Date(),
+    carteraDocCodes,
   );
 
   const salesProfileLabels = getSalesProfileLabels(sourceProfileId);

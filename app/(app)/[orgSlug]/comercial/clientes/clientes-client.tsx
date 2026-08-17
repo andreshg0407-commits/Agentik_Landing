@@ -561,8 +561,8 @@ function DrawerContent({
         <DrawerKpi label="Pedidos CRM" value={crmQuotes.items.length} />
         <DrawerKpi label="Pedidos SAG" textValue={kpiDisplayValue(data.sagOrdersMeta)} color={data.sagOrdersMeta.truthState === "SOURCE_DOWN" ? C.red : data.sagOrdersMeta.truthState === "IDENTITY_MISSING" ? C.inkGhost : undefined} />
         <DrawerKpi label="Facturas oficiales" textValue={kpiDisplayValue(data.invoicesMeta)} color={data.invoicesMeta.truthState === "SOURCE_DOWN" ? C.red : data.invoicesMeta.truthState === "IDENTITY_MISSING" ? C.inkGhost : undefined} />
-        <DrawerKpi label="Remisiones" textValue={data.salesHistory.truthState === "CERTIFIED" || data.salesHistory.truthState === "EMPTY_CERTIFIED" ? String(data.salesHistory.remissions.length) : "\u2014"} />
-        <DrawerKpi label="Recaudos" textValue={data.collectionsResult.truthState === "CERTIFIED" ? fmtCurrency(data.collectionsResult.netCollected ?? 0) : data.collectionsResult.truthState === "EMPTY_CERTIFIED" ? "$0" : "\u2014"} />
+        <DrawerKpi label="Remisiones" textValue={data.salesHistory.truthState === "CERTIFIED" ? String(data.salesHistory.remissions.length) : data.salesHistory.truthState === "EMPTY_CERTIFIED" ? "0" : "\u2014"} />
+        <DrawerKpi label="Recaudos aplicados" textValue={data.collectionsResult.truthState === "CERTIFIED" ? fmtCurrency(data.collectionsResult.netCollected ?? 0) : data.collectionsResult.truthState === "EMPTY_CERTIFIED" ? "$0" : "\u2014"} />
         <DrawerKpi label="Saldo cartera" textValue={receivables.truthStatus !== "CERTIFIED" ? "No verificado" : receivables.totalBalance !== null && receivables.totalBalance > 0 ? fmtCurrency(receivables.totalBalance) : "$0"} color={receivables.truthStatus !== "CERTIFIED" ? C.inkGhost : (receivables.totalOverdue ?? 0) > 0 ? C.red : undefined} />
         <DrawerKpi label="Ultima venta" textValue={data.salesHistory.lastSaleDate ? `${fmtDaysAgo(data.salesHistory.lastSaleDate)} (${data.salesHistory.lastSaleKind})` : "\u2014"} />
         <DrawerKpi label="Salud cartera" textValue={carteraTrafficLight(receivables).label} color={carteraTrafficLight(receivables).color} />
@@ -745,6 +745,9 @@ function TabVentas({ data }: { data: Cliente360Data }) {
   }
   if (sh.truthState === "PROFILE_MISSING") {
     return <EmptyOperationalState message="Clasificación no disponible" detail={sh.reason} />;
+  }
+  if (sh.truthState === "CROSS_SOURCE_MISMATCH") {
+    return <EmptyOperationalState message="Historial de ventas no reconciliado" detail={sh.reason} />;
   }
   if (sh.truthState === "EMPTY_CERTIFIED" && sh.officialInvoices.length === 0 && sh.remissions.length === 0) {
     return <EmptyOperationalState message="Sin ventas registradas" detail="No hay facturas ni remisiones registradas para este cliente." />;

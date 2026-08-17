@@ -435,8 +435,8 @@ describe("structural — UI wiring for Recaudos tab", () => {
     expect(tabSrc).not.toContain("vw_agentik_pagos");
   });
 
-  test("drawer KPI strip includes Recaudos", () => {
-    expect(drawerSrc).toContain('label="Recaudos"');
+  test("drawer KPI strip includes Recaudos aplicados", () => {
+    expect(drawerSrc).toContain('label="Recaudos aplicados"');
   });
 
   test("360 detail has Recaudos section", () => {
@@ -447,8 +447,8 @@ describe("structural — UI wiring for Recaudos tab", () => {
     expect(detail360Src).toContain("COLLECTIONS_GRID");
   });
 
-  test("360 detail KPI strip has Recaudos", () => {
-    expect(detail360Src).toContain('label="Recaudos"');
+  test("360 detail KPI strip has Recaudos aplicados", () => {
+    expect(detail360Src).toContain('label="Recaudos aplicados"');
   });
 
   test("loader has collectionsResult in Cliente360Data", () => {
