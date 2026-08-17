@@ -60,7 +60,8 @@ const STATUS_VARIANT: Record<ClienteStatus, string> = {
   BLOCKED:  "critical",
 };
 
-const TABLE_GRID = "1.2fr 90px 90px 110px 75px 80px 70px 60px 40px";
+// Columns: CLIENTE | UBICACIÓN | RESPONSABLE | TIPO | CARTERA | ACTIVIDAD | ESTADO | ACCIÓN
+const TABLE_GRID = "25% 12% 20% 9% 11% 9% 9% 5%";
 
 // ── Drawer tab type ──────────────────────────────────────────────────────────
 
@@ -91,8 +92,18 @@ function fmtDaysAgo(iso: string | null): string {
   if (days === 0) return "Hoy";
   if (days === 1) return "Ayer";
   if (days <= 30) return `${days}d`;
-  if (days <= 365) return `${Math.round(days / 30)}m`;
-  return `${(days / 365).toFixed(1)}a`;
+  if (days <= 365) {
+    const months = Math.round(days / 30);
+    return months <= 1 ? "1 mes" : `${months} meses`;
+  }
+  return `${(days / 365).toFixed(1)} años`;
+}
+
+/** Full date string for tooltip on relative dates */
+function fmtFullDate(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return d.toLocaleDateString("es-CO", { day: "2-digit", month: "long", year: "numeric" });
 }
 
 function fmtDate(iso: string | null): string {
@@ -448,20 +459,39 @@ export function ClientesClient({ orgSlug, summary, pageResult, currentFilter, cu
               detail="Ajuste los filtros para ver clientes"
             />
           ) : (
-            <div className="ag-op-table" style={{ border: `1px solid ${C.line}`, borderRadius: R.sm, overflow: "hidden" }}>
-              {/* Header */}
-              <div className="ag-op-row" style={{ display: "grid", gridTemplateColumns: TABLE_GRID, gap: S[2], padding: `${S[2]}px ${S[4]}px`, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}` }}>
-                {["Cliente", "NIT", "Ciudad", "Vendedor", "Tipo", "Cartera", "Ult. mov", "Estado", ""].map(h => (
-                  <span key={h || "action"} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkLight, textTransform: "uppercase" as const }}>{h}</span>
+            <div className="ag-op-table" style={{
+              border: `1px solid ${C.line}`, borderRadius: R.sm, overflow: "hidden",
+              tableLayout: "fixed" as const,
+            }}>
+              {/* Header — sticky within scrollable list */}
+              <div style={{
+                display: "grid", gridTemplateColumns: TABLE_GRID,
+                padding: `${S[2]}px ${S[4]}px`,
+                background: C.surfaceAlt, borderBottom: `1px solid ${C.line}`,
+                position: "sticky" as const, top: 0, zIndex: 1,
+              }}>
+                {[
+                  { label: "CLIENTE", align: "left" },
+                  { label: "UBICACIÓN", align: "left" },
+                  { label: "RESPONSABLE", align: "left" },
+                  { label: "TIPO", align: "left" },
+                  { label: "CARTERA", align: "right" },
+                  { label: "ACTIVIDAD", align: "left" },
+                  { label: "ESTADO", align: "center" },
+                  { label: "", align: "center" },
+                ].map((h, i) => (
+                  <span key={i} style={{
+                    fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                    color: C.inkLight, textAlign: h.align as any,
+                  }}>{h.label}</span>
                 ))}
               </div>
 
               {/* Rows */}
-              {clients.map((client, idx) => (
+              {clients.map((client) => (
                 <ClienteRowItem
                   key={client.id}
                   client={client}
-                  even={idx % 2 === 0}
                   selected={drawerOpen && drawerClientId === client.id}
                   onClick={() => openDrawer(client)}
                 />
@@ -1334,51 +1364,151 @@ function FieldRow({ label, value, span, color, compact }: { label: string; value
   );
 }
 
-function ClienteRowItem({ client, even, selected, onClick }: {
-  client: ClienteRow; even: boolean; selected: boolean; onClick: () => void;
+function ClienteRowItem({ client, selected, onClick }: {
+  client: ClienteRow; selected: boolean; onClick: () => void;
 }) {
   const status = client.status as ClienteStatus;
   const variant = STATUS_VARIANT[status] ?? "muted";
   const stateLabel = STATUS_LABELS[status] ?? client.status;
 
+  // Cartera display — preserve existing contract exactly
+  let carteraLabel: string;
+  let carteraColor: string;
+  if (client.carteraState === "CERTIFIED_CREDIT_BALANCE") {
+    carteraLabel = "Saldo a favor";
+    carteraColor = C.inkMid;
+  } else if (client.totalReceivable != null) {
+    carteraLabel = fmtCurrency(client.totalReceivable);
+    carteraColor = (client.overdueReceivable ?? 0) > 0 ? C.red : (client.totalReceivable ?? 0) > 0 ? C.ink : C.inkGhost;
+  } else {
+    carteraLabel = "\u2014";
+    carteraColor = C.inkGhost;
+  }
+
   return (
     <div
       onClick={onClick}
-      className="ag-op-row"
+      role="row"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } }}
       style={{
-        display: "grid", gridTemplateColumns: TABLE_GRID, gap: S[2],
-        padding: `${S[2]}px ${S[4]}px`,
-        background: selected ? `${C.blueDark}08` : even ? C.surface : "transparent",
-        borderBottom: `1px solid ${C.line}22`, alignItems: "center", cursor: "pointer",
+        display: "grid", gridTemplateColumns: TABLE_GRID,
+        padding: `6px ${S[4]}px`,
+        background: selected ? `${C.blueDark}08` : C.surface,
+        borderBottom: `1px solid ${C.line}15`,
         borderLeft: selected ? `3px solid ${C.blueDark}` : "3px solid transparent",
+        alignItems: "center", cursor: "pointer",
+        transition: "background 0.12s ease",
       }}
+      onMouseEnter={(e) => { if (!selected) (e.currentTarget as HTMLElement).style.background = `${C.blueDark}05`; }}
+      onMouseLeave={(e) => { if (!selected) (e.currentTarget as HTMLElement).style.background = C.surface; }}
     >
-      <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
-        {client.name}
-      </span>
-      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
-        {client.nit ?? "\u2014"}
-      </span>
-      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: client.city ? C.inkMid : C.inkGhost, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+      {/* CLIENTE — name + NIT as unit */}
+      <div style={{ overflow: "hidden", minWidth: 0 }}>
+        <div
+          title={client.name}
+          style={{
+            fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink,
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
+            lineHeight: 1.3,
+          }}
+        >
+          {client.name}
+        </div>
+        {client.nit && (
+          <div style={{
+            fontFamily: T.mono, fontSize: 10, color: C.inkGhost,
+            fontVariantNumeric: "tabular-nums",
+            lineHeight: 1.3,
+          }}>
+            NIT {client.nit}
+          </div>
+        )}
+      </div>
+
+      {/* UBICACIÓN */}
+      <span
+        title={client.city ?? undefined}
+        style={{
+          fontFamily: T.mono, fontSize: T.sz["2xs"], color: client.city ? C.inkMid : C.inkGhost,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
+        }}
+      >
         {client.city ?? "\u2014"}
       </span>
-      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: client.sellerName ? C.ink : C.inkGhost, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+
+      {/* RESPONSABLE — truncated with tooltip */}
+      <span
+        title={client.sellerName ?? undefined}
+        style={{
+          fontFamily: T.mono, fontSize: T.sz["2xs"], color: client.sellerName ? C.ink : C.inkGhost,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
+        }}
+      >
         {client.sellerName ?? "\u2014"}
       </span>
-      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: client.customerType ? C.inkMid : C.inkGhost, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
-        {client.customerType ?? "\u2014"}
+
+      {/* TIPO — discrete chip */}
+      <span>
+        {client.customerType ? (
+          <span style={{
+            fontFamily: T.mono, fontSize: 10, fontWeight: T.wt.semibold,
+            color: C.inkMid, background: `${C.line}66`,
+            padding: "2px 6px", borderRadius: R.pill,
+            whiteSpace: "nowrap" as const,
+          }}>
+            {client.customerType}
+          </span>
+        ) : (
+          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost }}>{"\u2014"}</span>
+        )}
       </span>
-      <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: (client.totalReceivable ?? 0) > 0 ? T.wt.semibold : T.wt.normal, color: (client.overdueReceivable ?? 0) > 0 ? C.red : client.carteraState === "CERTIFIED_CREDIT_BALANCE" ? C.inkMid : (client.totalReceivable ?? 0) > 0 ? C.ink : C.inkGhost, textAlign: "right" as const }}>
-        {client.carteraState === "CERTIFIED_CREDIT_BALANCE" ? "Saldo a favor" : client.totalReceivable != null ? fmtCurrency(client.totalReceivable) : "\u2014"}
+
+      {/* CARTERA — right-aligned, tabular nums */}
+      <span style={{
+        fontFamily: T.mono, fontSize: T.sz.xs,
+        fontWeight: (client.totalReceivable ?? 0) > 0 ? T.wt.semibold : T.wt.normal,
+        fontVariantNumeric: "tabular-nums",
+        color: carteraColor, textAlign: "right" as const,
+      }}>
+        {carteraLabel}
       </span>
-      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, textAlign: "center" as const }}>
+
+      {/* ACTIVIDAD — relative + tooltip with exact date */}
+      <span
+        title={fmtFullDate(client.lastPurchaseAt)}
+        style={{
+          fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid,
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
         {fmtDaysAgo(client.lastPurchaseAt)}
       </span>
-      <span className={`ag-op-status ag-op-status--${variant}`} style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold }}>
-        {stateLabel}
+
+      {/* ESTADO */}
+      <span style={{ textAlign: "center" as const }}>
+        <span className={`ag-op-status ag-op-status--${variant}`} style={{
+          fontFamily: T.mono, fontSize: 10, fontWeight: T.wt.semibold,
+        }}>
+          {stateLabel}
+        </span>
       </span>
-      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.blueDark, textAlign: "center" as const }}>
-        360
+
+      {/* ACCIÓN — 360 button */}
+      <span style={{ textAlign: "center" as const }}>
+        <button
+          aria-label={`Abrir vista 360 de ${client.name}`}
+          onClick={(e) => { e.stopPropagation(); onClick(); }}
+          style={{
+            fontFamily: T.mono, fontSize: 10, fontWeight: T.wt.bold,
+            color: C.blueDark, background: `${C.blueDark}0A`,
+            border: `1px solid ${C.blueDark}22`,
+            borderRadius: R.sm, padding: "2px 8px",
+            cursor: "pointer", lineHeight: 1.4,
+          }}
+        >
+          360 →
+        </button>
       </span>
     </div>
   );
