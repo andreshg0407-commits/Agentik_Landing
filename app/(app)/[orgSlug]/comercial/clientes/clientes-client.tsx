@@ -60,8 +60,7 @@ const STATUS_VARIANT: Record<ClienteStatus, string> = {
   BLOCKED:  "critical",
 };
 
-// Columns: CLIENTE | UBICACIÓN | RESPONSABLE | TIPO | CARTERA | ACTIVIDAD | ESTADO | ACCIÓN
-const TABLE_GRID = "25% 12% 20% 9% 11% 9% 9% 5%";
+// TABLE_GRID removed — using semantic <table> with colgroup (see ClientesTable)
 
 // ── Drawer tab type ──────────────────────────────────────────────────────────
 
@@ -93,17 +92,15 @@ function fmtDaysAgo(iso: string | null): string {
   if (days === 1) return "Ayer";
   if (days <= 30) return `${days}d`;
   if (days <= 365) {
-    const months = Math.round(days / 30);
-    return months <= 1 ? "1 mes" : `${months} meses`;
+    const m = Math.round(days / 30);
+    return m <= 1 ? "1 mes" : `${m} meses`;
   }
-  return `${(days / 365).toFixed(1)} años`;
+  return `${(days / 365).toFixed(1)} a`;
 }
 
-/** Full date string for tooltip on relative dates */
 function fmtFullDate(iso: string | null): string {
   if (!iso) return "";
-  const d = new Date(iso);
-  return d.toLocaleDateString("es-CO", { day: "2-digit", month: "long", year: "numeric" });
+  return new Date(iso).toLocaleDateString("es-CO", { day: "2-digit", month: "long", year: "numeric" });
 }
 
 function fmtDate(iso: string | null): string {
@@ -459,43 +456,43 @@ export function ClientesClient({ orgSlug, summary, pageResult, currentFilter, cu
               detail="Ajuste los filtros para ver clientes"
             />
           ) : (
-            <div className="ag-op-table" style={{
-              border: `1px solid ${C.line}`, borderRadius: R.sm, overflow: "hidden",
-              tableLayout: "fixed" as const,
-            }}>
-              {/* Header — sticky within scrollable list */}
-              <div style={{
-                display: "grid", gridTemplateColumns: TABLE_GRID,
-                padding: `${S[2]}px ${S[4]}px`,
-                background: C.surfaceAlt, borderBottom: `1px solid ${C.line}`,
-                position: "sticky" as const, top: 0, zIndex: 1,
-              }}>
-                {[
-                  { label: "CLIENTE", align: "left" },
-                  { label: "UBICACIÓN", align: "left" },
-                  { label: "RESPONSABLE", align: "left" },
-                  { label: "TIPO", align: "left" },
-                  { label: "CARTERA", align: "right" },
-                  { label: "ACTIVIDAD", align: "left" },
-                  { label: "ESTADO", align: "center" },
-                  { label: "", align: "center" },
-                ].map((h, i) => (
-                  <span key={i} style={{
-                    fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-                    color: C.inkLight, textAlign: h.align as any,
-                  }}>{h.label}</span>
-                ))}
-              </div>
-
-              {/* Rows */}
-              {clients.map((client) => (
-                <ClienteRowItem
-                  key={client.id}
-                  client={client}
-                  selected={drawerOpen && drawerClientId === client.id}
-                  onClick={() => openDrawer(client)}
-                />
-              ))}
+            <div style={{ overflowX: "auto" as const, border: `1px solid ${C.line}`, borderRadius: R.sm }}>
+              <table style={{ tableLayout: "fixed" as const, width: "100%", minWidth: 960, borderCollapse: "collapse" as const }}>
+                <colgroup>
+                  <col style={{ width: "24%" }} />
+                  <col style={{ width: "12%" }} />
+                  <col style={{ width: "20%" }} />
+                  <col style={{ width: "9%" }} />
+                  <col style={{ width: "11%" }} />
+                  <col style={{ width: "9%" }} />
+                  <col style={{ width: "9%" }} />
+                  <col style={{ width: "6%" }} />
+                </colgroup>
+                <thead>
+                  <tr style={{ background: C.surfaceAlt, borderBottom: `1px solid ${C.line}` }}>
+                    {["CLIENTE", "UBICACIÓN", "RESPONSABLE", "TIPO", "CARTERA", "ACTIVIDAD", "ESTADO", ""].map((h, i) => (
+                      <th key={i} style={{
+                        fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
+                        color: C.inkLight, padding: `${S[2]}px ${S[3]}px`, height: 36,
+                        textAlign: h === "CARTERA" ? "right" as const : h === "ESTADO" || h === "" ? "center" as const : "left" as const,
+                        paddingRight: h === "CARTERA" ? 16 : undefined,
+                        paddingLeft: h === "ACTIVIDAD" ? 16 : undefined,
+                        borderBottom: "none",
+                      }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {clients.map((client) => (
+                    <ClienteRowItem
+                      key={client.id}
+                      client={client}
+                      selected={drawerOpen && drawerClientId === client.id}
+                      onClick={() => openDrawer(client)}
+                    />
+                  ))}
+                </tbody>
+              </table>
 
               {/* Pagination */}
               {totalPages > 1 && (
@@ -1364,6 +1361,12 @@ function FieldRow({ label, value, span, color, compact }: { label: string; value
   );
 }
 
+const ROW_CELL: React.CSSProperties = {
+  fontFamily: T.mono, fontSize: T.sz["2xs"], padding: `0 ${S[3]}px`,
+  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
+  verticalAlign: "middle",
+};
+
 function ClienteRowItem({ client, selected, onClick }: {
   client: ClienteRow; selected: boolean; onClick: () => void;
 }) {
@@ -1371,146 +1374,117 @@ function ClienteRowItem({ client, selected, onClick }: {
   const variant = STATUS_VARIANT[status] ?? "muted";
   const stateLabel = STATUS_LABELS[status] ?? client.status;
 
-  // Cartera display — preserve existing contract exactly
+  // Cartera display — exact existing contract
   let carteraLabel: string;
   let carteraColor: string;
+  let carteraWeight: number = T.wt.normal;
   if (client.carteraState === "CERTIFIED_CREDIT_BALANCE") {
     carteraLabel = "Saldo a favor";
     carteraColor = C.inkMid;
   } else if (client.totalReceivable != null) {
     carteraLabel = fmtCurrency(client.totalReceivable);
-    carteraColor = (client.overdueReceivable ?? 0) > 0 ? C.red : (client.totalReceivable ?? 0) > 0 ? C.ink : C.inkGhost;
+    carteraColor = (client.overdueReceivable ?? 0) > 0 ? C.red
+      : (client.totalReceivable ?? 0) > 0 ? C.ink : C.inkGhost;
+    if ((client.totalReceivable ?? 0) > 0) carteraWeight = T.wt.semibold;
   } else {
     carteraLabel = "\u2014";
     carteraColor = C.inkGhost;
   }
 
   return (
-    <div
+    <tr
       onClick={onClick}
-      role="row"
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } }}
       style={{
-        display: "grid", gridTemplateColumns: TABLE_GRID,
-        padding: `6px ${S[4]}px`,
+        height: 56, cursor: "pointer",
         background: selected ? `${C.blueDark}08` : C.surface,
-        borderBottom: `1px solid ${C.line}15`,
+        borderBottom: `1px solid ${C.line}18`,
         borderLeft: selected ? `3px solid ${C.blueDark}` : "3px solid transparent",
-        alignItems: "center", cursor: "pointer",
-        transition: "background 0.12s ease",
+        transition: "background 0.1s ease",
       }}
       onMouseEnter={(e) => { if (!selected) (e.currentTarget as HTMLElement).style.background = `${C.blueDark}05`; }}
       onMouseLeave={(e) => { if (!selected) (e.currentTarget as HTMLElement).style.background = C.surface; }}
     >
-      {/* CLIENTE — name + NIT as unit */}
-      <div style={{ overflow: "hidden", minWidth: 0 }}>
-        <div
-          title={client.name}
-          style={{
-            fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink,
-            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
-            lineHeight: 1.3,
-          }}
-        >
-          {client.name}
-        </div>
+      {/* CLIENTE — name + NIT */}
+      <td style={{ ...ROW_CELL, padding: `0 ${S[3]}px` }}>
+        <div title={client.name} style={{
+          fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, lineHeight: 1.3,
+        }}>{client.name}</div>
         {client.nit && (
           <div style={{
-            fontFamily: T.mono, fontSize: 10, color: C.inkGhost,
+            fontFamily: T.mono, fontSize: 10, color: C.inkGhost, lineHeight: 1.3,
             fontVariantNumeric: "tabular-nums",
-            lineHeight: 1.3,
-          }}>
-            NIT {client.nit}
-          </div>
+          }}>NIT {client.nit}</div>
         )}
-      </div>
+      </td>
 
       {/* UBICACIÓN */}
-      <span
-        title={client.city ?? undefined}
-        style={{
-          fontFamily: T.mono, fontSize: T.sz["2xs"], color: client.city ? C.inkMid : C.inkGhost,
-          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
-        }}
-      >
+      <td title={client.city ?? undefined} style={{ ...ROW_CELL, color: client.city ? C.inkMid : C.inkGhost }}>
         {client.city ?? "\u2014"}
-      </span>
+      </td>
 
-      {/* RESPONSABLE — truncated with tooltip */}
-      <span
-        title={client.sellerName ?? undefined}
-        style={{
-          fontFamily: T.mono, fontSize: T.sz["2xs"], color: client.sellerName ? C.ink : C.inkGhost,
-          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
-        }}
-      >
+      {/* RESPONSABLE */}
+      <td title={client.sellerName ?? undefined} style={{ ...ROW_CELL, color: client.sellerName ? C.ink : C.inkGhost }}>
         {client.sellerName ?? "\u2014"}
-      </span>
+      </td>
 
-      {/* TIPO — discrete chip */}
-      <span>
+      {/* TIPO — chip */}
+      <td style={{ ...ROW_CELL }}>
         {client.customerType ? (
           <span style={{
             fontFamily: T.mono, fontSize: 10, fontWeight: T.wt.semibold,
             color: C.inkMid, background: `${C.line}66`,
-            padding: "2px 6px", borderRadius: R.pill,
-            whiteSpace: "nowrap" as const,
-          }}>
-            {client.customerType}
-          </span>
+            padding: "2px 6px", borderRadius: R.pill, whiteSpace: "nowrap" as const,
+          }}>{client.customerType}</span>
         ) : (
-          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost }}>{"\u2014"}</span>
+          <span style={{ color: C.inkGhost }}>{"\u2014"}</span>
         )}
-      </span>
+      </td>
 
-      {/* CARTERA — right-aligned, tabular nums */}
-      <span style={{
-        fontFamily: T.mono, fontSize: T.sz.xs,
-        fontWeight: (client.totalReceivable ?? 0) > 0 ? T.wt.semibold : T.wt.normal,
-        fontVariantNumeric: "tabular-nums",
-        color: carteraColor, textAlign: "right" as const,
+      {/* CARTERA — right-aligned, tabular nums, 16px right padding */}
+      <td style={{
+        ...ROW_CELL, fontSize: T.sz.xs, textAlign: "right" as const,
+        paddingRight: 16, fontVariantNumeric: "tabular-nums",
+        fontWeight: carteraWeight, color: carteraColor,
+        whiteSpace: "nowrap" as const,
       }}>
         {carteraLabel}
-      </span>
+      </td>
 
-      {/* ACTIVIDAD — relative + tooltip with exact date */}
-      <span
-        title={fmtFullDate(client.lastPurchaseAt)}
-        style={{
-          fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid,
-          fontVariantNumeric: "tabular-nums",
-        }}
-      >
+      {/* ACTIVIDAD — left-aligned, 16px left padding */}
+      <td title={fmtFullDate(client.lastPurchaseAt)} style={{
+        ...ROW_CELL, paddingLeft: 16, color: C.inkMid,
+        fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" as const,
+      }}>
         {fmtDaysAgo(client.lastPurchaseAt)}
-      </span>
+      </td>
 
-      {/* ESTADO */}
-      <span style={{ textAlign: "center" as const }}>
+      {/* ESTADO — centered badge */}
+      <td style={{ ...ROW_CELL, textAlign: "center" as const }}>
         <span className={`ag-op-status ag-op-status--${variant}`} style={{
           fontFamily: T.mono, fontSize: 10, fontWeight: T.wt.semibold,
-        }}>
-          {stateLabel}
-        </span>
-      </span>
+        }}>{stateLabel}</span>
+      </td>
 
-      {/* ACCIÓN — 360 button */}
-      <span style={{ textAlign: "center" as const }}>
+      {/* ACCIÓN — compact 30px square button */}
+      <td style={{ ...ROW_CELL, textAlign: "center" as const }}>
         <button
-          aria-label={`Abrir vista 360 de ${client.name}`}
+          aria-label="Abrir cliente 360"
+          title="Abrir cliente 360"
           onClick={(e) => { e.stopPropagation(); onClick(); }}
           style={{
-            fontFamily: T.mono, fontSize: 10, fontWeight: T.wt.bold,
+            display: "inline-flex", alignItems: "center", justifyContent: "center",
+            width: 30, height: 30, padding: 0,
+            fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
             color: C.blueDark, background: `${C.blueDark}0A`,
-            border: `1px solid ${C.blueDark}22`,
-            borderRadius: R.sm, padding: "2px 8px",
-            cursor: "pointer", lineHeight: 1.4,
+            border: `1px solid ${C.blueDark}22`, borderRadius: R.sm,
+            cursor: "pointer", lineHeight: 1,
           }}
-        >
-          360 →
-        </button>
-      </span>
-    </div>
+        >{"\u203A"}</button>
+      </td>
+    </tr>
   );
 }
 
