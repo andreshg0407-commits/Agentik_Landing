@@ -24,6 +24,33 @@ import { consultaSagJson } from "@/lib/connectors/pya/client";
 import { getSagConnection } from "@/lib/connectors/pya/sag-source-router";
 import { CASTILLITOS_SOURCE_SEMANTIC_RULES } from "@/lib/sag/master-data/source-semantic-rules";
 
+// ── Shared key builder ────────────────────────────────────────────────────────
+
+/**
+ * Canonical composite key builder for sales documents.
+ *
+ * Handles three storage formats produced by different mappers:
+ *   Path 1 (mapSagMovement):       comprobanteCode="FE", comprobante="10505"  → "FE-10505"
+ *   Path 2 (mapSagVentasRow):      comprobanteCode=null,  comprobante="10505" → "10505" (bare)
+ *   Path 3 (store-sale-lines-sync): comprobanteCode="FE", comprobante="FE-10505" → "FE-10505"
+ *
+ * Path 2 returns a bare number — callers must use bare-number fallback for lookup.
+ */
+export function buildCanonicalSalesDocumentKey(
+  comprobanteCode: string | null | undefined,
+  comprobante: string | null | undefined,
+): string {
+  const code = (comprobanteCode ?? "").trim();
+  const raw = (comprobante ?? "").trim();
+  if (!raw) return "";
+  // Prevent double-prefix (path 3): "FE" + "FE-10505" → "FE-10505"
+  if (code && raw.startsWith(`${code}-`)) return raw;
+  // Normal composite (path 1): "FE" + "10505" → "FE-10505"
+  if (code) return `${code}-${raw}`;
+  // Bare number (path 2): no code available
+  return raw;
+}
+
 // ── Fuente code lookup ───────────────────────────────────────────────────────
 
 const FUENTE_ID_TO_CODE = new Map<number, string>(
@@ -81,6 +108,11 @@ export interface SellerEnrichmentResult {
   distinctDocuments: DocumentSellerInfo[];
   /** Build a collision-safe map keyed by "fuenteCode-numero" */
   buildDocumentSellerMap(): Map<string, DocumentSellerInfo>;
+  /**
+   * Bare-number fallback for records where comprobanteCode is null.
+   * Maps bare document number → DocumentSellerInfo if unambiguous, null if ambiguous.
+   */
+  buildBareNumberFallback(): Map<string, DocumentSellerInfo | null>;
 }
 
 // ── Query ────────────────────────────────────────────────────────────────────
@@ -130,6 +162,7 @@ export async function fetchSalesSellerEnrichment(
     sourceDown: false,
     distinctDocuments: [],
     buildDocumentSellerMap: () => new Map(),
+    buildBareNumberFallback: () => new Map(),
   };
 
   if (sagTerceroId == null || sagTerceroId <= 0) {
@@ -211,6 +244,19 @@ export async function fetchSalesSellerEnrichment(
       const map = new Map<string, DocumentSellerInfo>();
       for (const doc of distinctDocuments) {
         map.set(doc.compositeKey, doc);
+      }
+      return map;
+    },
+    buildBareNumberFallback(): Map<string, DocumentSellerInfo | null> {
+      // Bare document number → info (null if ambiguous = multiple fuentes share same number)
+      const map = new Map<string, DocumentSellerInfo | null>();
+      for (const doc of distinctDocuments) {
+        if (map.has(doc.numeroDocumento)) {
+          // Ambiguous — mark as null (collision risk)
+          map.set(doc.numeroDocumento, null);
+        } else {
+          map.set(doc.numeroDocumento, doc);
+        }
       }
       return map;
     },

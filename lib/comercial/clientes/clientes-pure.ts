@@ -378,7 +378,8 @@ export type SellerTruthState =
   | "CERTIFIED"
   | "IDENTITY_ONLY"
   | "NOT_REPORTED_BY_SOURCE"
-  | "SOURCE_DOWN";
+  | "SOURCE_DOWN"
+  | "DOCUMENT_UNMATCHED";
 
 export interface ClassifiedSaleItem {
   id: string;

@@ -264,8 +264,8 @@ describe("reconciliation fuentes filter", () => {
 describe("loader wiring", () => {
   test("T10: loader uses composite key for seller lookup and computes coverage", () => {
     const loaderSrc = readFile("lib/comercial/clientes/cliente-360-loader.ts");
-    // Must use composite key for seller map lookup
-    expect(loaderSrc).toContain("sagSellerMap.get(compositeKey)");
+    // Must use canonical key for seller map lookup (03A8G3R: compositeKey → canonicalKey)
+    expect(loaderSrc).toContain("sagSellerMap.get(canonicalKey)");
     // Must NOT use bare NUMERO_DOCUMENTO for seller lookup
     expect(loaderSrc).not.toMatch(/sagSellerMap\.get\(num\)/);
     // Must build storedCompositeKeys

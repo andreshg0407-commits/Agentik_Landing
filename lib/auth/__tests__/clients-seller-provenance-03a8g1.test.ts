@@ -247,11 +247,12 @@ describe("seller provenance — production wiring", () => {
     expect(pureSrc).toContain("sellerTruthState: SellerTruthState");
   });
 
-  test("T10c: SellerTruthState type has exactly 4 states", () => {
+  test("T10c: SellerTruthState type has exactly 5 states", () => {
     const pureSrc = readFile("lib/comercial/clientes/clientes-pure.ts");
     expect(pureSrc).toContain('"CERTIFIED"');
     expect(pureSrc).toContain('"IDENTITY_ONLY"');
     expect(pureSrc).toContain('"NOT_REPORTED_BY_SOURCE"');
     expect(pureSrc).toContain('"SOURCE_DOWN"');
+    expect(pureSrc).toContain('"DOCUMENT_UNMATCHED"');
   });
 });

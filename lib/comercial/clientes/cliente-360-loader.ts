@@ -28,7 +28,7 @@ import { resolveCity, resolveCrmCity } from "./city-resolver";
 import { getCustomerPrimarySeller } from "@/lib/comercial/foundation/client-seller-linker";
 import { fetchCustomerArWithStatus } from "@/lib/comercial/frontline/canonical-ar-service";
 import { fetchCertifiedCustomerRecaudos } from "@/lib/comercial/frontline/canonical-recaudos-service";
-import { fetchSalesSellerEnrichment, computeSalesCoverage, type SalesCoverage } from "./sales-seller-enrichment";
+import { fetchSalesSellerEnrichment, computeSalesCoverage, buildCanonicalSalesDocumentKey, type SalesCoverage } from "./sales-seller-enrichment";
 import type { CertifiedReceivableDocument } from "@/lib/comercial/frontline/canonical-ar-types";
 import type { ReceivableTruthStatus } from "@/lib/comercial/frontline/receivable-truth-contract";
 import {
@@ -572,13 +572,16 @@ export async function loadCliente360(
   // SAG seller enrichment: build lookup map keyed by composite "fuenteCode-numero"
   // Collision-safe: FE-849 and D2-849 are different documents (03A8G3)
   const sagSellerMap = sellerEnrichment.buildDocumentSellerMap();
+  // Bare-number fallback for records where comprobanteCode is null (legacy mappers)
+  const sagBareFallback = sellerEnrichment.buildBareNumberFallback();
 
   // Build stored composite keys for coverage reconciliation
   const storedCompositeKeys = new Set<string>();
   for (const s of salesRaw.rows) {
     const code = (s.comprobanteCode as string) ?? "";
     const num = (s.comprobante as string) ?? "";
-    if (code && num) storedCompositeKeys.add(`${code}-${num}`);
+    const key = buildCanonicalSalesDocumentKey(code, num);
+    if (key) storedCompositeKeys.add(key);
   }
 
   // Compute sales coverage (SAG source vs stored SaleRecords)
@@ -595,9 +598,20 @@ export async function loadCliente360(
     });
 
     // Seller resolution: SAG enrichment > persisted data > fallback
-    // Step 1: Try SAG runtime enrichment using composite key (collision-safe)
-    const compositeKey = code ? `${code}-${num}` : num;
-    const sagSeller = sagSellerMap.get(compositeKey);
+    // Step 1: Try SAG runtime enrichment using canonical key (03A8G3R collision-safe)
+    const canonicalKey = buildCanonicalSalesDocumentKey(code, num);
+    let sagSeller = sagSellerMap.get(canonicalKey);
+    let bareNumberAmbiguous = false;
+    // Step 1b: Bare-number fallback when comprobanteCode is null (legacy mapper path 2)
+    if (!sagSeller && !canonicalKey.includes("-") && canonicalKey) {
+      const fallback = sagBareFallback.get(canonicalKey);
+      if (fallback === null) {
+        // Multiple fuentes share this number — ambiguous, cannot resolve
+        bareNumberAmbiguous = true;
+      } else if (fallback !== undefined) {
+        sagSeller = fallback;
+      }
+    }
     // Step 2: Check persisted data quality
     const rawSellerName = (s.sellerName as string) ?? "";
     const rawSellerCode = (s.sellerCode as string) ?? null;
@@ -635,6 +649,11 @@ export async function loadCliente360(
         sellerId = null;
         sellerName = null;
       }
+    } else if (bareNumberAmbiguous) {
+      // Bare number matched multiple fuentes — cannot resolve safely
+      sellerTruthState = "DOCUMENT_UNMATCHED";
+      sellerId = null;
+      sellerName = null;
     } else if (!isFallbackSeller) {
       // SAG enrichment didn't cover this doc (e.g. remisiones not in view) but persisted is real
       sellerTruthState = "CERTIFIED";
