@@ -231,7 +231,7 @@ export function buildVendorSnapshots(
       health,
       isActive: true,
       totalRefs: refs.length,
-      totalUnits: refs.length,
+      totalUnits: refs.reduce((s, r) => s + Math.max(0, r.centralAvailable), 0),
       estimatedValue: 0,
       replaceRefs: refs.filter((r) => r.state === "reemplazar").length,
       healthyRefs: refs.filter((r) => r.state === "saludable").length,

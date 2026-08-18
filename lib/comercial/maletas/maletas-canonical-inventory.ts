@@ -441,8 +441,8 @@ export function isEligibleForMaletaCoverage(
 ): boolean {
   if (!isCommerciallyAvailableForMaletas(ref)) return false;
 
-  // Must not already be in THIS vendor's bag
-  if (context.currentVendorReferences.has(ref.reference)) return false;
+  // CASTILLITOS-COMMERCIAL-TRUTH-08A0 §B: normalize to prevent casing/whitespace mismatches
+  if (context.currentVendorReferences.has(ref.reference.trim().toUpperCase())) return false;
 
   // Must not be the same reference at risk
   if (context.riskReference === ref.reference) return false;
