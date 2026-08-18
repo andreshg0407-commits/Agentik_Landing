@@ -45,6 +45,7 @@ export type NavItem = {
 export type DomainDef = {
   id:        string;
   label:     string;
+  shortLabel?: string;  // abbreviated rail label — full label used for title/aria
   shortIcon: string;    // fallback label for tooltip/aria — kept for compatibility
   iconKey:   string;    // serializable key → resolved to LucideIcon in the client shell
   accent:    string;    // domain brand color
@@ -70,6 +71,9 @@ export interface NavBuildOptions {
   hasSettings:       boolean;
   showInternal:      boolean;
   showPlatformAdmin: boolean;
+  /** Raw tenant entitlements — used for "Próximamente" stubs. When a module is
+   *  role-permitted but NOT tenant-entitled, the stub is shown instead of full nav. */
+  orgEntitledModules?: Set<string>;
 }
 
 // ── Visibility filter ─────────────────────────────────────────────────────────
@@ -108,6 +112,10 @@ function filterItemsByVisibility(items: NavItem[], isPlatformAdmin: boolean): Na
 export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
   const s = opts.orgSlug;
   const domains: DomainDef[] = [];
+  // Tenant entitlement check — when provided, overrides role-based flags for stub decisions.
+  // A SUPER_ADMIN may have hasProduction=true (role permits) but the org doesn't have the entitlement.
+  const orgHas = opts.orgEntitledModules;
+  const orgEntitled = (key: string) => !orgHas || orgHas.has(key);
 
   // ── Gestión — executive/management layer ──────────────────────────────────
   if (opts.hasDashboard || opts.hasSales || opts.hasAlerts) {
@@ -137,7 +145,7 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
   }
 
   // ── Finanzas — financial operations ──────────────────────────────────────
-  if (opts.hasFinance || opts.hasTorreControl) {
+  if ((opts.hasFinance || opts.hasTorreControl) && orgEntitled("finance")) {
     const items: NavItem[] = [];
     if (opts.hasTorreControl)
       items.push({
@@ -173,8 +181,8 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
     });
   }
 
-  // ── Finanzas stub — "Próximamente" when module not enabled ───────────────
-  if (!opts.hasFinance && !opts.hasTorreControl) {
+  // ── Finanzas stub — "Próximamente" when org has no finance entitlement ──
+  if (!orgEntitled("finance") && !orgEntitled("torre_control")) {
     domains.push({
       id:        "finanzas",
       label:     "Finanzas",
@@ -237,7 +245,7 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
   }
 
   // ── Producción — production operations domain ───────────────────────────
-  if (opts.hasProduction) {
+  if (opts.hasProduction && orgEntitled("production")) {
     domains.push({
       id:        "produccion",
       label:     "Producción",
@@ -261,8 +269,8 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
     });
   }
 
-  // ── Producción stub — "Próximamente" when module not enabled ─────────────
-  if (!opts.hasProduction) {
+  // ── Producción stub — "Próximamente" when org has no production entitlement
+  if (!orgEntitled("production")) {
     domains.push({
       id:        "produccion",
       label:     "Producción",
@@ -277,7 +285,7 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
   }
 
   // ── Marketing Studio — creative + content + commerce ──────────────────────
-  if (opts.hasMarketing) {
+  if (opts.hasMarketing && orgEntitled("marketing_studio")) {
     const mItems: NavItem[] = [
       // ── RECURSOS — produce y organiza recursos visuales ───────────────────────
       { label: "Recursos",     href: "#", isSectionHeader: true },
@@ -330,8 +338,8 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
     });
   }
 
-  // ── Marketing stub — "Próximamente" when module not enabled ──────────────
-  if (!opts.hasMarketing) {
+  // ── Marketing stub — "Próximamente" when org has no marketing entitlement
+  if (!orgEntitled("marketing_studio")) {
     domains.push({
       id:        "marketing",
       label:     "Marketing",

@@ -273,6 +273,10 @@ function PrimaryRail({
     <div style={{
       width:         PRIMARY_W,
       minWidth:      PRIMARY_W,
+      height:        "100dvh",
+      position:      "sticky" as const,
+      top:           0,
+      alignSelf:     "flex-start" as const,
       background:    PRIMARY_BG,
       display:       "flex",
       flexDirection: "column",
@@ -507,13 +511,15 @@ function DomainButton({
         fontWeight:    T.wt.semibold,   // 600 — lighter than bold, more refined
         letterSpacing: "0.05em",         // tracking for premium enterprise rhythm
         textTransform: "uppercase" as const,
-        lineHeight:    1.25,
+        lineHeight:    1,
         maxWidth:      52,
         textAlign:     "center" as const,
-        wordBreak:     "break-word" as const,
+        overflow:      "hidden" as const,
+        textOverflow:  "ellipsis" as const,
+        whiteSpace:    "nowrap" as const,
         color:         labelColor,       // independent from icon — label is secondary signal
       }}>
-        {domain.label}
+        {domain.shortLabel ?? domain.label}
       </span>
     </button>
   );

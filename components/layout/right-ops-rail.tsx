@@ -13,6 +13,7 @@
 import type { Role } from "@prisma/client";
 import { prisma }    from "@/lib/prisma";
 import { isInternalRole }    from "@/lib/auth/module-access";
+import { getEnabledModules } from "@/lib/tenant/modules";
 import { evaluateAllSignals } from "@/lib/copilot/signal-engine";
 import type { CopilotSignal, SignalEngineResult } from "@/lib/copilot/types";
 import { getAgentForPathname, getMemoryHints }          from "@/lib/copilot/agents";
@@ -212,6 +213,14 @@ export default async function RightOpsRail({
   // showInfra: show deep infrastructure rail sections only on console/admin surfaces.
   // On all operational and AI-workspace routes the rail stays clean (Header + Signals + Alerts + Tasks).
   const showInfra  = isInternal && isConsoleSurface(pathname);
+
+  // DELIVERY-HARDENING-07A0R2: suppress executive widgets for tenants that don't
+  // have operational modules producing real signal/alert/task data.
+  // A tenant with only "sales" enabled has no torre_control, alerts, or dashboard data.
+  const orgMods = await getEnabledModules(orgId);
+  const suppressExecutiveWidgets = !orgMods.has("torre_control")
+    && !orgMods.has("alerts")
+    && !orgMods.has("finance");
 
   const isFinancialSurface  = pathname.includes("/finanzas/") || pathname.includes("/executive");
   const isCommercialSurface = pathname.includes("/comercial/");
@@ -1228,6 +1237,7 @@ export default async function RightOpsRail({
       isInternal={showInfra}
       isInternalUser={isInternal}
       davidData={davidData}
+      suppressExecutiveWidgets={suppressExecutiveWidgets}
     />
   );
 }

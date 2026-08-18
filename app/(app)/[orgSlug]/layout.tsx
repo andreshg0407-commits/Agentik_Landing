@@ -100,6 +100,7 @@ export default async function OrgLayout({
     hasSettings:       mods.has("settings"),
     showInternal,
     showPlatformAdmin,
+    orgEntitledModules: orgMods,
   });
 
   // ── Seller App shell bypass ─────────────────────────────────────────────────

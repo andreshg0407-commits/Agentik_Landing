@@ -29,16 +29,32 @@ describe("A — Left rail overflow safety", () => {
     expect(shellSrc).toContain('overflowY');
     // Verify the overflowY is set to "auto" near the PrimaryRail definition
     const railIdx = shellSrc.indexOf("function PrimaryRail");
-    const chunk = shellSrc.slice(railIdx, railIdx + 600);
+    const chunk = shellSrc.slice(railIdx, railIdx + 1200);
     expect(chunk).toContain("overflowY");
   });
 
-  test("T02: DomainButton label wraps with word-break for full legibility", () => {
+  test("T02: DomainButton label uses ellipsis overflow (no word-break)", () => {
     const btnIdx = shellSrc.indexOf("function DomainButton");
     const chunk = shellSrc.slice(btnIdx, btnIdx + 3200);
     expect(chunk).toContain("maxWidth");
-    expect(chunk).toContain("wordBreak");
-    expect(chunk).toContain("textAlign");
+    expect(chunk).toContain("textOverflow");
+    expect(chunk).toContain("overflow");
+    expect(chunk).toContain("whiteSpace");
+    expect(chunk).not.toContain("wordBreak");
+  });
+
+  test("T02b: PrimaryRail uses sticky positioning for full viewport height", () => {
+    const railIdx = shellSrc.indexOf("function PrimaryRail");
+    const chunk = shellSrc.slice(railIdx, railIdx + 800);
+    expect(chunk).toContain('"sticky"');
+    expect(chunk).toContain("100dvh");
+  });
+
+  test("T02c: DomainDef supports shortLabel for abbreviated labels", () => {
+    const navSrc = readSrc("components/shell/module-nav-config.ts");
+    expect(navSrc).toContain("shortLabel");
+    // Shell uses shortLabel ?? label
+    expect(shellSrc).toContain("shortLabel");
   });
 });
 
@@ -82,12 +98,20 @@ describe("C — Copilot executive data guard", () => {
   });
 
   test("T07: static empty state texts removed from cards", () => {
-    // Card 2: "Sin alertas activas" should NOT appear as a rendered string
     expect(copilotSrc).not.toContain("Sin alertas activas · Sistema operando con normalidad");
-    // Card 3: "Sin tareas pendientes" should NOT appear as a rendered string
     expect(copilotSrc).not.toContain("Sin tareas pendientes · Todo en orden");
-    // Card 2: "nominal" empty badge removed
-    // (the word "nominal" may still exist in comments, but not in JSX rendering for empty alerts)
+  });
+
+  test("T07b: suppressExecutiveWidgets prop exists and gates all executive cards", () => {
+    expect(copilotSrc).toContain("suppressExecutiveWidgets");
+    // Guards use suppressExecutiveWidgets
+    expect(copilotSrc).toContain("!suppressExecutiveWidgets");
+  });
+
+  test("T07c: right-ops-rail computes suppressExecutiveWidgets from org entitlements", () => {
+    const railSrc = readSrc("components/layout/right-ops-rail.tsx");
+    expect(railSrc).toContain("suppressExecutiveWidgets");
+    expect(railSrc).toContain("getEnabledModules");
   });
 });
 
@@ -120,28 +144,38 @@ describe("C — Provisioning endpoint removed", () => {
 describe("E — Próximamente module stubs", () => {
   const navSrc = readSrc("components/shell/module-nav-config.ts");
 
-  test("T15: Producción stub exists when hasProduction is false", () => {
-    expect(navSrc).toContain("!opts.hasProduction");
-    const stubIdx = navSrc.indexOf("!opts.hasProduction");
+  test("T15: Producción stub uses orgEntitled check", () => {
+    expect(navSrc).toContain('orgEntitled("production")');
+    // Stub block exists with Próximamente
+    const stubIdx = navSrc.indexOf('!orgEntitled("production")');
+    expect(stubIdx).toBeGreaterThan(-1);
     const chunk = navSrc.slice(stubIdx, stubIdx + 400);
     expect(chunk).toContain("Próximamente");
-    expect(chunk).toContain('disabled: true');
+    expect(chunk).toContain("disabled: true");
   });
 
-  test("T16: Marketing stub exists when hasMarketing is false", () => {
-    expect(navSrc).toContain("!opts.hasMarketing");
-    const stubIdx = navSrc.indexOf("!opts.hasMarketing");
+  test("T16: Marketing stub uses orgEntitled check", () => {
+    expect(navSrc).toContain('orgEntitled("marketing_studio")');
+    const stubIdx = navSrc.indexOf('!orgEntitled("marketing_studio")');
+    expect(stubIdx).toBeGreaterThan(-1);
     const chunk = navSrc.slice(stubIdx, stubIdx + 400);
     expect(chunk).toContain("Próximamente");
-    expect(chunk).toContain('disabled: true');
+    expect(chunk).toContain("disabled: true");
   });
 
-  test("T17: Finanzas stub exists when hasFinance and hasTorreControl are false", () => {
-    expect(navSrc).toContain("!opts.hasFinance && !opts.hasTorreControl");
-    const stubIdx = navSrc.indexOf("!opts.hasFinance && !opts.hasTorreControl");
+  test("T17: Finanzas stub uses orgEntitled check", () => {
+    expect(navSrc).toContain('orgEntitled("finance")');
+    expect(navSrc).toContain('orgEntitled("torre_control")');
+    const stubIdx = navSrc.indexOf('!orgEntitled("finance")');
+    expect(stubIdx).toBeGreaterThan(-1);
     const chunk = navSrc.slice(stubIdx, stubIdx + 400);
     expect(chunk).toContain("Próximamente");
-    expect(chunk).toContain('disabled: true');
+    expect(chunk).toContain("disabled: true");
+  });
+
+  test("T17b: orgEntitledModules passed from layout to buildNavDomains", () => {
+    const layoutSrc = readSrc("app/(app)/[orgSlug]/layout.tsx");
+    expect(layoutSrc).toContain("orgEntitledModules");
   });
 });
 

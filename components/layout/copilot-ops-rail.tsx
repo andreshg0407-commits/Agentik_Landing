@@ -532,6 +532,9 @@ export interface CopilotOpsRailProps {
   isInternalUser?:                boolean;
   // David commercial copilot data (AGENTIK-AGENT-DAVID-COMMERCIAL-TOOLS-01)
   davidData?:                     RailDavidData | null;
+  // DELIVERY-HARDENING-07A0R2: suppress ALL executive widgets (status/alerts/tasks cards).
+  // When true, only Copilot identity + chat remain. Used for tenants without operational data.
+  suppressExecutiveWidgets?:      boolean;
 }
 
 // ── Status palette ─────────────────────────────────────────────────────────────
@@ -2117,6 +2120,7 @@ export function CopilotOpsRail({
   isInternal = false,
   isInternalUser = false,
   davidData,
+  suppressExecutiveWidgets = false,
 }: CopilotOpsRailProps) {
   const [tasksExpanded,       setTasksExpanded]       = useState(false);
   const [alertsExpanded,      setAlertsExpanded]      = useState(false);
@@ -2193,12 +2197,13 @@ export function CopilotOpsRail({
   }
   const taskCount = totalTasksCount + (supervisedExecution?.confirmationState === "pending" ? 1 : 0);
 
-  // DELIVERY-HARDENING-07A0R: per-card data guards — each card only renders
-  // when it has real data. No static "Todo en orden" / "Sin alertas" noise.
-  const hasStatusData = signals.length > 0 || decisions > 0
-    || (davidData && davidData.dataState !== "EMPTY" && davidData.criticalRefs.length > 0);
-  const hasAlertData  = alertItems.length > 0;
-  const hasTaskData   = taskItems.length > 0;
+  // DELIVERY-HARDENING-07A0R2: when suppressExecutiveWidgets is true, ALL
+  // executive cards (status/alerts/tasks/david) are suppressed regardless of data.
+  // Only Copilot identity + chat remain.
+  const hasStatusData = !suppressExecutiveWidgets && (signals.length > 0 || decisions > 0
+    || (davidData && davidData.dataState !== "EMPTY" && davidData.criticalRefs.length > 0));
+  const hasAlertData  = !suppressExecutiveWidgets && alertItems.length > 0;
+  const hasTaskData   = !suppressExecutiveWidgets && taskItems.length > 0;
   const hasAnyExecutiveData = hasStatusData || hasAlertData || hasTaskData;
 
   // ── Rail visual system ─────────────────────────────────────────────────────
@@ -2274,12 +2279,14 @@ export function CopilotOpsRail({
               {" "}
               <span style={{ fontWeight: T.wt.normal, opacity: 0.55 }}>Copilot</span>
             </span>
+            {!suppressExecutiveWidgets && (
             <div style={{ display: "flex", alignItems: "center", gap: 4, background: statusChipBg, borderRadius: R.pill, padding: "2px 8px" }}>
               <span style={{ width: 5, height: 5, borderRadius: R.pill, background: statusDot, display: "inline-block", flexShrink: 0, boxShadow: `0 0 4px ${statusDot}88` }} />
               <span style={{ fontFamily: T.mono, fontSize: 9, fontWeight: T.wt.semibold, color: statusText, whiteSpace: "nowrap" as const, letterSpacing: "0.04em" }}>
                 {statusLabel}
               </span>
             </div>
+            )}
           </div>
 
           {/* Row 2: agent identity — large avatar + name/specialty */}
@@ -2516,7 +2523,7 @@ export function CopilotOpsRail({
         })()}
 
         {/* ── CARD 4 — DAVID COMERCIAL ─────────────────────────────────── */}
-        {davidData && davidData.dataState !== "EMPTY" && davidData.criticalRefs.length > 0 && (() => {
+        {!suppressExecutiveWidgets && davidData && davidData.dataState !== "EMPTY" && davidData.criticalRefs.length > 0 && (() => {
           const sevColor = davidData.topSignalSeverity === "critical" ? "#DC2626"
             : davidData.topSignalSeverity === "high" ? "#B45309"
             : "#004AAD";
