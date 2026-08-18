@@ -45,8 +45,9 @@
  * VARIANT_PHYSICAL_EXISTENCE_NOT_RECONCILED: MOVIMIENTOS_ITEMS saldo does not match vw_agentik_inventario EXISTENCIA
  * VARIANT_RESERVED_ALLOCATION_BLOCKED: SAG RESERVADO only exists at reference×bodega grain
  * VARIANT_AVAILABLE_QUANTITY_BLOCKED: DISPONIBLE per variant cannot be certified
- * AGENTIK_PENDING_ORDER_RESERVATION_VERIFIED: OperationalReservation tracks uncommitted Agentik orders
- * SAG_ORDER_RESERVATION_HANDOFF_VERIFIED: synced orders removed from local reservation to avoid double count
+ * AGENTIK_PENDING_ORDER_RESERVATION_STRUCTURALLY_VERIFIED: loader + UI structurally complete
+ * AGENTIK_PENDING_ORDER_RESERVATION_RUNTIME_BLOCKED: no runtime data to verify (SAG write mode=SIMULATION)
+ * SAG_ORDER_RESERVATION_HANDOFF_SIMULATION_ONLY: handoff logic present but untested with live SAG (debt SAG-006)
  *
  * Sprint: COMERCIAL-INVENTARIO-MASTER-DATA-COMPLETION-02
  */
@@ -101,10 +102,11 @@ export interface CommercialProductData {
   totalStock?: number;
   productionInProcess?: number;
 
-  // ── Order reservations (04A6B) ──
-  reservadoAgentikPendiente?: number;
-  reservadoOperativo?: number;
-  disponibleParaPrometer?: number;
+  // ── Order reservations (04A6B / 04A6B1) ──
+  /** null = query failed (fail-closed). 0 = verified, no pending. */
+  reservadoAgentikPendiente?: number | null;
+  reservadoOperativo?: number | null;
+  disponibleParaPrometer?: number | null;
   pendingOrders?: PendingOrderForDrawer[];
   reservationError?: string | null;
 
@@ -354,21 +356,20 @@ export function CommercialProductDrawer({ open, onClose, product, children }: Pr
         )}
       </Section>
 
-      {/* ── Inventario B01 (04A6A: certified SAG fields + 04A6B: reservations) ── */}
+      {/* ── Inventario B01 (04A6A + 04A6B + 04A6B1) ─────────────── */}
       <Section title={"Inventario B01 \u2014 Bodega Principal"}>
+        {/* Row 1: SAG certified values */}
         <InfoGrid>
-          {/* 04A6A: Existencia = on-hand from vw_agentik_inventario */}
           <InfoField
             label="Existencia B01"
             value={product.totalStock != null && product.totalStock > 0
               ? fmtNum(product.totalStock)
               : "\u2014"}
           />
-          {/* 04A6B: Reservado en pedidos = SAG + Agentik pendiente */}
           <InfoField
-            label="Reservado en pedidos"
-            value={(product.reservadoOperativo ?? product.reservado ?? 0) > 0
-              ? fmtNum(product.reservadoOperativo ?? product.reservado ?? 0)
+            label="Reservado SAG"
+            value={product.reservado != null && product.reservado > 0
+              ? fmtNum(product.reservado)
               : "\u2014"}
           />
           <InfoField
@@ -380,55 +381,42 @@ export function CommercialProductDrawer({ open, onClose, product, children }: Pr
               : "\u2014"}
             highlight={product.disponible <= 0}
           />
-          {/* 04A6B: Disponible para prometer */}
-          <InfoField
-            label="Disponible para prometer"
-            value={product.disponibleParaPrometer != null
-              ? product.disponibleParaPrometer > 0
+        </InfoGrid>
+
+        {/* Row 2: Agentik reservation overlay (04A6B1 fail-closed) */}
+        <div style={{ marginTop: S[3] }}>
+          <InfoGrid>
+            <InfoField
+              label="Reservado Agentik pendiente"
+              value={product.reservadoAgentikPendiente == null
+                ? "No verificado"
+                : product.reservadoAgentikPendiente > 0
+                ? fmtNum(product.reservadoAgentikPendiente)
+                : "\u2014"}
+              highlight={product.reservadoAgentikPendiente == null}
+            />
+            <InfoField
+              label="Reservado en pedidos"
+              value={product.reservadoOperativo == null
+                ? "No verificado"
+                : product.reservadoOperativo > 0
+                ? fmtNum(product.reservadoOperativo)
+                : "\u2014"}
+              highlight={product.reservadoOperativo == null}
+            />
+            <InfoField
+              label="Disponible para prometer"
+              value={product.disponibleParaPrometer == null
+                ? "No disponible"
+                : product.disponibleParaPrometer > 0
                 ? fmtNum(product.disponibleParaPrometer)
                 : product.disponibleParaPrometer < 0
                 ? `(${fmtNum(Math.abs(product.disponibleParaPrometer))})`
-                : "\u2014"
-              : "\u2014"}
-            highlight={(product.disponibleParaPrometer ?? 0) < 0}
-          />
-        </InfoGrid>
-
-        {/* 04A6B: Breakdown: SAG vs Agentik reservation */}
-        {(product.reservadoAgentikPendiente ?? 0) > 0 && (
-          <div style={{
-            marginTop: S[2],
-            padding: `${S[2]}px ${S[3]}px`,
-            background: `${C.amber}08`,
-            border: `1px solid ${C.amber}22`,
-            borderRadius: R.sm,
-          }}>
-            <div style={{
-              fontFamily: T.mono,
-              fontSize: T.sz["2xs"],
-              color: C.inkLight,
-              marginBottom: S[1],
-            }}>
-              Detalle de reserva
-            </div>
-            <div style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: `${S[1]}px ${S[3]}px`,
-            }}>
-              <InfoField
-                label="Reservado SAG"
-                value={product.reservado != null && product.reservado > 0
-                  ? fmtNum(product.reservado)
-                  : "\u2014"}
-              />
-              <InfoField
-                label="Reservado Agentik pendiente"
-                value={fmtNum(product.reservadoAgentikPendiente ?? 0)}
-              />
-            </div>
-          </div>
-        )}
+                : "\u2014"}
+              highlight={product.disponibleParaPrometer == null || product.disponibleParaPrometer < 0}
+            />
+          </InfoGrid>
+        </div>
 
         <div style={{
           fontFamily: T.mono,

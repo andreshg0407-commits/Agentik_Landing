@@ -10,14 +10,49 @@
  *   OperationalReservation (status="active", sourceType="order")
  *   AgentExecution (metadataJson for order header/status)
  *
+ * ── STATES THAT RESERVE (04A6B1 correction) ──────────────────────────────────
+ *   Only committed/approved orders reserve inventory:
+ *     listo_para_enviar, pendiente_sag, conflicto (reintentable), enviando
+ *
+ *   Do NOT reserve:
+ *     borrador, cancelado, sincronizado+absorbed, facturado/cerrado
+ *
+ * ── HANDOFF (04A6B1 SAG-006) ─────────────────────────────────────────────────
+ *   syncState=sincronizado + sagOrderId = SAG_ACK_WAITING_INVENTORY_REFRESH
+ *   Still counts as local reservation until a post-confirmation inventory
+ *   snapshot is observed. This pipeline does NOT yet verify the snapshot,
+ *   so these orders remain in the pending count (conservative, no gap).
+ *   Debt: SAG-006 — implement snapshot verification for handoff.
+ *
+ * ── FAIL-CLOSED (04A6B1) ─────────────────────────────────────────────────────
+ *   On query error: reservadoAgentikPendiente = null (NOT 0).
+ *   Callers must not compute disponibleParaPrometer from null.
+ *
  * server-only — uses Prisma.
  *
  * Sprint: INVENTORY-DRAWER-ORDER-RESERVATION-04A6B
+ * Correction: INVENTORY-DRAWER-ORDER-RESERVATION-04A6B1
  */
 
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+
+// ── States that represent committed orders ──────────────────────────────────
+
+/** Order statuses that commit inventory (approved, not draft/cancelled) */
+const COMMITTED_ORDER_STATUSES = new Set([
+  "listo_para_enviar",
+  "pendiente_sag",
+  "conflicto",        // reintentable — still committed
+]);
+
+/** Order statuses that explicitly do NOT reserve */
+const EXCLUDED_ORDER_STATUSES = new Set([
+  "borrador",
+  "cancelado",
+  "sincronizado",     // fully absorbed by SAG (only if snapshot verified — see SAG-006)
+]);
 
 // ── Result types ────────────────────────────────────────────────────────────
 
@@ -41,8 +76,11 @@ export interface PendingOrderReservation {
 
 export interface OrderReservationSummary {
   reference: string;
-  /** Total active units reserved by Agentik orders not yet absorbed by SAG */
-  reservadoAgentikPendiente: number;
+  /**
+   * Total active units reserved by committed Agentik orders.
+   * null = query failed (fail-closed — do NOT treat as 0).
+   */
+  reservadoAgentikPendiente: number | null;
   /** Individual orders composing the reservation */
   orders: PendingOrderReservation[];
   /** True if reservation query succeeded */
@@ -108,7 +146,7 @@ export async function loadOrderReservations(
       execMap.set(ex.id, ex.metadataJson);
     }
 
-    // 3. Build results
+    // 3. Build results — only committed orders
     const orders: PendingOrderReservation[] = [];
     let totalPending = 0;
 
@@ -121,11 +159,32 @@ export async function loadOrderReservations(
       const syncState = meta?.syncState ?? "desconocido";
       const sagOrderId = meta?.sagOrderId ?? null;
 
-      // Skip orders that are already synced (SAG has absorbed the reservation)
-      if (syncState === "sincronizado" && sagOrderId) continue;
-
-      // Skip cancelled orders (reservation should have been released)
+      // 04A6B1: Only committed orders reserve inventory
+      // borrador does NOT reserve — it's a draft, not a commitment
+      if (orderStatus === "borrador") continue;
       if (orderStatus === "cancelado") continue;
+
+      // 04A6B1 / SAG-006: Handoff without snapshot verification
+      // syncState=sincronizado + sagOrderId means SAG acknowledged the order,
+      // but we haven't verified a post-confirmation inventory snapshot yet.
+      // Conservative: keep reservation active (SAG_ACK_WAITING_INVENTORY_REFRESH).
+      // Do NOT release here — that would create a gap between SAG ACK and
+      // the next inventory snapshot where the reservation would be double-counted.
+      // Debt SAG-006: verify post-confirmation snapshot before releasing.
+
+      // Only skip if the order status is truly terminal AND NOT waiting for handoff
+      if (EXCLUDED_ORDER_STATUSES.has(orderStatus) && orderStatus !== "sincronizado") continue;
+
+      // For sincronizado orders: keep in local reservation (SAG-006 debt)
+      // They will be displayed with syncState indicator so the user sees the handoff state
+
+      // Verify this is a committed status (not just any unknown status)
+      if (!COMMITTED_ORDER_STATUSES.has(orderStatus) &&
+          orderStatus !== "sincronizado" &&   // SAG_ACK_WAITING — keep
+          syncState !== "error_sincronizacion" // reintentable error — keep
+      ) {
+        continue;
+      }
 
       // Extract variant info from order lines for this reference
       const variants: string[] = [];
@@ -144,7 +203,7 @@ export async function loadOrderReservations(
         reservationId: res.id,
         orderId: res.sourceId,
         consecutivo: meta?.consecutivo ?? 0,
-        customerName: meta?.header?.customerName ?? "—",
+        customerName: meta?.header?.customerName ?? "\u2014",
         qtyReserved: res.qtyReserved,
         qtyReleased: res.qtyReleased,
         qtyConsumed: res.qtyConsumed,
@@ -170,9 +229,10 @@ export async function loadOrderReservations(
       error: null,
     };
   } catch (err) {
+    // 04A6B1 FAIL-CLOSED: null, not 0
     return {
       reference: upper,
-      reservadoAgentikPendiente: 0,
+      reservadoAgentikPendiente: null,
       orders: [],
       loaded: false,
       error: `Error cargando reservas: ${(err as Error).message}`,

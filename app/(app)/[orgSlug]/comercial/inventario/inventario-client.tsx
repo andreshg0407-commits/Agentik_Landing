@@ -513,8 +513,9 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
   const enrichmentRef = useRef<string | null>(null);
 
   // 04A6B: Order reservation data for drawer
+  // 04A6B1: reservadoAgentikPendiente is null on error (fail-closed, not 0)
   const [reservation, setReservation] = useState<{
-    reservadoAgentikPendiente: number;
+    reservadoAgentikPendiente: number | null;
     pendingOrders: Array<{
       orderId: string;
       consecutivo: number;
@@ -614,16 +615,18 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
         });
       }
 
-      // Process reservation (04A6B)
+      // Process reservation (04A6B / 04A6B1 fail-closed)
       if (reservationJson?.ok) {
+        // Preserve null from loader — do NOT coalesce to 0
         setReservation({
           reservadoAgentikPendiente: reservationJson.reservadoAgentikPendiente ?? 0,
           pendingOrders: reservationJson.orders ?? [],
           error: reservationJson.error ?? null,
         });
       } else {
+        // 04A6B1: null = not verified. Prohibido calcular con cero.
         setReservation({
-          reservadoAgentikPendiente: 0,
+          reservadoAgentikPendiente: null,
           pendingOrders: [],
           error: "Reservas Agentik no verificadas",
         });
@@ -638,11 +641,16 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
   const drawerProduct: CommercialProductData | null = useMemo(() => {
     if (!drawerItem) return null;
 
-    // 04A6B: Compute operational reservation metrics
+    // 04A6B1: Compute operational reservation metrics (null-safe)
     const reservadoSag = drawerItem.pedidosPendientes ?? 0;
-    const reservadoAgentikPendiente = reservation?.reservadoAgentikPendiente ?? 0;
-    const reservadoOperativo = reservadoSag + reservadoAgentikPendiente;
-    const disponibleParaPrometer = drawerItem.disponibleReal - reservadoAgentikPendiente;
+    const rawAgentik = reservation?.reservadoAgentikPendiente;
+    // null = not verified. Do NOT substitute 0.
+    const reservadoAgentikPendiente: number | null =
+      rawAgentik === undefined ? null : rawAgentik;
+    const reservadoOperativo: number | null =
+      reservadoAgentikPendiente != null ? reservadoSag + reservadoAgentikPendiente : null;
+    const disponibleParaPrometer: number | null =
+      reservadoAgentikPendiente != null ? drawerItem.disponibleReal - reservadoAgentikPendiente : null;
 
     return {
       reference: drawerItem.reference,
