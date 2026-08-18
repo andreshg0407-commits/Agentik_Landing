@@ -29,7 +29,10 @@ export const maxDuration = 30;
 const ALLOWED_ORG = "castillitos";
 
 // The two test AGK orders created by Andrés for flow testing
-const TEST_ORDER_IDS = ["cmsku43cf", "cmslanbpp"] as const;
+const TEST_ORDER_IDS = [
+  "cmsku43cf000004jt6imr5oqj",
+  "cmslanbpp000004l4cjiwb1ly",
+] as const;
 
 export async function POST(req: Request) {
   // ── Guard: Preview-only ──────────────────────────────────────────────
