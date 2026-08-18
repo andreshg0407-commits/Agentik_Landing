@@ -75,8 +75,8 @@ export async function POST(req: Request) {
   let body: { password?: string } = {};
   try {
     body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 });
+  } catch (parseErr: unknown) {
+    return NextResponse.json({ error: "INVALID_BODY", detail: parseErr instanceof Error ? parseErr.message : String(parseErr) }, { status: 400 });
   }
 
   const tempPassword = body.password;
