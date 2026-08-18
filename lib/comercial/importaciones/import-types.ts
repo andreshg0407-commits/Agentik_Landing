@@ -105,6 +105,12 @@ export interface ImportedReference {
   /** Legacy alias for sales6mNet */
   salesTotal6m:    number;
 
+  // ── 8M / 12M sales (for window selector) ──────────────────────────────
+  sales8mNet:      number;
+  sales12mNet:     number;
+  revenue8m:       number;
+  revenue12m:      number;
+
   // ── Channel classification ──────────────────────────────────────────────
   /** Units classified as detal (summed per classified line) */
   salesDetal6m:    number;

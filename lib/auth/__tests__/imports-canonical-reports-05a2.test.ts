@@ -48,6 +48,18 @@ const CALENDAR_PATH = path.resolve(
 );
 const calendarSrc = fs.readFileSync(CALENDAR_PATH, "utf-8");
 
+const SERVICE_PATH = path.resolve(
+  __dirname,
+  "../../comercial/importaciones/import-service.ts"
+);
+const serviceSrc = fs.readFileSync(SERVICE_PATH, "utf-8");
+
+const TYPES_PATH = path.resolve(
+  __dirname,
+  "../../comercial/importaciones/import-types.ts"
+);
+const typesSrc = fs.readFileSync(TYPES_PATH, "utf-8");
+
 // ── G1: Tabs match 05A2 spec ────────────────────────────────────────────────
 
 describe("G1 — Tab structure matches 05A2 spec", () => {
@@ -91,6 +103,13 @@ describe("G2 — Window selector 6M|8M|12M", () => {
     expect(clientSrc).toContain("windowMonths");
     expect(clientSrc).toContain("setWindowMonths");
   });
+
+  test("T2d: Uses server-side per-window sales fields", () => {
+    expect(clientSrc).toContain("sales8mNet");
+    expect(clientSrc).toContain("sales12mNet");
+    expect(clientSrc).toContain("revenue8m");
+    expect(clientSrc).toContain("revenue12m");
+  });
 });
 
 // ── G3: KPIs — 5 management KPIs ────────────────────────────────────────────
@@ -110,9 +129,10 @@ describe("G3 — 5 management KPIs", () => {
     expect(clientSrc).toContain("sinVentasVerificadas");
   });
 
-  test("T3d: KPI — Mas de 8 meses certificados", () => {
-    expect(clientSrc).toContain("Mas de 8 meses certificados");
-    expect(clientSrc).toContain("masde8MesesCertificados");
+  test("T3d: KPI — 8M+ provisionales (SAG-004 blocked)", () => {
+    expect(clientSrc).toContain("8M+ provisionales");
+    expect(clientSrc).toContain("pendiente SAG-004");
+    expect(clientSrc).toContain("masde8MesesProvisionales");
   });
 
   test("T3e: KPI — Existencia fisica B24", () => {
@@ -207,11 +227,10 @@ describe("G6 — Report 3: Mas de 8 meses sin reingreso", () => {
     expect(clientSrc).toContain("PRODUCT_CREATION_DATE_PROXY");
   });
 
-  test("T6c: Certified vs proxy separation", () => {
-    expect(clientSrc).toContain("Certificados");
-    expect(clientSrc).toContain("Proxy");
-    expect(clientSrc).toContain("certifiedList");
+  test("T6c: All items are proxy (SAG-004 blocked, no certified)", () => {
+    expect(clientSrc).toContain("Provisionales");
     expect(clientSrc).toContain("proxyList");
+    expect(clientSrc).toContain("IMPORTS_B24_REENTRY_AGE_PARTIAL");
   });
 
   test("T6d: Evidence table shows required columns", () => {
@@ -220,9 +239,10 @@ describe("G6 — Report 3: Mas de 8 meses sin reingreso", () => {
     expect(clientSrc).toContain("Fuente");
   });
 
-  test("T6e: Proxy items have warning banner", () => {
-    expect(clientSrc).toContain("fechas proxy");
-    expect(clientSrc).toContain("requieren SAG-004 para verificacion");
+  test("T6e: All items marked provisional with SAG-004 blocker", () => {
+    expect(clientSrc).toContain("Todas las fechas son provisionales");
+    expect(clientSrc).toContain("SAG-004 bloqueado");
+    expect(clientSrc).toContain("Pendientes de confirmar antiguedad fisica");
   });
 
   test("T6f: Uses calendar months, not fixed days", () => {
@@ -314,7 +334,11 @@ describe("G8 — Rulings", () => {
     expect(clientSrc).toContain("IMPORT_ROTATION_CLASSIFICATION_BLOCKED");
   });
 
-  test("T8d: Rulings section in UI", () => {
+  test("T8d: IMPORTS_B24_REENTRY_AGE_PARTIAL", () => {
+    expect(clientSrc).toContain("IMPORTS_B24_REENTRY_AGE_PARTIAL");
+  });
+
+  test("T8e: Rulings section in UI", () => {
     expect(clientSrc).toContain("Rulings emitidos");
     expect(clientSrc).toContain("RulingRow");
   });
@@ -429,26 +453,59 @@ describe("G13 — Calendar months module", () => {
   });
 });
 
-// ── G14: Detail drawer preserved ────────────────────────────────────────────
+// ── G14: Server-side 8M/12M aggregation ─────────────────────────────────────
 
-describe("G14 — Detail drawer preserved", () => {
-  test("T14a: Drawer exists", () => {
+describe("G14 — Server-side window aggregation", () => {
+  test("T14a: Service computes 8M cutoff", () => {
+    expect(serviceSrc).toContain("eightMonthsAgo");
+  });
+
+  test("T14b: Service computes 12M cutoff", () => {
+    expect(serviceSrc).toContain("twelveMonthsAgo");
+  });
+
+  test("T14c: SalesAgg has 8M/12M fields", () => {
+    expect(serviceSrc).toContain("gross8m");
+    expect(serviceSrc).toContain("returns8m");
+    expect(serviceSrc).toContain("gross12m");
+    expect(serviceSrc).toContain("returns12m");
+  });
+
+  test("T14d: Types define 8M/12M sales fields", () => {
+    expect(typesSrc).toContain("sales8mNet");
+    expect(typesSrc).toContain("sales12mNet");
+    expect(typesSrc).toContain("revenue8m");
+    expect(typesSrc).toContain("revenue12m");
+  });
+
+  test("T14e: Service outputs sales8mNet and sales12mNet", () => {
+    expect(serviceSrc).toContain("sales8mNet");
+    expect(serviceSrc).toContain("sales12mNet");
+    expect(serviceSrc).toContain("revenue8m");
+    expect(serviceSrc).toContain("revenue12m");
+  });
+});
+
+// ── G15: Detail drawer preserved ────────────────────────────────────────────
+
+describe("G15 — Detail drawer preserved", () => {
+  test("T15a: Drawer exists", () => {
     expect(clientSrc).toContain("ImportDetailDrawer");
   });
 
-  test("T14b: Drawer shows classification badge", () => {
+  test("T15b: Drawer shows classification badge", () => {
     expect(clientSrc).toContain("RECOMPRA_LABELS[item.recompraClassification]");
   });
 
-  test("T14c: Drawer shows purchase invoice history (not 'receipts')", () => {
+  test("T15c: Drawer shows purchase invoice history (not 'receipts')", () => {
     expect(clientSrc).toContain("Facturas de compra (C1/C2)");
   });
 
-  test("T14d: Drawer shows technical info", () => {
+  test("T15d: Drawer shows technical info", () => {
     expect(clientSrc).toContain("Informacion tecnica");
   });
 
-  test("T14e: Drawer shows evidence for inbound date", () => {
+  test("T15e: Drawer shows evidence for inbound date", () => {
     expect(clientSrc).toContain("Ultimo ingreso documentado");
   });
 });

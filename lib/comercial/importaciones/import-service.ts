@@ -157,11 +157,25 @@ export async function listImportedReferences(orgId: string): Promise<ImportedRef
   sixMonthsAgo.setDate(1);
   sixMonthsAgo.setHours(0, 0, 0, 0);
 
+  const eightMonthsAgo = new Date();
+  eightMonthsAgo.setMonth(eightMonthsAgo.getMonth() - 8);
+  eightMonthsAgo.setDate(1);
+  eightMonthsAgo.setHours(0, 0, 0, 0);
+
+  const twelveMonthsAgo = new Date();
+  twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
+  twelveMonthsAgo.setDate(1);
+  twelveMonthsAgo.setHours(0, 0, 0, 0);
+
   type SalesAgg = {
     grossAll: number;
     returnsAll: number;
     gross6m: number;
     returns6m: number;
+    gross8m: number;
+    returns8m: number;
+    gross12m: number;
+    returns12m: number;
     // Per-line classification: actual unit sums
     detalAll: number;
     mayoristaAll: number;
@@ -174,6 +188,8 @@ export async function listImportedReferences(orgId: string): Promise<ImportedRef
     // Monetary values
     revenueAll: number;
     revenue6m: number;
+    revenue8m: number;
+    revenue12m: number;
     revenueDetal6m: number;
     revenueMayorista6m: number;
   };
@@ -214,10 +230,13 @@ export async function listImportedReferences(orgId: string): Promise<ImportedRef
           salesMap.set(code, {
             grossAll: 0, returnsAll: 0,
             gross6m: 0, returns6m: 0,
+            gross8m: 0, returns8m: 0,
+            gross12m: 0, returns12m: 0,
             detalAll: 0, mayoristaAll: 0, noDetAll: 0,
             detal6m: 0, mayorista6m: 0, noDet6m: 0,
             classifiedUnits: 0, confidenceSum: 0,
             revenueAll: 0, revenue6m: 0,
+            revenue8m: 0, revenue12m: 0,
             revenueDetal6m: 0, revenueMayorista6m: 0,
           });
         }
@@ -227,18 +246,21 @@ export async function listImportedReferences(orgId: string): Promise<ImportedRef
         const lineRevenue = Math.abs(qty) * unitValue;
         const orderDate = new Date(line.order.orderDate);
         const is6m = orderDate >= sixMonthsAgo;
+        const is8m = orderDate >= eightMonthsAgo;
+        const is12m = orderDate >= twelveMonthsAgo;
 
         // Separate gross sales from returns (negative quantities)
         if (qty > 0) {
           agg.grossAll += qty;
           agg.revenueAll += lineRevenue;
-          if (is6m) {
-            agg.gross6m += qty;
-            agg.revenue6m += lineRevenue;
-          }
+          if (is6m) { agg.gross6m += qty; agg.revenue6m += lineRevenue; }
+          if (is8m) { agg.gross8m += qty; agg.revenue8m += lineRevenue; }
+          if (is12m) { agg.gross12m += qty; agg.revenue12m += lineRevenue; }
         } else if (qty < 0) {
           agg.returnsAll += Math.abs(qty);
           if (is6m) agg.returns6m += Math.abs(qty);
+          if (is8m) agg.returns8m += Math.abs(qty);
+          if (is12m) agg.returns12m += Math.abs(qty);
         }
 
         // Classify this line by channel using actual unit value
@@ -327,9 +349,15 @@ export async function listImportedReferences(orgId: string): Promise<ImportedRef
     const sales6mNet = sales6mGross - returns6m;
     const salesTotal6m = sales6mNet;
 
+    // 8M / 12M sales
+    const sales8mNet = (agg?.gross8m ?? 0) - (agg?.returns8m ?? 0);
+    const sales12mNet = (agg?.gross12m ?? 0) - (agg?.returns12m ?? 0);
+
     // Revenue
     const revenueAll = agg?.revenueAll ?? 0;
     const revenue6m = agg?.revenue6m ?? 0;
+    const revenue8m = agg?.revenue8m ?? 0;
+    const revenue12m = agg?.revenue12m ?? 0;
     const revenueDetal6m = agg?.revenueDetal6m ?? 0;
     const revenueMayorista6m = agg?.revenueMayorista6m ?? 0;
 
@@ -440,6 +468,8 @@ export async function listImportedReferences(orgId: string): Promise<ImportedRef
       returns6m,
       sales6mNet,
       salesTotal6m,
+      sales8mNet,
+      sales12mNet,
       salesDetal6m,
       salesMayorista6m,
       salesNoDet6m,
@@ -455,6 +485,8 @@ export async function listImportedReferences(orgId: string): Promise<ImportedRef
       receipts,
       revenueAll,
       revenue6m,
+      revenue8m,
+      revenue12m,
       revenueDetal6m,
       revenueMayorista6m,
     };

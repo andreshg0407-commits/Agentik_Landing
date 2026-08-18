@@ -169,18 +169,33 @@ function calendarMonthsSince(dateStr: string): number {
 
 // ── Resolve evidence level for an item ──────────────────────────────────────
 
+/**
+ * Resolve evidence level for an item.
+ *
+ * IMPORTANT: CERTIFIED_B24_REENTRY_DATE requires a runtime query to B24
+ * movements (not yet implemented — SAG-004 blocked). C1/C2 receipts are
+ * purchase invoices, NOT physical B24 entries. They are classified as
+ * PURCHASE_DOCUMENT_DATE_PROXY until a B24 movement query exists.
+ *
+ * Current evidence hierarchy (all are PROXY until SAG-004 resolved):
+ *   Level 1: C1/C2 receipt date — PURCHASE_DOCUMENT_DATE_PROXY (best available)
+ *   Level 2: d_ultima_compra SAG — PURCHASE_DOCUMENT_DATE_PROXY
+ *   Level 3: Product creation date — PRODUCT_CREATION_DATE_PROXY
+ */
 function resolveEvidence(item: ImportSupplyIntelligenceItem): {
   level: EvidenceLevel;
   date: string;
   months: number;
   source: string;
 } | null {
+  // C1/C2 = purchase invoices, NOT certified B24 physical entries
+  // Classified as PURCHASE_DOCUMENT_DATE_PROXY per Gate E ruling
   if (item.lastInboundSource === "SAG_RECEIPT_C1_C2" && item.lastInboundDate) {
     return {
-      level: "CERTIFIED_B24_REENTRY_DATE",
+      level: "PURCHASE_DOCUMENT_DATE_PROXY",
       date: item.lastInboundDate,
       months: calendarMonthsSince(item.lastInboundDate),
-      source: "MOVIMIENTOS C1/C2",
+      source: "MOVIMIENTOS C1/C2 (factura de compra)",
     };
   }
   if (item.lastInboundSource === "LAST_PURCHASE_SAG" && item.lastInboundDate) {
@@ -208,33 +223,50 @@ interface DerivedKpis {
   totalRefs: number;
   conVentasEnVentana: number;
   sinVentasVerificadas: number;
+  /** Certified = B24 movement query (currently 0, SAG-004 blocked) */
   masde8MesesCertificados: number;
+  /** Provisional = proxy dates (C1/C2 or d_ultima_compra) > 8 months */
+  masde8MesesProvisionales: number;
   existenciaFisicaB24: number;
+}
+
+function salesInWindow(item: ImportSupplyIntelligenceItem, windowMonths: WindowMonths): number {
+  switch (windowMonths) {
+    case 6: return item.salesTotal6m;
+    case 8: return item.sales8mNet;
+    case 12: return item.sales12mNet;
+  }
+}
+
+function revenueInWindow(item: ImportSupplyIntelligenceItem, windowMonths: WindowMonths): number {
+  switch (windowMonths) {
+    case 6: return item.revenue6m;
+    case 8: return item.revenue8m;
+    case 12: return item.revenue12m;
+  }
 }
 
 function derivarKpis(items: ImportSupplyIntelligenceItem[], windowMonths: WindowMonths): DerivedKpis {
   let conVentasEnVentana = 0;
   let sinVentasVerificadas = 0;
-  let masde8MesesCertificados = 0;
+  // Certified = 0 because no B24 movement query exists (SAG-004 blocked)
+  const masde8MesesCertificados = 0;
+  let masde8MesesProvisionales = 0;
   let existenciaFisicaB24 = 0;
 
   for (const item of items) {
-    // Ventas en ventana: uses salesTotal6m for 6M, soldNet for wider windows
-    const hasSalesInWindow = windowMonths === 6
-      ? (item.salesDataQuality === "SYNCED" && item.salesTotal6m > 0)
-      : (item.salesDataQuality === "SYNCED" && item.soldNet > 0);
+    const windowSales = salesInWindow(item, windowMonths);
+    const hasSalesInWindow = item.salesDataQuality === "SYNCED" && windowSales > 0;
 
     if (hasSalesInWindow) {
       conVentasEnVentana++;
-    } else if (item.salesDataQuality === "SYNCED" && item.soldNet === 0) {
+    } else if (item.salesDataQuality === "SYNCED" && windowSales <= 0) {
       sinVentasVerificadas++;
     }
 
-    // Mas de 8 meses certificados: ONLY SAG_RECEIPT_C1_C2 source
-    if (item.lastInboundSource === "SAG_RECEIPT_C1_C2" && item.lastInboundDate) {
-      const months = calendarMonthsSince(item.lastInboundDate);
-      if (months >= 8) masde8MesesCertificados++;
-    }
+    // Provisional: any inbound date source > 8 months (all are proxy until SAG-004)
+    const ev = resolveEvidence(item);
+    if (ev && ev.months >= 8) masde8MesesProvisionales++;
 
     if (item.remaining > 0) existenciaFisicaB24++;
   }
@@ -244,6 +276,7 @@ function derivarKpis(items: ImportSupplyIntelligenceItem[], windowMonths: Window
     conVentasEnVentana,
     sinVentasVerificadas,
     masde8MesesCertificados,
+    masde8MesesProvisionales,
     existenciaFisicaB24,
   };
 }
@@ -326,11 +359,7 @@ export function ImportacionesClient({
               </button>
             ))}
           </div>
-          {windowMonths > 6 && (
-            <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.amber }}>
-              Ventana {windowMonths}M usa ventas totales (no filtradas por periodo exacto)
-            </span>
-          )}
+          {/* Each window (6M/8M/12M) uses its own server-side aggregation */}
         </div>
       )}
 
@@ -357,9 +386,9 @@ export function ImportacionesClient({
             onClick={() => setActiveTab("menor_rotacion")}
           />
           <KpiCard
-            label="Mas de 8 meses certificados"
-            value={derived.masde8MesesCertificados}
-            color={derived.masde8MesesCertificados > 0 ? C.red : undefined}
+            label="8M+ provisionales (pendiente SAG-004)"
+            value={derived.masde8MesesProvisionales}
+            color={derived.masde8MesesProvisionales > 0 ? C.amber : undefined}
             active={activeTab === "mas_8_meses"}
             onClick={() => setActiveTab("mas_8_meses")}
           />
@@ -448,11 +477,9 @@ function MayorRotacionView({
   onRowClick: (item: ImportSupplyIntelligenceItem) => void;
 }) {
   const filtered = useMemo(() => {
-    // Items with certified sales in window
     return items.filter(item => {
       if (item.salesDataQuality !== "SYNCED") return false;
-      if (windowMonths === 6) return item.salesTotal6m > 0;
-      return item.soldNet > 0;
+      return salesInWindow(item, windowMonths) > 0;
     });
   }, [items, windowMonths]);
 
@@ -460,11 +487,11 @@ function MayorRotacionView({
     const list = [...filtered];
     switch (sortKey) {
       case "units":
-        return list.sort((a, b) => (windowMonths === 6 ? b.salesTotal6m - a.salesTotal6m : b.soldNet - a.soldNet));
+        return list.sort((a, b) => salesInWindow(b, windowMonths) - salesInWindow(a, windowMonths));
       case "velocity":
-        return list.sort((a, b) => (b.ritmoPromedioVentas ?? 0) - (a.ritmoPromedioVentas ?? 0));
+        return list.sort((a, b) => (salesInWindow(b, windowMonths) / windowMonths) - (salesInWindow(a, windowMonths) / windowMonths));
       case "value":
-        return list.sort((a, b) => b.revenue6m - a.revenue6m);
+        return list.sort((a, b) => revenueInWindow(b, windowMonths) - revenueInWindow(a, windowMonths));
     }
   }, [filtered, sortKey, windowMonths]);
 
@@ -518,9 +545,9 @@ function MayorRotacionView({
           </div>
         )}
         {sorted.map((item, idx) => {
-          const salesInWindow = windowMonths === 6 ? item.salesTotal6m : item.soldNet;
-          const velocity = item.ritmoPromedioVentas ?? 0;
-          const value = item.revenue6m;
+          const windowSales = salesInWindow(item, windowMonths);
+          const velocity = windowSales / windowMonths;
+          const value = revenueInWindow(item, windowMonths);
           const cls = CLASSIFICATION_DISPLAY[item.recompraClassification];
 
           return (
@@ -546,7 +573,7 @@ function MayorRotacionView({
                   </div>
                 </div>
               </div>
-              <span style={{ textAlign: "right", fontWeight: T.wt.semibold }}>{salesInWindow.toLocaleString("es-CO")}</span>
+              <span style={{ textAlign: "right", fontWeight: T.wt.semibold }}>{windowSales.toLocaleString("es-CO")}</span>
               <span style={{ textAlign: "right", color: C.inkMid }}>{velocity > 0 ? velocity.toFixed(1) : "\u2014"}</span>
               <span style={{ textAlign: "right", color: C.inkMid }}>${Math.round(value).toLocaleString("es-CO")}</span>
               <span style={{ textAlign: "right", color: item.remaining > 0 ? C.ink : C.red }}>
@@ -587,11 +614,7 @@ function MenorRotacionView({
     // Items with EXISTENCIA B24 > 0, sorted by lowest sales
     return items
       .filter(item => item.remaining > 0 && item.stockDataQuality === "CONFIRMED")
-      .sort((a, b) => {
-        const salesA = windowMonths === 6 ? a.salesTotal6m : a.soldNet;
-        const salesB = windowMonths === 6 ? b.salesTotal6m : b.soldNet;
-        return salesA - salesB;
-      });
+      .sort((a, b) => salesInWindow(a, windowMonths) - salesInWindow(b, windowMonths));
   }, [items, windowMonths]);
 
   const coverageInfo = useMemo(() => {
@@ -636,7 +659,7 @@ function MenorRotacionView({
           </div>
         )}
         {filtered.map((item, idx) => {
-          const salesInWindow = windowMonths === 6 ? item.salesTotal6m : item.soldNet;
+          const windowSales = salesInWindow(item, windowMonths);
           return (
             <div
               key={item.productId}
@@ -660,8 +683,8 @@ function MenorRotacionView({
                   </div>
                 </div>
               </div>
-              <span style={{ textAlign: "right", color: salesInWindow === 0 ? C.red : C.ink }}>
-                {salesInWindow.toLocaleString("es-CO")}
+              <span style={{ textAlign: "right", color: windowSales === 0 ? C.red : C.ink }}>
+                {windowSales.toLocaleString("es-CO")}
               </span>
               <span style={{ textAlign: "right" }}>{item.remaining.toLocaleString("es-CO")}</span>
               <span style={{ textAlign: "right", color: C.inkMid }}>
@@ -696,57 +719,52 @@ function Masde8MesesView({
   items: ImportSupplyIntelligenceItem[];
   onRowClick: (item: ImportSupplyIntelligenceItem) => void;
 }) {
-  const { certified, proxy } = useMemo(() => {
-    const certifiedList: Array<ImportSupplyIntelligenceItem & { evidence: NonNullable<ReturnType<typeof resolveEvidence>> }> = [];
+  const { proxy } = useMemo(() => {
     const proxyList: Array<ImportSupplyIntelligenceItem & { evidence: NonNullable<ReturnType<typeof resolveEvidence>> }> = [];
 
     for (const item of items) {
       const ev = resolveEvidence(item);
       if (!ev || ev.months < 8) continue;
-
-      const augmented = { ...item, evidence: ev };
-      if (ev.level === "CERTIFIED_B24_REENTRY_DATE") {
-        certifiedList.push(augmented);
-      } else {
-        proxyList.push(augmented);
-      }
+      // ALL items are proxy — no CERTIFIED_B24_REENTRY_DATE exists
+      // until a B24 movement query is implemented (SAG-004 blocked)
+      proxyList.push({ ...item, evidence: ev });
     }
 
-    certifiedList.sort((a, b) => b.evidence.months - a.evidence.months);
     proxyList.sort((a, b) => b.evidence.months - a.evidence.months);
-
-    return { certified: certifiedList, proxy: proxyList };
+    return { proxy: proxyList };
   }, [items]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[4] }}>
-      {/* Section: Certified */}
-      <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
-        <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
-          Certificados — Fecha de reingreso C1/C2 &gt; 8 meses ({certified.length})
+      {/* SAG-004 blocker banner */}
+      <div style={{
+        fontFamily: T.mono, fontSize: T.sz.xs, color: C.amberDark,
+        background: C.amberLight, border: `1px solid ${C.amberBorder}`,
+        borderRadius: R.md, padding: `${S[2]}px ${S[3]}px`,
+        borderLeft: `4px solid ${C.amber}`,
+      }}>
+        <div style={{ fontWeight: T.wt.semibold, marginBottom: S[1] }}>
+          IMPORTS_B24_REENTRY_AGE_PARTIAL — Todas las fechas son provisionales
         </div>
-        <EightMonthTable items={certified} onRowClick={onRowClick} />
+        <div>
+          No existe una consulta runtime de movimientos B24 (SAG-004 bloqueado).
+          Las fechas provienen de facturas de compra C1/C2 o d_ultima_compra SAG.
+          Ninguna fecha proxy puede generar el KPI &quot;Mas de 8 meses certificados&quot;.
+          Pendientes de confirmar antiguedad fisica hasta que SAG-004 se resuelva.
+        </div>
       </div>
 
-      {/* Section: Proxy */}
+      {/* Section: Provisional (all proxy) */}
       {proxy.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
           <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.amber }}>
-            Proxy — Fecha de compra/creacion SAG &gt; 8 meses ({proxy.length})
-          </div>
-          <div style={{
-            fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.amberDark,
-            background: C.amberLight, border: `1px solid ${C.amberBorder}`,
-            borderRadius: R.sm, padding: `${S[1]}px ${S[2]}px`,
-          }}>
-            Estos items usan fechas proxy (d_ultima_compra o fecha de creacion del producto).
-            No son ingresos fisicos certificados — requieren SAG-004 para verificacion.
+            Provisionales — Fecha de compra/creacion SAG &gt; 8 meses ({proxy.length})
           </div>
           <EightMonthTable items={proxy} onRowClick={onRowClick} />
         </div>
       )}
 
-      {certified.length === 0 && proxy.length === 0 && (
+      {proxy.length === 0 && (
         <div style={{ padding: S[5], textAlign: "center", fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight }}>
           Sin referencias con mas de 8 meses desde ultimo ingreso documentado.
         </div>
@@ -1075,6 +1093,7 @@ function InteligenciaView({
           <RulingRow ruling="IMPORTS_SALES_AND_STOCK_PARTIAL_RUNTIME_VERIFIED" status="PASS" />
           <RulingRow ruling="IMPORT_RECEIPT_SOURCE_BLOCKED" status="BLOCKED" />
           <RulingRow ruling="IMPORT_ROTATION_CLASSIFICATION_BLOCKED" status="BLOCKED" />
+          <RulingRow ruling="IMPORTS_B24_REENTRY_AGE_PARTIAL" status="BLOCKED" />
         </div>
       </div>
 
