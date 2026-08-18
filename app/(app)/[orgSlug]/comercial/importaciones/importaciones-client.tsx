@@ -876,39 +876,11 @@ function InteligenciaView({
       ? completeMonths.reduce((s, m) => s + m.revenueNet, 0) / completeMonths.length
       : totalRevenue6m / 6;
 
-    // Growth: last complete month vs previous complete month
-    let growthPct: number | null = null;
-    if (completeMonths.length >= 2) {
-      const last = completeMonths[completeMonths.length - 1];
-      const prev = completeMonths[completeMonths.length - 2];
-      if (prev.revenueNet > 0) {
-        growthPct = Math.round(((last.revenueNet - prev.revenueNet) / prev.revenueNet) * 100);
-      }
-    }
+    // Last closed month: most recent entry with partial=false
+    const lastClosed = completeMonths.length > 0 ? completeMonths[completeMonths.length - 1] : null;
 
-    // Purchases (C1/C2): only quantity available, no monetary value
-    const totalPurchaseUnits = items.reduce((s, i) => s + i.receipts.reduce((rs, r) => rs + r.quantity, 0), 0);
-
-    return { totalRevenue6m, totalUnits6m, refsWithSales, avgMonthlyRevenue, growthPct, totalPurchaseUnits };
+    return { totalRevenue6m, totalUnits6m, refsWithSales, avgMonthlyRevenue, lastClosed };
   }, [items, monthlySales]);
-
-  // Monthly purchases from C1/C2 receipts (quantity only)
-  const monthlyPurchases = useMemo(() => {
-    const monthly = new Map<string, { units: number; docs: Set<string> }>();
-    for (const item of items) {
-      for (const r of item.receipts) {
-        const month = r.date.substring(0, 7);
-        const entry = monthly.get(month) ?? { units: 0, docs: new Set() };
-        entry.units += r.quantity;
-        entry.docs.add(r.documentNumber);
-        monthly.set(month, entry);
-      }
-    }
-    return Array.from(monthly.entries())
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .slice(-6)
-      .map(([month, d]) => ({ month, units: d.units, docs: d.docs.size }));
-  }, [items]);
 
   // Products grouped by size class for Top Products
   const sizeGroups = useMemo(() => {
@@ -954,11 +926,25 @@ function InteligenciaView({
           <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight }}>Ventas netas / meses completos</span>
         </div>
         <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, padding: `${S[3]}px ${S[4]}px`, background: C.white, boxShadow: E.xs }}>
-          <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>Crecimiento ultimo mes</span>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xl"], fontWeight: T.wt.bold, color: execKpis.growthPct !== null ? (execKpis.growthPct >= 0 ? C.green : C.red) : C.inkFaint }}>
-            {execKpis.growthPct !== null ? `${execKpis.growthPct > 0 ? "+" : ""}${execKpis.growthPct}%` : "\u2014"}
-          </div>
-          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight }}>Mes completo vs anterior</span>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>Ventas ultimo mes cerrado</span>
+          {execKpis.lastClosed ? (
+            <>
+              <div title={fmtCOPFull(execKpis.lastClosed.revenueNet)} style={{ fontFamily: T.mono, fontSize: T.sz["2xl"], fontWeight: T.wt.bold, color: C.blueDark }}>
+                {fmtCOP(execKpis.lastClosed.revenueNet)}
+              </div>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight }}>
+                Ventas netas {"\u00B7"} {new Date(execKpis.lastClosed.month + "-15").toLocaleString("es-CO", { month: "long", year: "numeric", timeZone: "America/Bogota" })}
+              </span>
+              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginTop: 1 }}>
+                {execKpis.lastClosed.unitsNet.toLocaleString("es-CO")} unidades netas
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xl"], fontWeight: T.wt.bold, color: C.inkFaint }}>No disponible</div>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight }}>Sin meses cerrados en fuente</span>
+            </>
+          )}
         </div>
       </div>
 
@@ -1014,39 +1000,7 @@ function InteligenciaView({
         </div>
       )}
 
-      {/* ── 3. Documented Purchases (quantity only — no monetary) ──── */}
-      {monthlyPurchases.length > 0 && (
-        <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, overflow: "hidden", background: C.white, boxShadow: E.sm }}>
-          <div style={{ padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}`, background: C.surfaceAlt }}>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
-              Compras documentadas de referencias importadas
-            </div>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
-              Facturas C1/C2 · Unidades (valor monetario no disponible en fuente)
-            </div>
-          </div>
-          <div style={{ padding: `${S[3]}px ${S[4]}px` }}>
-            <div style={{ display: "flex", gap: S[2], alignItems: "flex-end", height: 60 }}>
-              {monthlyPurchases.map(m => {
-                const max = Math.max(...monthlyPurchases.map(x => x.units));
-                const h = max > 0 ? Math.max(4, (m.units / max) * 52) : 4;
-                return (
-                  <div key={m.month} title={`${m.units.toLocaleString("es-CO")} und · ${m.docs} documentos`}
-                    style={{ display: "flex", flexDirection: "column", alignItems: "center", flex: 1 }}>
-                    <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, marginBottom: 2 }}>
-                      {m.units.toLocaleString("es-CO")}
-                    </span>
-                    <div style={{ width: "100%", height: h, background: C.amber, borderRadius: `${R.xs}px ${R.xs}px 0 0`, minWidth: 4 }} />
-                    <span style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint, marginTop: 2 }}>{m.month.substring(5)}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── 4. Top Products by Size ──────────────────────────────────── */}
+      {/* ── 3. Top Products by Size ──────────────────────────────────── */}
       <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, overflow: "hidden", background: C.white, boxShadow: E.sm }}>
         <div style={{ padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}`, background: C.surfaceAlt }}>
           <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
@@ -1073,7 +1027,7 @@ function InteligenciaView({
         />
       </div>
 
-      {/* ── 5. Compact freshness footer ──────────────────────────────── */}
+      {/* ── 4. Compact freshness footer ──────────────────────────────── */}
       <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, display: "flex", gap: S[4], flexWrap: "wrap" }}>
         <span>Actualizado: {new Date(computedAt).toLocaleString("es-CO", { timeZone: "America/Bogota" })}</span>
         {salesCoverage?.salesAsOf && <span>Ventas al: {salesCoverage.salesAsOf}</span>}

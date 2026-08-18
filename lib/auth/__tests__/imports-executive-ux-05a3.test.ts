@@ -72,16 +72,16 @@ describe("05A3 — Classification Labels", () => {
 });
 
 describe("05A3 — Inteligencia Tab", () => {
-  test("T8: Inteligencia has executive KPIs (05A4 redesign)", () => {
+  test("T8: Inteligencia has executive KPIs (05A4A redesign)", () => {
     expect(clientSrc).toContain("Ventas netas 6M");
     expect(clientSrc).toContain("Unidades netas 6M");
     expect(clientSrc).toContain("Promedio mensual");
-    expect(clientSrc).toContain("Crecimiento ultimo mes");
+    expect(clientSrc).toContain("Ventas ultimo mes cerrado");
   });
 
-  test("T9: Inteligencia has purchases chart (05A4 replaces classification)", () => {
-    expect(clientSrc).toContain("Compras documentadas");
-    expect(clientSrc).toContain("monthlyPurchases");
+  test("T9: Inteligencia has no purchases chart (removed 05A4A)", () => {
+    expect(clientSrc).not.toContain("Compras documentadas");
+    expect(clientSrc).not.toContain("monthlyPurchases");
   });
 
   test("T10: Inteligencia has Top productos por tamano (05A4)", () => {

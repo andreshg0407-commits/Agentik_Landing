@@ -259,16 +259,16 @@ describe("G7 — Inteligencia tab", () => {
     expect(clientSrc).toContain("InteligenciaView");
   });
 
-  test("T7b: Executive KPIs (05A4 redesign)", () => {
+  test("T7b: Executive KPIs (05A4A redesign)", () => {
     expect(clientSrc).toContain("Ventas netas 6M");
     expect(clientSrc).toContain("Unidades netas 6M");
     expect(clientSrc).toContain("Promedio mensual");
-    expect(clientSrc).toContain("Crecimiento ultimo mes");
+    expect(clientSrc).toContain("Ventas ultimo mes cerrado");
   });
 
-  test("T7c: Purchases chart (05A4)", () => {
-    expect(clientSrc).toContain("Compras documentadas");
-    expect(clientSrc).toContain("monthlyPurchases");
+  test("T7c: No purchases chart (removed 05A4A)", () => {
+    expect(clientSrc).not.toContain("Compras documentadas");
+    expect(clientSrc).not.toContain("monthlyPurchases");
   });
 
   test("T7d: No classification distribution (removed in 05A4)", () => {
