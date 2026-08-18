@@ -35,17 +35,16 @@
  * | reservado        | InventoryItem.pedidosPendientes      | REAL — SAG pedidos pendientes de facturacion
  * | totalStock       | InventoryItem.existenciaBodega01     | REAL — vw_agentik_inventario EXISTENCIA B01
  * | enTransito       | (REMOVED — no certified source)      | —
- * | variantInventory | ProductInventoryLevel (wh10, B01)    | REAL — SAG MOVIMIENTOS_ITEMS computed
+ * | variantInventory | ProductInventoryLevel (wh10, B01)    | BLOCKED — not reconciled (04A6A1R)
  *
- * ── Rulings (04A6A / 04A6A1) ─────────────────────────────────────
- * VARIANT_PHYSICAL_EXISTENCE_VERIFIED: SAG certifies EXISTENCIA per talla×color×bodega
+ * ── Rulings (04A6A / 04A6A1R) ────────────────────────────────────
+ * VARIANT_PHYSICAL_EXISTENCE_NOT_RECONCILED: MOVIMIENTOS_ITEMS saldo does not match vw_agentik_inventario EXISTENCIA
  * VARIANT_RESERVED_ALLOCATION_BLOCKED: SAG RESERVADO only exists at reference×bodega grain
  * VARIANT_AVAILABLE_QUANTITY_BLOCKED: DISPONIBLE per variant cannot be certified
  *
  * Sprint: COMERCIAL-INVENTARIO-MASTER-DATA-COMPLETION-02
  */
 
-import { useState, useMemo } from "react";
 import { C, T, S, R } from "@/lib/ui/tokens";
 import { OperationalSideDrawer } from "@/components/workspace/operational-side-drawer";
 import type { DrawerSeverity } from "@/components/workspace/operational-side-drawer";
@@ -101,17 +100,6 @@ export interface CommercialProductData {
   isAccessory?: boolean;
 
   enrichmentLoading?: boolean;
-
-  // ── 04A6A1: Variant physical inventory ──
-  variantInventory?: VariantInventoryRow[];
-  variantInventorySyncedAt?: string | null;
-}
-
-/** 04A6A1: VARIANT_PHYSICAL_EXISTENCE_VERIFIED — per-variant EXISTENCIA B01 */
-export interface VariantInventoryRow {
-  talla: string;
-  color: string;
-  existenciaB01: number;
 }
 
 // ── Props ────────────────────────────────────────────────────────────────────
@@ -304,7 +292,7 @@ export function CommercialProductDrawer({ open, onClose, product, children }: Pr
             fontStyle: "italic",
             marginTop: S[1],
           }}>
-            Variantes de catalogo {"\u2014"} SAG no expone cantidades certificadas por talla y color
+            Variantes de catalogo {"\u2014"} SAG no permite reconciliar todavia cantidades actuales por talla y color
           </div>
         </Section>
       ) : product.isAccessory && product.handlingUnit ? (
@@ -383,9 +371,6 @@ export function CommercialProductDrawer({ open, onClose, product, children }: Pr
         </div>
       </Section>
 
-      {/* ── 04A6A1: Existencia fisica por talla y color ──────────── */}
-      {!loading && <VariantInventorySection product={product} />}
-
       {/* ── Produccion abierta (Addendum D7: secondary indicator) ── */}
       {product.productionInProcess != null && product.productionInProcess > 0 && (
         <Section title="Produccion abierta">
@@ -433,249 +418,6 @@ export function CommercialProductDrawer({ open, onClose, product, children }: Pr
 
       {children}
     </OperationalSideDrawer>
-  );
-}
-
-// ── 04A6A1: Variant Inventory Section ────────────────────────────────────────
-
-const VARIANT_COLLAPSE_THRESHOLD = 12;
-
-function VariantInventorySection({ product }: { product: CommercialProductData }) {
-  const [expanded, setExpanded] = useState(false);
-  const [tallaFilter, setTallaFilter] = useState<string | null>(null);
-  const [colorFilter, setColorFilter] = useState<string | null>(null);
-
-  const rows = product.variantInventory;
-  if (!rows || rows.length === 0) return null;
-
-  // Reconciliation: SUM(variant EXISTENCIA B01) vs reference EXISTENCIA B01
-  const sumVariantExist = rows.reduce((s, r) => s + r.existenciaB01, 0);
-  const refExist = product.totalStock ?? 0;
-  const delta = sumVariantExist - refExist;
-  const isReconciled = Math.abs(delta) <= 1;
-
-  // Unique tallas/colores for filter chips
-  const tallas = useMemo(() => [...new Set(rows.map(r => r.talla))].sort(), [rows]);
-  const colores = useMemo(() => [...new Set(rows.map(r => r.color))].sort(), [rows]);
-
-  // Apply filters
-  const filtered = useMemo(() => {
-    let result = rows;
-    if (tallaFilter) result = result.filter(r => r.talla === tallaFilter);
-    if (colorFilter) result = result.filter(r => r.color === colorFilter);
-    return result;
-  }, [rows, tallaFilter, colorFilter]);
-
-  const shouldCollapse = filtered.length > VARIANT_COLLAPSE_THRESHOLD;
-  const visible = shouldCollapse && !expanded
-    ? filtered.slice(0, VARIANT_COLLAPSE_THRESHOLD)
-    : filtered;
-
-  // Variant estado
-  function variantEstado(existencia: number): { label: string; color: string } {
-    if (existencia > 0) return { label: "Con existencia", color: C.green };
-    if (existencia === 0) return { label: "Agotada", color: C.inkGhost };
-    return { label: "Inconsistencia", color: C.red };
-  }
-
-  const sumVisible = filtered.reduce((s, r) => s + r.existenciaB01, 0);
-
-  const cellBase: React.CSSProperties = {
-    fontFamily: T.mono,
-    fontSize: T.sz["2xs"],
-    padding: `${S[1]}px ${S[2]}px`,
-    borderBottom: `1px solid ${C.line}22`,
-  };
-
-  return (
-    <Section title="Existencia fisica por talla y color">
-      {/* 04A6A1: VARIANT_PHYSICAL_EXISTENCE_VERIFIED — SAG MOVIMIENTOS_ITEMS B01 */}
-
-      {/* Reconciliation status */}
-      {!isReconciled && (
-        <div style={{
-          fontFamily: T.mono,
-          fontSize: T.sz["2xs"],
-          color: C.amber,
-          marginBottom: S[2],
-          padding: `${S[1]}px ${S[2]}px`,
-          background: `${C.amber}08`,
-          borderRadius: R.sm,
-        }}>
-          Existencia por variante no reconciliada {"\u2014"} diferencia: {fmtNum(delta)}
-        </div>
-      )}
-
-      {/* Filter chips */}
-      {(tallas.length > 1 || colores.length > 1) && (
-        <div style={{ display: "flex", gap: S[2], marginBottom: S[2], flexWrap: "wrap" as const }}>
-          {tallas.length > 1 && (
-            <div style={{ display: "flex", gap: S[1], alignItems: "center", flexWrap: "wrap" as const }}>
-              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost }}>Talla:</span>
-              <FilterChip label="Todas" active={!tallaFilter} onClick={() => setTallaFilter(null)} />
-              {tallas.map(t => (
-                <FilterChip key={t} label={t} active={tallaFilter === t} onClick={() => setTallaFilter(tallaFilter === t ? null : t)} />
-              ))}
-            </div>
-          )}
-          {colores.length > 1 && (
-            <div style={{ display: "flex", gap: S[1], alignItems: "center", flexWrap: "wrap" as const }}>
-              <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost }}>Color:</span>
-              <FilterChip label="Todos" active={!colorFilter} onClick={() => setColorFilter(null)} />
-              {colores.map(c => (
-                <FilterChip key={c} label={c} active={colorFilter === c} onClick={() => setColorFilter(colorFilter === c ? null : c)} />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Table */}
-      <div style={{ overflowX: "auto" as const }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" as const }}>
-          <thead>
-            <tr>
-              {["Talla", "Color", "Existencia B01", "Estado"].map(h => (
-                <th key={h} style={{
-                  ...cellBase,
-                  fontWeight: T.wt.bold,
-                  color: C.inkLight,
-                  textTransform: "uppercase" as const,
-                  letterSpacing: "0.04em",
-                  textAlign: h === "Existencia B01" ? ("right" as const) : ("left" as const),
-                  borderBottom: `2px solid ${C.line}44`,
-                }}>
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {visible.map((row, i) => {
-              const est = variantEstado(row.existenciaB01);
-              return (
-                <tr key={`${row.talla}-${row.color}-${i}`}>
-                  <td style={{ ...cellBase, color: C.ink }}>{row.talla}</td>
-                  <td style={{ ...cellBase, color: C.ink }}>{row.color}</td>
-                  <td style={{
-                    ...cellBase,
-                    textAlign: "right" as const,
-                    fontWeight: T.wt.semibold,
-                    color: row.existenciaB01 < 0 ? C.red : C.ink,
-                  }}>
-                    {row.existenciaB01 < 0
-                      ? `(${fmtNum(Math.abs(row.existenciaB01))})`
-                      : row.existenciaB01 === 0
-                      ? "\u2014"
-                      : fmtNum(row.existenciaB01)}
-                  </td>
-                  <td style={{ ...cellBase }}>
-                    <span style={{
-                      fontFamily: T.mono,
-                      fontSize: T.sz["2xs"],
-                      color: est.color,
-                    }}>
-                      {est.label}
-                    </span>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-          {/* Footer totals */}
-          <tfoot>
-            <tr>
-              <td colSpan={2} style={{
-                ...cellBase,
-                fontWeight: T.wt.bold,
-                color: C.inkLight,
-                borderBottom: "none",
-                borderTop: `2px solid ${C.line}44`,
-              }}>
-                Total ({filtered.length} combinaciones)
-              </td>
-              <td style={{
-                ...cellBase,
-                textAlign: "right" as const,
-                fontWeight: T.wt.bold,
-                color: C.ink,
-                borderBottom: "none",
-                borderTop: `2px solid ${C.line}44`,
-              }}>
-                {fmtNum(sumVisible)}
-              </td>
-              <td style={{
-                ...cellBase,
-                borderBottom: "none",
-                borderTop: `2px solid ${C.line}44`,
-              }}>
-                {isReconciled ? (
-                  <span style={{ color: C.green, fontFamily: T.mono, fontSize: T.sz["2xs"] }}>
-                    Reconciliado
-                  </span>
-                ) : (
-                  <span style={{ color: C.amber, fontFamily: T.mono, fontSize: T.sz["2xs"] }}>
-                    Delta: {fmtNum(delta)}
-                  </span>
-                )}
-              </td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-
-      {/* Expand/collapse */}
-      {shouldCollapse && (
-        <button
-          onClick={() => setExpanded(!expanded)}
-          style={{
-            fontFamily: T.mono,
-            fontSize: T.sz["2xs"],
-            color: C.blueDark,
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            padding: `${S[1]}px 0`,
-            marginTop: S[1],
-          }}
-        >
-          {expanded ? "Colapsar" : `Ver todas (${filtered.length})`}
-        </button>
-      )}
-
-      {/* Provenance footer */}
-      <div style={{
-        fontFamily: T.mono,
-        fontSize: T.sz["2xs"],
-        color: C.inkGhost,
-        marginTop: S[2],
-      }}>
-        Fuente: SAG / MOVIMIENTOS_ITEMS / B01
-        {product.variantInventorySyncedAt && (
-          <> {"\u2014"} Sincronizado: {fmtDate(product.variantInventorySyncedAt)}</>
-        )}
-      </div>
-    </Section>
-  );
-}
-
-function FilterChip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        fontFamily: T.mono,
-        fontSize: T.sz["2xs"],
-        padding: `1px ${S[2]}px`,
-        borderRadius: R.sm,
-        border: `1px solid ${active ? C.blueDark : C.line}`,
-        background: active ? `${C.blueDark}10` : C.surface,
-        color: active ? C.blueDark : C.inkMid,
-        cursor: "pointer",
-      }}
-    >
-      {label}
-    </button>
   );
 }
 
