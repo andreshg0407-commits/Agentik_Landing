@@ -35,6 +35,7 @@ import { computeServerKpiStats } from "@/lib/comercial/pedidos/order-service";
 import {
   CASTILLITOS_SAG_WRITE,
 } from "@/lib/comercial/pedidos/order-policy-pack-config";
+import { computeTodayWindow } from "@/lib/comercial/pedidos/tenant-today-window";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -134,27 +135,13 @@ export async function GET(req: Request) {
   // ══════════════════════════════════════════════════════════════════════
   // B. TODAY WINDOW BOUNDARIES (COT)
   // ══════════════════════════════════════════════════════════════════════
-  const tenantTimezoneOffset = -300; // COT
   const now = new Date();
-  const utcMs = now.getTime() + now.getTimezoneOffset() * 60_000;
-  const tenantMs = utcMs - tenantTimezoneOffset * 60_000;
-  const tenantNow = new Date(tenantMs);
-  const todayStart = new Date(
-    Date.UTC(
-      tenantNow.getUTCFullYear(),
-      tenantNow.getUTCMonth(),
-      tenantNow.getUTCDate(),
-    ),
-  );
-  todayStart.setMinutes(todayStart.getMinutes() + tenantTimezoneOffset);
-  const tomorrowStart = new Date(todayStart.getTime() + 24 * 60 * 60_000);
+  const { todayStart, tomorrowStart } = computeTodayWindow(now, "America/Bogota");
 
   result.sectionB_todayWindow = {
     serverNowUtc: now.toISOString(),
-    tenantNow: tenantNow.toISOString(),
     todayStartUtc: todayStart.toISOString(),
     tomorrowStartUtc: tomorrowStart.toISOString(),
-    timezoneOffset: tenantTimezoneOffset,
     timezone: "America/Bogota",
   };
 
@@ -162,7 +149,7 @@ export async function GET(req: Request) {
   // C. REAL KPI VALUES
   // ══════════════════════════════════════════════════════════════════════
   try {
-    const kpis = await computeServerKpiStats(orgId, tenantTimezoneOffset);
+    const kpis = await computeServerKpiStats(orgId);
     result.sectionC_kpis = { status: "OK", ...kpis };
   } catch (e: unknown) {
     result.sectionC_kpis = {
@@ -301,19 +288,44 @@ export async function GET(req: Request) {
 
     const agkOrders = agkRows.map((r: any) => {
       const meta = (r.metadataJson ?? {}) as Record<string, unknown>;
+      const header = (meta.header ?? {}) as Record<string, unknown>;
+      const summary = (meta.summary ?? {}) as Record<string, unknown>;
+      const lines = (meta.lines ?? []) as any[];
       return {
         id: r.id,
+        consecutivo: meta.consecutivo ?? null,
         createdAt: r.createdAt,
         status: meta.status ?? "unknown",
         origin: meta.origin ?? "unknown",
-        customerName: (meta.header as any)?.customerName ?? null,
-        totalValue: meta.totalValue ?? 0,
-        lineCount: meta.lineCount ?? 0,
+        syncState: meta.syncState ?? "unknown",
+        // From header (canonical source)
+        customerName: header.customerName ?? null,
+        customerId: header.customerId ?? null,
+        customerCode: header.customerCode ?? null,
+        sellerName: header.sellerName ?? null,
+        sellerId: header.sellerId ?? null,
+        channel: header.channel ?? null,
+        // From summary (canonical source for totals)
+        totalValue: summary.totalValue ?? 0,
+        totalUnits: summary.totalUnits ?? 0,
+        uniqueReferences: summary.uniqueReferences ?? 0,
+        totalLines: summary.totalLines ?? 0,
+        activeLines: summary.activeLines ?? 0,
+        // Lines detail (first 5 for inspection)
+        linesSample: lines.slice(0, 5).map((l: any) => ({
+          reference: l.reference ?? l.productReference ?? null,
+          description: l.description ?? l.productName ?? null,
+          quantity: l.quantity ?? 0,
+          unitPrice: l.unitPrice ?? 0,
+          lineTotal: l.lineTotal ?? 0,
+        })),
+        lineCountFromArray: lines.length,
+        // SAG sync
         sagOrderId: meta.sagOrderId ?? null,
+        externalSyncKey: meta.externalSyncKey ?? null,
+        commercialJourneyId: meta.commercialJourneyId ?? null,
         hasConflict: !!meta.hasConflict,
         reservationExpired: !!meta.reservationExpired,
-        wizardSessionKey: meta.wizardSessionKey ?? null,
-        externalSyncKey: meta.externalSyncKey ?? null,
       };
     });
 
@@ -380,15 +392,37 @@ export async function GET(req: Request) {
   // J. SAG WRITE OPERATION COUNT (verify SIMULATION = 0 real writes)
   // ══════════════════════════════════════════════════════════════════════
   try {
-    const writeOps = await prisma.sagWriteOperation.count({
+    const writeOps = await prisma.sagWriteOperation.findMany({
       where: { organizationId: orgId },
+      select: {
+        id: true,
+        organizationId: true,
+        writeType: true,
+        status: true,
+        risk: true,
+        description: true,
+        sourceRef: true,
+        initiatedBy: true,
+        initiatedAt: true,
+        approvedBy: true,
+        approvedAt: true,
+        sentAt: true,
+        executedAt: true,
+        sagResponseOk: true,
+        retryCount: true,
+        lastError: true,
+        updatedAt: true,
+      },
+      take: 5,
+      orderBy: { initiatedAt: "desc" },
     });
     result.sectionJ_sagWriteOps = {
       status: "OK",
-      count: writeOps,
-      ruling: writeOps === 0
+      count: writeOps.length,
+      operations: writeOps,
+      ruling: writeOps.length === 0
         ? "CONFIRMED: Zero SagWriteOperation rows — consistent with SIMULATION mode"
-        : `WARNING: ${writeOps} SagWriteOperation rows exist`,
+        : `INSPECT: ${writeOps.length} SagWriteOperation rows exist — details above`,
     };
   } catch (e: unknown) {
     result.sectionJ_sagWriteOps = {
@@ -396,6 +430,97 @@ export async function GET(req: Request) {
       error: e instanceof Error ? e.message : String(e),
     };
   }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // K. SELLER RESOLUTION FOR 5 RECENT SAG ORDERS (batch)
+  // ══════════════════════════════════════════════════════════════════════
+  try {
+    const recentOrders = await prisma.customerOrderRecord.findMany({
+      where: { organizationId: orgId },
+      orderBy: { orderDate: "desc" },
+      take: 5,
+      select: {
+        erpMovId: true,
+        customerNit: true,
+        customerName: true,
+        sellerTerceroId: true,
+        sellerName: true,
+        orderDate: true,
+      },
+    });
+
+    // Batch resolve via SAG TERCEROS
+    const terceroIds = recentOrders
+      .map(o => o.sellerTerceroId)
+      .filter((id): id is number => id !== null && id > 0);
+
+    let terceroNames: Record<number, string> = {};
+    if (terceroIds.length > 0) {
+      try {
+        const config = getSagConnection("CURRENT");
+        const idList = [...new Set(terceroIds)].join(",");
+        const rows = await consultaSagJson(
+          config,
+          `SELECT ka_nl_tercero, sc_nombre FROM TERCEROS WHERE ka_nl_tercero IN (${idList})`,
+        );
+        for (const r of rows as any[]) {
+          if (r.ka_nl_tercero && r.sc_nombre) {
+            terceroNames[Number(r.ka_nl_tercero)] = String(r.sc_nombre).trim();
+          }
+        }
+      } catch {
+        // SAG TERCEROS query failed
+      }
+    }
+
+    const enriched = recentOrders.map(o => ({
+      erpMovId: o.erpMovId,
+      customerName: o.customerName,
+      orderDate: o.orderDate,
+      sellerTerceroId: o.sellerTerceroId,
+      storedSellerName: o.sellerName,
+      resolvedSellerName: o.sellerTerceroId
+        ? terceroNames[o.sellerTerceroId] ?? null
+        : null,
+      resolutionStatus: o.sellerName
+        ? "STORED"
+        : o.sellerTerceroId && terceroNames[o.sellerTerceroId]
+          ? "RESOLVABLE_NOT_STORED"
+          : o.sellerTerceroId
+            ? "TERCERO_ID_BUT_NO_NAME"
+            : "NO_TERCERO_ID",
+    }));
+
+    result.sectionK_sellerResolution = {
+      status: "OK",
+      orders: enriched,
+      terceroNamesResolved: Object.keys(terceroNames).length,
+    };
+  } catch (e: unknown) {
+    result.sectionK_sellerResolution = {
+      status: "ERROR",
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // L. LOADED ORDERS RECONCILIATION (811 of 10193)
+  // ══════════════════════════════════════════════════════════════════════
+  result.sectionL_loadedOrdersReconciliation = {
+    listOrdersTakeLimits: {
+      agentExecution: 200,
+      crmQuote: 500,
+      customerOrderRecord: 500,
+      maxTheoretical: 1200,
+    },
+    deduplication: "No-op: dedup matches on sagOrderId (none set for SIMULATION mode AGK orders)",
+    explanation: "listOrders() loads at most 200 AGK + 500 CRM + 500 SAG = 1200 rows. " +
+      "The reported 811 was the actual count returned (likely fewer SAG/CRM rows matched " +
+      "the query window). computeServerKpiStats() uses count() with NO take limits for totals.",
+    uiLabel: "Mostrando X de 10.193 pedidos",
+    isPaginated: false,
+    recommendation: "Add server-side pagination or declare loaded subset explicitly",
+  };
 
   return NextResponse.json(result, { status: 200 });
 }

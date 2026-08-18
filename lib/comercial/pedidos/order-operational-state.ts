@@ -12,6 +12,7 @@
 
 import type { OrderStatus, OrderOrigin, OrderSyncState, SellerDisplayStatus } from "./order-types";
 import { resolveSellerDisplayStatus } from "./order-authority";
+import { computeTodayWindow } from "./tenant-today-window";
 
 // ── Operational state ────────────────────────────────────────────────────────
 
@@ -258,19 +259,10 @@ function isOrderToday(createdAt: string, todayStart: Date, tomorrowStart: Date):
  */
 export function computeCalibratedKpiStats(
   allOrders: OrderKpiInput[],
-  tenantTimezoneOffset: number = -300,
+  _tenantTimezoneOffset: number = -300,
 ): CalibratedKpiStats {
-  // Compute today boundaries in tenant timezone
-  const now = new Date();
-  const utcMs = now.getTime() + now.getTimezoneOffset() * 60_000;
-  const tenantMs = utcMs - tenantTimezoneOffset * 60_000;
-  const tenantNow = new Date(tenantMs);
-  const todayStart = new Date(Date.UTC(
-    tenantNow.getUTCFullYear(), tenantNow.getUTCMonth(), tenantNow.getUTCDate(),
-  ));
-  // Adjust back to UTC
-  todayStart.setMinutes(todayStart.getMinutes() + tenantTimezoneOffset);
-  const tomorrowStart = new Date(todayStart.getTime() + 24 * 60 * 60_000);
+  // Sprint: ORDERS-RUNTIME-CORRECTION-06A1 — replaced manual offset math
+  const { todayStart, tomorrowStart } = computeTodayWindow(new Date(), "America/Bogota");
 
   let valorHoy = 0;
   let pedidosHoy = 0;
@@ -410,20 +402,12 @@ export const QUICK_FILTER_LABELS: Record<QuickFilterKey, string> = {
 export function applyQuickFilter(
   allOrders: OrderKpiInput[],
   filter: QuickFilterKey,
-  tenantTimezoneOffset: number = -300,
+  _tenantTimezoneOffset: number = -300,
 ): OrderKpiInput[] {
   if (filter === "todos") return allOrders;
 
-  // Compute today boundaries
-  const now = new Date();
-  const utcMs = now.getTime() + now.getTimezoneOffset() * 60_000;
-  const tenantMs = utcMs - tenantTimezoneOffset * 60_000;
-  const tenantNow = new Date(tenantMs);
-  const todayStart = new Date(Date.UTC(
-    tenantNow.getUTCFullYear(), tenantNow.getUTCMonth(), tenantNow.getUTCDate(),
-  ));
-  todayStart.setMinutes(todayStart.getMinutes() + tenantTimezoneOffset);
-  const tomorrowStart = new Date(todayStart.getTime() + 24 * 60 * 60_000);
+  // Sprint: ORDERS-RUNTIME-CORRECTION-06A1 — replaced manual offset math
+  const { todayStart, tomorrowStart } = computeTodayWindow(new Date(), "America/Bogota");
 
   switch (filter) {
     case "hoy":

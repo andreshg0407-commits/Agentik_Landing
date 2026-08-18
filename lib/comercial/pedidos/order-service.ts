@@ -48,6 +48,7 @@ import {
   releaseReservationsForOrder,
 } from "./order-reservation-adapter";
 import type { OrderReservationOperationResult, ReservationConflict } from "./order-reservation-adapter-core";
+import { computeTodayWindow } from "./tenant-today-window";
 
 // ── Order mutation result (includes reservation status) ─────────────────────
 export interface OrderMutationResult {
@@ -1626,18 +1627,12 @@ export interface ServerKpiStats {
 
 export async function computeServerKpiStats(
   orgId: string,
-  tenantTimezoneOffset: number = -300,
+  _tenantTimezoneOffset: number = -300,
 ): Promise<ServerKpiStats> {
-  // Compute today boundaries in tenant timezone (COT = -300)
+  // Compute today boundaries in tenant timezone (America/Bogota)
+  // Sprint: ORDERS-RUNTIME-CORRECTION-06A1 — replaced manual offset math
   const now = new Date();
-  const utcMs = now.getTime() + now.getTimezoneOffset() * 60_000;
-  const tenantMs = utcMs - tenantTimezoneOffset * 60_000;
-  const tenantNow = new Date(tenantMs);
-  const todayStart = new Date(Date.UTC(
-    tenantNow.getUTCFullYear(), tenantNow.getUTCMonth(), tenantNow.getUTCDate(),
-  ));
-  todayStart.setMinutes(todayStart.getMinutes() + tenantTimezoneOffset);
-  const tomorrowStart = new Date(todayStart.getTime() + 24 * 60 * 60_000);
+  const { todayStart, tomorrowStart } = computeTodayWindow(now, "America/Bogota");
 
   let valorPedidosHoy = 0;
   let pedidosDeHoy = 0;
@@ -1669,7 +1664,8 @@ export async function computeServerKpiStats(
       const sagError = (meta.sagError as string | undefined) ?? null;
       const hasConflict = !!(meta.hasConflict);
       const reservationExpired = !!(meta.reservationExpired);
-      const totalValue = Number(meta.totalValue ?? 0);
+      const summary = (meta.summary ?? {}) as Record<string, unknown>;
+      const totalValue = Number(summary.totalValue ?? meta.totalValue ?? 0);
       const cancelled = status === "cancelado";
       const isNative = origin === "AGENTIK_NATIVE" || origin === "agentik";
       const createdAt = r.createdAt instanceof Date ? r.createdAt : new Date(r.createdAt);

@@ -30,6 +30,8 @@
 import { createHash } from "crypto";
 import { prisma }       from "@/lib/prisma";
 import type { RunContext, StorageHandler, UnifiedCollection, UnifiedCustomer, UnifiedMovement, UnifiedReceivable, UnifiedSagOrder } from "@/lib/connectors/core/types";
+import { consultaSagJson } from "@/lib/connectors/pya/client";
+import { getSagConnection } from "@/lib/connectors/pya/sag-source-router";
 
 const BATCH_SIZE      = 500;
 const SALE_BATCH_SIZE = 200;
@@ -764,6 +766,61 @@ export const customerOrderStorage: StorageHandler<UnifiedSagOrder> = {
         }
       }
       skipped += batch.length - ops.length;
+    }
+
+    // Sprint: ORDERS-RUNTIME-CORRECTION-06A1 — batch resolve seller names at ingestion
+    const allTerceroIds = [...new Set(
+      records
+        .map(r => r.sellerTerceroId)
+        .filter((id): id is number => id !== null && id !== undefined && id > 0)
+    )];
+
+    if (allTerceroIds.length > 0) {
+      try {
+        const config = getSagConnection("CURRENT");
+        const nameMap = new Map<number, string>();
+
+        for (let i = 0; i < allTerceroIds.length; i += 100) {
+          const idBatch = allTerceroIds.slice(i, i + 100).join(",");
+          const names = await consultaSagJson(config, `
+            SELECT ka_nl_tercero, sc_nombre
+            FROM TERCEROS
+            WHERE ka_nl_tercero IN (${idBatch})
+          `);
+          for (const n of names as any[]) {
+            if (n.ka_nl_tercero && n.sc_nombre) {
+              nameMap.set(Number(n.ka_nl_tercero), String(n.sc_nombre).trim());
+            }
+          }
+        }
+
+        if (nameMap.size > 0) {
+          const ordersToUpdate = await db.customerOrderRecord.findMany({
+            where: {
+              organizationId: ctx.orgId,
+              sellerTerceroId: { in: allTerceroIds },
+              sellerName: null,
+            },
+            select: { id: true, sellerTerceroId: true },
+          });
+
+          for (const o of ordersToUpdate) {
+            const name = nameMap.get(o.sellerTerceroId);
+            if (name) {
+              await db.customerOrderRecord.update({
+                where: { id: o.id },
+                data: {
+                  sellerName: name,
+                  sellerSource: "sag_movimientos",
+                  sellerConfidence: "high",
+                },
+              });
+            }
+          }
+        }
+      } catch {
+        // Seller resolution is best-effort — does not block ingestion
+      }
     }
 
     return { imported, skipped, errored };
