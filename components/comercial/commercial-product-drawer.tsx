@@ -36,15 +36,22 @@
  * | totalStock       | InventoryItem.existenciaBodega01     | REAL — vw_agentik_inventario EXISTENCIA B01
  * | enTransito       | (REMOVED — no certified source)      | —
  * | variantInventory | ProductInventoryLevel (wh10, B01)    | BLOCKED — not reconciled (04A6A1R)
+ * | reservadoAgentikPendiente | OperationalReservation (active, order) | REAL — 04A6B
+ * | reservadoOperativo | reservadoSag + reservadoAgentikPendiente | COMPUTED — 04A6B
+ * | disponibleParaPrometer | disponibleSag - reservadoAgentikPendiente | COMPUTED — 04A6B
+ * | pendingOrders | AgentExecution + OperationalReservation | REAL — 04A6B
  *
- * ── Rulings (04A6A / 04A6A1R) ────────────────────────────────────
+ * ── Rulings (04A6A / 04A6A1R / 04A6B) ───────────────────────────
  * VARIANT_PHYSICAL_EXISTENCE_NOT_RECONCILED: MOVIMIENTOS_ITEMS saldo does not match vw_agentik_inventario EXISTENCIA
  * VARIANT_RESERVED_ALLOCATION_BLOCKED: SAG RESERVADO only exists at reference×bodega grain
  * VARIANT_AVAILABLE_QUANTITY_BLOCKED: DISPONIBLE per variant cannot be certified
+ * AGENTIK_PENDING_ORDER_RESERVATION_VERIFIED: OperationalReservation tracks uncommitted Agentik orders
+ * SAG_ORDER_RESERVATION_HANDOFF_VERIFIED: synced orders removed from local reservation to avoid double count
  *
  * Sprint: COMERCIAL-INVENTARIO-MASTER-DATA-COMPLETION-02
  */
 
+import { useState } from "react";
 import { C, T, S, R } from "@/lib/ui/tokens";
 import { OperationalSideDrawer } from "@/components/workspace/operational-side-drawer";
 import type { DrawerSeverity } from "@/components/workspace/operational-side-drawer";
@@ -94,12 +101,32 @@ export interface CommercialProductData {
   totalStock?: number;
   productionInProcess?: number;
 
+  // ── Order reservations (04A6B) ──
+  reservadoAgentikPendiente?: number;
+  reservadoOperativo?: number;
+  disponibleParaPrometer?: number;
+  pendingOrders?: PendingOrderForDrawer[];
+  reservationError?: string | null;
+
   imageUrl?: string | null;
 
   lineCategory?: "textile" | "accessory";
   isAccessory?: boolean;
 
   enrichmentLoading?: boolean;
+}
+
+/** Minimal order shape for drawer display (04A6B) */
+export interface PendingOrderForDrawer {
+  orderId: string;
+  consecutivo: number;
+  customerName: string;
+  qtyActive: number;
+  orderStatus: string;
+  syncState: string;
+  sagOrderId: string | null;
+  createdAt: string;
+  variants: string[];
 }
 
 // ── Props ────────────────────────────────────────────────────────────────────
@@ -327,7 +354,7 @@ export function CommercialProductDrawer({ open, onClose, product, children }: Pr
         )}
       </Section>
 
-      {/* ── Inventario B01 (04A6A: certified SAG fields) ──────────── */}
+      {/* ── Inventario B01 (04A6A: certified SAG fields + 04A6B: reservations) ── */}
       <Section title={"Inventario B01 \u2014 Bodega Principal"}>
         <InfoGrid>
           {/* 04A6A: Existencia = on-hand from vw_agentik_inventario */}
@@ -337,11 +364,11 @@ export function CommercialProductDrawer({ open, onClose, product, children }: Pr
               ? fmtNum(product.totalStock)
               : "\u2014"}
           />
-          {/* 04A6A: Reservado SAG = pedidos pendientes from vw_agentik_inventario */}
+          {/* 04A6B: Reservado en pedidos = SAG + Agentik pendiente */}
           <InfoField
-            label="Reservado SAG"
-            value={product.reservado != null && product.reservado > 0
-              ? fmtNum(product.reservado)
+            label="Reservado en pedidos"
+            value={(product.reservadoOperativo ?? product.reservado ?? 0) > 0
+              ? fmtNum(product.reservadoOperativo ?? product.reservado ?? 0)
               : "\u2014"}
           />
           <InfoField
@@ -353,7 +380,56 @@ export function CommercialProductDrawer({ open, onClose, product, children }: Pr
               : "\u2014"}
             highlight={product.disponible <= 0}
           />
+          {/* 04A6B: Disponible para prometer */}
+          <InfoField
+            label="Disponible para prometer"
+            value={product.disponibleParaPrometer != null
+              ? product.disponibleParaPrometer > 0
+                ? fmtNum(product.disponibleParaPrometer)
+                : product.disponibleParaPrometer < 0
+                ? `(${fmtNum(Math.abs(product.disponibleParaPrometer))})`
+                : "\u2014"
+              : "\u2014"}
+            highlight={(product.disponibleParaPrometer ?? 0) < 0}
+          />
         </InfoGrid>
+
+        {/* 04A6B: Breakdown: SAG vs Agentik reservation */}
+        {(product.reservadoAgentikPendiente ?? 0) > 0 && (
+          <div style={{
+            marginTop: S[2],
+            padding: `${S[2]}px ${S[3]}px`,
+            background: `${C.amber}08`,
+            border: `1px solid ${C.amber}22`,
+            borderRadius: R.sm,
+          }}>
+            <div style={{
+              fontFamily: T.mono,
+              fontSize: T.sz["2xs"],
+              color: C.inkLight,
+              marginBottom: S[1],
+            }}>
+              Detalle de reserva
+            </div>
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: `${S[1]}px ${S[3]}px`,
+            }}>
+              <InfoField
+                label="Reservado SAG"
+                value={product.reservado != null && product.reservado > 0
+                  ? fmtNum(product.reservado)
+                  : "\u2014"}
+              />
+              <InfoField
+                label="Reservado Agentik pendiente"
+                value={fmtNum(product.reservadoAgentikPendiente ?? 0)}
+              />
+            </div>
+          </div>
+        )}
+
         <div style={{
           fontFamily: T.mono,
           fontSize: T.sz["2xs"],
@@ -361,7 +437,7 @@ export function CommercialProductDrawer({ open, onClose, product, children }: Pr
           fontStyle: "italic",
           marginTop: S[1],
         }}>
-          El reservado SAG se certifica a nivel de referencia. SAG no expone su distribucion por talla y color.
+          Pedidos pendientes por facturar/despachar. El reservado SAG se certifica a nivel de referencia. SAG no expone su distribucion por talla y color.
         </div>
         <div style={{
           fontFamily: T.mono,
@@ -372,6 +448,9 @@ export function CommercialProductDrawer({ open, onClose, product, children }: Pr
           Fuente: vw_agentik_inventario {"\u2014"} B01 Bodega Principal
         </div>
       </Section>
+
+      {/* ── Pedidos Agentik que reservan inventario (04A6B) ────────── */}
+      <PendingOrdersSection product={product} />
 
       {/* ── Produccion abierta (Addendum D7: secondary indicator) ── */}
       {product.productionInProcess != null && product.productionInProcess > 0 && (
@@ -420,6 +499,141 @@ export function CommercialProductDrawer({ open, onClose, product, children }: Pr
 
       {children}
     </OperationalSideDrawer>
+  );
+}
+
+// ── Pending Orders Section (04A6B) ──────────────────────────────────────────
+
+const SYNC_LABELS: Record<string, string> = {
+  nunca_sincronizado: "Pendiente",
+  sincronizado: "Sincronizado",
+  error_sincronizacion: "Error",
+};
+
+const ORDER_STATUS_LABELS: Record<string, string> = {
+  borrador: "Borrador",
+  listo_para_enviar: "Listo",
+  pendiente_sag: "Enviando",
+  sincronizado: "Sincronizado",
+  conflicto: "Conflicto",
+  cancelado: "Cancelado",
+};
+
+function PendingOrdersSection({ product }: { product: CommercialProductData }) {
+  const [expanded, setExpanded] = useState(false);
+  const orders = product.pendingOrders ?? [];
+  const hasOrders = orders.length > 0;
+
+  if (product.reservationError) {
+    return (
+      <Section title="Pedidos Agentik que reservan inventario">
+        <div style={{
+          fontFamily: T.mono,
+          fontSize: T.sz["2xs"],
+          color: C.amber,
+          padding: `${S[2]}px ${S[3]}px`,
+          background: `${C.amber}08`,
+          border: `1px solid ${C.amber}22`,
+          borderRadius: R.sm,
+        }}>
+          Reservas Agentik no verificadas
+        </div>
+      </Section>
+    );
+  }
+
+  if (!hasOrders) {
+    return (
+      <Section title="Pedidos Agentik que reservan inventario">
+        <div style={{
+          fontFamily: T.mono,
+          fontSize: T.sz["2xs"],
+          color: C.inkGhost,
+        }}>
+          Sin reservas Agentik pendientes de sincronizacion
+        </div>
+      </Section>
+    );
+  }
+
+  return (
+    <Section title="Pedidos Agentik que reservan inventario">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          background: "none",
+          border: `1px solid ${C.line}`,
+          borderRadius: R.sm,
+          padding: `${S[1]}px ${S[3]}px`,
+          cursor: "pointer",
+          fontFamily: T.mono,
+          fontSize: T.sz["2xs"],
+          color: C.blueDark,
+          width: "100%",
+          textAlign: "left",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <span>{orders.length} pedido{orders.length > 1 ? "s" : ""} reservando {fmtNum(product.reservadoAgentikPendiente ?? 0)} uds</span>
+        <span>{expanded ? "\u25BC" : "\u25B6"}</span>
+      </button>
+
+      {expanded && (
+        <div style={{ marginTop: S[2] }}>
+          {/* Column headers */}
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "60px 1fr 50px 70px 80px",
+            gap: S[2],
+            padding: `${S[1]}px 0`,
+            borderBottom: `1px solid ${C.line}22`,
+          }}>
+            {["PEDIDO", "CLIENTE", "CANT", "ESTADO", "SINC SAG"].map(h => (
+              <div key={h} style={{
+                fontFamily: T.mono,
+                fontSize: T.sz["2xs"],
+                color: C.inkGhost,
+                fontWeight: T.wt.bold,
+                textTransform: "uppercase" as const,
+              }}>{h}</div>
+            ))}
+          </div>
+
+          {/* Order rows */}
+          {orders.map(o => (
+            <div
+              key={o.orderId}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "60px 1fr 50px 70px 80px",
+                gap: S[2],
+                padding: `${S[1]}px 0`,
+                borderBottom: `1px solid ${C.line}11`,
+                alignItems: "center",
+              }}
+            >
+              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.blueDark, fontWeight: T.wt.semibold }}>
+                #{o.consecutivo}
+              </div>
+              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                {o.customerName}
+              </div>
+              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.ink, fontWeight: T.wt.semibold }}>
+                {fmtNum(o.qtyActive)}
+              </div>
+              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
+                {ORDER_STATUS_LABELS[o.orderStatus] ?? o.orderStatus}
+              </div>
+              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: o.syncState === "error_sincronizacion" ? C.red : C.inkMid }}>
+                {SYNC_LABELS[o.syncState] ?? o.syncState}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Section>
   );
 }
 

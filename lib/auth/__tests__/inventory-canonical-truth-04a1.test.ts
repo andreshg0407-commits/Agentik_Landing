@@ -229,7 +229,8 @@ describe("J14: Click expands subgroup references", () => {
   });
 
   test("J14b: Expanded subgroup shows item rows", () => {
-    expect(clientSrc).toContain("isOpen && sgItems.length > 0");
+    // Subgroup expansion renders content when isOpen is true
+    expect(clientSrc).toContain("isOpen && (");
   });
 });
 

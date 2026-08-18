@@ -512,6 +512,23 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
   const [enrichmentLoading, setEnrichmentLoading] = useState(false);
   const enrichmentRef = useRef<string | null>(null);
 
+  // 04A6B: Order reservation data for drawer
+  const [reservation, setReservation] = useState<{
+    reservadoAgentikPendiente: number;
+    pendingOrders: Array<{
+      orderId: string;
+      consecutivo: number;
+      customerName: string;
+      qtyActive: number;
+      orderStatus: string;
+      syncState: string;
+      sagOrderId: string | null;
+      createdAt: string;
+      variants: string[];
+    }>;
+    error: string | null;
+  } | null>(null);
+
   // Build canonical lookup
   const canonicalByRef = useMemo(() => {
     const map = new Map<string, CanonicalInventoryItemStatus>();
@@ -525,6 +542,7 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
     setDrawerItem(item);
     setDrawerCanonical(canonicalByRef.get(item.reference) ?? null);
     setEnrichment(null);
+    setReservation(null);
     setEnrichmentLoading(true);
     enrichmentRef.current = item.reference;
   }, [canonicalByRef]);
@@ -534,6 +552,7 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
     setDrawerItem(orig);
     setDrawerCanonical(ci);
     setEnrichment(null);
+    setReservation(null);
     setEnrichmentLoading(true);
     enrichmentRef.current = ci.reference;
   }, []);
@@ -542,6 +561,7 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
     setDrawerItem(null);
     setDrawerCanonical(null);
     setEnrichment(null);
+    setReservation(null);
     setEnrichmentLoading(false);
     enrichmentRef.current = null;
   }, []);
@@ -553,47 +573,63 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
     let cancelled = false;
 
     (async () => {
-      try {
-        const res = await fetch(
-          `/api/orgs/${orgSlug}/comercial/inventario/product-detail?reference=${encodeURIComponent(ref)}`,
-        );
-        if (cancelled || enrichmentRef.current !== ref) return;
-        if (res.ok) {
-          const json = await res.json();
-          if (json.ok && json.detail) {
-            const d = json.detail;
-            setEnrichment({
-              categoria: d.categoria ?? null,
-              precioDetal: d.precioDetal ?? null,
-              precioMayorista: d.precioMayorista ?? null,
-              grupoSag: d.grupoSag ?? null,
-              lineaSag: d.lineaSag ?? null,
-              subgrupoSag: d.subgrupoSag ?? null,
-              grupoId: d.grupoId ?? null,
-              lineaId: d.lineaId ?? null,
-              subgrupoId: d.subgrupoId ?? null,
-              costo: d.costo ?? null,
-              manejaTallaColor: d.manejaTallaColor ?? false,
-              barcode: d.barcode ?? null,
-              description2: d.description2 ?? null,
-              handlingUnit: d.handlingUnit ?? null,
-              createdAtSag: d.createdAtSag ?? null,
-              lastModifiedSag: d.lastModifiedSag ?? null,
-              lastPurchaseSag: d.lastPurchaseSag ?? null,
-              lastSaleSag: d.lastSaleSag ?? null,
-              tallas: d.tallas ?? [],
-              colores: d.colores ?? [],
-              variantCount: d.variantCount ?? 0,
-            });
-          }
-        }
-      } catch {
-        // Network error — graceful degradation
-      } finally {
-        if (!cancelled && enrichmentRef.current === ref) {
-          setEnrichmentLoading(false);
-        }
+      // Fetch enrichment + reservation in parallel
+      const enrichmentPromise = fetch(
+        `/api/orgs/${orgSlug}/comercial/inventario/product-detail?reference=${encodeURIComponent(ref)}`,
+      ).then(r => r.ok ? r.json() : null).catch(() => null);
+
+      const reservationPromise = fetch(
+        `/api/orgs/${orgSlug}/comercial/inventario/order-reservations?reference=${encodeURIComponent(ref)}`,
+      ).then(r => r.ok ? r.json() : null).catch(() => null);
+
+      const [enrichmentJson, reservationJson] = await Promise.all([enrichmentPromise, reservationPromise]);
+
+      if (cancelled || enrichmentRef.current !== ref) return;
+
+      // Process enrichment
+      if (enrichmentJson?.ok && enrichmentJson.detail) {
+        const d = enrichmentJson.detail;
+        setEnrichment({
+          categoria: d.categoria ?? null,
+          precioDetal: d.precioDetal ?? null,
+          precioMayorista: d.precioMayorista ?? null,
+          grupoSag: d.grupoSag ?? null,
+          lineaSag: d.lineaSag ?? null,
+          subgrupoSag: d.subgrupoSag ?? null,
+          grupoId: d.grupoId ?? null,
+          lineaId: d.lineaId ?? null,
+          subgrupoId: d.subgrupoId ?? null,
+          costo: d.costo ?? null,
+          manejaTallaColor: d.manejaTallaColor ?? false,
+          barcode: d.barcode ?? null,
+          description2: d.description2 ?? null,
+          handlingUnit: d.handlingUnit ?? null,
+          createdAtSag: d.createdAtSag ?? null,
+          lastModifiedSag: d.lastModifiedSag ?? null,
+          lastPurchaseSag: d.lastPurchaseSag ?? null,
+          lastSaleSag: d.lastSaleSag ?? null,
+          tallas: d.tallas ?? [],
+          colores: d.colores ?? [],
+          variantCount: d.variantCount ?? 0,
+        });
       }
+
+      // Process reservation (04A6B)
+      if (reservationJson?.ok) {
+        setReservation({
+          reservadoAgentikPendiente: reservationJson.reservadoAgentikPendiente ?? 0,
+          pendingOrders: reservationJson.orders ?? [],
+          error: reservationJson.error ?? null,
+        });
+      } else {
+        setReservation({
+          reservadoAgentikPendiente: 0,
+          pendingOrders: [],
+          error: "Reservas Agentik no verificadas",
+        });
+      }
+
+      setEnrichmentLoading(false);
     })();
 
     return () => { cancelled = true; };
@@ -601,6 +637,13 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
 
   const drawerProduct: CommercialProductData | null = useMemo(() => {
     if (!drawerItem) return null;
+
+    // 04A6B: Compute operational reservation metrics
+    const reservadoSag = drawerItem.pedidosPendientes ?? 0;
+    const reservadoAgentikPendiente = reservation?.reservadoAgentikPendiente ?? 0;
+    const reservadoOperativo = reservadoSag + reservadoAgentikPendiente;
+    const disponibleParaPrometer = drawerItem.disponibleReal - reservadoAgentikPendiente;
+
     return {
       reference: drawerItem.reference,
       description: drawerItem.description,
@@ -636,8 +679,14 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
       colores: enrichment?.colores,
       variantCount: enrichment?.variantCount,
       productionInProcess: drawerItem.productionInProcess,
+      // 04A6B: Order reservation fields
+      reservadoAgentikPendiente,
+      reservadoOperativo,
+      disponibleParaPrometer,
+      pendingOrders: reservation?.pendingOrders,
+      reservationError: reservation?.error,
     };
-  }, [drawerItem, enrichment, enrichmentLoading]);
+  }, [drawerItem, enrichment, enrichmentLoading, reservation]);
 
   return (
     <div style={{ padding: S[6], maxWidth: 1200 }}>

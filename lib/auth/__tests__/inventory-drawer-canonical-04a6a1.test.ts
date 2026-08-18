@@ -171,8 +171,10 @@ describe("G6 — Prohibited patterns absent", () => {
     expect(src).not.toContain("STA_SKU");
   });
 
-  test("T6d: No useState import (no interactive variant section)", () => {
-    expect(src).not.toContain("from \"react\"");
+  test("T6d: No interactive variant inventory section (04A6B allows useState for order expansion)", () => {
+    // useState is now legitimately used by PendingOrdersSection (04A6B).
+    // What matters: no VariantInventorySection component.
+    expect(src).not.toContain("VariantInventorySection");
   });
 });
 
