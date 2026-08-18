@@ -1,8 +1,12 @@
 /**
  * INVENTORY-DRAWER-CANONICAL-04A6A — Drawer Variant Provenance Tests
  *
+ * Updated for 04A6A1R retraction: VARIANT_QUANTITY_SOURCE_BLOCKED superseded
+ * by VARIANT_PHYSICAL_EXISTENCE_NOT_RECONCILED after evidence showed
+ * SUM(variant EXISTENCIA) does not match reference EXISTENCIA B01.
+ *
  * Structural tests verifying:
- *   1. VARIANT_QUANTITY_SOURCE_BLOCKED ruling applied
+ *   1. Corrected rulings applied (NOT_RECONCILED, RESERVED_BLOCKED, AVAILABLE_BLOCKED)
  *   2. Variant catalog shown without quantities
  *   3. Inventory section shows Existencia/Reservado/Disponible with provenance
  *   4. No prohibited patterns (CCS, PIL, bodega 757, estimated quantities)
@@ -18,15 +22,15 @@ const DRAWER_PATH = path.resolve(
 );
 const src = fs.readFileSync(DRAWER_PATH, "utf-8");
 
-// ── G1: VARIANT_QUANTITY_SOURCE_BLOCKED ruling ─────────────────────────────
+// ── G1: Corrected rulings (04A6A1R retraction) ────────────────────────────
 
-describe("G1 — VARIANT_QUANTITY_SOURCE_BLOCKED ruling applied", () => {
-  test("T1a: Drawer documents VARIANT_QUANTITY_SOURCE_BLOCKED", () => {
-    expect(src).toContain("VARIANT_QUANTITY_SOURCE_BLOCKED");
+describe("G1 — Corrected rulings applied (04A6A1R retraction)", () => {
+  test("T1a: Drawer documents VARIANT_PHYSICAL_EXISTENCE_NOT_RECONCILED", () => {
+    expect(src).toContain("VARIANT_PHYSICAL_EXISTENCE_NOT_RECONCILED");
   });
 
-  test("T1b: Explicit message about SAG not exposing per-variant quantities", () => {
-    expect(src).toContain("SAG no expone cantidades certificadas por talla y color");
+  test("T1b: Explicit message about SAG not reconciling per-variant quantities", () => {
+    expect(src).toContain("SAG no permite reconciliar todavia cantidades actuales por talla y color");
   });
 
   test("T1c: No per-variant quantity display", () => {
