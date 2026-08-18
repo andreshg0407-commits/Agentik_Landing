@@ -52,6 +52,8 @@ export async function GET(req: Request) {
   }
 
   // ── Guard: Auth + org ─────────────────────────────────────────────────
+  // Dual auth: NextAuth session OR PROBE_SECRET query param (Preview-only).
+  // PROBE_SECRET is a Vercel env var set only on Preview deployments.
   const { searchParams } = new URL(req.url);
   const orgSlug = searchParams.get("org") ?? ALLOWED_ORG;
 
@@ -62,23 +64,48 @@ export async function GET(req: Request) {
     );
   }
 
-  let ctx;
-  try {
-    ctx = await requireOrgAccess(orgSlug);
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : "AUTH_FAILED";
-    return NextResponse.json({ error: msg }, { status: 401 });
+  const probeSecret = searchParams.get("secret");
+  const expectedSecret = process.env.PROBE_SECRET;
+  let authMethod = "unknown";
+  let userId = "probe-secret";
+  let userRole = "PROBE";
+  let orgId: string;
+
+  if (probeSecret && expectedSecret && probeSecret === expectedSecret) {
+    // Secret-based auth — resolve org directly
+    authMethod = "PROBE_SECRET";
+    const org = await prisma.organization.findUnique({
+      where: { slug: orgSlug },
+      select: { id: true },
+    });
+    if (!org) {
+      return NextResponse.json({ error: "ORG_NOT_FOUND" }, { status: 404 });
+    }
+    orgId = org.id;
+  } else {
+    // Session-based auth
+    let ctx;
+    try {
+      ctx = await requireOrgAccess(orgSlug);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "AUTH_FAILED";
+      return NextResponse.json({ error: msg }, { status: 401 });
+    }
+    authMethod = "SESSION";
+    orgId = ctx.organization.id;
+    userId = ctx.user.id;
+    userRole = ctx.membership.role;
   }
 
-  const orgId = ctx.organization.id;
   const result: Record<string, unknown> = {
     probe: "ORDERS-SAG-RUNTIME-PROBE-06A0R",
     vercelEnv,
     orgSlug,
     orgId,
     timestamp: new Date().toISOString(),
-    user: ctx.user.id,
-    role: ctx.membership.role,
+    authMethod,
+    user: userId,
+    role: userRole,
   };
 
   // ══════════════════════════════════════════════════════════════════════
