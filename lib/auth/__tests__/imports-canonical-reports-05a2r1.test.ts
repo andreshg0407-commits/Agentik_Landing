@@ -257,9 +257,9 @@ describe("05A2R1 — SAG B24 Inventory Authority", () => {
     expect(intelSrc).toContain("return { items, kpis, salesCoverage }");
   });
 
-  test("T13: Client receives and displays salesCoverage", () => {
+  test("T13: Client receives and uses salesCoverage", () => {
     expect(clientSrc).toContain("salesCoverage");
-    expect(clientSrc).toContain("Cobertura de ventas");
+    expect(clientSrc).toContain("salesCoverage.salesAsOf");
   });
 
   // ── T14: Reconciliation script exists (Section C) ──

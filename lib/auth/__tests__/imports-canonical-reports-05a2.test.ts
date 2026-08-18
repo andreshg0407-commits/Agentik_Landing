@@ -129,9 +129,8 @@ describe("G3 — 5 management KPIs", () => {
     expect(clientSrc).toContain("sinVentasVerificadas");
   });
 
-  test("T3d: KPI — 8M+ provisionales (SAG-004 blocked)", () => {
-    expect(clientSrc).toContain("8M+ provisionales");
-    expect(clientSrc).toContain("pendiente SAG-004");
+  test("T3d: KPI — Antiguedad estimada 8M+ (05A3 relabel)", () => {
+    expect(clientSrc).toContain("Antiguedad estimada 8M+");
     expect(clientSrc).toContain("masde8MesesProvisionales");
   });
 
@@ -226,22 +225,20 @@ describe("G6 — Report 3: Mas de 8 meses sin reingreso", () => {
     expect(clientSrc).toContain("PRODUCT_CREATION_DATE_PROXY");
   });
 
-  test("T6c: All items are proxy (SAG-004 blocked, no certified)", () => {
-    expect(clientSrc).toContain("Provisionales");
+  test("T6c: Items use proxy list with compact methodology note (05A3)", () => {
     expect(clientSrc).toContain("proxyList");
-    expect(clientSrc).toContain("IMPORTS_B24_REENTRY_AGE_PARTIAL");
+    expect(clientSrc).toContain("Antiguedad estimada con fecha de ultima compra SAG");
   });
 
-  test("T6d: Evidence table shows required columns", () => {
-    expect(clientSrc).toContain("Evidencia");
+  test("T6d: Evidence table shows required columns (05A3 relabel)", () => {
+    expect(clientSrc).toContain("Tipo");
     expect(clientSrc).toContain("Meses");
-    expect(clientSrc).toContain("Fuente");
+    expect(clientSrc).toContain("Origen");
   });
 
-  test("T6e: All items marked provisional with SAG-004 blocker", () => {
-    expect(clientSrc).toContain("Todas las fechas son provisionales");
-    expect(clientSrc).toContain("SAG-004 bloqueado");
-    expect(clientSrc).toContain("Pendientes de confirmar antiguedad fisica");
+  test("T6e: Section header uses human-readable label (05A3)", () => {
+    expect(clientSrc).toContain("antiguedad estimada");
+    expect(clientSrc).toContain("8 meses");
   });
 
   test("T6f: Uses calendar months, not fixed days", () => {
@@ -263,58 +260,52 @@ describe("G7 — Inteligencia tab", () => {
     expect(clientSrc).toContain("InteligenciaView");
   });
 
-  test("T7b: Chart 1 — C1/C2 documented purchases", () => {
-    expect(clientSrc).toContain("Compras documentadas C1/C2");
-    expect(clientSrc).toContain("facturas de compra");
+  test("T7b: Sales 6M KPIs (05A3 executive redesign)", () => {
+    expect(clientSrc).toContain("Refs con ventas 6M");
+    expect(clientSrc).toContain("Und netas 6M");
+    expect(clientSrc).toContain("Valor neto 6M");
   });
 
-  test("T7c: Chart 2 — import product sales", () => {
-    expect(clientSrc).toContain("Ventas de productos importados");
+  test("T7c: Purchases chart (05A3 compact)", () => {
+    expect(clientSrc).toContain("Compras documentadas");
+    expect(clientSrc).toContain("monthlyPurchases");
   });
 
-  test("T7d: SAG blockers section", () => {
-    expect(clientSrc).toContain("Blockers SAG");
-    expect(clientSrc).toContain("SAG-003");
-    expect(clientSrc).toContain("SAG-004");
-    expect(clientSrc).toContain("SAG-016");
+  test("T7d: Classification distribution (05A3 replaces SAG blockers)", () => {
+    expect(clientSrc).toContain("Distribucion por clasificacion");
+    expect(clientSrc).toContain("classDistribution");
   });
 
-  test("T7e: Identity provenance table", () => {
-    expect(clientSrc).toContain("Identidad del universo importado");
-    expect(clientSrc).toContain("Catalogo SAG");
-    expect(clientSrc).toContain("Inventario SAG");
-    expect(clientSrc).toContain("Ventas SAG");
-    expect(clientSrc).toContain("Ingreso China");
+  test("T7e: Top 10 by size class (05A3 replaces provenance)", () => {
+    expect(clientSrc).toContain("Top 10 tallas por ventas 6M");
+    expect(clientSrc).toContain("topBySizeClass");
   });
 
-  test("T7f: Provenance columns", () => {
-    expect(clientSrc).toContain('"FUENTE"');
-    expect(clientSrc).toContain('"CAMPO"');
-    expect(clientSrc).toContain('"VALOR"');
-    expect(clientSrc).toContain('"COBERTURA"');
-    expect(clientSrc).toContain('"FRESCURA"');
+  test("T7f: Compact freshness footer", () => {
+    expect(clientSrc).toContain("Actualizado:");
+    expect(clientSrc).toContain("salesCoverage?.salesAsOf");
   });
 
-  test("T7g: China row shows BLOCKED", () => {
-    expect(clientSrc).toContain("CERO documentos");
-    expect(clientSrc).toContain("SAG-004 BLOCKED");
-    expect(clientSrc).toContain("SOURCE_BLOCKED");
+  test("T7g: Technical panels removed (05A3)", () => {
+    expect(clientSrc).not.toContain("Blockers SAG");
+    expect(clientSrc).not.toContain("Rulings emitidos");
+    expect(clientSrc).not.toContain("Identidad del universo importado");
   });
 
-  test("T7h: Receipt honesty disclaimer", () => {
-    expect(clientSrc).toContain("no certifican origen China");
-    expect(clientSrc).toContain("no se grafican como crecimiento de importaciones");
+  test("T7h: No BlockerRow/ProvenanceRow/RulingRow components", () => {
+    expect(clientSrc).not.toContain("function BlockerRow");
+    expect(clientSrc).not.toContain("function ProvenanceRow");
+    expect(clientSrc).not.toContain("function RulingRow");
   });
 
-  test("T7i: Sales origin disclaimer", () => {
-    expect(clientSrc).toContain("No se certifica el origen de cada unidad vendida");
+  test("T7i: Sales coverage in freshness footer", () => {
+    expect(clientSrc).toContain("salesCoverage");
+    expect(clientSrc).toContain("Ventas al:");
   });
 
-  test("T7j: Inbound date coverage section", () => {
-    expect(clientSrc).toContain("Cobertura de fecha de ingreso");
-    expect(clientSrc).toContain("C1/C2 (certificado)");
-    expect(clientSrc).toContain("d_ultima_compra (proxy)");
-    expect(clientSrc).toContain("Sin fecha");
+  test("T7j: Vel promedio/mes KPI", () => {
+    expect(clientSrc).toContain("Vel promedio/mes");
+    expect(clientSrc).toContain("avgVelocity");
   });
 });
 
@@ -333,13 +324,14 @@ describe("G8 — Rulings", () => {
     expect(clientSrc).toContain("IMPORT_ROTATION_CLASSIFICATION_BLOCKED");
   });
 
-  test("T8d: IMPORTS_B24_REENTRY_AGE_PARTIAL", () => {
-    expect(clientSrc).toContain("IMPORTS_B24_REENTRY_AGE_PARTIAL");
+  test("T8d: Rulings referenced in file header comments", () => {
+    // Rulings still documented in file header even though UI panels removed
+    expect(clientSrc).toContain("IMPORTS_SALES_AND_STOCK_PARTIAL_RUNTIME_VERIFIED");
   });
 
-  test("T8e: Rulings section in UI", () => {
-    expect(clientSrc).toContain("Rulings emitidos");
-    expect(clientSrc).toContain("RulingRow");
+  test("T8e: Technical rulings removed from UI (05A3)", () => {
+    expect(clientSrc).not.toContain("Rulings emitidos");
+    expect(clientSrc).not.toContain("function RulingRow");
   });
 });
 
@@ -496,15 +488,18 @@ describe("G15 — Detail drawer preserved", () => {
     expect(clientSrc).toContain("RECOMPRA_LABELS[item.recompraClassification]");
   });
 
-  test("T15c: Drawer shows purchase invoice history (not 'receipts')", () => {
-    expect(clientSrc).toContain("Facturas de compra (C1/C2)");
+  test("T15c: Drawer shows recent purchases (05A3 relabel)", () => {
+    expect(clientSrc).toContain("Ultimas compras");
   });
 
-  test("T15d: Drawer shows technical info", () => {
-    expect(clientSrc).toContain("Informacion tecnica");
+  test("T15d: Drawer omits null metric cards (05A3)", () => {
+    // Technical info section removed in 05A3 — metrics are conditional
+    expect(clientSrc).not.toContain("Informacion tecnica");
+    expect(clientSrc).toContain("Velocidad/mes");
+    expect(clientSrc).toContain("Capital inmovilizado");
   });
 
-  test("T15e: Drawer shows evidence for inbound date", () => {
-    expect(clientSrc).toContain("Ultimo ingreso documentado");
+  test("T15e: Drawer shows antiguedad estimada (05A3 relabel)", () => {
+    expect(clientSrc).toContain("Antiguedad estimada");
   });
 });

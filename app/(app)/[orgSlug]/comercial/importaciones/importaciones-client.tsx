@@ -109,17 +109,17 @@ const WINDOW_OPTIONS: { value: WindowMonths; label: string }[] = [
 const ROW_PAD = `${S[2]}px ${S[3]}px`;
 
 const RECOMPRA_LABELS: Record<RecompraClassification, string> = {
-  INMEDIATA: "Comprar ahora",
+  INMEDIATA: "Alta rotacion",
   VIGILAR: "Revisar recompra",
-  NO_RECOMPRAR: "No recomprar",
-  SIN_DATOS: "Sin informacion suficiente",
+  NO_RECOMPRAR: "Menor rotacion",
+  SIN_DATOS: "Sin ventas 6M",
 };
 
 const CLASSIFICATION_DISPLAY: Record<RecompraClassification, { bg: string; fg: string; label: string }> = {
-  INMEDIATA:    { bg: C.greenLight,  fg: C.green,    label: "Comprar" },
+  INMEDIATA:    { bg: C.greenLight,  fg: C.green,    label: "Alta rotacion" },
   VIGILAR:      { bg: C.amberLight,  fg: C.amber,    label: "Revisar" },
-  NO_RECOMPRAR: { bg: C.surface,     fg: C.inkMid,   label: "No comprar" },
-  SIN_DATOS:    { bg: C.surface,     fg: C.inkFaint, label: "Verificar" },
+  NO_RECOMPRAR: { bg: C.surface,     fg: C.inkMid,   label: "Menor rotacion" },
+  SIN_DATOS:    { bg: C.surface,     fg: C.inkFaint, label: "Sin ventas" },
 };
 
 type SortKey = "units" | "velocity" | "value";
@@ -391,7 +391,7 @@ export function ImportacionesClient({
             onClick={() => setActiveTab("menor_rotacion")}
           />
           <KpiCard
-            label="8M+ provisionales (pendiente SAG-004)"
+            label="Antiguedad estimada 8M+"
             value={derived.masde8MesesProvisionales}
             color={derived.masde8MesesProvisionales > 0 ? C.amber : undefined}
             active={activeTab === "mas_8_meses"}
@@ -533,13 +533,14 @@ function MayorRotacionView({
       {/* Table */}
       <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, overflow: "hidden", background: C.white, boxShadow: E.sm }}>
         <div style={{
-          display: "grid", gridTemplateColumns: "48px 1fr 100px 100px 100px 100px 90px",
+          display: "grid", gridTemplateColumns: "48px 1fr 100px 80px 100px 90px 110px",
           padding: ROW_PAD, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}`,
           fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.inkMid,
+          gap: S[1],
         }}>
           <span>#</span>
           <span>Referencia</span>
-          <span style={{ textAlign: "right" }}>Und netas {windowMonths}M</span>
+          <span style={{ textAlign: "right" }}>Und {windowMonths}M</span>
           <span style={{ textAlign: "right" }}>Vel/mes</span>
           <span style={{ textAlign: "right" }}>Valor {windowMonths}M</span>
           <span style={{ textAlign: "right" }}>Stock B24</span>
@@ -561,10 +562,10 @@ function MayorRotacionView({
               key={item.productId}
               onClick={() => onRowClick(item)}
               style={{
-                display: "grid", gridTemplateColumns: "48px 1fr 100px 100px 100px 100px 90px",
+                display: "grid", gridTemplateColumns: "48px 1fr 100px 80px 100px 90px 110px",
                 padding: ROW_PAD, borderBottom: `1px solid ${C.lineSubtle}`,
                 fontFamily: T.mono, fontSize: T.sz.base, cursor: "pointer",
-                alignItems: "center",
+                alignItems: "center", gap: S[1],
               }}
             >
               <span style={{ color: C.inkFaint, fontSize: T.sz.xs }}>{idx + 1}</span>
@@ -742,29 +743,20 @@ function Masde8MesesView({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[4] }}>
-      {/* SAG-004 blocker banner */}
+      {/* Methodology note */}
       <div style={{
-        fontFamily: T.mono, fontSize: T.sz.xs, color: C.amberDark,
-        background: C.amberLight, border: `1px solid ${C.amberBorder}`,
-        borderRadius: R.md, padding: `${S[2]}px ${S[3]}px`,
-        borderLeft: `4px solid ${C.amber}`,
+        fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid,
+        background: C.surface, borderRadius: R.sm, padding: `${S[2]}px ${S[3]}px`,
       }}>
-        <div style={{ fontWeight: T.wt.semibold, marginBottom: S[1] }}>
-          IMPORTS_B24_REENTRY_AGE_PARTIAL — Todas las fechas son provisionales
-        </div>
-        <div>
-          No existe una consulta runtime de movimientos B24 (SAG-004 bloqueado).
-          Las fechas provienen de facturas de compra C1/C2 o d_ultima_compra SAG.
-          Ninguna fecha proxy puede generar el KPI &quot;Mas de 8 meses certificados&quot;.
-          Pendientes de confirmar antiguedad fisica hasta que SAG-004 se resuelva.
-        </div>
+        Antiguedad estimada con fecha de ultima compra SAG o creacion del producto.
+        Solo referencias con existencia B24 &gt; 0. Meses calendario (America/Bogota).
       </div>
 
       {/* Section: Provisional (all proxy) */}
       {proxy.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.amber }}>
-            Provisionales — Fecha de compra/creacion SAG &gt; 8 meses ({proxy.length})
+          <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
+            Referencias con antiguedad estimada &gt; 8 meses ({proxy.length})
           </div>
           <EightMonthTable items={proxy} onRowClick={onRowClick} />
         </div>
@@ -808,11 +800,11 @@ function EightMonthTable({
       }}>
         <span>#</span>
         <span>Referencia</span>
-        <span>Evidencia</span>
+        <span>Tipo</span>
         <span>Fecha</span>
         <span style={{ textAlign: "right" }}>Meses</span>
         <span style={{ textAlign: "right" }}>Stock B24</span>
-        <span>Fuente</span>
+        <span>Origen</span>
       </div>
       {items.map((item, idx) => {
         const ev = item.evidence;
@@ -879,256 +871,154 @@ function InteligenciaView({
   computedAt: string;
   salesCoverage?: ImportSalesCoverage;
 }) {
-  // C1/C2 documented purchases summary
-  const receiptSummary = useMemo(() => {
-    let totalDocs = 0;
-    let totalQty = 0;
-    const monthly = new Map<string, number>();
+  // Sales 6M summary
+  const salesSummary = useMemo(() => {
+    const withSales = items.filter(i => i.salesDataQuality === "SYNCED" && i.salesTotal6m > 0);
+    const totalUnits6m = items.reduce((s, i) => s + i.salesTotal6m, 0);
+    const totalRevenue6m = items.reduce((s, i) => s + i.revenue6m, 0);
+    const avgVelocity = withSales.length > 0
+      ? withSales.reduce((s, i) => s + i.salesTotal6m, 0) / (withSales.length * 6)
+      : 0;
+    return { refsWithSales: withSales.length, totalUnits6m, totalRevenue6m, avgVelocity };
+  }, [items]);
 
+  // C1/C2 monthly purchases for bar chart
+  const monthlyPurchases = useMemo(() => {
+    const monthly = new Map<string, number>();
     for (const item of items) {
       for (const r of item.receipts) {
-        totalDocs++;
-        totalQty += r.quantity;
         const month = r.date.substring(0, 7);
         monthly.set(month, (monthly.get(month) ?? 0) + r.quantity);
       }
     }
-
-    const months = Array.from(monthly.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-    return { totalDocs, totalQty, months };
+    return Array.from(monthly.entries()).sort((a, b) => a[0].localeCompare(b[0])).slice(-6);
   }, [items]);
 
-  // Monthly import product sales
-  const monthlySalesSummary = useMemo(() => {
-    const byMonth = new Map<string, number>();
-    // We only have 6M aggregate sales, no per-month breakdown at list level.
-    // Show total sales alongside receipt data for comparison.
-    return {
-      totalSalesRefs: items.filter(i => i.salesDataQuality === "SYNCED" && i.soldNet > 0).length,
-      totalSalesUnits: items.reduce((s, i) => s + i.salesTotal6m, 0),
-      totalRevenueAll: items.reduce((s, i) => s + i.revenueAll, 0),
-    };
-  }, [items]);
-
-  // Inbound date coverage
-  const inboundCoverage = useMemo(() => {
-    let c1c2 = 0, lastPurchase = 0, none = 0;
+  // Top 10 by size class
+  const topBySizeClass = useMemo(() => {
+    const bySize = new Map<string, { units: number; refs: number; revenue: number }>();
     for (const item of items) {
-      if (item.lastInboundSource === "SAG_RECEIPT_C1_C2") c1c2++;
-      else if (item.lastInboundSource === "LAST_PURCHASE_SAG") lastPurchase++;
-      else none++;
+      const sc = item.sizeClass ?? "Sin talla";
+      const entry = bySize.get(sc) ?? { units: 0, refs: 0, revenue: 0 };
+      entry.units += item.salesTotal6m;
+      entry.revenue += item.revenue6m;
+      entry.refs++;
+      bySize.set(sc, entry);
     }
-    return { c1c2, lastPurchase, none, total: items.length };
+    return Array.from(bySize.entries())
+      .sort((a, b) => b[1].units - a[1].units)
+      .slice(0, 10);
+  }, [items]);
+
+  // Classification distribution
+  const classDistribution = useMemo(() => {
+    const dist: Record<string, number> = {};
+    for (const item of items) {
+      const label = CLASSIFICATION_DISPLAY[item.recompraClassification].label;
+      dist[label] = (dist[label] ?? 0) + 1;
+    }
+    return Object.entries(dist).sort((a, b) => b[1] - a[1]);
   }, [items]);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: S[5] }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: S[4] }}>
 
-      {/* ── Chart 1: C1/C2 Documented Purchases ──────────────────────── */}
-      <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, overflow: "hidden", background: C.white, boxShadow: E.sm }}>
-        <div style={{
-          padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}`,
-          background: C.surfaceAlt, fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink,
-        }}>
-          Compras documentadas C1/C2 (facturas de compra)
-        </div>
-        <div style={{ padding: `${S[3]}px ${S[4]}px`, display: "flex", flexDirection: "column", gap: S[3] }}>
-          <div style={{ display: "flex", gap: S[6] }}>
-            <div>
-              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>Documentos</span>
-              <div style={{ fontFamily: T.mono, fontSize: T.sz.xl, fontWeight: T.wt.bold, color: C.ink }}>
-                {receiptSummary.totalDocs.toLocaleString("es-CO")}
-              </div>
-            </div>
-            <div>
-              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>Unidades recibidas</span>
-              <div style={{ fontFamily: T.mono, fontSize: T.sz.xl, fontWeight: T.wt.bold, color: C.ink }}>
-                {receiptSummary.totalQty.toLocaleString("es-CO")}
-              </div>
-            </div>
+      {/* ── Sales 6M Summary KPIs ────────────────────────────────────── */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: S[3] }}>
+        <KpiCard label="Refs con ventas 6M" value={salesSummary.refsWithSales} color={C.blueDark} active={false} />
+        <KpiCard label="Und netas 6M" value={salesSummary.totalUnits6m} active={false} />
+        <KpiCard label="Valor neto 6M" value={Math.round(salesSummary.totalRevenue6m)} unit="$" active={false} />
+        <KpiCard label="Vel promedio/mes" value={salesSummary.avgVelocity > 0 ? Math.round(salesSummary.avgVelocity * 10) / 10 : null} active={false} />
+      </div>
+
+      {/* ── 6M Purchases Chart ───────────────────────────────────────── */}
+      {monthlyPurchases.length > 0 && (
+        <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, overflow: "hidden", background: C.white, boxShadow: E.sm }}>
+          <div style={{
+            padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}`,
+            background: C.surfaceAlt, fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink,
+          }}>
+            Compras documentadas (ultimos 6 meses)
           </div>
-          {receiptSummary.months.length > 0 && (
+          <div style={{ padding: `${S[3]}px ${S[4]}px` }}>
             <div style={{ display: "flex", gap: S[1], alignItems: "flex-end", height: 60 }}>
-              {receiptSummary.months.slice(-12).map(([month, qty]) => {
-                const max = Math.max(...receiptSummary.months.map(m => m[1]));
+              {monthlyPurchases.map(([month, qty]) => {
+                const max = Math.max(...monthlyPurchases.map(m => m[1]));
                 const h = max > 0 ? Math.max(4, (qty / max) * 56) : 4;
                 return (
                   <div key={month} style={{ display: "flex", flexDirection: "column", alignItems: "center", flex: 1 }}>
+                    <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, marginBottom: 2 }}>
+                      {qty.toLocaleString("es-CO")}
+                    </span>
                     <div style={{ width: "100%", height: h, background: C.blueDark, borderRadius: `${R.xs}px ${R.xs}px 0 0`, minWidth: 4 }} />
-                    <span style={{ fontFamily: T.mono, fontSize: 7, color: C.inkFaint, marginTop: 2 }}>
+                    <span style={{ fontFamily: T.mono, fontSize: 8, color: C.inkFaint, marginTop: 2 }}>
                       {month.substring(5)}
                     </span>
                   </div>
                 );
               })}
             </div>
-          )}
-          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.amberDark }}>
-            Estos son facturas de compra (C1/C2), no certifican origen China.
-            No se grafican como crecimiento de importaciones — no se grafican como crecimiento de importaciones.
-            SAG no expone todavia una fuente reconciliada de ingresos fisicos desde China.
-            Facturas de compra (C1/C2): no certifican origen China.
-          </div>
-        </div>
-      </div>
-
-      {/* ── Chart 2: Monthly Import Product Sales ────────────────────── */}
-      <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, overflow: "hidden", background: C.white, boxShadow: E.sm }}>
-        <div style={{
-          padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}`,
-          background: C.surfaceAlt, fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink,
-        }}>
-          Ventas de productos importados
-        </div>
-        <div style={{ padding: `${S[3]}px ${S[4]}px`, display: "flex", flexDirection: "column", gap: S[2] }}>
-          <div style={{ display: "flex", gap: S[6] }}>
-            <div>
-              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>Refs con ventas</span>
-              <div style={{ fontFamily: T.mono, fontSize: T.sz.xl, fontWeight: T.wt.bold, color: C.ink }}>
-                {monthlySalesSummary.totalSalesRefs}
-              </div>
-            </div>
-            <div>
-              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>Und netas 6M</span>
-              <div style={{ fontFamily: T.mono, fontSize: T.sz.xl, fontWeight: T.wt.bold, color: C.ink }}>
-                {monthlySalesSummary.totalSalesUnits.toLocaleString("es-CO")}
-              </div>
-            </div>
-            <div>
-              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>Valor total (all time)</span>
-              <div style={{ fontFamily: T.mono, fontSize: T.sz.xl, fontWeight: T.wt.bold, color: C.ink }}>
-                ${Math.round(monthlySalesSummary.totalRevenueAll).toLocaleString("es-CO")}
-              </div>
-            </div>
-          </div>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight }}>
-            No se certifica el origen de cada unidad vendida — solo que la referencia pertenece al catalogo importado.
-            Ventas de CustomerOrderLine con status FACTURADO. Devoluciones y NC restadas.
-          </div>
-        </div>
-      </div>
-
-      {/* ── SAG Blockers ─────────────────────────────────────────────── */}
-      <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, overflow: "hidden", background: C.white, boxShadow: E.sm }}>
-        <div style={{
-          padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}`,
-          background: C.surfaceAlt, fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.red,
-        }}>
-          Blockers SAG — Datos no disponibles
-        </div>
-        <div style={{ padding: `${S[3]}px ${S[4]}px`, display: "flex", flexDirection: "column", gap: S[3] }}>
-          <BlockerRow id="SAG-003" label="Transito y ordenes de importacion abiertas" status="Fuente SAG pendiente" />
-          <BlockerRow id="SAG-004" label="Ingreso fisico certificado desde China" status="SAG-004 BLOCKED — CERO documentos" />
-          <BlockerRow id="SAG-016" label="FUENTE/origen en ventas por unidad" status="No disponible en vista SAG" />
-        </div>
-      </div>
-
-      {/* ── Identity provenance ──────────────────────────────────────── */}
-      <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, overflow: "hidden", background: C.white, boxShadow: E.sm }}>
-        <div style={{
-          padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}`,
-          background: C.surfaceAlt, fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink,
-        }}>
-          Identidad del universo importado
-        </div>
-        <div style={{ padding: 0 }}>
-          <div style={{
-            display: "grid", gridTemplateColumns: "120px 160px 120px 80px 100px",
-            padding: `${S[1]}px ${S[4]}px`, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}`,
-            fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkMid,
-          }}>
-            <span>{"FUENTE"}</span>
-            <span>{"CAMPO"}</span>
-            <span>{"VALOR"}</span>
-            <span>{"COBERTURA"}</span>
-            <span>{"FRESCURA"}</span>
-          </div>
-          <ProvenanceRow
-            fuente="Catalogo SAG"
-            campo="productLine"
-            valor={`LINEA 5 (${items.length} refs)`}
-            cobertura="100%"
-            frescura={freshness.productEntityAsOf ? fmtFreshness(freshness.productEntityAsOf) : "\u2014"}
-          />
-          <ProvenanceRow
-            fuente="Inventario SAG"
-            campo="B24 existencia"
-            valor={`${items.filter(i => i.remaining > 0).length} con stock`}
-            cobertura={`${Math.round((items.filter(i => i.stockDataQuality === "CONFIRMED").length / Math.max(items.length, 1)) * 100)}%`}
-            frescura={freshness.inventoryAsOf ? fmtFreshness(freshness.inventoryAsOf) : "\u2014"}
-          />
-          <ProvenanceRow
-            fuente="Ventas SAG"
-            campo="CustomerOrderLine"
-            valor={`${items.filter(i => i.salesDataQuality === "SYNCED" && i.soldNet > 0).length} con ventas`}
-            cobertura={`${Math.round((items.filter(i => i.salesDataQuality === "SYNCED").length / Math.max(items.length, 1)) * 100)}%`}
-            frescura={freshness.orderLinesAsOf ? fmtFreshness(freshness.orderLinesAsOf) : "\u2014"}
-          />
-          <ProvenanceRow
-            fuente="Ingreso China"
-            campo="CH 248"
-            valor="CERO documentos"
-            cobertura="SAG-004 BLOCKED"
-            frescura="SOURCE_BLOCKED"
-          />
-        </div>
-      </div>
-
-      {/* ── Inbound date coverage ──────────────────────────────────────── */}
-      <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, overflow: "hidden", background: C.white, boxShadow: E.sm }}>
-        <div style={{
-          padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}`,
-          background: C.surfaceAlt, fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink,
-        }}>
-          Cobertura de fecha de ingreso
-        </div>
-        <div style={{ padding: `${S[3]}px ${S[4]}px`, display: "flex", flexDirection: "column", gap: S[2] }}>
-          <CoverageBar label="C1/C2 (certificado)" count={inboundCoverage.c1c2} total={inboundCoverage.total} color={C.green} />
-          <CoverageBar label="d_ultima_compra (proxy)" count={inboundCoverage.lastPurchase} total={inboundCoverage.total} color={C.amber} />
-          <CoverageBar label="Sin fecha" count={inboundCoverage.none} total={inboundCoverage.total} color={C.red} />
-        </div>
-      </div>
-
-      {/* ── Rulings ───────────────────────────────────────────────────── */}
-      <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, overflow: "hidden", background: C.white, boxShadow: E.sm }}>
-        <div style={{
-          padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}`,
-          background: C.surfaceAlt, fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink,
-        }}>
-          Rulings emitidos
-        </div>
-        <div style={{ padding: `${S[3]}px ${S[4]}px`, display: "flex", flexDirection: "column", gap: S[2] }}>
-          <RulingRow ruling="IMPORTS_SALES_AND_STOCK_PARTIAL_RUNTIME_VERIFIED" status="PASS" />
-          <RulingRow ruling="IMPORT_RECEIPT_SOURCE_BLOCKED" status="BLOCKED" />
-          <RulingRow ruling="IMPORT_ROTATION_CLASSIFICATION_BLOCKED" status="BLOCKED" />
-          <RulingRow ruling="IMPORTS_B24_REENTRY_AGE_PARTIAL" status="BLOCKED" />
-        </div>
-      </div>
-
-      {/* ── Sales coverage ──────────────────────────────────────────── */}
-      {salesCoverage && (
-        <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, overflow: "hidden", background: C.white, boxShadow: E.sm }}>
-          <div style={{ padding: `${S[2]}px ${S[3]}px`, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}`, fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.inkMid }}>
-            Cobertura de ventas
-          </div>
-          <div style={{ padding: `${S[3]}px ${S[4]}px`, fontFamily: T.mono, fontSize: T.sz.xs, display: "flex", flexDirection: "column", gap: 4 }}>
-            <span>salesAsOf: {salesCoverage.salesAsOf ?? "\u2014"}</span>
-            <span>Rango: {salesCoverage.salesSourceMinDate ?? "\u2014"} .. {salesCoverage.salesSourceMaxDate ?? "\u2014"}</span>
-            <span>Lag: {salesCoverage.freshnessLagDays !== null ? `${salesCoverage.freshnessLagDays} dias` : "\u2014"}</span>
-            <span>
-              6M: {salesCoverage.coverage6m ? "FULL" : "PARTIAL"} |
-              8M: {salesCoverage.coverage8m ? "FULL" : "PARTIAL"} |
-              12M: {salesCoverage.coverage12m ? "FULL" : "PARTIAL"}
-            </span>
           </div>
         </div>
       )}
 
-      {/* ── Cache state ───────────────────────────────────────────────── */}
-      <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, display: "flex", flexDirection: "column", gap: 2 }}>
-        <span>Truth state: {truthState} | Computed at: {new Date(computedAt).toLocaleString("es-CO", { timeZone: "America/Bogota" })}</span>
-        <span>Composite freshness: {freshness.compositeAsOf ? fmtFreshness(freshness.compositeAsOf) : "\u2014"}</span>
-        <span>Rotacion: NO VERIFICABLE sin SAG-004. Meses calendario (America/Bogota).</span>
+      {/* ── Classification Distribution ──────────────────────────────── */}
+      <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, overflow: "hidden", background: C.white, boxShadow: E.sm }}>
+        <div style={{
+          padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}`,
+          background: C.surfaceAlt, fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink,
+        }}>
+          Distribucion por clasificacion
+        </div>
+        <div style={{ padding: `${S[3]}px ${S[4]}px`, display: "flex", flexDirection: "column", gap: S[2] }}>
+          {classDistribution.map(([label, count]) => (
+            <CoverageBar key={label} label={label} count={count} total={items.length} color={C.blueDark} />
+          ))}
+        </div>
+      </div>
+
+      {/* ── Top 10 by Size Class ─────────────────────────────────────── */}
+      {topBySizeClass.length > 0 && (
+        <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, overflow: "hidden", background: C.white, boxShadow: E.sm }}>
+          <div style={{
+            padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}`,
+            background: C.surfaceAlt, fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink,
+          }}>
+            Top 10 tallas por ventas 6M
+          </div>
+          <div style={{ padding: 0 }}>
+            <div style={{
+              display: "grid", gridTemplateColumns: "1fr 100px 80px 120px",
+              padding: `${S[1]}px ${S[4]}px`, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}`,
+              fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkMid,
+            }}>
+              <span>Talla</span>
+              <span style={{ textAlign: "right" }}>Und 6M</span>
+              <span style={{ textAlign: "right" }}>Refs</span>
+              <span style={{ textAlign: "right" }}>Valor 6M</span>
+            </div>
+            {topBySizeClass.map(([sc, data]) => (
+              <div key={sc} style={{
+                display: "grid", gridTemplateColumns: "1fr 100px 80px 120px",
+                padding: `${S[1]}px ${S[4]}px`, borderBottom: `1px solid ${C.lineSubtle}`,
+                fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink,
+              }}>
+                <span style={{ fontWeight: T.wt.medium }}>{sc}</span>
+                <span style={{ textAlign: "right" }}>{data.units.toLocaleString("es-CO")}</span>
+                <span style={{ textAlign: "right", color: C.inkMid }}>{data.refs}</span>
+                <span style={{ textAlign: "right", color: C.inkMid }}>${Math.round(data.revenue).toLocaleString("es-CO")}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Compact freshness footer ─────────────────────────────────── */}
+      <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, display: "flex", gap: S[4], flexWrap: "wrap" }}>
+        <span>Actualizado: {new Date(computedAt).toLocaleString("es-CO", { timeZone: "America/Bogota" })}</span>
+        {salesCoverage?.salesAsOf && <span>Ventas al: {salesCoverage.salesAsOf}</span>}
+        {salesCoverage?.freshnessLagDays !== null && salesCoverage?.freshnessLagDays !== undefined && <span>Lag: {salesCoverage.freshnessLagDays}d</span>}
+        <span>Catalogo: LINEA 5 ({items.length} refs)</span>
       </div>
     </div>
   );
@@ -1147,15 +1037,29 @@ function ImportDetailDrawer({
 }) {
   const evidence = resolveEvidence(item);
 
+  React.useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
   return (
     <div
       style={{
         position: "fixed", top: 0, right: 0, bottom: 0, width: 420,
-        background: C.white, boxShadow: E.lg, zIndex: 50,
+        background: C.white, boxShadow: E.lg, zIndex: 100,
         display: "flex", flexDirection: "column", overflow: "auto",
         borderLeft: `1px solid ${C.line}`,
       }}
     >
+      {/* Backdrop */}
+      <div
+        onClick={onClose}
+        style={{
+          position: "fixed", top: 0, left: 0, right: 420, bottom: 0,
+          background: "rgba(0,0,0,0.15)", zIndex: -1,
+        }}
+      />
       {/* Header */}
       <div style={{
         padding: `${S[4]}px ${S[5]}px`, borderBottom: `1px solid ${C.line}`,
@@ -1171,12 +1075,14 @@ function ImportDetailDrawer({
         </div>
         <button
           onClick={onClose}
+          aria-label="Cerrar"
           style={{
-            fontFamily: T.mono, fontSize: T.sz.lg, color: C.inkMid, background: "none",
-            border: "none", cursor: "pointer", padding: S[1],
+            fontSize: 20, lineHeight: 1, color: C.inkMid, background: "none",
+            border: "none", cursor: "pointer", padding: `${S[1]}px ${S[2]}px`,
+            borderRadius: R.sm,
           }}
         >
-          \u2715
+          {"\u00D7"}
         </button>
       </div>
 
@@ -1197,43 +1103,44 @@ function ImportDetailDrawer({
           )}
         </div>
 
-        {/* Key metrics */}
+        {/* Key metrics — omit null cards */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: S[2] }}>
-          <MetricBox label="Und netas (total)" value={item.soldNet.toLocaleString("es-CO")} />
           <MetricBox label="Und netas 6M" value={item.salesTotal6m.toLocaleString("es-CO")} />
-          <MetricBox label="Stock B24" value={item.stockDataQuality === "CONFIRMED" ? item.remaining.toLocaleString("es-CO") : "\u2014"} />
-          <MetricBox label="Vel/mes" value={item.ritmoPromedioVentas !== null ? item.ritmoPromedioVentas.toFixed(1) : "\u2014"} />
-          <MetricBox label="Cobertura" value={item.coberturaPromedioDias !== null ? `${item.coberturaPromedioDias}d` : "\u2014"} />
-          <MetricBox label="Capital inmov." value={item.capitalInmovilizado !== null ? `$${item.capitalInmovilizado.toLocaleString("es-CO")}` : "\u2014"} />
+          {item.soldNet > 0 && <MetricBox label="Und netas (total)" value={item.soldNet.toLocaleString("es-CO")} />}
+          {item.stockDataQuality === "CONFIRMED" && <MetricBox label="Stock B24" value={item.remaining.toLocaleString("es-CO")} />}
+          {item.ritmoPromedioVentas !== null && item.ritmoPromedioVentas > 0 && (
+            <MetricBox label="Velocidad/mes" value={item.ritmoPromedioVentas.toFixed(1)} />
+          )}
+          {item.coberturaPromedioDias !== null && (
+            <MetricBox label="Cobertura stock" value={`${item.coberturaPromedioDias} dias`} />
+          )}
+          {item.capitalInmovilizado !== null && item.capitalInmovilizado > 0 && (
+            <MetricBox label="Capital inmovilizado" value={`$${item.capitalInmovilizado.toLocaleString("es-CO")}`} />
+          )}
         </div>
 
-        {/* Evidence */}
+        {/* Evidence — antiguedad estimada */}
         {evidence && (
           <div style={{ display: "flex", flexDirection: "column", gap: S[1] }}>
             <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink }}>
-              Ultimo ingreso documentado
+              Antiguedad estimada
             </span>
             <div style={{
               fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid,
               background: C.surface, borderRadius: R.sm, padding: `${S[1]}px ${S[2]}px`,
             }}>
-              <div>Fecha: {evidence.date}</div>
-              <div>Meses: {evidence.months}</div>
-              <div>Fuente: {evidence.source}</div>
-              <div>Nivel: {EVIDENCE_LABELS[evidence.level].badge}</div>
+              <div>{evidence.months} meses desde {evidence.date}</div>
+              <div style={{ fontSize: T.sz["2xs"], color: C.inkLight }}>{evidence.source}</div>
             </div>
           </div>
         )}
 
-        {/* Facturas de compra (C1/C2) */}
+        {/* Recent purchases (C1/C2) */}
         {item.receipts.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column", gap: S[1] }}>
             <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink }}>
-              Facturas de compra (C1/C2)
+              Ultimas compras
             </span>
-            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.amberDark, marginBottom: S[1] }}>
-              Estas facturas de compra no certifican origen China.
-            </div>
             {item.receipts.slice(0, 5).map((r, i) => (
               <div key={i} style={{
                 fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid,
@@ -1246,25 +1153,6 @@ function ImportDetailDrawer({
             ))}
           </div>
         )}
-
-        {/* Informacion tecnica */}
-        <div style={{ display: "flex", flexDirection: "column", gap: S[1] }}>
-          <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.ink }}>
-            Informacion tecnica
-          </span>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
-            <div>productId: {item.productId}</div>
-            <div>salesDataQuality: {item.salesDataQuality}</div>
-            <div>stockDataQuality: {item.stockDataQuality}</div>
-            <div>lastInboundSource: {item.lastInboundSource}</div>
-            <div>lastInboundDate: {item.lastInboundDate ?? "\u2014"}</div>
-            <div>createdAtSag: {item.createdAtSag ?? "\u2014"}</div>
-            <div>lastPurchaseSag: {item.lastPurchaseSag ?? "\u2014"}</div>
-            <div>lastSaleSag: {item.lastSaleSag ?? "\u2014"}</div>
-            <div>recompraClassification: {item.recompraClassification}</div>
-            <div>recompraReason: {item.recompraReason}</div>
-          </div>
-        </div>
       </div>
     </div>
   );
@@ -1334,75 +1222,6 @@ function KpiCard({
           <span style={{ fontSize: T.sz.xs, fontWeight: T.wt.normal, color: C.inkMid, marginLeft: S[1] }}>{unit}</span>
         )}
       </span>
-    </div>
-  );
-}
-
-function BlockerRow({ id, label, status }: { id: string; label: string; status: string }) {
-  return (
-    <div style={{
-      display: "flex", alignItems: "center", gap: S[3],
-      padding: `${S[1]}px 0`, borderBottom: `1px solid ${C.lineSubtle}`,
-    }}>
-      <span style={{
-        fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
-        color: C.red, minWidth: 60,
-      }}>
-        {id}
-      </span>
-      <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink, flex: 1 }}>
-        {label}
-      </span>
-      <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.red }}>
-        {status}
-      </span>
-    </div>
-  );
-}
-
-function ProvenanceRow({
-  fuente,
-  campo,
-  valor,
-  cobertura,
-  frescura,
-}: {
-  fuente: string;
-  campo: string;
-  valor: string;
-  cobertura: string;
-  frescura: string;
-}) {
-  return (
-    <div style={{
-      display: "grid", gridTemplateColumns: "120px 160px 120px 80px 100px",
-      padding: `${S[1]}px ${S[4]}px`, borderBottom: `1px solid ${C.lineSubtle}`,
-      fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink,
-    }}>
-      <span>{fuente}</span>
-      <span style={{ color: C.inkMid }}>{campo}</span>
-      <span>{valor}</span>
-      <span style={{ color: cobertura.includes("BLOCKED") ? C.red : C.inkMid }}>{cobertura}</span>
-      <span style={{ color: frescura.includes("BLOCKED") ? C.red : C.inkLight }}>{frescura}</span>
-    </div>
-  );
-}
-
-function RulingRow({ ruling, status }: { ruling: string; status: "PASS" | "BLOCKED" }) {
-  return (
-    <div style={{
-      display: "flex", alignItems: "center", gap: S[2],
-      fontFamily: T.mono, fontSize: T.sz.xs,
-    }}>
-      <span style={{
-        padding: `1px ${S[1]}px`, borderRadius: R.sm,
-        background: status === "PASS" ? C.greenLight : C.redLight,
-        color: status === "PASS" ? C.green : C.red,
-        fontSize: T.sz["2xs"], fontWeight: T.wt.semibold,
-      }}>
-        {status}
-      </span>
-      <span style={{ color: C.inkMid }}>{ruling}</span>
     </div>
   );
 }
