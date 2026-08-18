@@ -2193,10 +2193,13 @@ export function CopilotOpsRail({
   }
   const taskCount = totalTasksCount + (supervisedExecution?.confirmationState === "pending" ? 1 : 0);
 
-  // DELIVERY-HARDENING-07A0: collapse executive cards when no runtime data exists.
-  // If all sources are empty, the body renders nothing — no fake "Todo en orden" noise.
-  const hasAnyExecutiveData = signals.length > 0 || alerts.length > 0 || taskItems.length > 0
-    || decisions > 0 || (davidData && davidData.dataState !== "EMPTY" && davidData.criticalRefs.length > 0);
+  // DELIVERY-HARDENING-07A0R: per-card data guards — each card only renders
+  // when it has real data. No static "Todo en orden" / "Sin alertas" noise.
+  const hasStatusData = signals.length > 0 || decisions > 0
+    || (davidData && davidData.dataState !== "EMPTY" && davidData.criticalRefs.length > 0);
+  const hasAlertData  = alertItems.length > 0;
+  const hasTaskData   = taskItems.length > 0;
+  const hasAnyExecutiveData = hasStatusData || hasAlertData || hasTaskData;
 
   // ── Rail visual system ─────────────────────────────────────────────────────
   const RAIL_BG     = "#F8F9FC";   // near-white editorial container
@@ -2341,8 +2344,8 @@ export function CopilotOpsRail({
         {hasAnyExecutiveData ? (
         <div style={{ padding: `${S[3]}px`, paddingTop: S[2] + 4, display: "flex", flexDirection: "column", gap: S[3] + 4 }}>
 
-        {/* ── CARD 1 — ESTADO OPERATIVO ──────────────────────────────────── */}
-        <div style={{
+        {/* ── CARD 1 — ESTADO OPERATIVO (only when real signals exist) ──── */}
+        {hasStatusData && <div style={{
           background: execBg(insightSentiment), border: `1px solid ${execBr(insightSentiment)}`,
           borderRadius: R.xl, overflow: "hidden", boxShadow: execShadow,
         }}>
@@ -2392,11 +2395,11 @@ export function CopilotOpsRail({
               </div>
             )}
           </div>
-        </div>
+        </div>}
 
-        {/* ── CARD 2 — ALERTAS ───────────────────────────────────────────── */}
-        {(() => {
-          const alertSentiment = alertCount === 0 ? "positive" : alertItems.some(a => a.level === "CRITICAL") ? "critical" : "warning";
+        {/* ── CARD 2 — ALERTAS (only when real alerts exist) ─────────────── */}
+        {hasAlertData && (() => {
+          const alertSentiment = alertItems.some(a => a.level === "CRITICAL") ? "critical" : "warning";
           return (
             <div style={{
               background: execBg(alertSentiment), border: `1px solid ${execBr(alertSentiment)}`,
@@ -2406,66 +2409,53 @@ export function CopilotOpsRail({
               <div style={{ display: "flex", alignItems: "center", gap: S[2], padding: `${S[3]}px ${S[3]}px ${S[1] + 2}px` }}>
                 <div style={{
                   width: 30, height: 30, borderRadius: R.md, flexShrink: 0,
-                  background: alertCount > 0 ? "rgba(220,38,38,.09)" : "rgba(5,150,105,.08)",
+                  background: "rgba(220,38,38,.09)",
                   display: "flex", alignItems: "center", justifyContent: "center",
                 }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={alertCount > 0 ? "#DC2626" : "#059669"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
                   </svg>
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: T.wt.semibold, color: ET_MUT, letterSpacing: "0.06em", textTransform: "uppercase" as const }}>Alertas</div>
                 </div>
-                {alertCount > 0 ? (
-                  <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: T.wt.bold, color: ALERT_SEV[alertItems[0]?.level ?? "CRITICAL"] ?? "#DC2626", background: ALERT_BG[alertItems[0]?.level ?? "CRITICAL"] ?? "rgba(254,226,226,.80)", borderRadius: R.pill, padding: "1px 8px", flexShrink: 0 }}>
-                    {alertCount} activa{alertCount > 1 ? "s" : ""}
-                  </div>
-                ) : (
-                  <div style={{ fontFamily: T.mono, fontSize: 8, color: "#065F46", background: "rgba(5,150,105,.08)", border: "1px solid rgba(5,150,105,.14)", borderRadius: R.pill, padding: "1px 7px", flexShrink: 0 }}>
-                    nominal
-                  </div>
-                )}
+                <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: T.wt.bold, color: ALERT_SEV[alertItems[0]?.level ?? "CRITICAL"] ?? "#DC2626", background: ALERT_BG[alertItems[0]?.level ?? "CRITICAL"] ?? "rgba(254,226,226,.80)", borderRadius: R.pill, padding: "1px 8px", flexShrink: 0 }}>
+                  {alertCount} activa{alertCount > 1 ? "s" : ""}
+                </div>
               </div>
 
-              {/* Alert list */}
-              {alertItems.length === 0 ? (
-                <div style={{ padding: `${S[1]}px ${S[3]}px ${S[3]}px`, fontFamily: T.mono, fontSize: T.sz.xs, color: ET_MUT, lineHeight: 1.5 }}>
-                  Sin alertas activas · Sistema operando con normalidad
-                </div>
-              ) : (
-                <div style={{ padding: `${S[1]}px ${S[2]}px ${S[2]}px`, display: "flex", flexDirection: "column", gap: 2 }}>
-                  {alertItems.map(a => (
-                    <a key={a.id} href={`/${orgSlug}/alerts`} style={{
-                      display: "flex", alignItems: "center", gap: S[2],
-                      padding: `${S[1] + 2}px ${S[2]}px`,
-                      borderRadius: R.md,
-                      background: "rgba(255,255,255,.55)",
-                      border: `1px solid ${a.level === "CRITICAL" ? "rgba(220,38,38,.14)" : a.level === "WARNING" ? "rgba(180,120,0,.12)" : "rgba(37,99,235,.10)"}`,
-                      textDecoration: "none",
-                      transition: "background 150ms",
-                    }}>
-                      {/* Severity dot */}
-                      <span style={{ width: 6, height: 6, borderRadius: R.pill, background: ALERT_SEV[a.level] ?? ET_MUT, flexShrink: 0, display: "inline-block" }} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontFamily: T.sans, fontSize: T.sz.xs, fontWeight: T.wt.medium, color: ET_PRI, lineHeight: 1.3 }}>{a.title}</div>
-                        <div style={{ fontFamily: T.mono, fontSize: 9, color: ET_MUT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, marginTop: 1 }}>{a.meta}</div>
-                      </div>
-                      <span style={{ fontFamily: T.mono, fontSize: 9, color: ALERT_SEV[a.level] ?? ET_MUT, flexShrink: 0 }}>
-                        {a.level === "CRITICAL" ? "Crítico" : a.level === "WARNING" ? "Alto" : "Info"} ›
-                      </span>
-                    </a>
-                  ))}
-                  <a href={`/${orgSlug}/alerts`} style={{ display: "block", textAlign: "center" as const, fontFamily: T.mono, fontSize: 9, color: ET_ACC, padding: `${S[2]}px`, textDecoration: "none", marginTop: 2, opacity: 0.75 }}>
-                    Ver todas las alertas →
+              {/* Alert list — always has items (guarded by hasAlertData) */}
+              <div style={{ padding: `${S[1]}px ${S[2]}px ${S[2]}px`, display: "flex", flexDirection: "column", gap: 2 }}>
+                {alertItems.map(a => (
+                  <a key={a.id} href={`/${orgSlug}/alerts`} style={{
+                    display: "flex", alignItems: "center", gap: S[2],
+                    padding: `${S[1] + 2}px ${S[2]}px`,
+                    borderRadius: R.md,
+                    background: "rgba(255,255,255,.55)",
+                    border: `1px solid ${a.level === "CRITICAL" ? "rgba(220,38,38,.14)" : a.level === "WARNING" ? "rgba(180,120,0,.12)" : "rgba(37,99,235,.10)"}`,
+                    textDecoration: "none",
+                    transition: "background 150ms",
+                  }}>
+                    <span style={{ width: 6, height: 6, borderRadius: R.pill, background: ALERT_SEV[a.level] ?? ET_MUT, flexShrink: 0, display: "inline-block" }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: T.sans, fontSize: T.sz.xs, fontWeight: T.wt.medium, color: ET_PRI, lineHeight: 1.3 }}>{a.title}</div>
+                      <div style={{ fontFamily: T.mono, fontSize: 9, color: ET_MUT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, marginTop: 1 }}>{a.meta}</div>
+                    </div>
+                    <span style={{ fontFamily: T.mono, fontSize: 9, color: ALERT_SEV[a.level] ?? ET_MUT, flexShrink: 0 }}>
+                      {a.level === "CRITICAL" ? "Crítico" : a.level === "WARNING" ? "Alto" : "Info"} ›
+                    </span>
                   </a>
-                </div>
-              )}
+                ))}
+                <a href={`/${orgSlug}/alerts`} style={{ display: "block", textAlign: "center" as const, fontFamily: T.mono, fontSize: 9, color: ET_ACC, padding: `${S[2]}px`, textDecoration: "none", marginTop: 2, opacity: 0.75 }}>
+                  Ver todas las alertas →
+                </a>
+              </div>
             </div>
           );
         })()}
 
-        {/* ── CARD 3 — TAREAS ────────────────────────────────────────────── */}
-        {(() => {
+        {/* ── CARD 3 — TAREAS (only when real tasks exist) ──────────────── */}
+        {hasTaskData && (() => {
           const hasCriticalTask = taskItems.some(t => t.urgency === "critical");
           const taskSentiment = hasCriticalTask ? "warning" : "neutral";
           return (
@@ -2487,53 +2477,40 @@ export function CopilotOpsRail({
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: T.wt.semibold, color: ET_MUT, letterSpacing: "0.06em", textTransform: "uppercase" as const }}>Tareas</div>
                 </div>
-                {taskCount > 0 ? (
-                  <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: T.wt.semibold, color: ET_ACC, background: "rgba(0,74,173,.08)", border: "1px solid rgba(0,74,173,.12)", borderRadius: R.pill, padding: "1px 8px", flexShrink: 0 }}>
-                    {taskCount}
-                  </div>
-                ) : (
-                  <div style={{ fontFamily: T.mono, fontSize: 8, color: ET_MUT, background: "rgba(107,114,128,.07)", border: "1px solid rgba(107,114,128,.12)", borderRadius: R.pill, padding: "1px 7px", flexShrink: 0 }}>
-                    sin pendientes
-                  </div>
-                )}
+                <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: T.wt.semibold, color: ET_ACC, background: "rgba(0,74,173,.08)", border: "1px solid rgba(0,74,173,.12)", borderRadius: R.pill, padding: "1px 8px", flexShrink: 0 }}>
+                  {taskCount}
+                </div>
               </div>
 
-              {/* Task list */}
-              {taskItems.length === 0 ? (
-                <div style={{ padding: `${S[1]}px ${S[3]}px ${S[3]}px`, fontFamily: T.mono, fontSize: T.sz.xs, color: ET_MUT, lineHeight: 1.5 }}>
-                  Sin tareas pendientes · Todo en orden
-                </div>
-              ) : (
-                <div style={{ padding: `${S[1]}px ${S[2]}px ${S[2]}px`, display: "flex", flexDirection: "column", gap: 2 }}>
-                  {taskItems.map(t => (
-                    <a key={t.id} href={t.href} style={{
-                      display: "flex", alignItems: "center", gap: S[2],
-                      padding: `${S[1] + 2}px ${S[2]}px`,
-                      borderRadius: R.md,
-                      background: "rgba(255,255,255,.55)",
-                      border: "1px solid rgba(0,74,173,.07)",
-                      textDecoration: "none",
-                      transition: "background 150ms",
-                    }}>
-                      {/* Checkbox */}
-                      <div style={{
-                        width: 14, height: 14, borderRadius: 3, flexShrink: 0,
-                        border: `1.5px solid ${t.urgency === "critical" ? "#B45309" : t.urgency === "elevated" ? "rgba(180,120,0,.40)" : "rgba(0,74,173,.25)"}`,
-                        background: "transparent",
-                      }} />
-                      <div style={{ flex: 1, fontFamily: T.sans, fontSize: T.sz.xs, color: ET_PRI, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, lineHeight: 1.3 }}>
-                        {t.label}
-                      </div>
-                      <div style={{ fontFamily: T.mono, fontSize: 9, color: TASK_DUE[t.urgency] ?? ET_MUT, flexShrink: 0, fontWeight: t.urgency !== "normal" ? T.wt.semibold : T.wt.normal }}>
-                        {t.dueLabel}
-                      </div>
-                    </a>
-                  ))}
-                  <a href={`/${orgSlug}/agentik`} style={{ display: "block", textAlign: "center" as const, fontFamily: T.mono, fontSize: 9, color: ET_ACC, padding: `${S[2]}px`, textDecoration: "none", marginTop: 2, opacity: 0.75 }}>
-                    Ver todas las tareas →
+              {/* Task list — always has items (guarded by hasTaskData) */}
+              <div style={{ padding: `${S[1]}px ${S[2]}px ${S[2]}px`, display: "flex", flexDirection: "column", gap: 2 }}>
+                {taskItems.map(t => (
+                  <a key={t.id} href={t.href} style={{
+                    display: "flex", alignItems: "center", gap: S[2],
+                    padding: `${S[1] + 2}px ${S[2]}px`,
+                    borderRadius: R.md,
+                    background: "rgba(255,255,255,.55)",
+                    border: "1px solid rgba(0,74,173,.07)",
+                    textDecoration: "none",
+                    transition: "background 150ms",
+                  }}>
+                    <div style={{
+                      width: 14, height: 14, borderRadius: 3, flexShrink: 0,
+                      border: `1.5px solid ${t.urgency === "critical" ? "#B45309" : t.urgency === "elevated" ? "rgba(180,120,0,.40)" : "rgba(0,74,173,.25)"}`,
+                      background: "transparent",
+                    }} />
+                    <div style={{ flex: 1, fontFamily: T.sans, fontSize: T.sz.xs, color: ET_PRI, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, lineHeight: 1.3 }}>
+                      {t.label}
+                    </div>
+                    <div style={{ fontFamily: T.mono, fontSize: 9, color: TASK_DUE[t.urgency] ?? ET_MUT, flexShrink: 0, fontWeight: t.urgency !== "normal" ? T.wt.semibold : T.wt.normal }}>
+                      {t.dueLabel}
+                    </div>
                   </a>
-                </div>
-              )}
+                ))}
+                <a href={`/${orgSlug}/agentik`} style={{ display: "block", textAlign: "center" as const, fontFamily: T.mono, fontSize: 9, color: ET_ACC, padding: `${S[2]}px`, textDecoration: "none", marginTop: 2, opacity: 0.75 }}>
+                  Ver todas las tareas →
+                </a>
+              </div>
             </div>
           );
         })()}

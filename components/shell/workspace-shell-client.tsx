@@ -480,14 +480,16 @@ function DomainButton({
       style={{
         all:            "unset",
         cursor:         "pointer",
-        width:          52,
-        height:         52,
+        width:          56,
+        minHeight:      52,
+        paddingTop:     6,
+        paddingBottom:  6,
         borderRadius:   R.lg,
         display:        "flex",
         flexDirection:  "column" as const,
         alignItems:     "center",
         justifyContent: "center",
-        gap:            4,
+        gap:            3,
         background:     bg,
         boxShadow:      shadow,
         color:          iconColor,
@@ -501,15 +503,14 @@ function DomainButton({
       />
       <span style={{
         fontFamily:    T.mono,
-        fontSize:      8,
+        fontSize:      7.5,
         fontWeight:    T.wt.semibold,   // 600 — lighter than bold, more refined
-        letterSpacing: "0.07em",         // more tracking = premium enterprise rhythm
+        letterSpacing: "0.05em",         // tracking for premium enterprise rhythm
         textTransform: "uppercase" as const,
-        lineHeight:    1,
-        maxWidth:      48,
-        overflow:      "hidden",
-        textOverflow:  "ellipsis",
-        whiteSpace:    "nowrap" as const,
+        lineHeight:    1.25,
+        maxWidth:      52,
+        textAlign:     "center" as const,
+        wordBreak:     "break-word" as const,
         color:         labelColor,       // independent from icon — label is secondary signal
       }}>
         {domain.label}

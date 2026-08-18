@@ -33,13 +33,12 @@ describe("A — Left rail overflow safety", () => {
     expect(chunk).toContain("overflowY");
   });
 
-  test("T02: DomainButton label has maxWidth, overflow, textOverflow", () => {
+  test("T02: DomainButton label wraps with word-break for full legibility", () => {
     const btnIdx = shellSrc.indexOf("function DomainButton");
     const chunk = shellSrc.slice(btnIdx, btnIdx + 3200);
     expect(chunk).toContain("maxWidth");
-    expect(chunk).toContain('overflow');
-    expect(chunk).toContain('textOverflow');
-    expect(chunk).toContain('ellipsis');
+    expect(chunk).toContain("wordBreak");
+    expect(chunk).toContain("textAlign");
   });
 });
 
@@ -75,67 +74,44 @@ describe("B — Control Comercial hidden", () => {
 describe("C — Copilot executive data guard", () => {
   const copilotSrc = readSrc("components/layout/copilot-ops-rail.tsx");
 
-  test("T06: hasAnyExecutiveData guard exists", () => {
+  test("T06: per-card data guards exist (hasStatusData, hasAlertData, hasTaskData)", () => {
+    expect(copilotSrc).toContain("hasStatusData");
+    expect(copilotSrc).toContain("hasAlertData");
+    expect(copilotSrc).toContain("hasTaskData");
     expect(copilotSrc).toContain("hasAnyExecutiveData");
   });
 
-  test("T07: ternary renders compact agent name when no data", () => {
-    // Verify ternary structure exists
-    const ternaryIdx = copilotSrc.indexOf("hasAnyExecutiveData ? (");
-    expect(ternaryIdx).toBeGreaterThan(-1);
-    // Verify the else branch exists after the ternary
-    const elseIdx = copilotSrc.indexOf(") : (", ternaryIdx);
-    expect(elseIdx).toBeGreaterThan(ternaryIdx);
-    // Verify agent.displayName is used after the else branch
-    const agentNameIdx = copilotSrc.indexOf("agent.displayName", elseIdx);
-    expect(agentNameIdx).toBeGreaterThan(elseIdx);
+  test("T07: static empty state texts removed from cards", () => {
+    // Card 2: "Sin alertas activas" should NOT appear as a rendered string
+    expect(copilotSrc).not.toContain("Sin alertas activas · Sistema operando con normalidad");
+    // Card 3: "Sin tareas pendientes" should NOT appear as a rendered string
+    expect(copilotSrc).not.toContain("Sin tareas pendientes · Todo en orden");
+    // Card 2: "nominal" empty badge removed
+    // (the word "nominal" may still exist in comments, but not in JSX rendering for empty alerts)
   });
 });
 
-// ── D. User provisioning matrix ──────────────────────────────────────────────
+// ── C/D. Provisioning endpoint REMOVED — absence proofs ─────────────────────
 
-describe("D — User provisioning matrix", () => {
-  const provSrc = readSrc("app/api/internal/provision-users/route.ts");
-
-  test("T08: 9 users defined in USER_MATRIX", () => {
-    const emailMatches = provSrc.match(/email:\s*"/g);
-    expect(emailMatches).toHaveLength(9);
+describe("C — Provisioning endpoint removed", () => {
+  test("T08: provision-users route file does NOT exist", () => {
+    const routePath = path.resolve(__dirname, "../../../app/api/internal/provision-users/route.ts");
+    expect(fs.existsSync(routePath)).toBe(false);
   });
 
-  test("T09: Blocked roles include SUPER_ADMIN and AGENTIK_ADMIN", () => {
-    expect(provSrc).toContain('"SUPER_ADMIN"');
-    expect(provSrc).toContain('"AGENTIK_ADMIN"');
-    expect(provSrc).toContain("BLOCKED_ROLES");
+  test("T09: provision-users directory does NOT exist", () => {
+    const dirPath = path.resolve(__dirname, "../../../app/api/internal/provision-users");
+    expect(fs.existsSync(dirPath)).toBe(false);
   });
 
-  test("T10: Password received from POST body, never stored in code", () => {
-    expect(provSrc).toContain("body.password");
-    expect(provSrc).toContain("hashPassword");
-    // No hardcoded passwords
-    expect(provSrc).not.toMatch(/password\s*[:=]\s*["'][^"']{8,}["']/i);
-  });
-
-  test("T11: Preview-only guard (VERCEL_ENV !== production)", () => {
-    expect(provSrc).toContain("VERCEL_ENV");
-    expect(provSrc).toContain('"production"');
-    expect(provSrc).toContain("BLOCKED_PRODUCTION");
-  });
-
-  test("T12: PROBE_SECRET required", () => {
-    expect(provSrc).toContain("PROBE_SECRET");
-    expect(provSrc).toContain("AUTH_FAILED");
-  });
-
-  test("T13: Seller operators have sellerSlug", () => {
-    // Nestor and Orlando should have sellerSlug in their permissionsJson
-    expect(provSrc).toContain('"nestor-alzate"');
-    expect(provSrc).toContain('"orlando-naranjo"');
-  });
-
-  test("T14: Idempotent outcomes: CREATED, UPDATED, ALREADY_CORRECT", () => {
-    expect(provSrc).toContain('"ALREADY_CORRECT"');
-    expect(provSrc).toContain('"UPDATED"');
-    expect(provSrc).toContain('"CREATED"');
+  test("T10: No substitute provisioning endpoint created", () => {
+    const internalDir = path.resolve(__dirname, "../../../app/api/internal");
+    if (!fs.existsSync(internalDir)) return; // dir gone = pass
+    const entries = fs.readdirSync(internalDir, { recursive: true }) as string[];
+    const provisionEntries = entries.filter(e =>
+      String(e).includes("provision") || String(e).includes("create-user") || String(e).includes("batch-user")
+    );
+    expect(provisionEntries).toHaveLength(0);
   });
 });
 
