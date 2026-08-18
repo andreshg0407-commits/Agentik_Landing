@@ -50,7 +50,7 @@ export default async function ImportacionesPage({
     }
   }
 
-  const { items, kpis } = cached.result;
+  const { items, kpis, salesCoverage } = cached.result;
 
   return (
     <ImportacionesClient
@@ -60,6 +60,7 @@ export default async function ImportacionesPage({
       truthState={runtimeState}
       freshness={cached.freshness}
       computedAt={cached.computedAt}
+      salesCoverage={salesCoverage}
     />
   );
 }

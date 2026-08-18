@@ -214,4 +214,69 @@ describe("05A2R1 — SAG B24 Inventory Authority", () => {
   test("T11: Masde8MesesView footer references SAG authority", () => {
     expect(clientSrc).toContain("autoridad SAG vw_agentik_inventario");
   });
+
+  // ── T12: PIL contamination eliminated (Section A) ──
+
+  test("T12: Intelligence service sets remaining from SAG B24, not PIL", () => {
+    expect(intelSrc).toContain("sagStock.existencia");
+    expect(intelSrc).toContain("(ref as any).remaining = b24Exist");
+  });
+
+  test("T12: When SOURCE_DOWN, remaining=0 and stockDataQuality=NO_PIL_RECORD", () => {
+    expect(intelSrc).toContain("(ref as any).remaining = 0");
+    expect(intelSrc).toContain('"NO_PIL_RECORD"');
+  });
+
+  test("T12: Intelligence service does not keep PIL totalStock when SAG is certified", () => {
+    // When certified, totalStock = b24Exist, not ref.totalStock from PIL
+    expect(intelSrc).toContain("(ref as any).totalStock = b24Exist");
+  });
+
+  // ── T13: Sales coverage metadata (Section B) ──
+
+  test("T13: ImportSalesCoverage type exported from import-types", () => {
+    expect(typesSrc).toContain("export interface ImportSalesCoverage");
+  });
+
+  test("T13: salesAsOf field exists", () => {
+    expect(typesSrc).toContain("salesAsOf:");
+  });
+
+  test("T13: coverage6m/8m/12m fields exist", () => {
+    expect(typesSrc).toContain("coverage6m:");
+    expect(typesSrc).toContain("coverage8m:");
+    expect(typesSrc).toContain("coverage12m:");
+  });
+
+  test("T13: freshnessLagDays field exists", () => {
+    expect(typesSrc).toContain("freshnessLagDays:");
+  });
+
+  test("T13: Intelligence result includes salesCoverage", () => {
+    expect(intelSrc).toContain("salesCoverage");
+    expect(intelSrc).toContain("return { items, kpis, salesCoverage }");
+  });
+
+  test("T13: Client receives and displays salesCoverage", () => {
+    expect(clientSrc).toContain("salesCoverage");
+    expect(clientSrc).toContain("Cobertura de ventas");
+  });
+
+  // ── T14: Reconciliation script exists (Section C) ──
+
+  test("T14: Sales reconciliation script exists", () => {
+    const scriptPath = path.resolve(__dirname, "../../../scripts/reconcile-imports-05a2r1-sales.ts");
+    expect(fs.existsSync(scriptPath)).toBe(true);
+  });
+
+  test("T14: Script queries vw_agentik_ventas", () => {
+    const scriptPath = path.resolve(__dirname, "../../../scripts/reconcile-imports-05a2r1-sales.ts");
+    const src = fs.readFileSync(scriptPath, "utf-8");
+    expect(src).toContain("vw_agentik_ventas");
+    expect(src).toContain("34852-3");
+    expect(src).toContain("34852-2");
+    expect(src).toContain("3747-5");
+    expect(src).toContain("3747-17");
+    expect(src).toContain("34831-8");
+  });
 });

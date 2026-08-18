@@ -144,7 +144,7 @@ function makeImportItem(overrides: Record<string, unknown> = {}): ImportSupplyIn
 describe("A — Assembler determinism", () => {
   test("same input produces identical output", () => {
     const snapshot = makeSnapshot();
-    const intel = { items: [makeImportItem()], kpis: { comprarAhora: 1, revisarRecompra: 2, noRecomprar: 0, inventarioLento: 1, totalRefs: 1 } };
+    const intel = { items: [makeImportItem()], kpis: { comprarAhora: 1, revisarRecompra: 2, noRecomprar: 0, inventarioLento: 1, totalRefs: 1 }, salesCoverage: { salesAsOf: null, salesSourceMinDate: null, salesSourceMaxDate: null, freshnessLagDays: null, coverage6m: false, coverage8m: false, coverage12m: false } };
     const asOf = new Date("2026-08-11T06:00:00Z");
 
     const pa1 = assembleCommercialExecutivePA({ snapshot, importIntelligence: intel, asOf });
@@ -840,7 +840,7 @@ describe("B02-E — Low rotation intelligence", () => {
 
     const insights = assembleExecutiveInsights({
       snapshot: makeSnapshot(),
-      importIntelligence: { items: [makeImportItem()], kpis: { comprarAhora: 0, revisarRecompra: 0, noRecomprar: 0, inventarioLento: 2, totalRefs: 1 } },
+      importIntelligence: { items: [makeImportItem()], kpis: { comprarAhora: 0, revisarRecompra: 0, noRecomprar: 0, inventarioLento: 2, totalRefs: 1 }, salesCoverage: { salesAsOf: null, salesSourceMinDate: null, salesSourceMaxDate: null, freshnessLagDays: null, coverage6m: false, coverage8m: false, coverage12m: false } },
       lowRotationItems: lowRotItems,
       orgSlug: "castillitos", asOf: "2026-08-11T06:00:00.000Z",
     });
@@ -861,7 +861,7 @@ describe("B02-F — UNAVAILABLE separate", () => {
 
     const insights = assembleExecutiveInsights({
       snapshot: makeSnapshot(),
-      importIntelligence: { items: [makeImportItem()], kpis: { comprarAhora: 0, revisarRecompra: 0, noRecomprar: 0, inventarioLento: 0, totalRefs: 1 } },
+      importIntelligence: { items: [makeImportItem()], kpis: { comprarAhora: 0, revisarRecompra: 0, noRecomprar: 0, inventarioLento: 0, totalRefs: 1 }, salesCoverage: { salesAsOf: null, salesSourceMinDate: null, salesSourceMaxDate: null, freshnessLagDays: null, coverage6m: false, coverage8m: false, coverage12m: false } },
       lowRotationItems: items,
       orgSlug: "castillitos", asOf: "2026-08-11T06:00:00.000Z",
     });

@@ -300,3 +300,22 @@ export interface ImportDataQualitySummary {
   /** How many refs have any inbound date (C1/C2 or lastPurchaseSag) */
   refsWithAnyInboundDate: number;
 }
+
+// ── Sales coverage metadata (05A2R1) ──────────────────────────────────────
+
+export interface ImportSalesCoverage {
+  /** MAX(orderDate) across all import order lines — anchor for window cutoffs */
+  salesAsOf: string | null;
+  /** MIN(orderDate) */
+  salesSourceMinDate: string | null;
+  /** MAX(orderDate) */
+  salesSourceMaxDate: string | null;
+  /** Days between salesAsOf and now */
+  freshnessLagDays: number | null;
+  /** Whether the 6M window has full data coverage */
+  coverage6m: boolean;
+  /** Whether the 8M window has full data coverage */
+  coverage8m: boolean;
+  /** Whether the 12M window has full data coverage */
+  coverage12m: boolean;
+}

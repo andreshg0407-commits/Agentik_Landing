@@ -68,6 +68,7 @@ import type {
   ImportReceiptSummary,
 } from "@/lib/comercial/importaciones/import-types";
 import type { CachedImportTruthState, ImportSourceFreshness } from "@/lib/comercial/importaciones/import-intelligence-cache";
+import type { ImportSalesCoverage } from "@/lib/comercial/importaciones/import-types";
 import { CommercialReferenceThumbnail } from "@/components/comercial/commercial-reference-thumbnail";
 
 // ── Props ───────────────────────────────────────────────────────────────────
@@ -79,6 +80,7 @@ interface ImportacionesClientProps {
   truthState: CachedImportTruthState;
   freshness: ImportSourceFreshness;
   computedAt: string;
+  salesCoverage?: ImportSalesCoverage;
 }
 
 // ── Tab type ────────────────────────────────────────────────────────────────
@@ -292,6 +294,7 @@ export function ImportacionesClient({
   truthState,
   freshness,
   computedAt,
+  salesCoverage,
 }: ImportacionesClientProps) {
   const [activeTab, setActiveTab] = useState<ViewTab>("mayor_rotacion");
   const [drawerItem, setDrawerItem] = useState<ImportSupplyIntelligenceItem | null>(null);
@@ -450,6 +453,7 @@ export function ImportacionesClient({
           truthState={truthState}
           freshness={freshness}
           computedAt={computedAt}
+          salesCoverage={salesCoverage}
         />
       )}
 
@@ -867,11 +871,13 @@ function InteligenciaView({
   truthState,
   freshness,
   computedAt,
+  salesCoverage,
 }: {
   items: ImportSupplyIntelligenceItem[];
   truthState: CachedImportTruthState;
   freshness: ImportSourceFreshness;
   computedAt: string;
+  salesCoverage?: ImportSalesCoverage;
 }) {
   // C1/C2 documented purchases summary
   const receiptSummary = useMemo(() => {
@@ -1098,6 +1104,25 @@ function InteligenciaView({
           <RulingRow ruling="IMPORTS_B24_REENTRY_AGE_PARTIAL" status="BLOCKED" />
         </div>
       </div>
+
+      {/* ── Sales coverage ──────────────────────────────────────────── */}
+      {salesCoverage && (
+        <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, overflow: "hidden", background: C.white, boxShadow: E.sm }}>
+          <div style={{ padding: `${S[2]}px ${S[3]}px`, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}`, fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.inkMid }}>
+            Cobertura de ventas
+          </div>
+          <div style={{ padding: `${S[3]}px ${S[4]}px`, fontFamily: T.mono, fontSize: T.sz.xs, display: "flex", flexDirection: "column", gap: 4 }}>
+            <span>salesAsOf: {salesCoverage.salesAsOf ?? "\u2014"}</span>
+            <span>Rango: {salesCoverage.salesSourceMinDate ?? "\u2014"} .. {salesCoverage.salesSourceMaxDate ?? "\u2014"}</span>
+            <span>Lag: {salesCoverage.freshnessLagDays !== null ? `${salesCoverage.freshnessLagDays} dias` : "\u2014"}</span>
+            <span>
+              6M: {salesCoverage.coverage6m ? "FULL" : "PARTIAL"} |
+              8M: {salesCoverage.coverage8m ? "FULL" : "PARTIAL"} |
+              12M: {salesCoverage.coverage12m ? "FULL" : "PARTIAL"}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* ── Cache state ───────────────────────────────────────────────── */}
       <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, display: "flex", flexDirection: "column", gap: 2 }}>

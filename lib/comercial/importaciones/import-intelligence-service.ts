@@ -21,6 +21,7 @@ import type {
   ImportedReference,
   ImportSupplyIntelligenceItem,
   ImportSupplyKpis,
+  ImportSalesCoverage,
   ImportLastInboundSource,
   ImportSizeClass,
   SaludComercial,
@@ -67,6 +68,7 @@ const SIZE_DISPLAY_LABELS: Record<ImportSizeClass, string> = {
 export interface ImportSupplyIntelligenceResult {
   items: ImportSupplyIntelligenceItem[];
   kpis: ImportSupplyKpis;
+  salesCoverage: ImportSalesCoverage;
 }
 
 export async function buildImportSupplyIntelligence(
@@ -75,7 +77,7 @@ export async function buildImportSupplyIntelligence(
   // 1. Get all imported references (existing pipeline)
   const references = await listImportedReferences(orgId);
   if (references.length === 0) {
-    return { items: [], kpis: emptyKpis() };
+    return { items: [], kpis: emptyKpis(), salesCoverage: emptySalesCoverage() };
   }
 
   // 2. Load SAG B24 inventory (authority) + costo/handlingUnit/dates
@@ -86,21 +88,25 @@ export async function buildImportSupplyIntelligence(
   ]);
 
   // Overlay SAG B24 stock onto references (replaces PIL as authority)
-  if (sagB24Result.stockTruthState === "SAG_B24_CERTIFIED") {
-    for (const ref of references) {
+  // When SAG_B24_CERTIFIED: use SAG exclusively, no PIL values in decisions
+  // When SOURCE_DOWN: remaining=0, stockDataQuality=NO_PIL_RECORD (stock not verified)
+  for (const ref of references) {
+    if (sagB24Result.stockTruthState === "SAG_B24_CERTIFIED") {
       const sagStock = sagB24Result.stockMap.get(ref.reference);
-      if (sagStock) {
-        (ref as any).remaining = Math.max(0, sagStock.existencia);
-        (ref as any).totalStock = Math.max(0, sagStock.existencia);
-        (ref as any).stockDataQuality = "CONFIRMED";
-      } else {
-        // SAG returned successfully but this ref has no B24 row — confirmed zero
-        (ref as any).remaining = 0;
-        (ref as any).totalStock = ref.totalStock; // keep total from PIL for other warehouses
-        (ref as any).stockDataQuality = "CONFIRMED";
-      }
+      const b24Exist = sagStock ? Math.max(0, sagStock.existencia) : 0;
+      (ref as any).remaining = b24Exist;
+      (ref as any).totalStock = b24Exist;
+      (ref as any).stockDataQuality = "CONFIRMED";
+    } else {
+      // SOURCE_DOWN: zero stock, unconfirmed quality — stock-dependent decisions blocked
+      (ref as any).remaining = 0;
+      (ref as any).totalStock = 0;
+      (ref as any).stockDataQuality = "NO_PIL_RECORD";
     }
   }
+
+  // Compute salesAsOf from the references' order line dates
+  const salesCoverage = await computeSalesCoverage(orgId, references.map(r => r.reference));
 
   // 3. Run decision engine evaluations
   const ctx: ImportPolicyContext = { tenantId: "castillitos" };
@@ -218,7 +224,7 @@ export async function buildImportSupplyIntelligence(
   // 6. Compute KPIs
   const kpis = computeKpis(items);
 
-  return { items, kpis };
+  return { items, kpis, salesCoverage };
 }
 
 // ── Last inbound resolver ────────────────────────────────────────────────────
@@ -510,6 +516,74 @@ function emptyKpis(): ImportSupplyKpis {
     inventarioLento: 0,
     totalRefs: 0,
   };
+}
+
+// ── Sales coverage ───────────────────────────────────────────────────────────
+
+import { subtractCalendarMonths } from "./calendar-months";
+
+function emptySalesCoverage(): ImportSalesCoverage {
+  return {
+    salesAsOf: null,
+    salesSourceMinDate: null,
+    salesSourceMaxDate: null,
+    freshnessLagDays: null,
+    coverage6m: false,
+    coverage8m: false,
+    coverage12m: false,
+  };
+}
+
+async function computeSalesCoverage(
+  orgId: string,
+  referenceCodes: string[],
+): Promise<ImportSalesCoverage> {
+  if (referenceCodes.length === 0) return emptySalesCoverage();
+
+  try {
+    const result: Array<{ min_date: Date | null; max_date: Date | null }> = await (prisma as any).$queryRawUnsafe(`
+      SELECT MIN(o."orderDate") AS min_date, MAX(o."orderDate") AS max_date
+      FROM "CustomerOrderLine" col
+      JOIN "CustomerOrderRecord" o ON o."id" = col."orderId" AND o."organizationId" = col."organizationId"
+      WHERE col."organizationId" = $1
+        AND col."referenceCode" = ANY($2::text[])
+        AND o."status" = 'FACTURADO'
+    `, orgId, referenceCodes);
+
+    if (!result || result.length === 0 || !result[0].max_date) {
+      return emptySalesCoverage();
+    }
+
+    const minDate = result[0].min_date ? new Date(result[0].min_date) : null;
+    const maxDate = new Date(result[0].max_date);
+    const salesAsOf = maxDate.toISOString().split("T")[0];
+    const salesSourceMinDate = minDate ? minDate.toISOString().split("T")[0] : null;
+    const salesSourceMaxDate = salesAsOf;
+
+    const now = new Date();
+    const freshnessLagDays = Math.floor((now.getTime() - maxDate.getTime()) / (1000 * 60 * 60 * 24));
+
+    // Check if each window has data: minDate must be <= cutoff for full coverage
+    const cutoff6m = subtractCalendarMonths(maxDate, 6);
+    const cutoff8m = subtractCalendarMonths(maxDate, 8);
+    const cutoff12m = subtractCalendarMonths(maxDate, 12);
+
+    const coverage6m = minDate !== null && minDate <= cutoff6m;
+    const coverage8m = minDate !== null && minDate <= cutoff8m;
+    const coverage12m = minDate !== null && minDate <= cutoff12m;
+
+    return {
+      salesAsOf,
+      salesSourceMinDate,
+      salesSourceMaxDate,
+      freshnessLagDays,
+      coverage6m,
+      coverage8m,
+      coverage12m,
+    };
+  } catch {
+    return emptySalesCoverage();
+  }
 }
 
 // ── Data loader ──────────────────────────────────────────────────────────────
