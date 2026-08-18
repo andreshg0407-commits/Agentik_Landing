@@ -173,6 +173,21 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
     });
   }
 
+  // ── Finanzas stub — "Próximamente" when module not enabled ───────────────
+  if (!opts.hasFinance && !opts.hasTorreControl) {
+    domains.push({
+      id:        "finanzas",
+      label:     "Finanzas",
+      shortIcon: "Fn",
+      iconKey:   "finanzas",
+      accent:    "#1e40af",
+      pathKeys:  [],
+      items: [
+        { label: "Próximamente", href: "#", indent: 1, disabled: true, badge: "🔜" },
+      ],
+    });
+  }
+
   // ── Cobranza — AR recovery and collection operations ──────────────────────
   if (opts.hasCollections) {
     domains.push({
@@ -203,7 +218,7 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
       shortIcon: "Cm",
       iconKey:   "comercial",
       accent:    "#0369a1",
-      pathKeys:  ["comercial/maletas", "comercial/inventario", "comercial/importaciones", "comercial/pedidos", "comercial/tiendas", "comercial/clientes", "comercial/vendedores", "comercial/control"],
+      pathKeys:  ["comercial/maletas", "comercial/inventario", "comercial/importaciones", "comercial/pedidos", "comercial/tiendas", "comercial/clientes", "comercial/vendedores"],
       items: [
         // ── OPERACIÓN ────────────────────────────────────────────────────────
         { label: "Operación",            href: "#", isSectionHeader: true },
@@ -216,9 +231,7 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
         { label: "Estructura Comercial", href: "#", isSectionHeader: true },
         { label: "Clientes",             href: `/${s}/comercial/clientes`,    indent: 1, accent: "#0369a1", pathMatches: ["comercial/clientes"]    },
         { label: "Vendedores",           href: `/${s}/comercial/vendedores`,  indent: 1, accent: "#0369a1", pathMatches: ["comercial/vendedores"]  },
-        // ── GESTIÓN ───────────────────────────────────────────────────────────
-        { label: "Gestión",              href: "#", isSectionHeader: true },
-        { label: "Control Comercial",    href: `/${s}/comercial/control`,     indent: 1, accent: "#0369a1", pathMatches: ["comercial/control"]     },
+        // Control Comercial hidden per DELIVERY-HARDENING-07A0 — route blocked via entitlement
       ],
     });
   }
@@ -244,6 +257,21 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
         { label: "Consumos",           href: `/${s}/produccion/consumos`,   indent: 1, accent: "#b45309", pathMatches: ["produccion/consumos"] },
         { label: "Costos",             href: `/${s}/produccion/costos`,     indent: 1, accent: "#b45309", pathMatches: ["produccion/costos"] },
         { label: "Alertas",            href: `/${s}/produccion/alertas`,    indent: 1, accent: "#b45309", pathMatches: ["produccion/alertas"] },
+      ],
+    });
+  }
+
+  // ── Producción stub — "Próximamente" when module not enabled ─────────────
+  if (!opts.hasProduction) {
+    domains.push({
+      id:        "produccion",
+      label:     "Producción",
+      shortIcon: "Pr",
+      iconKey:   "produccion",
+      accent:    "#b45309",
+      pathKeys:  [],
+      items: [
+        { label: "Próximamente", href: "#", indent: 1, disabled: true, badge: "🔜" },
       ],
     });
   }
@@ -299,6 +327,21 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
       accent:    "#7c2d92",
       pathKeys:  ["agentik/marketing-studio"],
       items:     filterItemsByVisibility(mItems, opts.showInternal),
+    });
+  }
+
+  // ── Marketing stub — "Próximamente" when module not enabled ──────────────
+  if (!opts.hasMarketing) {
+    domains.push({
+      id:        "marketing",
+      label:     "Marketing",
+      shortIcon: "Mk",
+      iconKey:   "marketing",
+      accent:    "#7c2d92",
+      pathKeys:  [],
+      items: [
+        { label: "Próximamente", href: "#", indent: 1, disabled: true, badge: "🔜" },
+      ],
     });
   }
 

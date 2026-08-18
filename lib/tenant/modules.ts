@@ -75,6 +75,8 @@ export const ROUTE_MODULE_MAP: ReadonlyArray<[string, ModuleKey]> = [
   ["settings",      "settings"],
   ["whatsapp",      "whatsapp"],
   // ── Comercial subpaths → gated by "sales" module key ────────────────────────
+  // Control Comercial blocked per DELIVERY-HARDENING-07A0 — dedicated gate, never enabled
+  ["comercial/control", "control_comercial"],
   ["comercial",     "sales"],
   // ── Producción domain → separate product, gated by "production" module key ──
   ["produccion",    "production"],
@@ -128,7 +130,8 @@ export const MODULE_KEYS = [
   "dashboard",         // Centro de Operaciones
   "torre_control",     // Torre de Control / executive
   "finance",           // Finanzas / FP&A
-  "sales",             // Control Comercial + all sub-pages
+  "sales",             // Comercial surfaces (maletas, pedidos, clientes, etc.)
+  "control_comercial", // Control Comercial — blocked per DELIVERY-HARDENING-07A0
   "collections",       // Cola de Cobranza + campañas + rendimiento
   "workforce",         // Workforce · RRHH
   "alerts",            // Alertas

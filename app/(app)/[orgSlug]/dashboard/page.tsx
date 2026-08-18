@@ -60,7 +60,7 @@ const MODULES: ReadonlyArray<{
   moduleKey?:  string; // opt-in module key — only shown when enabled for the tenant
 }> = [
   { label: "Torre de Control",       icon: "⚡", href: "executive",       accent: "#1e1e2e", description: "Vista ejecutiva",          internal: false },
-  { label: "Control Comercial",      icon: "📊", href: "sales",           accent: "#7c3aed", description: "KPIs, vendedores, líneas", internal: false },
+  { label: "Comercial",              icon: "📊", href: "comercial/maletas", accent: "#0369a1", description: "Maletas, pedidos, inventario", internal: false },
   { label: "Informes Inteligentes",  icon: "✨", href: "reports",         accent: "#7c3aed", description: "Reportes con IA",          internal: false },
   { label: "Marketing Studio",       icon: "📸", href: "agentik/marketing-studio", accent: "#7c2d92", description: "Foto Estudio, Biblioteca, Redes", internal: false, moduleKey: "marketing_studio" },
   { label: "Embudo Comercial",       icon: "🔁", href: "pipeline",        accent: "#0369a1", description: "Pipeline CRM → SAG",       internal: false },

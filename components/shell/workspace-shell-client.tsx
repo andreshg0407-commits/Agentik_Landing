@@ -281,6 +281,8 @@ function PrimaryRail({
       gap:           6,
       zIndex:        10,
       flexShrink:    0,
+      overflowY:     "auto" as const,
+      overflowX:     "hidden" as const,
       // Right-edge material separator — gives the rail a persistent shell-layer depth
       boxShadow:     "inset -1px 0 0 rgba(255,255,255,.05), 3px 0 12px rgba(0,0,0,.18)",
     }}>

@@ -2193,6 +2193,11 @@ export function CopilotOpsRail({
   }
   const taskCount = totalTasksCount + (supervisedExecution?.confirmationState === "pending" ? 1 : 0);
 
+  // DELIVERY-HARDENING-07A0: collapse executive cards when no runtime data exists.
+  // If all sources are empty, the body renders nothing — no fake "Todo en orden" noise.
+  const hasAnyExecutiveData = signals.length > 0 || alerts.length > 0 || taskItems.length > 0
+    || decisions > 0 || (davidData && davidData.dataState !== "EMPTY" && davidData.criticalRefs.length > 0);
+
   // ── Rail visual system ─────────────────────────────────────────────────────
   const RAIL_BG     = "#F8F9FC";   // near-white editorial container
   const BODY_BG     = "#F1F3F8";   // soft cool gray body area
@@ -2333,6 +2338,7 @@ export function CopilotOpsRail({
 
       {/* ── Executive 3-card body ───────────────────────────────────────────── */}
       <div style={{ flex: 1, overflowY: "auto", background: BODY_BG, display: "flex", flexDirection: "column" }}>
+        {hasAnyExecutiveData ? (
         <div style={{ padding: `${S[3]}px`, paddingTop: S[2] + 4, display: "flex", flexDirection: "column", gap: S[3] + 4 }}>
 
         {/* ── CARD 1 — ESTADO OPERATIVO ──────────────────────────────────── */}
@@ -2618,7 +2624,14 @@ export function CopilotOpsRail({
           );
         })()}
 
-        </div>{/* end padding wrapper */}
+        </div>
+        ) : (
+          <div style={{ padding: `${S[3]}px`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: ET_MUT, letterSpacing: "0.04em" }}>
+              {agent.displayName}
+            </span>
+          </div>
+        )}
 
         {/* ── INFRASTRUCTURE SECTIONS — internal_ops / super_admin only ──────── */}
         {isInternal && (<>
