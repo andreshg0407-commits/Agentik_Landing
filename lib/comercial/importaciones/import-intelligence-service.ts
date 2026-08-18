@@ -22,6 +22,7 @@ import type {
   ImportSupplyIntelligenceItem,
   ImportSupplyKpis,
   ImportSalesCoverage,
+  ImportMonthlySalesEntry,
   ImportLastInboundSource,
   ImportSizeClass,
   SaludComercial,
@@ -69,6 +70,7 @@ export interface ImportSupplyIntelligenceResult {
   items: ImportSupplyIntelligenceItem[];
   kpis: ImportSupplyKpis;
   salesCoverage: ImportSalesCoverage;
+  monthlySales: ImportMonthlySalesEntry[];
 }
 
 export async function buildImportSupplyIntelligence(
@@ -77,7 +79,7 @@ export async function buildImportSupplyIntelligence(
   // 1. Get all imported references (existing pipeline)
   const references = await listImportedReferences(orgId);
   if (references.length === 0) {
-    return { items: [], kpis: emptyKpis(), salesCoverage: emptySalesCoverage() };
+    return { items: [], kpis: emptyKpis(), salesCoverage: emptySalesCoverage(), monthlySales: [] };
   }
 
   // 2. Load SAG B24 inventory (authority) + costo/handlingUnit/dates
@@ -105,8 +107,12 @@ export async function buildImportSupplyIntelligence(
     }
   }
 
-  // Compute salesAsOf from the references' order line dates
-  const salesCoverage = await computeSalesCoverage(orgId, references.map(r => r.reference));
+  // Compute salesAsOf + monthly sales breakdown
+  const referenceCodes = references.map(r => r.reference);
+  const [salesCoverage, monthlySales] = await Promise.all([
+    computeSalesCoverage(orgId, referenceCodes),
+    computeMonthlySales(orgId, referenceCodes),
+  ]);
 
   // 3. Run decision engine evaluations
   const ctx: ImportPolicyContext = { tenantId: "castillitos" };
@@ -224,7 +230,7 @@ export async function buildImportSupplyIntelligence(
   // 6. Compute KPIs
   const kpis = computeKpis(items);
 
-  return { items, kpis, salesCoverage };
+  return { items, kpis, salesCoverage, monthlySales };
 }
 
 // ── Last inbound resolver ────────────────────────────────────────────────────
@@ -583,6 +589,53 @@ async function computeSalesCoverage(
     };
   } catch {
     return emptySalesCoverage();
+  }
+}
+
+// ── Monthly sales aggregation (05A4) ──────────────────────────────────────
+
+async function computeMonthlySales(
+  orgId: string,
+  referenceCodes: string[],
+): Promise<ImportMonthlySalesEntry[]> {
+  if (referenceCodes.length === 0) return [];
+
+  try {
+    const cutoff = subtractCalendarMonths(new Date(), 7); // 7 months to get 6 full + current partial
+    const rows: Array<{
+      month: string;
+      units_net: number | bigint;
+      revenue_net: number | bigint;
+      doc_count: number | bigint;
+    }> = await (prisma as any).$queryRawUnsafe(`
+      SELECT
+        TO_CHAR(o."orderDate", 'YYYY-MM') AS month,
+        COALESCE(SUM(col."quantity"), 0) AS units_net,
+        COALESCE(SUM(col."quantity" * col."unitValue"), 0) AS revenue_net,
+        COUNT(DISTINCT o."id") AS doc_count
+      FROM "CustomerOrderLine" col
+      JOIN "CustomerOrderRecord" o ON o."id" = col."orderId" AND o."organizationId" = col."organizationId"
+      WHERE col."organizationId" = $1
+        AND col."referenceCode" = ANY($2::text[])
+        AND o."status" = 'FACTURADO'
+        AND o."orderDate" >= $3
+      GROUP BY TO_CHAR(o."orderDate", 'YYYY-MM')
+      ORDER BY month
+    `, orgId, referenceCodes, cutoff);
+
+    // Determine current month for partial flag
+    const nowBogota = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+    const currentMonth = nowBogota.substring(0, 7);
+
+    return rows.map(r => ({
+      month: r.month,
+      unitsNet: Number(r.units_net),
+      revenueNet: Number(r.revenue_net),
+      documents: Number(r.doc_count),
+      partial: r.month === currentMonth,
+    }));
+  } catch {
+    return [];
   }
 }
 

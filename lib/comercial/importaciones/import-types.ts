@@ -301,6 +301,18 @@ export interface ImportDataQualitySummary {
   refsWithAnyInboundDate: number;
 }
 
+// ── Monthly sales aggregation (05A4) ─────────────────────────────────────
+
+export interface ImportMonthlySalesEntry {
+  /** YYYY-MM */
+  month: string;
+  unitsNet: number;
+  revenueNet: number;
+  documents: number;
+  /** true if the month is not yet complete */
+  partial: boolean;
+}
+
 // ── Sales coverage metadata (05A2R1) ──────────────────────────────────────
 
 export interface ImportSalesCoverage {

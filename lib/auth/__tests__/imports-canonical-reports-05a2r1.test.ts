@@ -211,8 +211,8 @@ describe("05A2R1 — SAG B24 Inventory Authority", () => {
     expect(clientSrc).toContain("SAG vw_agentik_inventario");
   });
 
-  test("T11: Masde8MesesView footer references SAG authority", () => {
-    expect(clientSrc).toContain("autoridad SAG vw_agentik_inventario");
+  test("T11: Masde8MesesView footer references SAG vw_agentik_inventario", () => {
+    expect(clientSrc).toContain("SAG vw_agentik_inventario");
   });
 
   // ── T12: PIL contamination eliminated (Section A) ──
@@ -254,7 +254,7 @@ describe("05A2R1 — SAG B24 Inventory Authority", () => {
 
   test("T13: Intelligence result includes salesCoverage", () => {
     expect(intelSrc).toContain("salesCoverage");
-    expect(intelSrc).toContain("return { items, kpis, salesCoverage }");
+    expect(intelSrc).toContain("return { items, kpis, salesCoverage, monthlySales }");
   });
 
   test("T13: Client receives and uses salesCoverage", () => {

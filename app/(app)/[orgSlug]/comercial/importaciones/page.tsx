@@ -50,7 +50,7 @@ export default async function ImportacionesPage({
     }
   }
 
-  const { items, kpis, salesCoverage } = cached.result;
+  const { items, kpis, salesCoverage, monthlySales } = cached.result;
 
   return (
     <ImportacionesClient
@@ -61,6 +61,7 @@ export default async function ImportacionesPage({
       freshness={cached.freshness}
       computedAt={cached.computedAt}
       salesCoverage={salesCoverage}
+      monthlySales={monthlySales ?? []}
     />
   );
 }

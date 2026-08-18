@@ -72,18 +72,20 @@ describe("05A3 — Classification Labels", () => {
 });
 
 describe("05A3 — Inteligencia Tab", () => {
-  test("T8: Inteligencia has Sales 6M KPIs", () => {
-    expect(clientSrc).toContain("Refs con ventas 6M");
-    expect(clientSrc).toContain("Und netas 6M");
-    expect(clientSrc).toContain("Valor neto 6M");
+  test("T8: Inteligencia has executive KPIs (05A4 redesign)", () => {
+    expect(clientSrc).toContain("Ventas netas 6M");
+    expect(clientSrc).toContain("Unidades netas 6M");
+    expect(clientSrc).toContain("Promedio mensual");
+    expect(clientSrc).toContain("Crecimiento ultimo mes");
   });
 
-  test("T9: Inteligencia has classification distribution", () => {
-    expect(clientSrc).toContain("Distribucion por clasificacion");
+  test("T9: Inteligencia has purchases chart (05A4 replaces classification)", () => {
+    expect(clientSrc).toContain("Compras documentadas");
+    expect(clientSrc).toContain("monthlyPurchases");
   });
 
-  test("T10: Inteligencia has Top 10 tallas", () => {
-    expect(clientSrc).toContain("Top 10 tallas por ventas 6M");
+  test("T10: Inteligencia has Top productos por tamano (05A4)", () => {
+    expect(clientSrc).toContain("Top productos por tamano");
   });
 
   test("T11: Inteligencia does NOT have SAG Blockers panel", () => {

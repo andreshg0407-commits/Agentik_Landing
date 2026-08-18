@@ -272,7 +272,7 @@ export async function getCachedImportIntelligence(
   // "no cache" from "prewarm ran, genuinely zero refs."
   // UI MUST check kpis.totalRefs < 0 and render em dashes, not "0".
   return {
-    result: { items: [], kpis: unavailableKpis(), salesCoverage: { salesAsOf: null, salesSourceMinDate: null, salesSourceMaxDate: null, freshnessLagDays: null, coverage6m: false, coverage8m: false, coverage12m: false } },
+    result: { items: [], kpis: unavailableKpis(), salesCoverage: { salesAsOf: null, salesSourceMinDate: null, salesSourceMaxDate: null, freshnessLagDays: null, coverage6m: false, coverage8m: false, coverage12m: false }, monthlySales: [] },
     freshness: {
       productEntityAsOf: null,
       inventoryAsOf: null,

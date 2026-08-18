@@ -66,6 +66,8 @@ import type {
   ImportSupplyKpis,
   RecompraClassification,
   ImportReceiptSummary,
+  ImportMonthlySalesEntry,
+  ImportSizeClass,
 } from "@/lib/comercial/importaciones/import-types";
 import type { CachedImportTruthState, ImportSourceFreshness } from "@/lib/comercial/importaciones/import-intelligence-cache";
 import type { ImportSalesCoverage } from "@/lib/comercial/importaciones/import-types";
@@ -81,6 +83,7 @@ interface ImportacionesClientProps {
   freshness: ImportSourceFreshness;
   computedAt: string;
   salesCoverage?: ImportSalesCoverage;
+  monthlySales?: ImportMonthlySalesEntry[];
 }
 
 // ── Tab type ────────────────────────────────────────────────────────────────
@@ -129,6 +132,76 @@ const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: "velocity", label: "Velocidad mensual" },
   { key: "value", label: "Valor neto vendido 6M" },
 ];
+
+// ── COP formatter ─────────────────────────────────────────────────────────
+
+function fmtCOP(value: number): string {
+  if (Math.abs(value) >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)} M`;
+  if (Math.abs(value) >= 1_000) return `$${Math.round(value).toLocaleString("es-CO")}`;
+  return `$${value.toLocaleString("es-CO")}`;
+}
+
+function fmtCOPFull(value: number): string {
+  return `$${Math.round(value).toLocaleString("es-CO")}`;
+}
+
+// ── Sortable header types ─────────────────────────────────────────────────
+
+type SortDir = "asc" | "desc";
+
+interface SortState<K extends string> {
+  key: K;
+  dir: SortDir;
+}
+
+function useSortable<K extends string>(defaultKey: K, defaultDir: SortDir = "desc") {
+  const [state, setState] = useState<SortState<K>>({ key: defaultKey, dir: defaultDir });
+  const toggle = useCallback((key: K) => {
+    setState(prev => prev.key === key
+      ? { key, dir: prev.dir === "desc" ? "asc" : "desc" }
+      : { key, dir: "desc" }
+    );
+  }, []);
+  return { sortKey: state.key, sortDir: state.dir, toggle };
+}
+
+function SortableHeader<K extends string>({
+  label, colKey, current, dir, onSort, align,
+}: {
+  label: string; colKey: K; current: K; dir: SortDir; onSort: (k: K) => void; align?: "right";
+}) {
+  const isActive = current === colKey;
+  return (
+    <button
+      onClick={() => onSort(colKey)}
+      aria-sort={isActive ? (dir === "desc" ? "descending" : "ascending") : "none"}
+      style={{
+        fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
+        color: isActive ? C.blueDark : C.inkMid,
+        background: "none", border: "none", cursor: "pointer", padding: 0,
+        textAlign: align ?? "left", display: "flex", alignItems: "center",
+        gap: 2, justifyContent: align === "right" ? "flex-end" : "flex-start",
+        width: "100%",
+      }}
+    >
+      {label}
+      <span style={{ fontSize: 9, opacity: isActive ? 1 : 0.3 }}>
+        {isActive ? (dir === "desc" ? "\u2193" : "\u2191") : "\u2195"}
+      </span>
+    </button>
+  );
+}
+
+function stableSort<T>(arr: T[], cmp: (a: T, b: T) => number, refKey: (item: T) => string): T[] {
+  return [...arr].sort((a, b) => cmp(a, b) || refKey(a).localeCompare(refKey(b)));
+}
+
+const SIZE_TAB_LABELS: Record<string, string> = {
+  PEQUENO: "Pequeno",
+  MEDIANO: "Mediano",
+  GRANDE: "Grande",
+  SIN_CLASIFICAR: "Sin clasificar",
+};
 
 // ── Evidence levels for Mas de 8 meses ────────────────────────────────────
 
@@ -295,11 +368,12 @@ export function ImportacionesClient({
   freshness,
   computedAt,
   salesCoverage,
+  monthlySales,
 }: ImportacionesClientProps) {
   const [activeTab, setActiveTab] = useState<ViewTab>("mayor_rotacion");
   const [drawerItem, setDrawerItem] = useState<ImportSupplyIntelligenceItem | null>(null);
   const [windowMonths, setWindowMonths] = useState<WindowMonths>(6);
-  const [sortKey, setSortKey] = useState<SortKey>("units");
+  // sortKey state removed — each table manages its own sort (05A4)
 
   const openDrawer = useCallback((item: ImportSupplyIntelligenceItem) => setDrawerItem(item), []);
   const closeDrawer = useCallback(() => setDrawerItem(null), []);
@@ -432,8 +506,6 @@ export function ImportacionesClient({
         <MayorRotacionView
           items={items}
           windowMonths={windowMonths}
-          sortKey={sortKey}
-          onSortChange={setSortKey}
           onRowClick={openDrawer}
         />
       )}
@@ -454,6 +526,7 @@ export function ImportacionesClient({
           freshness={freshness}
           computedAt={computedAt}
           salesCoverage={salesCoverage}
+          monthlySales={monthlySales ?? []}
         />
       )}
 
@@ -469,82 +542,55 @@ export function ImportacionesClient({
 // REPORT 1: Mayor rotacion
 // ═══════════════════════════════════════════════════════════════════════════════
 
+type MayorSortCol = "units" | "velocity" | "value" | "stock" | "ref";
+
 function MayorRotacionView({
   items,
   windowMonths,
-  sortKey,
-  onSortChange,
   onRowClick,
 }: {
   items: ImportSupplyIntelligenceItem[];
   windowMonths: WindowMonths;
-  sortKey: SortKey;
-  onSortChange: (k: SortKey) => void;
   onRowClick: (item: ImportSupplyIntelligenceItem) => void;
 }) {
+  const { sortKey, sortDir, toggle } = useSortable<MayorSortCol>("units");
+
   const filtered = useMemo(() => {
-    return items.filter(item => {
-      if (item.salesDataQuality !== "SYNCED") return false;
-      return salesInWindow(item, windowMonths) > 0;
-    });
+    return items.filter(item => item.salesDataQuality === "SYNCED" && salesInWindow(item, windowMonths) > 0);
   }, [items, windowMonths]);
 
   const sorted = useMemo(() => {
-    const list = [...filtered];
-    switch (sortKey) {
-      case "units":
-        return list.sort((a, b) => salesInWindow(b, windowMonths) - salesInWindow(a, windowMonths));
-      case "velocity":
-        return list.sort((a, b) => (salesInWindow(b, windowMonths) / windowMonths) - (salesInWindow(a, windowMonths) / windowMonths));
-      case "value":
-        return list.sort((a, b) => revenueInWindow(b, windowMonths) - revenueInWindow(a, windowMonths));
-    }
-  }, [filtered, sortKey, windowMonths]);
+    const cmp = (a: ImportSupplyIntelligenceItem, b: ImportSupplyIntelligenceItem) => {
+      let va: number, vb: number;
+      switch (sortKey) {
+        case "units": va = salesInWindow(a, windowMonths); vb = salesInWindow(b, windowMonths); break;
+        case "velocity": va = salesInWindow(a, windowMonths) / windowMonths; vb = salesInWindow(b, windowMonths) / windowMonths; break;
+        case "value": va = revenueInWindow(a, windowMonths); vb = revenueInWindow(b, windowMonths); break;
+        case "stock": va = a.remaining; vb = b.remaining; break;
+        case "ref": return sortDir === "desc" ? b.reference.localeCompare(a.reference) : a.reference.localeCompare(b.reference);
+        default: va = 0; vb = 0;
+      }
+      return sortDir === "desc" ? vb - va : va - vb;
+    };
+    return stableSort(filtered, cmp, i => i.reference);
+  }, [filtered, sortKey, sortDir, windowMonths]);
+
+  const COLS = "48px 1fr 100px 80px 100px 90px 110px";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-      {/* Sort selector */}
-      <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
-        <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>Ordenar por:</span>
-        {SORT_OPTIONS.map(opt => (
-          <button
-            key={opt.key}
-            onClick={() => onSortChange(opt.key)}
-            style={{
-              fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: sortKey === opt.key ? T.wt.semibold : T.wt.normal,
-              padding: `${S[1] - 2}px ${S[2]}px`, borderRadius: R.sm,
-              border: `1px solid ${sortKey === opt.key ? C.blueDark : C.line}`,
-              background: sortKey === opt.key ? C.blueLight : C.white,
-              color: sortKey === opt.key ? C.blueDark : C.inkMid,
-              cursor: "pointer",
-            }}
-          >
-            {opt.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Methodology note */}
       <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight }}>
-        Velocidad mensual = unidades netas vendidas 6M / 6 meses observados.
-        Devoluciones y NC restadas de venta neta. Anulados excluidos.
+        Velocidad mensual = unidades netas / meses observados. Devoluciones y NC restadas. Anulados excluidos.
       </div>
-
-      {/* Table */}
       <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, overflow: "hidden", background: C.white, boxShadow: E.sm }}>
-        <div style={{
-          display: "grid", gridTemplateColumns: "48px 1fr 100px 80px 100px 90px 110px",
-          padding: ROW_PAD, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}`,
-          fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.inkMid,
-          gap: S[1],
-        }}>
-          <span>#</span>
-          <span>Referencia</span>
-          <span style={{ textAlign: "right" }}>Und {windowMonths}M</span>
-          <span style={{ textAlign: "right" }}>Vel/mes</span>
-          <span style={{ textAlign: "right" }}>Valor {windowMonths}M</span>
-          <span style={{ textAlign: "right" }}>Stock B24</span>
-          <span>Clasificacion</span>
+        <div style={{ display: "grid", gridTemplateColumns: COLS, padding: ROW_PAD, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}`, gap: S[1] }}>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.inkMid }}>#</span>
+          <SortableHeader label="Referencia" colKey="ref" current={sortKey} dir={sortDir} onSort={toggle} />
+          <SortableHeader label={`Und ${windowMonths}M`} colKey="units" current={sortKey} dir={sortDir} onSort={toggle} align="right" />
+          <SortableHeader label="Vel/mes" colKey="velocity" current={sortKey} dir={sortDir} onSort={toggle} align="right" />
+          <SortableHeader label={`Valor ${windowMonths}M`} colKey="value" current={sortKey} dir={sortDir} onSort={toggle} align="right" />
+          <SortableHeader label="Stock B24" colKey="stock" current={sortKey} dir={sortDir} onSort={toggle} align="right" />
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.inkMid }}>Clasificacion</span>
         </div>
         {sorted.length === 0 && (
           <div style={{ padding: S[5], textAlign: "center", fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight }}>
@@ -556,49 +602,32 @@ function MayorRotacionView({
           const velocity = windowSales / windowMonths;
           const value = revenueInWindow(item, windowMonths);
           const cls = CLASSIFICATION_DISPLAY[item.recompraClassification];
-
           return (
-            <div
-              key={item.productId}
-              onClick={() => onRowClick(item)}
-              style={{
-                display: "grid", gridTemplateColumns: "48px 1fr 100px 80px 100px 90px 110px",
-                padding: ROW_PAD, borderBottom: `1px solid ${C.lineSubtle}`,
-                fontFamily: T.mono, fontSize: T.sz.base, cursor: "pointer",
-                alignItems: "center", gap: S[1],
-              }}
-            >
+            <div key={item.productId} onClick={() => onRowClick(item)} style={{
+              display: "grid", gridTemplateColumns: COLS, padding: ROW_PAD, borderBottom: `1px solid ${C.lineSubtle}`,
+              fontFamily: T.mono, fontSize: T.sz.base, cursor: "pointer", alignItems: "center", gap: S[1],
+            }}>
               <span style={{ color: C.inkFaint, fontSize: T.sz.xs }}>{idx + 1}</span>
               <div style={{ display: "flex", alignItems: "center", gap: S[2], minWidth: 0 }}>
                 <CommercialReferenceThumbnail imageUrl={item.imageUrl} referenceCode={item.reference} size={28} />
                 <div style={{ overflow: "hidden" }}>
-                  <div style={{ fontWeight: T.wt.medium, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {item.reference}
-                  </div>
-                  <div style={{ fontSize: T.sz.xs, color: C.inkLight, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {item.description}
-                  </div>
+                  <div style={{ fontWeight: T.wt.medium, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.reference}</div>
+                  <div style={{ fontSize: T.sz.xs, color: C.inkLight, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.description}</div>
                 </div>
               </div>
               <span style={{ textAlign: "right", fontWeight: T.wt.semibold }}>{windowSales.toLocaleString("es-CO")}</span>
               <span style={{ textAlign: "right", color: C.inkMid }}>{velocity > 0 ? velocity.toFixed(1) : "\u2014"}</span>
-              <span style={{ textAlign: "right", color: C.inkMid }}>${Math.round(value).toLocaleString("es-CO")}</span>
+              <span style={{ textAlign: "right", color: C.inkMid }}>{fmtCOPFull(value)}</span>
               <span style={{ textAlign: "right", color: item.remaining > 0 ? C.ink : C.red }}>
                 {item.stockDataQuality === "CONFIRMED" ? item.remaining.toLocaleString("es-CO") : "\u2014"}
               </span>
-              <span style={{
-                fontSize: T.sz.xs, padding: `1px ${S[1]}px`, borderRadius: R.sm,
-                background: cls.bg, color: cls.fg, textAlign: "center",
-              }}>
-                {cls.label}
-              </span>
+              <span style={{ fontSize: T.sz.xs, padding: `1px ${S[1]}px`, borderRadius: R.sm, background: cls.bg, color: cls.fg, textAlign: "center" }}>{cls.label}</span>
             </div>
           );
         })}
       </div>
       <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
-        {sorted.length} referencias con ventas certificadas en ventana {windowMonths}M.
-        Universo: productLine = &quot;5&quot; (LINEA 5).
+        {sorted.length} referencias con ventas certificadas en ventana {windowMonths}M. Universo: productLine = &quot;5&quot; (LINEA 5).
       </div>
     </div>
   );
@@ -607,6 +636,8 @@ function MayorRotacionView({
 // ═══════════════════════════════════════════════════════════════════════════════
 // REPORT 2: Menor rotacion
 // ═══════════════════════════════════════════════════════════════════════════════
+
+type MenorSortCol = "units" | "stock" | "cobertura" | "capital" | "ingreso" | "ref";
 
 function MenorRotacionView({
   items,
@@ -617,97 +648,82 @@ function MenorRotacionView({
   windowMonths: WindowMonths;
   onRowClick: (item: ImportSupplyIntelligenceItem) => void;
 }) {
+  const { sortKey, sortDir, toggle } = useSortable<MenorSortCol>("units", "asc");
+
   const filtered = useMemo(() => {
-    // Items with SAG B24 EXISTENCIA > 0, sorted by lowest sales
-    return items
-      .filter(item => item.sagB24Existencia !== null && item.sagB24Existencia > 0)
-      .sort((a, b) => salesInWindow(a, windowMonths) - salesInWindow(b, windowMonths));
-  }, [items, windowMonths]);
+    return items.filter(item => item.sagB24Existencia !== null && item.sagB24Existencia > 0);
+  }, [items]);
+
+  const sorted = useMemo(() => {
+    const cmp = (a: ImportSupplyIntelligenceItem, b: ImportSupplyIntelligenceItem) => {
+      let va: number, vb: number;
+      switch (sortKey) {
+        case "units": va = salesInWindow(a, windowMonths); vb = salesInWindow(b, windowMonths); break;
+        case "stock": va = a.remaining; vb = b.remaining; break;
+        case "cobertura": va = a.coberturaPromedioDias ?? 999999; vb = b.coberturaPromedioDias ?? 999999; break;
+        case "capital": va = a.capitalInmovilizado ?? -1; vb = b.capitalInmovilizado ?? -1; break;
+        case "ingreso": return (sortDir === "desc" ? -1 : 1) * ((a.lastInboundDate ?? "").localeCompare(b.lastInboundDate ?? ""));
+        case "ref": return (sortDir === "desc" ? -1 : 1) * a.reference.localeCompare(b.reference);
+        default: va = 0; vb = 0;
+      }
+      return sortDir === "desc" ? vb - va : va - vb;
+    };
+    return stableSort(filtered, cmp, i => i.reference);
+  }, [filtered, sortKey, sortDir, windowMonths]);
 
   const coverageInfo = useMemo(() => {
     const withSagData = items.filter(i => i.sagB24Existencia !== null).length;
-    const withStock = items.filter(i => i.sagB24Existencia !== null && i.sagB24Existencia > 0).length;
+    const withStock = filtered.length;
     return { total: items.length, confirmed: withSagData, withStock, coverage: items.length > 0 ? Math.round((withSagData / items.length) * 100) : 0 };
-  }, [items]);
+  }, [items, filtered]);
+
+  const COLS = "48px 1fr 100px 100px 100px 100px 120px";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-      {/* Coverage info */}
-      <div style={{
-        fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid,
-        display: "flex", alignItems: "center", gap: S[2],
-      }}>
+      <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, display: "flex", alignItems: "center", gap: S[2] }}>
         <span>SAG B24: {coverageInfo.confirmed}/{coverageInfo.total} refs con dato ({coverageInfo.coverage}%)</span>
-        <span style={{ color: C.inkMid }}>
-          {coverageInfo.withStock} con existencia &gt; 0
-        </span>
+        <span>{coverageInfo.withStock} con existencia &gt; 0</span>
       </div>
-
-      {/* Table */}
       <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, overflow: "hidden", background: C.white, boxShadow: E.sm }}>
-        <div style={{
-          display: "grid", gridTemplateColumns: "48px 1fr 100px 100px 100px 100px 120px",
-          padding: ROW_PAD, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}`,
-          fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.inkMid,
-        }}>
-          <span>#</span>
-          <span>Referencia</span>
-          <span style={{ textAlign: "right" }}>Und netas {windowMonths}M</span>
-          <span style={{ textAlign: "right" }}>Stock B24</span>
-          <span style={{ textAlign: "right" }}>Cobertura (dias)</span>
-          <span style={{ textAlign: "right" }}>Capital inmov.</span>
-          <span>Ultimo ingreso</span>
+        <div style={{ display: "grid", gridTemplateColumns: COLS, padding: ROW_PAD, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}`, gap: S[1] }}>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.inkMid }}>#</span>
+          <SortableHeader label="Referencia" colKey="ref" current={sortKey} dir={sortDir} onSort={toggle} />
+          <SortableHeader label={`Und ${windowMonths}M`} colKey="units" current={sortKey} dir={sortDir} onSort={toggle} align="right" />
+          <SortableHeader label="Stock B24" colKey="stock" current={sortKey} dir={sortDir} onSort={toggle} align="right" />
+          <SortableHeader label="Cobertura" colKey="cobertura" current={sortKey} dir={sortDir} onSort={toggle} align="right" />
+          <SortableHeader label="Capital inmov." colKey="capital" current={sortKey} dir={sortDir} onSort={toggle} align="right" />
+          <SortableHeader label="Ultimo ingreso" colKey="ingreso" current={sortKey} dir={sortDir} onSort={toggle} />
         </div>
-        {filtered.length === 0 && (
-          <div style={{ padding: S[5], textAlign: "center", fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight }}>
-            Sin referencias con existencia confirmada en B24.
-          </div>
+        {sorted.length === 0 && (
+          <div style={{ padding: S[5], textAlign: "center", fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight }}>Sin referencias con existencia confirmada en B24.</div>
         )}
-        {filtered.map((item, idx) => {
+        {sorted.map((item, idx) => {
           const windowSales = salesInWindow(item, windowMonths);
           return (
-            <div
-              key={item.productId}
-              onClick={() => onRowClick(item)}
-              style={{
-                display: "grid", gridTemplateColumns: "48px 1fr 100px 100px 100px 100px 120px",
-                padding: ROW_PAD, borderBottom: `1px solid ${C.lineSubtle}`,
-                fontFamily: T.mono, fontSize: T.sz.base, cursor: "pointer",
-                alignItems: "center",
-              }}
-            >
+            <div key={item.productId} onClick={() => onRowClick(item)} style={{
+              display: "grid", gridTemplateColumns: COLS, padding: ROW_PAD, borderBottom: `1px solid ${C.lineSubtle}`,
+              fontFamily: T.mono, fontSize: T.sz.base, cursor: "pointer", alignItems: "center", gap: S[1],
+            }}>
               <span style={{ color: C.inkFaint, fontSize: T.sz.xs }}>{idx + 1}</span>
               <div style={{ display: "flex", alignItems: "center", gap: S[2], minWidth: 0 }}>
                 <CommercialReferenceThumbnail imageUrl={item.imageUrl} referenceCode={item.reference} size={28} />
                 <div style={{ overflow: "hidden" }}>
-                  <div style={{ fontWeight: T.wt.medium, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {item.reference}
-                  </div>
-                  <div style={{ fontSize: T.sz.xs, color: C.inkLight, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {item.description}
-                  </div>
+                  <div style={{ fontWeight: T.wt.medium, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.reference}</div>
+                  <div style={{ fontSize: T.sz.xs, color: C.inkLight, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.description}</div>
                 </div>
               </div>
-              <span style={{ textAlign: "right", color: windowSales === 0 ? C.red : C.ink }}>
-                {windowSales.toLocaleString("es-CO")}
-              </span>
+              <span style={{ textAlign: "right", color: windowSales === 0 ? C.red : C.ink }}>{windowSales.toLocaleString("es-CO")}</span>
               <span style={{ textAlign: "right" }}>{item.remaining.toLocaleString("es-CO")}</span>
-              <span style={{ textAlign: "right", color: C.inkMid }}>
-                {item.coberturaPromedioDias !== null ? `${item.coberturaPromedioDias}d` : "\u2014"}
-              </span>
-              <span style={{ textAlign: "right", color: C.inkMid }}>
-                {item.capitalInmovilizado !== null ? `$${item.capitalInmovilizado.toLocaleString("es-CO")}` : "\u2014"}
-              </span>
-              <span style={{ fontSize: T.sz.xs, color: C.inkMid }}>
-                {item.lastInboundDate ?? "\u2014"}
-              </span>
+              <span style={{ textAlign: "right", color: C.inkMid }}>{item.coberturaPromedioDias !== null ? `${item.coberturaPromedioDias}d` : "\u2014"}</span>
+              <span style={{ textAlign: "right", color: C.inkMid }}>{item.capitalInmovilizado !== null ? fmtCOPFull(item.capitalInmovilizado) : "\u2014"}</span>
+              <span style={{ fontSize: T.sz.xs, color: C.inkMid }}>{item.lastInboundDate ?? "\u2014"}</span>
             </div>
           );
         })}
       </div>
       <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
-        {filtered.length} referencias con existencia B24 confirmada (SAG vw_agentik_inventario), ordenadas de menor a mayor venta.
-        EXISTENCIA &gt; 0 para permanencia fisica. DISPONIBLE para disponibilidad comercial.
+        {sorted.length} referencias con existencia B24 confirmada (SAG vw_agentik_inventario), ordenadas de menor a mayor venta.
       </div>
     </div>
   );
@@ -717,6 +733,8 @@ function MenorRotacionView({
 // REPORT 3: Mas de 8 meses sin reingreso
 // ═══════════════════════════════════════════════════════════════════════════════
 
+type EightMSortCol = "meses" | "stock" | "fecha" | "ref";
+
 function Masde8MesesView({
   items,
   onRowClick,
@@ -724,132 +742,101 @@ function Masde8MesesView({
   items: ImportSupplyIntelligenceItem[];
   onRowClick: (item: ImportSupplyIntelligenceItem) => void;
 }) {
-  const { proxy } = useMemo(() => {
-    const proxyList: Array<ImportSupplyIntelligenceItem & { evidence: NonNullable<ReturnType<typeof resolveEvidence>> }> = [];
+  const { sortKey, sortDir, toggle } = useSortable<EightMSortCol>("meses");
 
+  const proxy = useMemo(() => {
+    const proxyList: Array<ImportSupplyIntelligenceItem & { evidence: NonNullable<ReturnType<typeof resolveEvidence>> }> = [];
     for (const item of items) {
-      // 05A2R1: Require EXISTENCIA SAG B24 > 0 — exclude zero-stock refs
       const sagExist = item.sagB24Existencia;
       if (sagExist === null || sagExist <= 0) continue;
-
       const ev = resolveEvidence(item);
       if (!ev || ev.months < 8) continue;
       proxyList.push({ ...item, evidence: ev });
     }
-
-    proxyList.sort((a, b) => b.evidence.months - a.evidence.months);
-    return { proxy: proxyList };
+    return proxyList;
   }, [items]);
+
+  const sorted = useMemo(() => {
+    type Row = (typeof proxy)[number];
+    const cmp = (a: Row, b: Row) => {
+      let va: number, vb: number;
+      switch (sortKey) {
+        case "meses": va = a.evidence.months; vb = b.evidence.months; break;
+        case "stock": va = a.remaining; vb = b.remaining; break;
+        case "fecha": return (sortDir === "desc" ? -1 : 1) * (a.evidence.date).localeCompare(b.evidence.date);
+        case "ref": return (sortDir === "desc" ? -1 : 1) * a.reference.localeCompare(b.reference);
+        default: va = 0; vb = 0;
+      }
+      return sortDir === "desc" ? vb - va : va - vb;
+    };
+    return stableSort(proxy, cmp, i => i.reference);
+  }, [proxy, sortKey, sortDir]);
+
+  const COLS = "48px 1fr 80px 90px 80px 100px 120px";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[4] }}>
-      {/* Methodology note */}
-      <div style={{
-        fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid,
-        background: C.surface, borderRadius: R.sm, padding: `${S[2]}px ${S[3]}px`,
-      }}>
+      <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, background: C.surface, borderRadius: R.sm, padding: `${S[2]}px ${S[3]}px` }}>
         Antiguedad estimada con fecha de ultima compra SAG o creacion del producto.
         Solo referencias con existencia B24 &gt; 0. Meses calendario (America/Bogota).
       </div>
 
-      {/* Section: Provisional (all proxy) */}
-      {proxy.length > 0 && (
+      {sorted.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
           <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
-            Referencias con antiguedad estimada &gt; 8 meses ({proxy.length})
+            Antiguedad estimada &gt; 8 meses ({sorted.length})
           </div>
-          <EightMonthTable items={proxy} onRowClick={onRowClick} />
+          <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, overflow: "hidden", background: C.white, boxShadow: E.sm }}>
+            <div style={{ display: "grid", gridTemplateColumns: COLS, padding: ROW_PAD, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}`, gap: S[1] }}>
+              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.inkMid }}>#</span>
+              <SortableHeader label="Referencia" colKey="ref" current={sortKey} dir={sortDir} onSort={toggle} />
+              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.inkMid }}>Tipo</span>
+              <SortableHeader label="Fecha" colKey="fecha" current={sortKey} dir={sortDir} onSort={toggle} />
+              <SortableHeader label="Meses" colKey="meses" current={sortKey} dir={sortDir} onSort={toggle} align="right" />
+              <SortableHeader label="Stock B24" colKey="stock" current={sortKey} dir={sortDir} onSort={toggle} align="right" />
+              <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.inkMid }}>Origen</span>
+            </div>
+            {sorted.map((item, idx) => {
+              const ev = item.evidence;
+              const badge = EVIDENCE_LABELS[ev.level];
+              return (
+                <div key={item.productId} onClick={() => onRowClick(item)} style={{
+                  display: "grid", gridTemplateColumns: COLS, padding: ROW_PAD, borderBottom: `1px solid ${C.lineSubtle}`,
+                  fontFamily: T.mono, fontSize: T.sz.base, cursor: "pointer", alignItems: "center", gap: S[1],
+                }}>
+                  <span style={{ color: C.inkFaint, fontSize: T.sz.xs }}>{idx + 1}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: S[2], minWidth: 0 }}>
+                    <CommercialReferenceThumbnail imageUrl={item.imageUrl} referenceCode={item.reference} size={28} />
+                    <div style={{ overflow: "hidden" }}>
+                      <div style={{ fontWeight: T.wt.medium, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.reference}</div>
+                      <div style={{ fontSize: T.sz.xs, color: C.inkLight, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.description}</div>
+                    </div>
+                  </div>
+                  <span style={{ fontSize: T.sz["2xs"], padding: `1px ${S[1]}px`, borderRadius: R.sm, background: C.amberLight, color: badge.color, textAlign: "center" }}>
+                    {badge.badge}
+                  </span>
+                  <span style={{ fontSize: T.sz.xs, color: C.inkMid }}>{ev.date}</span>
+                  <span style={{ textAlign: "right", fontWeight: T.wt.semibold, color: ev.months >= 12 ? C.red : C.ink }}>{ev.months}</span>
+                  <span style={{ textAlign: "right", color: item.remaining > 0 ? C.ink : C.inkFaint }}>
+                    {item.stockDataQuality === "CONFIRMED" ? item.remaining.toLocaleString("es-CO") : "\u2014"}
+                  </span>
+                  <span style={{ fontSize: T.sz["2xs"], color: C.inkLight }}>{ev.source}</span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
-      {proxy.length === 0 && (
+      {sorted.length === 0 && (
         <div style={{ padding: S[5], textAlign: "center", fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight }}>
           Sin referencias con mas de 8 meses desde ultimo ingreso documentado.
         </div>
       )}
 
       <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
-        Calculo con meses calendario (America/Bogota), no conteos fijos de dias.
-        EXISTENCIA B24 = autoridad SAG vw_agentik_inventario (BODEGA 24). Solo refs con existencia &gt; 0.
+        Calculo con meses calendario (America/Bogota). EXISTENCIA B24 = SAG vw_agentik_inventario (BODEGA 24).
       </div>
-    </div>
-  );
-}
-
-function EightMonthTable({
-  items,
-  onRowClick,
-}: {
-  items: Array<ImportSupplyIntelligenceItem & { evidence: NonNullable<ReturnType<typeof resolveEvidence>> }>;
-  onRowClick: (item: ImportSupplyIntelligenceItem) => void;
-}) {
-  if (items.length === 0) {
-    return (
-      <div style={{ padding: S[3], fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkLight }}>
-        Sin items en esta categoria.
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, overflow: "hidden", background: C.white, boxShadow: E.sm }}>
-      <div style={{
-        display: "grid", gridTemplateColumns: "48px 1fr 80px 90px 80px 100px 120px",
-        padding: ROW_PAD, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}`,
-        fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.inkMid,
-      }}>
-        <span>#</span>
-        <span>Referencia</span>
-        <span>Tipo</span>
-        <span>Fecha</span>
-        <span style={{ textAlign: "right" }}>Meses</span>
-        <span style={{ textAlign: "right" }}>Stock B24</span>
-        <span>Origen</span>
-      </div>
-      {items.map((item, idx) => {
-        const ev = item.evidence;
-        const badge = EVIDENCE_LABELS[ev.level];
-        return (
-          <div
-            key={item.productId}
-            onClick={() => onRowClick(item)}
-            style={{
-              display: "grid", gridTemplateColumns: "48px 1fr 80px 90px 80px 100px 120px",
-              padding: ROW_PAD, borderBottom: `1px solid ${C.lineSubtle}`,
-              fontFamily: T.mono, fontSize: T.sz.base, cursor: "pointer",
-              alignItems: "center",
-            }}
-          >
-            <span style={{ color: C.inkFaint, fontSize: T.sz.xs }}>{idx + 1}</span>
-            <div style={{ display: "flex", alignItems: "center", gap: S[2], minWidth: 0 }}>
-              <CommercialReferenceThumbnail imageUrl={item.imageUrl} referenceCode={item.reference} size={28} />
-              <div style={{ overflow: "hidden" }}>
-                <div style={{ fontWeight: T.wt.medium, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {item.reference}
-                </div>
-                <div style={{ fontSize: T.sz.xs, color: C.inkLight, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {item.description}
-                </div>
-              </div>
-            </div>
-            <span style={{
-              fontSize: T.sz["2xs"], padding: `1px ${S[1]}px`, borderRadius: R.sm,
-              background: ev.level === "CERTIFIED_B24_REENTRY_DATE" ? C.greenLight : C.amberLight,
-              color: badge.color, textAlign: "center",
-            }}>
-              {badge.badge}
-            </span>
-            <span style={{ fontSize: T.sz.xs, color: C.inkMid }}>{ev.date}</span>
-            <span style={{ textAlign: "right", fontWeight: T.wt.semibold, color: ev.months >= 12 ? C.red : C.ink }}>
-              {ev.months}
-            </span>
-            <span style={{ textAlign: "right", color: item.remaining > 0 ? C.ink : C.inkFaint }}>
-              {item.stockDataQuality === "CONFIRMED" ? item.remaining.toLocaleString("es-CO") : "\u2014"}
-            </span>
-            <span style={{ fontSize: T.sz["2xs"], color: C.inkLight }}>{ev.source}</span>
-          </div>
-        );
-      })}
     </div>
   );
 }
@@ -858,102 +845,199 @@ function EightMonthTable({
 // REPORT 4: Inteligencia
 // ═══════════════════════════════════════════════════════════════════════════════
 
+type TopProdSortCol = "units" | "value" | "stock" | "lastSale" | "ref";
+
 function InteligenciaView({
   items,
   truthState,
   freshness,
   computedAt,
   salesCoverage,
+  monthlySales,
 }: {
   items: ImportSupplyIntelligenceItem[];
   truthState: CachedImportTruthState;
   freshness: ImportSourceFreshness;
   computedAt: string;
   salesCoverage?: ImportSalesCoverage;
+  monthlySales: ImportMonthlySalesEntry[];
 }) {
-  // Sales 6M summary
-  const salesSummary = useMemo(() => {
-    const withSales = items.filter(i => i.salesDataQuality === "SYNCED" && i.salesTotal6m > 0);
-    const totalUnits6m = items.reduce((s, i) => s + i.salesTotal6m, 0);
-    const totalRevenue6m = items.reduce((s, i) => s + i.revenue6m, 0);
-    const avgVelocity = withSales.length > 0
-      ? withSales.reduce((s, i) => s + i.salesTotal6m, 0) / (withSales.length * 6)
-      : 0;
-    return { refsWithSales: withSales.length, totalUnits6m, totalRevenue6m, avgVelocity };
-  }, [items]);
+  const [activeSizeTab, setActiveSizeTab] = useState<string>("ALL");
 
-  // C1/C2 monthly purchases for bar chart
+  // Executive KPIs
+  const execKpis = useMemo(() => {
+    const totalRevenue6m = items.reduce((s, i) => s + i.revenue6m, 0);
+    const totalUnits6m = items.reduce((s, i) => s + i.salesTotal6m, 0);
+    const refsWithSales = items.filter(i => i.salesDataQuality === "SYNCED" && i.salesTotal6m > 0).length;
+
+    // Monthly average from monthlySales (complete months only)
+    const completeMonths = monthlySales.filter(m => !m.partial);
+    const avgMonthlyRevenue = completeMonths.length > 0
+      ? completeMonths.reduce((s, m) => s + m.revenueNet, 0) / completeMonths.length
+      : totalRevenue6m / 6;
+
+    // Growth: last complete month vs previous complete month
+    let growthPct: number | null = null;
+    if (completeMonths.length >= 2) {
+      const last = completeMonths[completeMonths.length - 1];
+      const prev = completeMonths[completeMonths.length - 2];
+      if (prev.revenueNet > 0) {
+        growthPct = Math.round(((last.revenueNet - prev.revenueNet) / prev.revenueNet) * 100);
+      }
+    }
+
+    // Purchases (C1/C2): only quantity available, no monetary value
+    const totalPurchaseUnits = items.reduce((s, i) => s + i.receipts.reduce((rs, r) => rs + r.quantity, 0), 0);
+
+    return { totalRevenue6m, totalUnits6m, refsWithSales, avgMonthlyRevenue, growthPct, totalPurchaseUnits };
+  }, [items, monthlySales]);
+
+  // Monthly purchases from C1/C2 receipts (quantity only)
   const monthlyPurchases = useMemo(() => {
-    const monthly = new Map<string, number>();
+    const monthly = new Map<string, { units: number; docs: Set<string> }>();
     for (const item of items) {
       for (const r of item.receipts) {
         const month = r.date.substring(0, 7);
-        monthly.set(month, (monthly.get(month) ?? 0) + r.quantity);
+        const entry = monthly.get(month) ?? { units: 0, docs: new Set() };
+        entry.units += r.quantity;
+        entry.docs.add(r.documentNumber);
+        monthly.set(month, entry);
       }
     }
-    return Array.from(monthly.entries()).sort((a, b) => a[0].localeCompare(b[0])).slice(-6);
+    return Array.from(monthly.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .slice(-6)
+      .map(([month, d]) => ({ month, units: d.units, docs: d.docs.size }));
   }, [items]);
 
-  // Top 10 by size class
-  const topBySizeClass = useMemo(() => {
-    const bySize = new Map<string, { units: number; refs: number; revenue: number }>();
+  // Products grouped by size class for Top Products
+  const sizeGroups = useMemo(() => {
+    const groups = new Map<string, ImportSupplyIntelligenceItem[]>();
     for (const item of items) {
-      const sc = item.sizeClass ?? "Sin talla";
-      const entry = bySize.get(sc) ?? { units: 0, refs: 0, revenue: 0 };
-      entry.units += item.salesTotal6m;
-      entry.revenue += item.revenue6m;
-      entry.refs++;
-      bySize.set(sc, entry);
+      const key = item.sizeClass ?? "SIN_CLASIFICAR";
+      const list = groups.get(key) ?? [];
+      list.push(item);
+      groups.set(key, list);
     }
-    return Array.from(bySize.entries())
-      .sort((a, b) => b[1].units - a[1].units)
-      .slice(0, 10);
+    return groups;
   }, [items]);
 
-  // Classification distribution
-  const classDistribution = useMemo(() => {
-    const dist: Record<string, number> = {};
-    for (const item of items) {
-      const label = CLASSIFICATION_DISPLAY[item.recompraClassification].label;
-      dist[label] = (dist[label] ?? 0) + 1;
-    }
-    return Object.entries(dist).sort((a, b) => b[1] - a[1]);
-  }, [items]);
+  const sizeTabKeys = useMemo(() => {
+    const keys = ["ALL", ...["PEQUENO", "MEDIANO", "GRANDE", "SIN_CLASIFICAR"].filter(k => sizeGroups.has(k))];
+    return keys;
+  }, [sizeGroups]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[4] }}>
 
-      {/* ── Sales 6M Summary KPIs ────────────────────────────────────── */}
+      {/* ── 1. Executive KPIs ────────────────────────────────────────── */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: S[3] }}>
-        <KpiCard label="Refs con ventas 6M" value={salesSummary.refsWithSales} color={C.blueDark} active={false} />
-        <KpiCard label="Und netas 6M" value={salesSummary.totalUnits6m} active={false} />
-        <KpiCard label="Valor neto 6M" value={Math.round(salesSummary.totalRevenue6m)} unit="$" active={false} />
-        <KpiCard label="Vel promedio/mes" value={salesSummary.avgVelocity > 0 ? Math.round(salesSummary.avgVelocity * 10) / 10 : null} active={false} />
+        <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, padding: `${S[3]}px ${S[4]}px`, background: C.white, boxShadow: E.xs }}>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>Ventas netas 6M</span>
+          <div title={fmtCOPFull(execKpis.totalRevenue6m)} style={{ fontFamily: T.mono, fontSize: T.sz["2xl"], fontWeight: T.wt.bold, color: C.blueDark }}>
+            {fmtCOP(execKpis.totalRevenue6m)}
+          </div>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight }}>{execKpis.refsWithSales} referencias con ventas</span>
+        </div>
+        <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, padding: `${S[3]}px ${S[4]}px`, background: C.white, boxShadow: E.xs }}>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>Unidades netas 6M</span>
+          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xl"], fontWeight: T.wt.bold, color: C.ink }}>
+            {execKpis.totalUnits6m.toLocaleString("es-CO")}
+          </div>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight }}>Facturado menos NC/devoluciones</span>
+        </div>
+        <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, padding: `${S[3]}px ${S[4]}px`, background: C.white, boxShadow: E.xs }}>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>Promedio mensual</span>
+          <div title={fmtCOPFull(execKpis.avgMonthlyRevenue)} style={{ fontFamily: T.mono, fontSize: T.sz["2xl"], fontWeight: T.wt.bold, color: C.ink }}>
+            {fmtCOP(execKpis.avgMonthlyRevenue)}
+          </div>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight }}>Ventas netas / meses completos</span>
+        </div>
+        <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, padding: `${S[3]}px ${S[4]}px`, background: C.white, boxShadow: E.xs }}>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid }}>Crecimiento ultimo mes</span>
+          <div style={{ fontFamily: T.mono, fontSize: T.sz["2xl"], fontWeight: T.wt.bold, color: execKpis.growthPct !== null ? (execKpis.growthPct >= 0 ? C.green : C.red) : C.inkFaint }}>
+            {execKpis.growthPct !== null ? `${execKpis.growthPct > 0 ? "+" : ""}${execKpis.growthPct}%` : "\u2014"}
+          </div>
+          <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight }}>Mes completo vs anterior</span>
+        </div>
       </div>
 
-      {/* ── 6M Purchases Chart ───────────────────────────────────────── */}
-      {monthlyPurchases.length > 0 && (
+      {/* ── 2. Monthly Sales Chart ───────────────────────────────────── */}
+      {monthlySales.length > 0 && (
         <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, overflow: "hidden", background: C.white, boxShadow: E.sm }}>
-          <div style={{
-            padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}`,
-            background: C.surfaceAlt, fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink,
-          }}>
-            Compras documentadas (ultimos 6 meses)
+          <div style={{ padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}`, background: C.surfaceAlt }}>
+            <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
+              Ventas mensuales de productos importados
+            </div>
+            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
+              Referencias del catalogo SAG LINEA 5 · Ventas netas
+            </div>
           </div>
           <div style={{ padding: `${S[3]}px ${S[4]}px` }}>
-            <div style={{ display: "flex", gap: S[1], alignItems: "flex-end", height: 60 }}>
-              {monthlyPurchases.map(([month, qty]) => {
-                const max = Math.max(...monthlyPurchases.map(m => m[1]));
-                const h = max > 0 ? Math.max(4, (qty / max) * 56) : 4;
+            <div style={{ display: "flex", gap: S[2], alignItems: "flex-end", height: 100 }}>
+              {monthlySales.map((m, idx) => {
+                const max = Math.max(...monthlySales.map(x => x.revenueNet));
+                const h = max > 0 ? Math.max(4, (m.revenueNet / max) * 88) : 4;
+                const prevMonth = idx > 0 ? monthlySales[idx - 1] : null;
+                const change = prevMonth && prevMonth.revenueNet > 0 && !m.partial && !prevMonth.partial
+                  ? Math.round(((m.revenueNet - prevMonth.revenueNet) / prevMonth.revenueNet) * 100)
+                  : null;
                 return (
-                  <div key={month} style={{ display: "flex", flexDirection: "column", alignItems: "center", flex: 1 }}>
+                  <div key={m.month} title={`${fmtCOPFull(m.revenueNet)} · ${m.unitsNet.toLocaleString("es-CO")} und · ${m.documents} docs`}
+                    style={{ display: "flex", flexDirection: "column", alignItems: "center", flex: 1 }}>
                     <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, marginBottom: 2 }}>
-                      {qty.toLocaleString("es-CO")}
+                      {fmtCOP(m.revenueNet)}
                     </span>
-                    <div style={{ width: "100%", height: h, background: C.blueDark, borderRadius: `${R.xs}px ${R.xs}px 0 0`, minWidth: 4 }} />
-                    <span style={{ fontFamily: T.mono, fontSize: 8, color: C.inkFaint, marginTop: 2 }}>
-                      {month.substring(5)}
+                    {change !== null && (
+                      <span style={{ fontFamily: T.mono, fontSize: 8, color: change >= 0 ? C.green : C.red, marginBottom: 1 }}>
+                        {change > 0 ? "+" : ""}{change}%
+                      </span>
+                    )}
+                    <div style={{
+                      width: "100%", height: h, minWidth: 4, borderRadius: `${R.xs}px ${R.xs}px 0 0`,
+                      background: m.partial ? C.blueLight : C.blueDark,
+                      border: m.partial ? `1px dashed ${C.blueDark}` : "none",
+                    }} />
+                    <span style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint, marginTop: 2 }}>
+                      {m.month.substring(5)}{m.partial ? "*" : ""}
                     </span>
+                  </div>
+                );
+              })}
+            </div>
+            {monthlySales.some(m => m.partial) && (
+              <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkLight, marginTop: S[1] }}>
+                * Mes actual parcial — no incluido en calculo de crecimiento.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── 3. Documented Purchases (quantity only — no monetary) ──── */}
+      {monthlyPurchases.length > 0 && (
+        <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, overflow: "hidden", background: C.white, boxShadow: E.sm }}>
+          <div style={{ padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}`, background: C.surfaceAlt }}>
+            <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
+              Compras documentadas de referencias importadas
+            </div>
+            <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid }}>
+              Facturas C1/C2 · Unidades (valor monetario no disponible en fuente)
+            </div>
+          </div>
+          <div style={{ padding: `${S[3]}px ${S[4]}px` }}>
+            <div style={{ display: "flex", gap: S[2], alignItems: "flex-end", height: 60 }}>
+              {monthlyPurchases.map(m => {
+                const max = Math.max(...monthlyPurchases.map(x => x.units));
+                const h = max > 0 ? Math.max(4, (m.units / max) * 52) : 4;
+                return (
+                  <div key={m.month} title={`${m.units.toLocaleString("es-CO")} und · ${m.docs} documentos`}
+                    style={{ display: "flex", flexDirection: "column", alignItems: "center", flex: 1 }}>
+                    <span style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid, marginBottom: 2 }}>
+                      {m.units.toLocaleString("es-CO")}
+                    </span>
+                    <div style={{ width: "100%", height: h, background: C.amber, borderRadius: `${R.xs}px ${R.xs}px 0 0`, minWidth: 4 }} />
+                    <span style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint, marginTop: 2 }}>{m.month.substring(5)}</span>
                   </div>
                 );
               })}
@@ -962,64 +1046,117 @@ function InteligenciaView({
         </div>
       )}
 
-      {/* ── Classification Distribution ──────────────────────────────── */}
+      {/* ── 4. Top Products by Size ──────────────────────────────────── */}
       <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, overflow: "hidden", background: C.white, boxShadow: E.sm }}>
-        <div style={{
-          padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}`,
-          background: C.surfaceAlt, fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink,
-        }}>
-          Distribucion por clasificacion
+        <div style={{ padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}`, background: C.surfaceAlt }}>
+          <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
+            Top productos por tamano
+          </div>
         </div>
-        <div style={{ padding: `${S[3]}px ${S[4]}px`, display: "flex", flexDirection: "column", gap: S[2] }}>
-          {classDistribution.map(([label, count]) => (
-            <CoverageBar key={label} label={label} count={count} total={items.length} color={C.blueDark} />
+        {/* Size tabs */}
+        <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${C.line}` }}>
+          {sizeTabKeys.map(key => (
+            <button key={key} onClick={() => setActiveSizeTab(key)} style={{
+              fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.medium,
+              padding: `${S[1]}px ${S[3]}px`,
+              borderBottom: activeSizeTab === key ? `2px solid ${C.blueDark}` : "2px solid transparent",
+              color: activeSizeTab === key ? C.blueDark : C.inkMid,
+              background: "transparent", border: "none", cursor: "pointer", marginBottom: -1,
+            }}>
+              {key === "ALL" ? "Todos" : (SIZE_TAB_LABELS[key] ?? key)}
+            </button>
           ))}
         </div>
+        <TopProductsBySize
+          items={activeSizeTab === "ALL" ? items : (sizeGroups.get(activeSizeTab) ?? [])}
+          sizeLabel={activeSizeTab === "ALL" ? null : (SIZE_TAB_LABELS[activeSizeTab] ?? activeSizeTab)}
+        />
       </div>
 
-      {/* ── Top 10 by Size Class ─────────────────────────────────────── */}
-      {topBySizeClass.length > 0 && (
-        <div style={{ border: `1px solid ${C.line}`, borderRadius: R.md, overflow: "hidden", background: C.white, boxShadow: E.sm }}>
-          <div style={{
-            padding: `${S[2]}px ${S[4]}px`, borderBottom: `1px solid ${C.line}`,
-            background: C.surfaceAlt, fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink,
-          }}>
-            Top 10 tallas por ventas 6M
-          </div>
-          <div style={{ padding: 0 }}>
-            <div style={{
-              display: "grid", gridTemplateColumns: "1fr 100px 80px 120px",
-              padding: `${S[1]}px ${S[4]}px`, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}`,
-              fontFamily: T.mono, fontSize: T.sz["2xs"], fontWeight: T.wt.semibold, color: C.inkMid,
-            }}>
-              <span>Talla</span>
-              <span style={{ textAlign: "right" }}>Und 6M</span>
-              <span style={{ textAlign: "right" }}>Refs</span>
-              <span style={{ textAlign: "right" }}>Valor 6M</span>
-            </div>
-            {topBySizeClass.map(([sc, data]) => (
-              <div key={sc} style={{
-                display: "grid", gridTemplateColumns: "1fr 100px 80px 120px",
-                padding: `${S[1]}px ${S[4]}px`, borderBottom: `1px solid ${C.lineSubtle}`,
-                fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink,
-              }}>
-                <span style={{ fontWeight: T.wt.medium }}>{sc}</span>
-                <span style={{ textAlign: "right" }}>{data.units.toLocaleString("es-CO")}</span>
-                <span style={{ textAlign: "right", color: C.inkMid }}>{data.refs}</span>
-                <span style={{ textAlign: "right", color: C.inkMid }}>${Math.round(data.revenue).toLocaleString("es-CO")}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ── Compact freshness footer ─────────────────────────────────── */}
+      {/* ── 5. Compact freshness footer ──────────────────────────────── */}
       <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, display: "flex", gap: S[4], flexWrap: "wrap" }}>
         <span>Actualizado: {new Date(computedAt).toLocaleString("es-CO", { timeZone: "America/Bogota" })}</span>
         {salesCoverage?.salesAsOf && <span>Ventas al: {salesCoverage.salesAsOf}</span>}
         {salesCoverage?.freshnessLagDays !== null && salesCoverage?.freshnessLagDays !== undefined && <span>Lag: {salesCoverage.freshnessLagDays}d</span>}
         <span>Catalogo: LINEA 5 ({items.length} refs)</span>
       </div>
+    </div>
+  );
+}
+
+// ── Top Products By Size (sub-component with sortable headers) ────────────
+
+function TopProductsBySize({
+  items,
+  sizeLabel,
+}: {
+  items: ImportSupplyIntelligenceItem[];
+  sizeLabel: string | null;
+}) {
+  const { sortKey, sortDir, toggle } = useSortable<TopProdSortCol>("units");
+
+  const summary = useMemo(() => {
+    const totalUnits = items.reduce((s, i) => s + i.salesTotal6m, 0);
+    const totalRevenue = items.reduce((s, i) => s + i.revenue6m, 0);
+    return { count: items.length, totalUnits, totalRevenue };
+  }, [items]);
+
+  const sorted = useMemo(() => {
+    const withSales = items.filter(i => i.salesTotal6m > 0 || i.soldNet > 0);
+    const cmp = (a: ImportSupplyIntelligenceItem, b: ImportSupplyIntelligenceItem) => {
+      let va: number, vb: number;
+      switch (sortKey) {
+        case "units": va = a.salesTotal6m; vb = b.salesTotal6m; break;
+        case "value": va = a.revenue6m; vb = b.revenue6m; break;
+        case "stock": va = a.remaining; vb = b.remaining; break;
+        case "lastSale": return (sortDir === "desc" ? -1 : 1) * ((a.lastSaleSag ?? "").localeCompare(b.lastSaleSag ?? ""));
+        case "ref": return (sortDir === "desc" ? -1 : 1) * a.reference.localeCompare(b.reference);
+        default: va = 0; vb = 0;
+      }
+      return sortDir === "desc" ? vb - va : va - vb;
+    };
+    return stableSort(withSales, cmp, i => i.reference).slice(0, 10);
+  }, [items, sortKey, sortDir]);
+
+  const COLS = "36px 1fr 100px 110px 80px 90px";
+
+  return (
+    <div>
+      {/* Summary strip */}
+      {sizeLabel && (
+        <div style={{ padding: `${S[1]}px ${S[4]}px`, fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid, background: C.surface, borderBottom: `1px solid ${C.lineSubtle}` }}>
+          {sizeLabel}: {summary.totalUnits.toLocaleString("es-CO")} und 6M · {fmtCOP(summary.totalRevenue)} · {summary.count} productos
+        </div>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: COLS, padding: `${S[1]}px ${S[4]}px`, background: C.surfaceAlt, borderBottom: `1px solid ${C.line}`, gap: S[1] }}>
+        <span style={{ fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold, color: C.inkMid }}>#</span>
+        <SortableHeader label="Referencia" colKey="ref" current={sortKey} dir={sortDir} onSort={toggle} />
+        <SortableHeader label="Und 6M" colKey="units" current={sortKey} dir={sortDir} onSort={toggle} align="right" />
+        <SortableHeader label="Valor 6M" colKey="value" current={sortKey} dir={sortDir} onSort={toggle} align="right" />
+        <SortableHeader label="Stock B24" colKey="stock" current={sortKey} dir={sortDir} onSort={toggle} align="right" />
+        <SortableHeader label="Ultima venta" colKey="lastSale" current={sortKey} dir={sortDir} onSort={toggle} />
+      </div>
+      {sorted.length === 0 && (
+        <div style={{ padding: S[4], textAlign: "center", fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkLight }}>Sin referencias con ventas en este tamano.</div>
+      )}
+      {sorted.map((item, idx) => (
+        <div key={item.productId} style={{
+          display: "grid", gridTemplateColumns: COLS, padding: `${S[1]}px ${S[4]}px`, borderBottom: `1px solid ${C.lineSubtle}`,
+          fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink, alignItems: "center", gap: S[1],
+        }}>
+          <span style={{ color: C.inkFaint }}>{idx + 1}</span>
+          <div style={{ overflow: "hidden" }}>
+            <div style={{ fontWeight: T.wt.medium, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.reference}</div>
+            <div style={{ fontSize: T.sz["2xs"], color: C.inkLight, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.description}</div>
+          </div>
+          <span style={{ textAlign: "right", fontWeight: T.wt.semibold }}>{item.salesTotal6m.toLocaleString("es-CO")}</span>
+          <span style={{ textAlign: "right", color: C.inkMid }}>{fmtCOPFull(item.revenue6m)}</span>
+          <span style={{ textAlign: "right", color: item.remaining > 0 ? C.ink : C.inkFaint }}>
+            {item.stockDataQuality === "CONFIRMED" ? item.remaining.toLocaleString("es-CO") : "\u2014"}
+          </span>
+          <span style={{ color: C.inkMid }}>{item.lastSaleSag ?? "\u2014"}</span>
+        </div>
+      ))}
     </div>
   );
 }

@@ -167,11 +167,11 @@ describe("G4 — Report 1: Mayor rotacion", () => {
   });
 
   test("T4d: Velocity definition visible", () => {
-    expect(clientSrc).toContain("unidades netas vendidas 6M / 6 meses observados");
+    expect(clientSrc).toContain("unidades netas / meses observados");
   });
 
   test("T4e: NC/devoluciones/anulados documented", () => {
-    expect(clientSrc).toContain("Devoluciones y NC restadas de venta neta");
+    expect(clientSrc).toContain("Devoluciones y NC restadas");
     expect(clientSrc).toContain("Anulados excluidos");
   });
 
@@ -204,8 +204,7 @@ describe("G5 — Report 2: Menor rotacion", () => {
     expect(clientSrc).toContain("refs con dato");
   });
 
-  test("T5d: Shows cobertura dias and capital inmovilizado", () => {
-    expect(clientSrc).toContain("Cobertura (dias)");
+  test("T5d: Shows cobertura and capital inmovilizado", () => {
     expect(clientSrc).toContain("Capital inmov.");
     expect(clientSrc).toContain("coberturaPromedioDias");
     expect(clientSrc).toContain("capitalInmovilizado");
@@ -260,25 +259,24 @@ describe("G7 — Inteligencia tab", () => {
     expect(clientSrc).toContain("InteligenciaView");
   });
 
-  test("T7b: Sales 6M KPIs (05A3 executive redesign)", () => {
-    expect(clientSrc).toContain("Refs con ventas 6M");
-    expect(clientSrc).toContain("Und netas 6M");
-    expect(clientSrc).toContain("Valor neto 6M");
+  test("T7b: Executive KPIs (05A4 redesign)", () => {
+    expect(clientSrc).toContain("Ventas netas 6M");
+    expect(clientSrc).toContain("Unidades netas 6M");
+    expect(clientSrc).toContain("Promedio mensual");
+    expect(clientSrc).toContain("Crecimiento ultimo mes");
   });
 
-  test("T7c: Purchases chart (05A3 compact)", () => {
+  test("T7c: Purchases chart (05A4)", () => {
     expect(clientSrc).toContain("Compras documentadas");
     expect(clientSrc).toContain("monthlyPurchases");
   });
 
-  test("T7d: Classification distribution (05A3 replaces SAG blockers)", () => {
-    expect(clientSrc).toContain("Distribucion por clasificacion");
-    expect(clientSrc).toContain("classDistribution");
+  test("T7d: No classification distribution (removed in 05A4)", () => {
+    expect(clientSrc).not.toContain("Distribucion por clasificacion");
   });
 
-  test("T7e: Top 10 by size class (05A3 replaces provenance)", () => {
-    expect(clientSrc).toContain("Top 10 tallas por ventas 6M");
-    expect(clientSrc).toContain("topBySizeClass");
+  test("T7e: Top productos por tamano (05A4 replaces tallas)", () => {
+    expect(clientSrc).toContain("Top productos por tamano");
   });
 
   test("T7f: Compact freshness footer", () => {
@@ -303,9 +301,9 @@ describe("G7 — Inteligencia tab", () => {
     expect(clientSrc).toContain("Ventas al:");
   });
 
-  test("T7j: Vel promedio/mes KPI", () => {
-    expect(clientSrc).toContain("Vel promedio/mes");
-    expect(clientSrc).toContain("avgVelocity");
+  test("T7j: Monthly sales chart (05A4)", () => {
+    expect(clientSrc).toContain("monthlySales");
+    expect(clientSrc).toContain("fmtCOP");
   });
 });
 
