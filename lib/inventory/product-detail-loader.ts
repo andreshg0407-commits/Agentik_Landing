@@ -57,22 +57,6 @@ export interface ProductDetailEnrichment {
   tallas: string[];
   colores: string[];
   variantCount: number;
-
-  // ── 04A6A1: Variant physical inventory (B01 only) ──
-  variantInventory: VariantInventoryEntry[];
-  variantInventorySyncedAt: string | null;
-  variantInventoryReconciled: boolean;
-}
-
-/**
- * 04A6A1: VARIANT_PHYSICAL_EXISTENCE_VERIFIED
- * Per-variant EXISTENCIA from ProductInventoryLevel (SAG MOVIMIENTOS_ITEMS saldo).
- * No RESERVADO, no DISPONIBLE per variant.
- */
-export interface VariantInventoryEntry {
-  talla: string;
-  color: string;
-  existenciaB01: number;
 }
 
 // ── Loader ─────────────────────────────────────────────────────────────────
@@ -149,48 +133,7 @@ export async function loadProductDetail(
       }
     }
 
-    // 3. 04A6A1: Load variant inventory levels (B01 = warehouseId "10")
-    let variantInventory: VariantInventoryEntry[] = [];
-    let variantInventorySyncedAt: string | null = null;
-
-    if (product?.id && variantCount > 0) {
-      try {
-        const levels = await (prisma as any).productInventoryLevel.findMany({
-          where: { productId: product.id, warehouseId: "10" },
-          select: { variantId: true, quantity: true, syncedAt: true },
-        });
-
-        // Build variant ID → attributes map
-        const variantAttrs = new Map<string, Record<string, string>>();
-        const variants2 = await (prisma as any).productVariant.findMany({
-          where: { productId: product.id },
-          select: { id: true, attributes: true },
-        });
-        for (const v of variants2) {
-          if (v.attributes) variantAttrs.set(v.id, v.attributes as Record<string, string>);
-        }
-
-        for (const l of levels) {
-          if (!l.variantId) continue;
-          const attrs = variantAttrs.get(l.variantId);
-          const talla = attrs?.tallaName || attrs?.talla || "Sin talla";
-          const color = attrs?.colorName || attrs?.color || "Sin color";
-          variantInventory.push({ talla, color, existenciaB01: l.quantity });
-          if (l.syncedAt && !variantInventorySyncedAt) {
-            variantInventorySyncedAt = (l.syncedAt as Date).toISOString();
-          }
-        }
-
-        // Sort: talla asc, color asc
-        variantInventory.sort((a, b) =>
-          a.talla.localeCompare(b.talla) || a.color.localeCompare(b.color)
-        );
-      } catch {
-        // ProductInventoryLevel unavailable — graceful degradation
-      }
-    }
-
-    return { product, tallas, colores, variantCount, variantInventory, variantInventorySyncedAt };
+    return { product, tallas, colores, variantCount };
   }
 
   async function loadSagPrices() {
@@ -219,7 +162,7 @@ export async function loadProductDetail(
     loadSagPrices(),
   ]);
 
-  const { product, tallas, colores, variantCount, variantInventory, variantInventorySyncedAt } = prismaData;
+  const { product, tallas, colores, variantCount } = prismaData;
   const { precioDetal, precioMayorista, sagPriceQueried } = sagData;
 
   const fmtDate = (d: Date | null | undefined) => d?.toISOString() ?? null;
@@ -254,9 +197,5 @@ export async function loadProductDetail(
     tallas,
     colores,
     variantCount,
-
-    variantInventory,
-    variantInventorySyncedAt,
-    variantInventoryReconciled: false, // reconciliation checked by drawer at render time
   };
 }

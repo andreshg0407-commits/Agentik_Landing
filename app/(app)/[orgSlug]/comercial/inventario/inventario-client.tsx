@@ -508,8 +508,6 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
     tallas: string[];
     colores: string[];
     variantCount: number;
-    variantInventory: { talla: string; color: string; existenciaB01: number }[];
-    variantInventorySyncedAt: string | null;
   } | null>(null);
   const [enrichmentLoading, setEnrichmentLoading] = useState(false);
   const enrichmentRef = useRef<string | null>(null);
@@ -586,8 +584,6 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
               tallas: d.tallas ?? [],
               colores: d.colores ?? [],
               variantCount: d.variantCount ?? 0,
-              variantInventory: d.variantInventory ?? [],
-              variantInventorySyncedAt: d.variantInventorySyncedAt ?? null,
             });
           }
         }
@@ -639,8 +635,6 @@ export function InventarioClient({ orgSlug, snapshot, canonicalSnapshot }: Props
       tallas: enrichment?.tallas,
       colores: enrichment?.colores,
       variantCount: enrichment?.variantCount,
-      variantInventory: enrichment?.variantInventory,
-      variantInventorySyncedAt: enrichment?.variantInventorySyncedAt,
       productionInProcess: drawerItem.productionInProcess,
     };
   }, [drawerItem, enrichment, enrichmentLoading]);
