@@ -195,15 +195,14 @@ describe("G5 — Report 2: Menor rotacion", () => {
     expect(clientSrc).toContain("MenorRotacionView");
   });
 
-  test("T5b: Filters by EXISTENCIA B24 > 0", () => {
-    expect(clientSrc).toContain("item.remaining > 0");
-    expect(clientSrc).toContain('stockDataQuality === "CONFIRMED"');
+  test("T5b: Filters by SAG B24 EXISTENCIA > 0 (05A2R1 authority)", () => {
+    expect(clientSrc).toContain("sagB24Existencia");
+    expect(clientSrc).toContain("sagB24Existencia > 0");
   });
 
-  test("T5c: Coverage info displayed", () => {
-    expect(clientSrc).toContain("Cobertura stock B24");
-    expect(clientSrc).toContain("Parcial");
-    expect(clientSrc).toContain("refs sin dato B24 excluidas");
+  test("T5c: SAG B24 coverage info displayed", () => {
+    expect(clientSrc).toContain("SAG B24:");
+    expect(clientSrc).toContain("refs con dato");
   });
 
   test("T5d: Shows cobertura dias and capital inmovilizado", () => {

@@ -33,6 +33,8 @@ import type {
 } from "./import-types";
 import type { ImportReferenceInput, ImportPolicyContext } from "./import-policy-types";
 import { resolveLifecycleState } from "@/lib/inventory/reference-lifecycle";
+import { loadSagB24Inventory } from "./import-sag-b24-inventory";
+import type { SagB24InventoryResult } from "./import-sag-b24-inventory";
 
 import type { StockDataQuality, SalesDataQuality } from "./import-types";
 
@@ -76,9 +78,29 @@ export async function buildImportSupplyIntelligence(
     return { items: [], kpis: emptyKpis() };
   }
 
-  // 2. Load costo + handlingUnit + SAG dates from ProductEntity
+  // 2. Load SAG B24 inventory (authority) + costo/handlingUnit/dates
   const productIds = references.map(r => r.productId);
-  const productDataMap = await loadProductData(orgId, productIds);
+  const [productDataMap, sagB24Result] = await Promise.all([
+    loadProductData(orgId, productIds),
+    loadSagB24Inventory(),
+  ]);
+
+  // Overlay SAG B24 stock onto references (replaces PIL as authority)
+  if (sagB24Result.stockTruthState === "SAG_B24_CERTIFIED") {
+    for (const ref of references) {
+      const sagStock = sagB24Result.stockMap.get(ref.reference);
+      if (sagStock) {
+        (ref as any).remaining = Math.max(0, sagStock.existencia);
+        (ref as any).totalStock = Math.max(0, sagStock.existencia);
+        (ref as any).stockDataQuality = "CONFIRMED";
+      } else {
+        // SAG returned successfully but this ref has no B24 row — confirmed zero
+        (ref as any).remaining = 0;
+        (ref as any).totalStock = ref.totalStock; // keep total from PIL for other warehouses
+        (ref as any).stockDataQuality = "CONFIRMED";
+      }
+    }
+  }
 
   // 3. Run decision engine evaluations
   const ctx: ImportPolicyContext = { tenantId: "castillitos" };
@@ -155,6 +177,10 @@ export async function buildImportSupplyIntelligence(
 
     const fmtDate = (d: unknown) => d ? new Date(d as string).toISOString().split("T")[0] : null;
 
+    // SAG B24 stock fields
+    const sagStock = sagB24Result.stockMap.get(ref.reference);
+    const isCertified = sagB24Result.stockTruthState === "SAG_B24_CERTIFIED";
+
     return {
       ...ref,
       costo,
@@ -182,6 +208,10 @@ export async function buildImportSupplyIntelligence(
       lastInboundSource,
       daysSinceLastInbound,
       sizeClass,
+      sagB24Existencia: isCertified ? (sagStock?.existencia ?? 0) : null,
+      sagB24Reservado: isCertified ? (sagStock?.reservado ?? 0) : null,
+      sagB24Disponible: isCertified ? (sagStock?.disponible ?? 0) : null,
+      stockTruthState: sagB24Result.stockTruthState,
     };
   });
 

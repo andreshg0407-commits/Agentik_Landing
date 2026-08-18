@@ -256,6 +256,16 @@ export interface ImportSupplyIntelligenceItem extends ImportedReference {
 
   /** Canonical size from ProductEntity.handlingUnit */
   sizeClass: ImportSizeClass | null;
+
+  // ── SAG B24 stock authority (05A2R1) ─────────────────────────────────
+  /** SAG B24 existencia (authority) — null when SOURCE_DOWN */
+  sagB24Existencia: number | null;
+  /** SAG B24 reservado — null when SOURCE_DOWN */
+  sagB24Reservado: number | null;
+  /** SAG B24 disponible — null when SOURCE_DOWN */
+  sagB24Disponible: number | null;
+  /** Whether SAG B24 was successfully queried */
+  stockTruthState: "SAG_B24_CERTIFIED" | "SOURCE_DOWN";
 }
 
 /** Simplified KPIs — 4 clickable metrics only */

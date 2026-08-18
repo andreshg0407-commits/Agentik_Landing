@@ -264,11 +264,13 @@ function derivarKpis(items: ImportSupplyIntelligenceItem[], windowMonths: Window
       sinVentasVerificadas++;
     }
 
-    // Provisional: any inbound date source > 8 months (all are proxy until SAG-004)
+    // Provisional: any inbound date source > 8 months + SAG B24 existencia > 0
+    const sagExist = item.sagB24Existencia;
     const ev = resolveEvidence(item);
-    if (ev && ev.months >= 8) masde8MesesProvisionales++;
+    if (ev && ev.months >= 8 && sagExist !== null && sagExist > 0) masde8MesesProvisionales++;
 
-    if (item.remaining > 0) existenciaFisicaB24++;
+    // SAG B24 authority for existencia count
+    if (sagExist !== null && sagExist > 0) existenciaFisicaB24++;
   }
 
   return {
@@ -611,16 +613,16 @@ function MenorRotacionView({
   onRowClick: (item: ImportSupplyIntelligenceItem) => void;
 }) {
   const filtered = useMemo(() => {
-    // Items with EXISTENCIA B24 > 0, sorted by lowest sales
+    // Items with SAG B24 EXISTENCIA > 0, sorted by lowest sales
     return items
-      .filter(item => item.remaining > 0 && item.stockDataQuality === "CONFIRMED")
+      .filter(item => item.sagB24Existencia !== null && item.sagB24Existencia > 0)
       .sort((a, b) => salesInWindow(a, windowMonths) - salesInWindow(b, windowMonths));
   }, [items, windowMonths]);
 
   const coverageInfo = useMemo(() => {
-    const total = items.filter(i => i.remaining > 0).length;
-    const confirmed = items.filter(i => i.remaining > 0 && i.stockDataQuality === "CONFIRMED").length;
-    return { total, confirmed, coverage: total > 0 ? Math.round((confirmed / total) * 100) : 0 };
+    const withSagData = items.filter(i => i.sagB24Existencia !== null).length;
+    const withStock = items.filter(i => i.sagB24Existencia !== null && i.sagB24Existencia > 0).length;
+    return { total: items.length, confirmed: withSagData, withStock, coverage: items.length > 0 ? Math.round((withSagData / items.length) * 100) : 0 };
   }, [items]);
 
   return (
@@ -630,12 +632,10 @@ function MenorRotacionView({
         fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid,
         display: "flex", alignItems: "center", gap: S[2],
       }}>
-        <span>Cobertura stock B24: {coverageInfo.confirmed}/{coverageInfo.total} ({coverageInfo.coverage}%)</span>
-        {coverageInfo.coverage < 100 && (
-          <span style={{ color: C.amber }}>
-            Parcial — {coverageInfo.total - coverageInfo.confirmed} refs sin dato B24 excluidas
-          </span>
-        )}
+        <span>SAG B24: {coverageInfo.confirmed}/{coverageInfo.total} refs con dato ({coverageInfo.coverage}%)</span>
+        <span style={{ color: C.inkMid }}>
+          {coverageInfo.withStock} con existencia &gt; 0
+        </span>
       </div>
 
       {/* Table */}
@@ -701,7 +701,7 @@ function MenorRotacionView({
         })}
       </div>
       <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
-        {filtered.length} referencias con existencia B24 confirmada, ordenadas de menor a mayor venta.
+        {filtered.length} referencias con existencia B24 confirmada (SAG vw_agentik_inventario), ordenadas de menor a mayor venta.
         EXISTENCIA &gt; 0 para permanencia fisica. DISPONIBLE para disponibilidad comercial.
       </div>
     </div>
@@ -723,10 +723,12 @@ function Masde8MesesView({
     const proxyList: Array<ImportSupplyIntelligenceItem & { evidence: NonNullable<ReturnType<typeof resolveEvidence>> }> = [];
 
     for (const item of items) {
+      // 05A2R1: Require EXISTENCIA SAG B24 > 0 — exclude zero-stock refs
+      const sagExist = item.sagB24Existencia;
+      if (sagExist === null || sagExist <= 0) continue;
+
       const ev = resolveEvidence(item);
       if (!ev || ev.months < 8) continue;
-      // ALL items are proxy — no CERTIFIED_B24_REENTRY_DATE exists
-      // until a B24 movement query is implemented (SAG-004 blocked)
       proxyList.push({ ...item, evidence: ev });
     }
 
@@ -772,7 +774,7 @@ function Masde8MesesView({
 
       <div style={{ fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint }}>
         Calculo con meses calendario (America/Bogota), no conteos fijos de dias.
-        EXISTENCIA B24 = confirmada via ProductInventoryLevel.
+        EXISTENCIA B24 = autoridad SAG vw_agentik_inventario (BODEGA 24). Solo refs con existencia &gt; 0.
       </div>
     </div>
   );
