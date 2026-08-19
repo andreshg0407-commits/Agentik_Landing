@@ -922,7 +922,7 @@ export function findBusinessCoverageOpportunities(
           if (isImport) {
             // ── IMPORT: bodega only, no OP ────────────────────────────────
             const candidates = allCentralRefs.filter((r) => {
-              if (vendorRefs.has(r.reference)) return false;
+              if (vendorRefs.has(r.reference.trim().toUpperCase())) return false;
               if (r.disponible <= 0) return false;
               if (r.sizeClass !== entry.subgroupCode) return false;
               if (!(r.disponible > threshold)) return false;
@@ -959,7 +959,7 @@ export function findBusinessCoverageOpportunities(
 
           // STEP 1: Bodega principal
           const bodegaCandidates = allCentralRefs.filter((r) => {
-            if (vendorRefs.has(r.reference)) return false;
+            if (vendorRefs.has(r.reference.trim().toUpperCase())) return false;
             if (r.disponible <= 0) return false;
             if (!matchesTextilEntry(
               r.line, r.subgrupoSag, r.grupoSag,
@@ -1001,7 +1001,7 @@ export function findBusinessCoverageOpportunities(
 
           // STEP 2: OP Activa (textile only, ≤60d)
           const opMatches = freshOpCandidates.filter((op) => {
-            if (vendorRefs.has(op.reference)) return false;
+            if (vendorRefs.has(op.reference.trim().toUpperCase())) return false;
             if (!matchesTextilEntry(
               op.line, op.subgrupoSag, op.grupoSag,
               requiredLine, group.sagGrupo, entry.sagSubgrupos,

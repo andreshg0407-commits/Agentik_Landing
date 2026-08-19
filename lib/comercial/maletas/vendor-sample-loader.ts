@@ -730,9 +730,10 @@ export async function loadVendorSampleData(
   const importEvaluation = evaluateImportRefs(vendors);
 
   // 9f. Coverage opportunities from derrotero faltantes
+  // CASTILLITOS-COMMERCIAL-TRUTH-08A0 §B: normalize to prevent casing/whitespace mismatches
   const vendorRefSets = new Map<string, Set<string>>();
   for (const v of vendors) {
-    vendorRefSets.set(v.vendorId, new Set(v.refs.map((r) => r.reference)));
+    vendorRefSets.set(v.vendorId, new Set(v.refs.map((r) => r.reference.trim().toUpperCase())));
   }
   // ACTIVATION-01: scope-filtered central refs for coverage opportunities
   const allCentralRefs: Array<{
@@ -858,9 +859,10 @@ export async function loadVendorSampleData(
       const tDiffStart = Date.now();
 
       // Build per-vendor ref sets (scoped, NOT global)
+      // §B: normalize to prevent casing/whitespace mismatches
       const vendorRefSetsForDiff = new Map<string, Set<string>>();
       for (const v of vendors) {
-        vendorRefSetsForDiff.set(v.vendorId, new Set(v.refs.map((r) => r.reference)));
+        vendorRefSetsForDiff.set(v.vendorId, new Set(v.refs.map((r) => r.reference.trim().toUpperCase())));
       }
 
       const entries: CanonicalDiffEntry[] = [];
@@ -1449,8 +1451,11 @@ function applyReplacements(
     }
   }
 
-  // Collect the set of refs already present in this vendor (to exclude from candidates)
-  const vendorRefSet = new Set(refs.map((r) => r.reference));
+  // CASTILLITOS-COMMERCIAL-TRUTH-08A0 §B: Collect the set of refs already present
+  // in this vendor (to exclude from candidates). Normalize to defend against
+  // casing/whitespace differences between SAG data sources.
+  const vendorRefSet = new Set(refs.map((r) => r.reference.trim().toUpperCase()));
+  const vendorRefSetRaw = new Set(refs.map((r) => r.reference)); // backward compat
 
   // ── Step 3: Apply Castillitos decision cascade per ref ────────────────
   for (const ref of eligibleRefs) {
@@ -1472,7 +1477,7 @@ function applyReplacements(
       const subCandidates = candidatesBySubgrupoId.get(ref.subgrupoId);
       if (subCandidates && subCandidates.length > 0) {
         const valid = subCandidates
-          .filter((c) => c.refCode !== ref.reference && !vendorRefSet.has(c.refCode))
+          .filter((c) => c.refCode !== ref.reference && !vendorRefSet.has(c.refCode.trim().toUpperCase()))
           .sort((a, b) => b.disponible - a.disponible)
           .slice(0, MAX_REPLACEMENT_OPTIONS);
 
@@ -1493,7 +1498,7 @@ function applyReplacements(
     const opOptions: VendorOpReplacementOption[] =
       ref.subgrupoId != null
         ? (opOptionsBySubgrupoId.get(ref.subgrupoId) ?? [])
-            .filter((o) => o.reference !== ref.reference && !vendorRefSet.has(o.reference))
+            .filter((o) => o.reference !== ref.reference && !vendorRefSet.has(o.reference.trim().toUpperCase()))
             .slice(0, MAX_REPLACEMENT_OPTIONS)
         : [];
 
@@ -1568,7 +1573,7 @@ function buildVendorSnapshot(
     health: deriveVendorHealth(refs),
     isActive,
     totalRefs: refs.length,
-    totalUnits: refs.length,
+    totalUnits: refs.reduce((s, r) => s + Math.max(0, r.centralAvailable), 0),
     estimatedValue: 0,
     replaceRefs,
     healthyRefs,

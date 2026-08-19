@@ -37,7 +37,7 @@ import type {
 } from "./order-decision-types";
 
 import type { OrderPolicyPackConfig } from "./order-policy-pack-config";
-import { isReceivableDataCertified } from "@/lib/comercial/frontline/receivable-truth-status";
+import type { ReceivableTruthState } from "@/lib/comercial/frontline/receivable-truth-contract";
 
 // ── Evidence builder ────────────────────────────────────────────────────────
 
@@ -169,7 +169,10 @@ export function evaluateCustomerCredit(
 
   // AGENTIK-RECEIVABLES-SAFETY-LOCK-P0: when receivable data is not
   // certified, always return "approved" — no credit warnings or blocks.
-  if (!isReceivableDataCertified(ctx.tenantId ?? "")) {
+  // DATA-TRUST: receive truthState as serialized input — never query Prisma from client code.
+  // Missing/undefined truthState defaults to UNVERIFIED (fail-closed).
+  const _truthState: ReceivableTruthState = ctx.receivableTruthState ?? "UNVERIFIED";
+  if (_truthState !== "CERTIFIED") {
     return {
       customerId,
       customerName,
