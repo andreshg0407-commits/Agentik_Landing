@@ -1239,12 +1239,14 @@ export async function loadVendorSampleData(
     }
   }
 
-  // ── Supply plan (AGENTIK-SALES-PORTFOLIO-SUPPLY-PLAN-02) ──────────────
+  // ── Supply plan (MALETAS-PLAN-SURTIDO-08B1) ──────────────────────────
   const vendorNameMap = new Map<string, string>();
   for (const v of vendors) vendorNameMap.set(v.vendorId, v.vendorName);
   const supplyPlan = buildSalesPortfolioSupplyPlan(
     assortmentEvaluations,
-    coverageResult,
+    allCentralRefs,
+    opCovCandidates,
+    vendorRefSets,
     vendorNameMap,
   );
 

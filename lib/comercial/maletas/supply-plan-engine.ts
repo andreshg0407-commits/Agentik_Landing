@@ -1,17 +1,23 @@
 /**
  * lib/comercial/maletas/supply-plan-engine.ts
  *
- * AGENTIK-SALES-PORTFOLIO-SUPPLY-PLAN-02
+ * MALETAS-PLAN-SURTIDO-08B1
  *
- * Builds a supply plan for vendor maletas driven by Derrotero evaluation.
+ * Builds actionable supply plans for vendor maletas driven by Derrotero evaluation.
  * Primary entity = MISSING DERROTERO POSITION (not reference).
  *
  * Supply cascade per position:
- *   1. REEMPLAZAR_BODEGA     — central warehouse has eligible refs
+ *   1. REEMPLAZAR_BODEGA     — central warehouse has eligible refs (threshold: CS>100, LT>200, IMP>10)
  *   2. COMPLETAR_DESDE_OP    — active OP has pending production
  *   3. PRODUCCION_SUGERIDA   — textile: suggest new production
  *   4. RECOMPRA_SUGERIDA     — import: suggest repurchase
- *   5. RETIRAR_MOSTRARIO     — excess positions that should be removed
+ *
+ * Invariants:
+ *   - Each reference used at most once per vendor plan (deduplication)
+ *   - Each candidate meets threshold individually (no aggregation)
+ *   - Positions cascade fully: BODEGA → OP → PRODUCCION (never skips)
+ *   - Position identity = catalogId|groupCode|subgroupCode (canonical rule ID)
+ *   - Multi-reference needs: N missing = N distinct candidates
  *
  * Pure computation — no Prisma, no UI, no side effects.
  */
@@ -20,11 +26,11 @@ import type {
   VendorAssortmentResult,
   CatalogEvaluation,
   AssortmentEntryEval,
-  BusinessCoverageResult,
-  TextileCoverageOpportunity,
-  ImportCoverageOpportunity,
-  UrgentProductionNeed,
+  AssortmentGroupEval,
+  OpCoverageCandidate,
 } from "./maletas-functional-evaluation";
+
+import { checkOpEligibility } from "./maletas-functional-evaluation";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Types
@@ -50,6 +56,10 @@ export interface SupplyCandidate {
   opNumber: string | null;
   confidence: "ALTA" | "MEDIA" | "BAJA";
   explanation: string;
+  /** Threshold applied to this candidate */
+  threshold: number;
+  /** Whether this candidate was selected as the best for this slot */
+  selected: boolean;
 }
 
 /**
@@ -58,7 +68,8 @@ export interface SupplyCandidate {
  * fully covered for a specific vendor.
  */
 export interface SupplyPosition {
-  // Derrotero identity
+  // Derrotero identity (canonical rule ID)
+  positionId: string;
   catalogId: string;
   catalogName: string;
   commercialWorld: string;
@@ -79,8 +90,12 @@ export interface SupplyPosition {
   bestAction: SupplyAction;
   bestActionExplanation: string;
 
-  // All candidates (sorted by cascade priority)
+  // Selected candidates (one per missing reference slot)
   candidates: SupplyCandidate[];
+
+  // Minimum production quantity if PRODUCCION_SUGERIDA
+  minProductionQty: number | null;
+  productionReason: string | null;
 }
 
 /**
@@ -147,36 +162,61 @@ export interface SalesPortfolioSupplyPlan {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Supply plan thresholds — MALETAS-PLAN-SURTIDO-08B1
+// These are the WHOLESALE thresholds for the supply plan.
+// Independent of coverage opportunity thresholds (which are informational).
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const SUPPLY_PLAN_THRESHOLDS: Readonly<Record<string, number>> = {
+  CS: 100,     // Castillitos: disponible individual > 100
+  LT: 200,     // Latin Kids: disponible individual > 200
+  IMPORT_SM: 10, // Accesorios pequeños/medianos: disponible individual > 10
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Central ref type — subset of allCentralRefs from loader
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface CentralRef {
+  reference: string;
+  description: string;
+  line: string;
+  grupoSag: string | null;
+  subgrupoSag: string | null;
+  sizeClass: string | null;
+  disponible: number;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Engine
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Builds the supply plan from Derrotero evaluations + coverage opportunities.
+ * Builds the supply plan from Derrotero evaluations + raw inventory data.
  *
- * Consumes:
- *   - evaluations: per-vendor assortment evaluation from evaluateVendorAssortment()
- *   - coverageResult: grouped coverage from findBusinessCoverageOpportunities()
- *   - vendorNames: map of vendorId → display name (for labels)
+ * MALETAS-PLAN-SURTIDO-08B1: Direct matching against allCentralRefs and
+ * opCandidates with proper wholesale thresholds. Does NOT rely on pre-grouped
+ * BusinessCoverageResult (which uses different thresholds and grouping).
  */
 export function buildSalesPortfolioSupplyPlan(
   evaluations: VendorAssortmentResult[],
-  coverageResult: BusinessCoverageResult,
+  allCentralRefs: CentralRef[],
+  opCandidates: OpCoverageCandidate[],
+  vendorRefSets: Map<string, Set<string>>,
   vendorNames: Map<string, string>,
 ): SalesPortfolioSupplyPlan {
-  const vendorPlans: VendorSupplyPlan[] = [];
+  const now = new Date();
+  const freshOps = opCandidates.filter((op) => checkOpEligibility(op, now).eligible);
 
-  // Index coverage by subgroup for fast lookup
-  const textileCoverageIndex = indexTextileCoverage(coverageResult.textileCoverage);
-  const importCoverageIndex = indexImportCoverage(coverageResult.importCoverage);
-  const urgentProductionIndex = indexUrgentProduction(coverageResult.urgentProductionNeeds);
+  const vendorPlans: VendorSupplyPlan[] = [];
 
   for (const vendorEval of evaluations) {
     const plan = buildVendorPlan(
       vendorEval,
       vendorNames.get(vendorEval.vendorId) ?? vendorEval.vendorId,
-      textileCoverageIndex,
-      importCoverageIndex,
-      urgentProductionIndex,
+      allCentralRefs,
+      freshOps,
+      vendorRefSets.get(vendorEval.vendorId) ?? new Set(),
     );
     vendorPlans.push(plan);
   }
@@ -209,9 +249,9 @@ export function buildSalesPortfolioSupplyPlan(
 function buildVendorPlan(
   vendorEval: VendorAssortmentResult,
   vendorName: string,
-  textileCoverage: TextileCoverageIndex,
-  importCoverage: ImportCoverageIndex,
-  urgentProduction: UrgentProductionIndex,
+  allCentralRefs: CentralRef[],
+  freshOps: OpCoverageCandidate[],
+  vendorRefs: Set<string>,
 ): VendorSupplyPlan {
   const positions: SupplyPosition[] = [];
   const excessPositions: ExcessPosition[] = [];
@@ -220,6 +260,9 @@ function buildVendorPlan(
   let missingEntries = 0;
   let excessEntries = 0;
 
+  // Track references already selected for this vendor's plan (deduplication)
+  const usedReferences = new Set<string>();
+
   for (const catalog of vendorEval.catalogs) {
     for (const group of catalog.groups) {
       for (const entry of group.entries) {
@@ -227,10 +270,9 @@ function buildVendorPlan(
 
         if (entry.complete) {
           completeEntries++;
-          // Check for excess even if complete
           if (entry.excess) {
             excessEntries++;
-            excessPositions.push(buildExcessPosition(catalog, group.groupName, entry));
+            excessPositions.push(buildExcessPosition(catalog, group, entry));
           }
           continue;
         }
@@ -239,19 +281,19 @@ function buildVendorPlan(
         missingEntries++;
         const position = buildMissingPosition(
           catalog,
-          group.groupName,
+          group,
           entry,
-          vendorEval.vendorId,
-          textileCoverage,
-          importCoverage,
-          urgentProduction,
+          allCentralRefs,
+          freshOps,
+          vendorRefs,
+          usedReferences,
         );
         positions.push(position);
       }
     }
   }
 
-  // Sort positions: SIN_COBERTURA first (most urgent), then by missing count DESC
+  // Sort positions: BODEGA first (actionable), then OP, then PRODUCCION
   positions.sort((a, b) => {
     const actionRank = ACTION_PRIORITY[a.bestAction] - ACTION_PRIORITY[b.bestAction];
     if (actionRank !== 0) return actionRank;
@@ -297,89 +339,199 @@ function buildVendorPlan(
 
 function buildMissingPosition(
   catalog: CatalogEvaluation,
-  groupName: string,
+  group: AssortmentGroupEval,
   entry: AssortmentEntryEval,
-  vendorId: string,
-  textileCoverage: TextileCoverageIndex,
-  importCoverage: ImportCoverageIndex,
-  urgentProduction: UrgentProductionIndex,
+  allCentralRefs: CentralRef[],
+  freshOps: OpCoverageCandidate[],
+  vendorRefs: Set<string>,
+  usedReferences: Set<string>,
 ): SupplyPosition {
   const isImport = catalog.commercialWorld === "IMPORTACION";
   const missing = entry.targetReferences - entry.currentReferences;
+  const positionId = `${catalog.catalogId}|${group.groupCode}|${entry.subgroupCode ?? entry.subgroupName}`;
 
-  // Resolve candidates from coverage results
-  const candidates: SupplyCandidate[] = [];
+  // Resolve line code for threshold lookup
+  const lineCode = isImport ? "IMPORT_SM" : (
+    catalog.brand === "Castillitos" ? "CS" :
+    catalog.brand === "Latin Kids" ? "LT" : null
+  );
+  const threshold = lineCode ? (SUPPLY_PLAN_THRESHOLDS[lineCode] ?? 0) : 0;
+
+  // Resolve line filter for SAG matching
+  const requiredLine = isImport ? null : (
+    catalog.brand === "Castillitos" ? "CS" :
+    catalog.brand === "Latin Kids" ? "LT" : null
+  );
+
+  const allCandidates: SupplyCandidate[] = [];
 
   if (isImport) {
-    // Import: BODEGA only, then RECOMPRA_SUGERIDA
-    const importCandidates = findImportCandidates(entry, vendorId, importCoverage);
-    candidates.push(...importCandidates);
+    // Import: bodega match by sizeClass, then RECOMPRA
+    const sizeClass = entry.subgroupCode?.toUpperCase() ?? "";
+    // Import grandes are excluded
+    if (sizeClass === "GRANDE") {
+      // No candidates — large accessories fully excluded
+    } else {
+      const bodegaMatches = allCentralRefs
+        .filter((r) => {
+          if (vendorRefs.has(r.reference.trim().toUpperCase())) return false;
+          if (usedReferences.has(r.reference.trim().toUpperCase())) return false;
+          if (r.disponible <= 0) return false;
+          if (r.sizeClass !== entry.subgroupCode) return false;
+          if (!(r.disponible > threshold)) return false;
+          return true;
+        })
+        .sort((a, b) => b.disponible - a.disponible);
 
-    if (candidates.length === 0) {
-      candidates.push({
-        reference: "",
-        description: `Recompra sugerida: ${entry.subgroupName}`,
-        action: "RECOMPRA_SUGERIDA",
-        source: "RECOMPRA",
-        availableQty: null,
-        pendingQty: null,
-        opNumber: null,
-        confidence: "BAJA",
-        explanation: `Sin stock en bodega para ${entry.subgroupName}. Evaluar recompra en proximo contenedor.`,
-      });
-    }
-  } else {
-    // Textile: BODEGA → OP → PRODUCCION_SUGERIDA
-    const textileCandidates = findTextileCandidates(
-      entry, vendorId, catalog.brand, groupName, textileCoverage,
-    );
-    candidates.push(...textileCandidates);
-
-    // Check urgent production needs
-    const urgentKey = buildUrgentKey(catalog.brand, groupName, entry.subgroupName);
-    const urgent = urgentProduction.get(urgentKey);
-    if (urgent && candidates.length === 0) {
-      candidates.push({
-        reference: "",
-        description: `Produccion sugerida: ${entry.subgroupName}`,
-        action: "PRODUCCION_SUGERIDA",
-        source: "PRODUCCION",
-        availableQty: null,
-        pendingQty: null,
-        opNumber: null,
-        confidence: "BAJA",
-        explanation: urgent.explanation,
-      });
+      for (const ref of bodegaMatches.slice(0, missing)) {
+        const ratio = ref.disponible / Math.max(threshold, 1);
+        allCandidates.push({
+          reference: ref.reference,
+          description: ref.description,
+          action: "REEMPLAZAR_BODEGA",
+          source: "BODEGA",
+          availableQty: ref.disponible,
+          pendingQty: null,
+          opNumber: null,
+          confidence: ratio > 3 ? "ALTA" : ratio > 1.5 ? "MEDIA" : "BAJA",
+          explanation: `Disponible B01: ${ref.disponible} · Umbral importacion: >${threshold}`,
+          threshold,
+          selected: true,
+        });
+        usedReferences.add(ref.reference.trim().toUpperCase());
+      }
     }
 
-    if (candidates.length === 0) {
-      candidates.push({
-        reference: "",
-        description: `Sin cobertura: ${entry.subgroupName}`,
-        action: "PRODUCCION_SUGERIDA",
-        source: "PRODUCCION",
-        availableQty: null,
-        pendingQty: null,
-        opNumber: null,
-        confidence: "BAJA",
-        explanation: `Faltante de ${missing} ref(s) en ${entry.subgroupName}. No hay stock en bodega ni OP activa. Sugerir produccion.`,
+    // If not enough bodega candidates → RECOMPRA for remaining slots
+    const filled = allCandidates.length;
+    if (filled < missing && sizeClass !== "GRANDE") {
+      for (let i = 0; i < missing - filled; i++) {
+        allCandidates.push({
+          reference: "",
+          description: `Recompra sugerida: ${entry.subgroupName}`,
+          action: "RECOMPRA_SUGERIDA",
+          source: "RECOMPRA",
+          availableQty: null,
+          pendingQty: null,
+          opNumber: null,
+          confidence: "BAJA",
+          explanation: `Sin stock en bodega para ${entry.subgroupName}. Evaluar recompra.`,
+          threshold,
+          selected: true,
+        });
+      }
+    }
+  } else if (requiredLine) {
+    // Textile: BODEGA → OP → PRODUCCION cascade
+    // Each missing slot is filled independently with deduplication
+
+    for (let slot = 0; slot < missing; slot++) {
+      let slotFilled = false;
+
+      // STEP 1: Bodega principal
+      const bodegaMatch = allCentralRefs.find((r) => {
+        if (vendorRefs.has(r.reference.trim().toUpperCase())) return false;
+        if (usedReferences.has(r.reference.trim().toUpperCase())) return false;
+        if (r.disponible <= 0) return false;
+        if (!(r.disponible > threshold)) return false;
+        if (!matchesTextilEntry(
+          r.line, r.subgrupoSag, r.grupoSag,
+          requiredLine, group.sagGrupo, entry.sagSubgrupos,
+        )) return false;
+        return true;
       });
+
+      if (bodegaMatch) {
+        const ratio = bodegaMatch.disponible / Math.max(threshold, 1);
+        allCandidates.push({
+          reference: bodegaMatch.reference,
+          description: bodegaMatch.description,
+          action: "REEMPLAZAR_BODEGA",
+          source: "BODEGA",
+          availableQty: bodegaMatch.disponible,
+          pendingQty: null,
+          opNumber: null,
+          confidence: ratio > 3 ? "ALTA" : ratio > 1.5 ? "MEDIA" : "BAJA",
+          explanation: `Disponible B01: ${bodegaMatch.disponible} · Umbral ${requiredLine}: >${threshold} · No en maleta`,
+          threshold,
+          selected: true,
+        });
+        usedReferences.add(bodegaMatch.reference.trim().toUpperCase());
+        slotFilled = true;
+        continue;
+      }
+
+      // STEP 2: OP Activa (<=60d)
+      const opMatch = freshOps.find((op) => {
+        if (vendorRefs.has(op.reference.trim().toUpperCase())) return false;
+        if (usedReferences.has(op.reference.trim().toUpperCase())) return false;
+        if (op.pendingQty <= 0) return false;
+        if (!matchesTextilEntry(
+          op.line, op.subgrupoSag, op.grupoSag,
+          requiredLine, group.sagGrupo, entry.sagSubgrupos,
+        )) return false;
+        return true;
+      });
+
+      if (opMatch) {
+        allCandidates.push({
+          reference: opMatch.reference,
+          description: opMatch.description,
+          action: "COMPLETAR_DESDE_OP",
+          source: "OP_ACTIVA",
+          availableQty: null,
+          pendingQty: opMatch.pendingQty,
+          opNumber: opMatch.opNumber,
+          confidence: "MEDIA",
+          explanation: `OP #${opMatch.opNumber}: ${opMatch.pendingQty} pendientes · Umbral ${requiredLine}: >${threshold}`,
+          threshold,
+          selected: true,
+        });
+        usedReferences.add(opMatch.reference.trim().toUpperCase());
+        slotFilled = true;
+        continue;
+      }
+
+      // STEP 3: No coverage → PRODUCCION_SUGERIDA
+      if (!slotFilled) {
+        allCandidates.push({
+          reference: "",
+          description: `Produccion sugerida: ${entry.subgroupName}`,
+          action: "PRODUCCION_SUGERIDA",
+          source: "PRODUCCION",
+          availableQty: null,
+          pendingQty: null,
+          opNumber: null,
+          confidence: "BAJA",
+          explanation: `Sin referencia elegible en B01 ni OP activa`,
+          threshold,
+          selected: true,
+        });
+      }
     }
   }
 
-  // Sort candidates by cascade priority
-  candidates.sort((a, b) => ACTION_PRIORITY[a.action] - ACTION_PRIORITY[b.action]);
+  // Determine best action (highest-priority candidate wins)
+  allCandidates.sort((a, b) => ACTION_PRIORITY[a.action] - ACTION_PRIORITY[b.action]);
+  const bestAction = allCandidates[0]?.action ?? "SIN_COBERTURA";
+  const bestExplanation = allCandidates[0]?.explanation ?? `Sin opciones de abastecimiento para ${entry.subgroupName}`;
 
-  const bestAction = candidates[0]?.action ?? "SIN_COBERTURA";
-  const bestExplanation = candidates[0]?.explanation ?? `Sin opciones de abastecimiento para ${entry.subgroupName}`;
+  // Production minimum quantity
+  let minProductionQty: number | null = null;
+  let productionReason: string | null = null;
+  if (bestAction === "PRODUCCION_SUGERIDA" || allCandidates.some((c) => c.action === "PRODUCCION_SUGERIDA")) {
+    minProductionQty = threshold > 0 ? threshold : null;
+    productionReason = `Sin referencia elegible en B01 ni OP activa`;
+  }
 
   return {
+    positionId,
     catalogId: catalog.catalogId,
     catalogName: catalog.catalogName,
     commercialWorld: catalog.commercialWorld,
     brand: catalog.brand,
-    groupCode: "",
-    groupName,
+    groupCode: group.groupCode,
+    groupName: group.groupName,
     subgroupCode: entry.subgroupCode,
     subgroupName: entry.subgroupName,
     sagSubgrupos: entry.sagSubgrupos,
@@ -389,13 +541,15 @@ function buildMissingPosition(
     matchedReferences: entry.matchedReferences,
     bestAction,
     bestActionExplanation: bestExplanation,
-    candidates,
+    candidates: allCandidates,
+    minProductionQty,
+    productionReason,
   };
 }
 
 function buildExcessPosition(
   catalog: CatalogEvaluation,
-  groupName: string,
+  group: AssortmentGroupEval,
   entry: AssortmentEntryEval,
 ): ExcessPosition {
   return {
@@ -403,7 +557,7 @@ function buildExcessPosition(
     catalogName: catalog.catalogName,
     commercialWorld: catalog.commercialWorld,
     brand: catalog.brand,
-    groupName,
+    groupName: group.groupName,
     subgroupName: entry.subgroupName,
     targetReferences: entry.targetReferences,
     currentReferences: entry.currentReferences,
@@ -413,115 +567,28 @@ function buildExcessPosition(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Candidate finders
+// Textile matching — uses SAG codes, not display names
 // ═══════════════════════════════════════════════════════════════════════════
 
-function findTextileCandidates(
-  entry: AssortmentEntryEval,
-  vendorId: string,
-  brand: string | null,
-  groupName: string,
-  textileCoverage: TextileCoverageIndex,
-): SupplyCandidate[] {
-  const candidates: SupplyCandidate[] = [];
-
-  // Look up coverage opportunities that match this entry's SAG subgrupos
-  for (const sagSub of entry.sagSubgrupos) {
-    const key = sagSub.toUpperCase();
-    const opportunities = textileCoverage.get(key) ?? [];
-
-    for (const opp of opportunities) {
-      // Check this opportunity targets our vendor
-      const targetsVendor = opp.targets.some((t) => t.vendorId === vendorId);
-      if (!targetsVendor) continue;
-
-      candidates.push({
-        reference: opp.replacementReference,
-        description: opp.replacementDescription,
-        action: opp.source === "BODEGA" ? "REEMPLAZAR_BODEGA" : "COMPLETAR_DESDE_OP",
-        source: opp.source,
-        availableQty: opp.availableNow,
-        pendingQty: opp.incomingUnits,
-        opNumber: opp.opNumber ?? null,
-        confidence: opp.confidence,
-        explanation: opp.explanation,
-      });
-    }
+function matchesTextilEntry(
+  candidateLine: string,
+  candidateSubgrupoSag: string | null,
+  candidateGrupoSag: string | null,
+  requiredLine: string,
+  sagGrupo: string | null,
+  sagSubgrupos: string[],
+): boolean {
+  if (candidateLine !== requiredLine) return false;
+  if (!candidateSubgrupoSag) return false;
+  // Match any of the entry's SAG subgrupos (e.g., ["BUZO", "CAMIBUSO"])
+  const normalizedCandidate = candidateSubgrupoSag.trim().toUpperCase();
+  const matches = sagSubgrupos.some((s) => s.trim().toUpperCase() === normalizedCandidate);
+  if (!matches) return false;
+  // For CS: also match grupo (required)
+  if (sagGrupo && candidateGrupoSag) {
+    if (candidateGrupoSag.trim().toUpperCase() !== sagGrupo.trim().toUpperCase()) return false;
   }
-
-  return candidates;
-}
-
-function findImportCandidates(
-  entry: AssortmentEntryEval,
-  vendorId: string,
-  importCoverage: ImportCoverageIndex,
-): SupplyCandidate[] {
-  const candidates: SupplyCandidate[] = [];
-
-  // Import entries match by sizeClass (subgroupCode = PEQUENO/MEDIANO)
-  const sizeClass = entry.subgroupCode?.toUpperCase() ?? "";
-  const opportunities = importCoverage.get(sizeClass) ?? [];
-
-  for (const opp of opportunities) {
-    const targetsVendor = opp.targets.some((t) => t.vendorId === vendorId);
-    if (!targetsVendor) continue;
-
-    candidates.push({
-      reference: opp.replacementReference,
-      description: opp.replacementDescription,
-      action: "REEMPLAZAR_BODEGA",
-      source: "BODEGA",
-      availableQty: opp.availableNow,
-      pendingQty: null,
-      opNumber: null,
-      confidence: opp.confidence,
-      explanation: opp.explanation,
-    });
-  }
-
-  return candidates;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Coverage indexes (avoid O(N*M) lookups)
-// ═══════════════════════════════════════════════════════════════════════════
-
-type TextileCoverageIndex = Map<string, TextileCoverageOpportunity[]>;
-type ImportCoverageIndex = Map<string, ImportCoverageOpportunity[]>;
-type UrgentProductionIndex = Map<string, UrgentProductionNeed>;
-
-function indexTextileCoverage(items: TextileCoverageOpportunity[]): TextileCoverageIndex {
-  const index = new Map<string, TextileCoverageOpportunity[]>();
-  for (const item of items) {
-    const key = item.subgroup.toUpperCase();
-    if (!index.has(key)) index.set(key, []);
-    index.get(key)!.push(item);
-  }
-  return index;
-}
-
-function indexImportCoverage(items: ImportCoverageOpportunity[]): ImportCoverageIndex {
-  const index = new Map<string, ImportCoverageOpportunity[]>();
-  for (const item of items) {
-    const key = item.sizeClass.toUpperCase();
-    if (!index.has(key)) index.set(key, []);
-    index.get(key)!.push(item);
-  }
-  return index;
-}
-
-function indexUrgentProduction(items: UrgentProductionNeed[]): UrgentProductionIndex {
-  const index = new Map<string, UrgentProductionNeed>();
-  for (const item of items) {
-    const key = buildUrgentKey(item.brand ?? null, item.group, item.subgroup);
-    index.set(key, item);
-  }
-  return index;
-}
-
-function buildUrgentKey(brand: string | null, group: string, subgroup: string): string {
-  return `${(brand ?? "").toUpperCase()}|${group.toUpperCase()}|${subgroup.toUpperCase()}`;
+  return true;
 }
 
 // ── Action priority (lower = higher priority in cascade) ────────────────
@@ -613,7 +680,6 @@ export function getSalesPortfolioSupplyNeeds(
   needs.sort((a, b) => {
     const ar = ACTION_PRIORITY[a.bestAction] ?? 5;
     const br = ACTION_PRIORITY[b.bestAction] ?? 5;
-    // Invert: SIN_COBERTURA (5) is most urgent — show first
     if (ar !== br) return br - ar;
     return b.missingReferences - a.missingReferences;
   });
@@ -628,10 +694,12 @@ export function getSalesPortfolioSupplyNeeds(
 export function getSalesPortfolioSupplyCandidates(
   plan: SalesPortfolioSupplyPlan,
   vendorId: string,
-  subgroupName: string,
+  positionIdOrSubgroupName: string,
 ): SupplyCandidate[] {
   const vp = plan.vendorPlans.find((v) => v.vendorId === vendorId);
   if (!vp) return [];
-  const pos = vp.positions.find((p) => p.subgroupName === subgroupName);
+  // Match by positionId first, then fallback to subgroupName (copilot compat)
+  const pos = vp.positions.find((p) => p.positionId === positionIdOrSubgroupName)
+    ?? vp.positions.find((p) => p.subgroupName === positionIdOrSubgroupName);
   return pos?.candidates ?? [];
 }

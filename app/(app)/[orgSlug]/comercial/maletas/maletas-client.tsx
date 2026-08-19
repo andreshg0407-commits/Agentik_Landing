@@ -1666,11 +1666,11 @@ export function MaletasClient({
                 );
               }
 
-              // Section-grouped positions (no counting in React — values from engine)
+              // MALETAS-PLAN-SURTIDO-08B1: Section-grouped positions
               const bodegaPositions = vendorPlan.positions.filter((p) => p.bestAction === "REEMPLAZAR_BODEGA");
               const opPositions = vendorPlan.positions.filter((p) => p.bestAction === "COMPLETAR_DESDE_OP");
-              const sinCoberturaPositions = vendorPlan.positions.filter(
-                (p) => p.bestAction === "SIN_COBERTURA" || p.bestAction === "PRODUCCION_SUGERIDA" || p.bestAction === "RECOMPRA_SUGERIDA",
+              const produccionPositions = vendorPlan.positions.filter(
+                (p) => p.bestAction === "PRODUCCION_SUGERIDA" || p.bestAction === "RECOMPRA_SUGERIDA" || p.bestAction === "SIN_COBERTURA",
               );
 
               return (
@@ -1684,7 +1684,7 @@ export function MaletasClient({
                       { label: "Por completar", value: vendorPlan.missingEntries, color: vendorPlan.missingEntries > 0 ? C.red : C.green },
                       { label: "Listas para surtir", value: vendorPlan.bodegaCandidates, color: C.green },
                       { label: "Proximas por OP", value: vendorPlan.opCandidates, color: C.amber },
-                      { label: "Sin cobertura", value: vendorPlan.sinCobertura + vendorPlan.produccionSugerida + vendorPlan.recompraSugerida, color: C.red },
+                      { label: "Produccion sugerida", value: vendorPlan.produccionSugerida + vendorPlan.recompraSugerida + vendorPlan.sinCobertura, color: C.red },
                     ].map((kpi) => (
                       <div key={kpi.label} style={{
                         background: C.surfaceAlt, borderRadius: R.sm, padding: `${S[2]}px ${S[3]}px`,
@@ -1729,13 +1729,13 @@ export function MaletasClient({
                     emptyMessage="Sin posiciones con OP activa"
                   />
 
-                  {/* ── SECTION: SIN COBERTURA — open if non-empty ── */}
+                  {/* ── SECTION: PRODUCCION SUGERIDA ── */}
                   <SupplySection
-                    title="Sin cobertura"
-                    count={sinCoberturaPositions.length}
+                    title="Produccion sugerida"
+                    count={produccionPositions.length}
                     color={C.red}
-                    defaultOpen={sinCoberturaPositions.length > 0}
-                    positions={sinCoberturaPositions}
+                    defaultOpen={produccionPositions.length > 0}
+                    positions={produccionPositions}
                     emptyMessage="Todas las posiciones tienen cobertura"
                   />
 
@@ -4218,11 +4218,11 @@ function UnresolvedRefsPanel({
 // ═══════════════════════════════════════════════════════════════════════════
 
 const SUPPLY_ACTION_LABEL: Record<SupplyAction, string> = {
-  REEMPLAZAR_BODEGA: "En bodega",
+  REEMPLAZAR_BODEGA: "Surtir B01",
   COMPLETAR_DESDE_OP: "OP activa",
   PRODUCCION_SUGERIDA: "Producir",
   RECOMPRA_SUGERIDA: "Recomprar",
-  SIN_COBERTURA: "Sin cobertura",
+  SIN_COBERTURA: "Producir",
 };
 
 const SUPPLY_ACTION_COLOR: Record<SupplyAction, string> = {
@@ -4278,18 +4278,18 @@ function SupplySection({ title, count, color, defaultOpen, positions, emptyMessa
             <div className="ag-op-table">
               {/* Header */}
               <div className="ag-op-row" style={{
-                display: "grid", gridTemplateColumns: "1fr 40px 40px 90px",
+                display: "grid", gridTemplateColumns: "1fr 30px 30px 30px 90px",
                 padding: `${S[1]}px ${S[3]}px`, background: C.surfaceAlt,
                 borderBottom: `1px solid ${C.line}`,
               }}>
-                {["Posicion", "Ideal", "Tiene", "Estado"].map((h) => (
+                {["Posicion", "Ideal", "Tiene", "Falta", "Estado"].map((h) => (
                   <div key={h} style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: C.inkFaint, textTransform: "uppercase" as const }}>
                     {h}
                   </div>
                 ))}
               </div>
-              {positions.map((pos, i) => (
-                <SupplyPositionRow key={`${pos.catalogId}-${pos.subgroupCode}-${i}`} pos={pos} />
+              {positions.map((pos) => (
+                <SupplyPositionRow key={pos.positionId} pos={pos} />
               ))}
             </div>
           )}
@@ -4330,7 +4330,7 @@ function SupplyCollapsedSection({ title, count, color, defaultOpen, children }: 
   );
 }
 
-/** Single supply position row with expand/collapse */
+/** MALETAS-PLAN-SURTIDO-08B1: Supply position row showing need + suggestion together */
 function SupplyPositionRow({ pos }: { pos: SupplyPosition }) {
   const [expanded, setExpanded] = useState(false);
   const actionColor = SUPPLY_ACTION_COLOR[pos.bestAction];
@@ -4344,13 +4344,17 @@ function SupplyPositionRow({ pos }: { pos: SupplyPosition }) {
       ? `${pos.brand} · ${pos.groupName}`
       : pos.groupName;
 
+  // First candidate for inline display
+  const firstCandidate = pos.candidates[0];
+
   return (
     <div style={{ borderBottom: `1px solid ${C.line}` }}>
+      {/* ── Need row ── */}
       <div
         className="ag-op-row"
         onClick={() => setExpanded(!expanded)}
         style={{
-          display: "grid", gridTemplateColumns: "1fr 40px 40px 90px",
+          display: "grid", gridTemplateColumns: "1fr 30px 30px 30px 90px",
           padding: `${S[2]}px ${S[3]}px`, cursor: "pointer", alignItems: "center",
           background: expanded ? C.blueLight : "transparent", transition: "background 0.1s",
         }}
@@ -4366,8 +4370,11 @@ function SupplyPositionRow({ pos }: { pos: SupplyPosition }) {
         <div style={{ fontFamily: T.mono, fontSize: 11, color: C.inkFaint, textAlign: "center" as const }}>
           {pos.targetReferences}
         </div>
-        <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: C.red, textAlign: "center" as const }}>
+        <div style={{ fontFamily: T.mono, fontSize: 11, color: C.inkFaint, textAlign: "center" as const }}>
           {pos.currentReferences}
+        </div>
+        <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: C.red, textAlign: "center" as const }}>
+          {pos.missingReferences}
         </div>
         <div style={{
           fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: actionColor,
@@ -4378,32 +4385,50 @@ function SupplyPositionRow({ pos }: { pos: SupplyPosition }) {
         </div>
       </div>
 
+      {/* ── Inline suggestion strip (always visible for BODEGA candidates) ── */}
+      {firstCandidate && firstCandidate.reference && (
+        <div
+          onClick={() => setExpanded(!expanded)}
+          style={{
+            display: "flex", alignItems: "center", gap: S[2],
+            padding: `${S[1]}px ${S[3]}px`, cursor: "pointer",
+            background: pos.bestAction === "REEMPLAZAR_BODEGA" ? C.green + "08" : "transparent",
+            borderTop: `1px dashed ${C.line}`,
+          }}
+        >
+          <span style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint }}>{"→"}</span>
+          <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: actionColor }}>
+            {firstCandidate.reference}
+          </span>
+          <span style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint, flex: 1 }}>
+            {firstCandidate.description}
+          </span>
+          {firstCandidate.availableQty != null && (
+            <span style={{ fontFamily: T.mono, fontSize: 9, color: C.ink }}>
+              B01: {firstCandidate.availableQty}
+            </span>
+          )}
+          {firstCandidate.pendingQty != null && firstCandidate.opNumber && (
+            <span style={{ fontFamily: T.mono, fontSize: 9, color: C.amber }}>
+              OP {firstCandidate.opNumber}: {firstCandidate.pendingQty} pend.
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* ── Expanded detail ── */}
       {expanded && (
         <div style={{ padding: `${S[2]}px ${S[3]}px ${S[3]}px`, background: C.surfaceAlt, borderTop: `1px solid ${C.line}` }}>
-          {/* Summary: candidate count when candidates exist, otherwise explanation */}
-          <div style={{ fontFamily: T.mono, fontSize: 10, color: C.ink, marginBottom: S[2], lineHeight: "1.5" }}>
-            {pos.candidates.length > 0
-              ? `${pos.candidates.length} candidato${pos.candidates.length > 1 ? "s" : ""} elegible${pos.candidates.length > 1 ? "s" : ""}`
-              : pos.bestActionExplanation}
-          </div>
-
-          {/* Candidates */}
+          {/* All candidates (one per missing reference slot) */}
           {pos.candidates.length > 0 && (
-            <div style={{ marginTop: S[2] }}>
+            <div>
               <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: C.inkFaint, marginBottom: S[1], textTransform: "uppercase" as const }}>
-                Candidatos ({pos.candidates.length})
+                {pos.candidates.length === 1
+                  ? "Sugerencia"
+                  : `Sugerencias (${pos.candidates.length} para ${pos.missingReferences} faltante${pos.missingReferences > 1 ? "s" : ""})`}
               </div>
               {pos.candidates.map((cand, ci) => {
                 const candColor = SUPPLY_ACTION_COLOR[cand.action];
-                // Manager-facing quality labels
-                const qtyLabel = cand.availableQty != null
-                  ? `Disponible ${cand.availableQty}`
-                  : cand.pendingQty != null
-                    ? `Pendiente ${cand.pendingQty}`
-                    : "\u2014";
-                const confidenceLabel = cand.confidence === "ALTA" ? "Confianza alta"
-                  : cand.confidence === "MEDIA" ? "Confianza media" : "Confianza baja";
-
                 return (
                   <div key={ci} style={{
                     padding: `${S[1]}px 0`, borderBottom: ci < pos.candidates.length - 1 ? `1px solid ${C.line}` : "none",
@@ -4413,19 +4438,29 @@ function SupplyPositionRow({ pos }: { pos: SupplyPosition }) {
                         {cand.reference || SUPPLY_ACTION_LABEL[cand.action]}
                       </div>
                       <div style={{ fontFamily: T.mono, fontSize: 10, color: C.ink }}>
-                        {qtyLabel}
+                        {cand.availableQty != null ? `Disponible B01: ${cand.availableQty}` : cand.pendingQty != null ? `Pendiente: ${cand.pendingQty}` : "\u2014"}
                       </div>
                     </div>
-                    <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint, marginTop: 2, display: "flex", gap: S[2] }}>
-                      <span>{cand.description}</span>
-                      {cand.opNumber && <span>OP {cand.opNumber}</span>}
-                      <span style={{ color: cand.confidence === "ALTA" ? C.green : cand.confidence === "MEDIA" ? C.amber : C.red }}>
-                        {confidenceLabel}
-                      </span>
+                    <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint, marginTop: 2 }}>
+                      {cand.explanation}
                     </div>
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {/* Production minimum quantity */}
+          {pos.minProductionQty != null && (
+            <div style={{ fontFamily: T.mono, fontSize: 9, color: C.red, marginTop: S[2] }}>
+              Cantidad minima mayorista: producir una referencia con {">"}{pos.minProductionQty}
+            </div>
+          )}
+
+          {/* Production reason */}
+          {pos.productionReason && (
+            <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint, marginTop: S[1] }}>
+              Motivo: {pos.productionReason}
             </div>
           )}
 
