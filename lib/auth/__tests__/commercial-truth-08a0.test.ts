@@ -126,24 +126,48 @@ describe("C — Derrotero structure and semantics", () => {
 // ── D. Auto-activation from presence data ────────────────────────────────────
 
 describe("D — Vendor bag activation from SAG presence", () => {
+  const presenceSrc = readSrc("lib/comercial/maletas/vendor-sample-presence-engine.ts");
+  const loaderSrc = readSrc("lib/comercial/maletas/vendor-sample-loader.ts");
+
   test("T18: Vendor presence engine queries SAG movimientos_traslados", () => {
-    const src = readSrc("lib/comercial/maletas/vendor-sample-presence-engine.ts");
-    expect(src).toContain("movimientos_traslados");
-    expect(src).toContain("net_qty");
+    expect(presenceSrc).toContain("movimientos_traslados");
+    expect(presenceSrc).toContain("net_qty");
   });
 
   test("T19: Presence items are trimmed from SAG ref codes", () => {
-    const src = readSrc("lib/comercial/maletas/vendor-sample-presence-engine.ts");
-    // Reference codes from SAG are trimmed
-    expect(src).toContain('.trim()');
+    expect(presenceSrc).toContain('.trim()');
   });
 
   test("T20: Vendor bodegas are correctly mapped", () => {
-    const src = readSrc("lib/comercial/maletas/vendor-sample-presence-engine.ts");
     // Orlando=45, Carlos Leon=46, Luis=47, Nestor=48, Carlos Villa=49, Fredy=50
-    expect(src).toContain("45");
-    expect(src).toContain("48");
-    expect(src).toContain("50");
+    expect(presenceSrc).toContain("45");
+    expect(presenceSrc).toContain("48");
+    expect(presenceSrc).toContain("50");
+  });
+
+  test("T25: autoActivateVendorsFromPresence function exists in loader", () => {
+    expect(loaderSrc).toContain("autoActivateVendorsFromPresence");
+  });
+
+  test("T26: Auto-activation skips vendors with totalPresent <= 0", () => {
+    expect(loaderSrc).toContain("pr.totalPresent <= 0");
+  });
+
+  test("T27: Auto-activation respects existing activation records (manual decisions)", () => {
+    // Must check currentActivation.has() before writing
+    expect(loaderSrc).toContain("currentActivation.has(pr.vendorId)");
+  });
+
+  test("T28: Auto-activation uses setVendorActivation (idempotent upsert)", () => {
+    expect(loaderSrc).toContain("setVendorActivation(organizationId, pr.vendorId, true)");
+  });
+
+  test("T29: Auto-activation called after presence fetch, wrapped in try/catch", () => {
+    const callIdx = loaderSrc.indexOf("autoActivateVendorsFromPresence(organizationId, presenceResults)");
+    expect(callIdx).toBeGreaterThan(0);
+    // Check it's wrapped in try/catch (non-fatal)
+    const beforeCall = loaderSrc.slice(Math.max(0, callIdx - 100), callIdx);
+    expect(beforeCall).toContain("try {");
   });
 });
 

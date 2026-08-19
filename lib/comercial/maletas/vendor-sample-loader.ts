@@ -53,7 +53,7 @@ import {
   DEFAULT_SUBGROUP_MINIMUM_REFS,
 } from "./vendor-sample-types";
 import type { AccessoryScarcityState, AccessorySummary } from "./vendor-sample-types";
-import { loadEffectiveMinimumRefsMap, loadVendorActivationOverrides } from "./vendor-bag-ideal-route-service";
+import { loadEffectiveMinimumRefsMap, loadVendorActivationOverrides, setVendorActivation } from "./vendor-bag-ideal-route-service";
 import { buildCommercialIntelligence } from "./maletas-commercial-intelligence";
 import type { MaletasCommercialIntelligenceResult } from "./maletas-commercial-intelligence-types";
 import { applyActivationOverrides } from "./vendor-sample-presence-engine";
@@ -280,6 +280,32 @@ export interface VendorSampleLoadResult {
   opportunityCandidates: OpportunityCandidatesResult;
 }
 
+// ── CASTILLITOS-COMMERCIAL-TRUTH-08A0 §D: Auto-activation ────────────────────
+// When SAG shows positive refs for a canonical vendor's bodega, auto-activate
+// their maleta. Idempotent via upsert. Never reactivates a manually deactivated
+// vendor (only activates vendors without an existing activation override).
+// Zero SAG writes — only Agentik VendorBagIdealRouteRule.
+
+async function autoActivateVendorsFromPresence(
+  organizationId: string,
+  presenceResults: VendorPresenceResult[],
+): Promise<void> {
+  // Load current activation state
+  const currentActivation = await loadVendorActivationOverrides(organizationId);
+
+  for (const pr of presenceResults) {
+    if (pr.totalPresent <= 0) continue; // No positive refs → skip
+
+    // If vendor already has an activation record, DON'T override.
+    // This respects manual deactivation decisions.
+    if (currentActivation.has(pr.vendorId)) continue;
+
+    // First time seeing positive refs → auto-activate
+    console.log(`[MALETAS §D] Auto-activating ${pr.vendorId} (${pr.totalPresent} refs in bodega ${pr.bodegaKaNl})`);
+    await setVendorActivation(organizationId, pr.vendorId, true);
+  }
+}
+
 // ── Main loader ──────────────────────────────────────────────────────────────
 
 export async function loadVendorSampleData(
@@ -330,6 +356,16 @@ export async function loadVendorSampleData(
       supplyPlan: { vendorPlans: [], totalMissingPositions: 0, totalExcessPositions: 0, globalCompletionPct: 0, coverageSummary: { bodega: 0, op: 0, produccion: 0, recompra: 0, sinCobertura: 0 } },
       opportunityCandidates: { candidates: [], totalCS: 0, totalLT: 0 },
     };
+  }
+
+  // ── 1b. CASTILLITOS-COMMERCIAL-TRUTH-08A0 §D: Auto-activate vendors ──
+  // If a canonical vendor has positive refs in SAG, activate their maleta.
+  // Idempotent: uses upsert. Never reactivates a manually archived vendor.
+  // Zero SAG writes — only writes to Agentik VendorBagIdealRouteRule.
+  try {
+    await autoActivateVendorsFromPresence(organizationId, presenceResults);
+  } catch {
+    // Non-fatal — activation is a convenience, not a gate
   }
 
   // ── 2. Canonical main-warehouse availability (SAG CURRENT B01) ──
