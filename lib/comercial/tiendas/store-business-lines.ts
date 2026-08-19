@@ -58,11 +58,11 @@ export const BUSINESS_LINE_MAP: Record<string, StoreBusinessLine> = {
 // ── SAG productLine → business line mapping ──────────────────────────────────
 
 const SAG_LINE_MAP: Record<string, string> = {
-  "1": "castillitos",              // Pijamas, camisetas, conjuntos CC
-  "2": "latin_kids",              // Mamelucos, conjuntos, vestidos LK
-  "3": "castillitos",              // Pijamas dama (textile, same brand)
-  "4": "accesorios_importacion",   // Accesorios (bolsos, carteras, etc.)
-  "5": "accesorios_importacion",   // Jugueteria, dormitorio, peluche
+  "1": "latin_kids",              // SAG LINEAS.1 = "LATIN KIDS" — confirmed 2026-04-08
+  "2": "castillitos",             // SAG LINEAS.2 = "CASTILLITOS" — confirmed 2026-04-08
+  "3": "castillitos",             // SAG LINEAS.3 = "OTROS" (bolsas, tapabocas — textile, CC brand)
+  "4": "accesorios_importacion",  // SAG LINEAS.4 = "POWER" (pijamas niño power)
+  "5": "accesorios_importacion",  // SAG LINEAS.5 = "IMPORTACION" (jugueteria, dormitorio, peluche)
 };
 
 const DEFAULT_LINE_ID = "accesorios_importacion";

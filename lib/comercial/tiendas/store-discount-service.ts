@@ -188,6 +188,17 @@ export async function loadStoreDiscounts(
     const data = refMap.get(ref)!;
     const first = data.items[0];
 
+    // CASTILLITOS-COMMERCIAL-TRUTH-08A0 §G: Discount rules are Castillitos-only.
+    // Latin Kids and Accesorios/Importación have no discount rules defined yet.
+    // Emit them with discountPercent=0, status=LINE_NOT_ELIGIBLE (no recommendation).
+    // CASTILLITOS-COMMERCIAL-TRUTH-08A0 §G: Discount rules are Castillitos-only.
+    // Latin Kids and Accesorios/Importación have no discount rules defined yet.
+    // Skip these lines entirely — no recommendation emitted (0% by omission).
+    const discountLine = resolveDiscountLine(first);
+    if (discountLine !== "CASTILLITOS") {
+      continue;
+    }
+
     const fact = agingFacts.get(ref);
     const daysInStore = fact?.daysInStore ?? null;
     const agingSource = fact?.source ?? "SIN_FECHA";
