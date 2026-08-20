@@ -31,10 +31,10 @@ import "server-only";
 
 import { loadVendorSampleData } from "./vendor-sample-loader";
 import {
-  getSalesPortfolioDerroteroCoverage,
-  getSalesPortfolioSupplyNeeds,
-  getSalesPortfolioSupplyCandidates,
-} from "./supply-plan-engine";
+  getSampleCoverageSummary,
+  getSampleCoverageNeeds,
+  getSampleCoverageCandidates,
+} from "./sample-coverage-engine";
 import { VENDOR_BODEGA_CONFIGS } from "./vendor-sample-presence-engine";
 import {
   MALETA_REMOVAL_LIMITS,
@@ -44,7 +44,7 @@ import type {
   VendorSampleRef,
   ProductionSuggestion,
 } from "./vendor-sample-types";
-import type { SalesPortfolioSupplyPlan } from "./supply-plan-engine";
+import type { SampleCoverageResult } from "./sample-coverage-engine";
 import type {
   DataProvenance,
   DomainToolDefinition,
@@ -229,8 +229,7 @@ export async function getSalesPortfolioDerrotero(
   const v = data.vendors.find((x) => x.vendorId === vendorId);
   if (!v) return null;
 
-  const plan = data.supplyPlan;
-  const coverageAll = getSalesPortfolioDerroteroCoverage(plan);
+  const coverageAll = getSampleCoverageSummary(data.sampleCoverage);
   const vc = coverageAll.find((c) => c.vendorId === vendorId);
 
   if (!vc) {
@@ -241,12 +240,12 @@ export async function getSalesPortfolioDerrotero(
     };
   }
 
-  // Break coverage down by line from supply plan positions
-  const vp = plan.vendorPlans.find((p) => p.vendorId === vendorId);
+  // Break coverage down by line from sample coverage positions
+  const vendorCov = data.sampleCoverage.vendorCoverages.find((p) => p.vendorId === vendorId);
   const byLine = new Map<string, DerroteroCoverageLineEntry>();
 
-  if (vp) {
-    for (const pos of vp.positions) {
+  if (vendorCov) {
+    for (const pos of vendorCov.positions) {
       const lineKey = resolveLineKey(pos.commercialWorld, pos.brand);
       if (!byLine.has(lineKey)) {
         byLine.set(lineKey, { line: lineKey, completionPct: 0, totalEntries: 0, completeEntries: 0, missingEntries: 0, excessEntries: 0 });
@@ -257,8 +256,8 @@ export async function getSalesPortfolioDerrotero(
       else entry.missingEntries++;
     }
 
-    // Add excess from plan
-    for (const excess of vp.excessPositions ?? []) {
+    // Add excess from coverage
+    for (const excess of vendorCov.excessPositions ?? []) {
       const lineKey = resolveLineKey(excess.commercialWorld, excess.brand);
       if (!byLine.has(lineKey)) {
         byLine.set(lineKey, { line: lineKey, completionPct: 0, totalEntries: 0, completeEntries: 0, missingEntries: 0, excessEntries: 0 });
@@ -282,10 +281,10 @@ export async function getSalesPortfolioDerrotero(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 6. getSalesPortfolioSupplyPlan — full supply plan for a vendor
+// 6. getSalesPortfolioCoverageForVendor — sample coverage needs for a vendor
 // ══════════════════════════════════════════════════════════════════════════════
 
-export async function getSalesPortfolioSupplyPlanForVendor(
+export async function getSalesPortfolioCoverageForVendor(
   orgId: string,
   vendorId: string,
 ): Promise<SupplyNeedsResult | null> {
@@ -293,19 +292,19 @@ export async function getSalesPortfolioSupplyPlanForVendor(
   const v = data.vendors.find((x) => x.vendorId === vendorId);
   if (!v) return null;
 
-  const allNeeds = getSalesPortfolioSupplyNeeds(data.supplyPlan);
+  const allNeeds = getSampleCoverageNeeds(data.sampleCoverage);
   const vendorNeeds = allNeeds.filter((n) => n.vendorId === vendorId);
 
   const needs: SupplyNeedItem[] = vendorNeeds.map((n) => {
-    const vp = data.supplyPlan.vendorPlans.find((p) => p.vendorId === vendorId);
-    const pos = vp?.positions.find((p) => p.subgroupName === n.subgroupName);
+    const vc = data.sampleCoverage.vendorCoverages.find((p) => p.vendorId === vendorId);
+    const pos = vc?.positions.find((p) => p.subgroupName === n.subgroupName);
     return {
       subgroupName: n.subgroupName,
       brand: n.brand,
       commercialWorld: pos?.commercialWorld ?? "",
       missingReferences: n.missingReferences,
-      bestAction: n.bestAction,
-      bestActionExplanation: n.bestActionExplanation,
+      bestAction: n.status,
+      bestActionExplanation: n.statusExplanation,
       candidateCount: n.candidateCount,
     };
   });
@@ -317,28 +316,31 @@ export async function getSalesPortfolioSupplyPlanForVendor(
   };
 }
 
+/** @deprecated Use getSalesPortfolioCoverageForVendor */
+export const getSalesPortfolioSupplyPlanForVendor = getSalesPortfolioCoverageForVendor;
+
 // ══════════════════════════════════════════════════════════════════════════════
-// 7. getSalesPortfolioSupplyCandidatesForPosition
+// 7. getSalesPortfolioCoverageCandidatesForPosition
 // ══════════════════════════════════════════════════════════════════════════════
 
-export async function getSalesPortfolioSupplyCandidatesForPosition(
+export async function getSalesPortfolioCoverageCandidatesForPosition(
   orgId: string,
   vendorId: string,
   subgroupName: string,
 ): Promise<SupplyCandidatesResult> {
   const data = await loadVendorSampleData(orgId);
-  const raw = getSalesPortfolioSupplyCandidates(data.supplyPlan, vendorId, subgroupName);
+  const raw = getSampleCoverageCandidates(data.sampleCoverage, vendorId, subgroupName);
 
   const candidates: SupplyCandidateItem[] = raw.map((c) => ({
     reference: c.reference,
     description: c.description,
-    action: c.action,
+    action: c.status,
     source: c.source,
     availableQty: c.availableQty,
     pendingQty: c.pendingQty,
     pendingQtyQuality: c.pendingQty != null ? "ESTIMATED" : null,
     opNumber: c.opNumber,
-    confidence: c.confidence,
+    confidence: "HIGH",
     explanation: c.explanation,
   }));
 
@@ -348,6 +350,15 @@ export async function getSalesPortfolioSupplyCandidatesForPosition(
       "pendingQtyQuality=ESTIMATED when OP line data unavailable",
     ]),
   };
+}
+
+/** @deprecated Use getSalesPortfolioCoverageCandidatesForPosition */
+export async function getSalesPortfolioSupplyCandidatesForPosition(
+  orgId: string,
+  vendorId: string,
+  subgroupName: string,
+): Promise<SupplyCandidatesResult> {
+  return getSalesPortfolioCoverageCandidatesForPosition(orgId, vendorId, subgroupName);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -455,8 +466,8 @@ export async function emitPortfolioAttentionSignals(
       });
     }
 
-    // PORTFOLIO_COVERAGE_AT_RISK — from supply plan coverage
-    const coverageAll = getSalesPortfolioDerroteroCoverage(data.supplyPlan);
+    // PORTFOLIO_COVERAGE_AT_RISK — from sample coverage
+    const coverageAll = getSampleCoverageSummary(data.sampleCoverage);
     const vc = coverageAll.find((c) => c.vendorId === v.vendorId);
     if (vc && vc.completionPct < 70) {
       items.push({
@@ -472,7 +483,7 @@ export async function emitPortfolioAttentionSignals(
           missingEntries: vc.missingEntries,
           totalEntries: vc.totalEntries,
         },
-        suggestedAction: "Abrir Plan surtido para completar posiciones",
+        suggestedAction: "Abrir Cobertura de mostrario para completar posiciones",
         suggestedDestination: "surtido",
         deduplicationKey: `coverage:${orgId}:${v.vendorId}`,
         createdAt: now,
@@ -481,9 +492,9 @@ export async function emitPortfolioAttentionSignals(
   }
 
   // PORTFOLIO_SUPPLY_REQUIRED — missing positions with candidates
-  const needs = getSalesPortfolioSupplyNeeds(data.supplyPlan);
+  const needs = getSampleCoverageNeeds(data.sampleCoverage);
   const withCandidates = needs.filter((n) => n.candidateCount > 0 &&
-    (n.bestAction === "REEMPLAZAR_BODEGA" || n.bestAction === "COMPLETAR_DESDE_OP"));
+    (n.status === "B01_AVAILABLE" || n.status === "OP_INCOMING"));
   if (withCandidates.length > 0) {
     items.push({
       type: "PORTFOLIO_SUPPLY_REQUIRED",
@@ -496,19 +507,19 @@ export async function emitPortfolioAttentionSignals(
       evidence: {
         positionsWithCandidate: withCandidates.length,
         byAction: {
-          bodega: withCandidates.filter((n) => n.bestAction === "REEMPLAZAR_BODEGA").length,
-          op: withCandidates.filter((n) => n.bestAction === "COMPLETAR_DESDE_OP").length,
+          bodega: withCandidates.filter((n) => n.status === "B01_AVAILABLE").length,
+          op: withCandidates.filter((n) => n.status === "OP_INCOMING").length,
         },
       },
-      suggestedAction: "Revisar plan surtido para enviar muestras",
-      suggestedDestination: "surtido",
+      suggestedAction: "Revisar cobertura de mostrario para enviar muestras",
+      suggestedDestination: "cobertura",
       deduplicationKey: `supply:${orgId}:actionable`,
       createdAt: now,
     });
   }
 
   // PORTFOLIO_NO_SUPPLY_CANDIDATE — missing positions without any candidate
-  const noCandidates = needs.filter((n) => n.candidateCount === 0 && n.bestAction === "SIN_COBERTURA");
+  const noCandidates = needs.filter((n) => n.candidateCount === 0 && (n.status === "PRODUCTION_REQUIRED" || n.status === "IMPORT_UNAVAILABLE" || n.status === "DATA_UNVERIFIED"));
   if (noCandidates.length > 0) {
     items.push({
       type: "PORTFOLIO_NO_SUPPLY_CANDIDATE",
@@ -551,7 +562,7 @@ export async function emitPortfolioAttentionSignals(
   }
 
   // PORTFOLIO_OP_CANDIDATE_AVAILABLE
-  const opCandidates = needs.filter((n) => n.bestAction === "COMPLETAR_DESDE_OP");
+  const opCandidates = needs.filter((n) => n.status === "OP_INCOMING");
   if (opCandidates.length > 0) {
     items.push({
       type: "PORTFOLIO_OP_CANDIDATE_AVAILABLE",
@@ -587,7 +598,7 @@ export async function comparePortfolios(
   orgId: string,
 ): Promise<PortfolioComparisonResult> {
   const data = await loadVendorSampleData(orgId);
-  const coverageAll = getSalesPortfolioDerroteroCoverage(data.supplyPlan);
+  const coverageAll = getSampleCoverageSummary(data.sampleCoverage);
 
   const portfolios: PortfolioComparisonItem[] = data.vendors
     .filter((v) => v.isActive)
@@ -618,17 +629,17 @@ export async function findSharedSupplyNeeds(
   orgId: string,
 ): Promise<SharedNeedsResult> {
   const data = await loadVendorSampleData(orgId);
-  const allNeeds = getSalesPortfolioSupplyNeeds(data.supplyPlan);
+  const allNeeds = getSampleCoverageNeeds(data.sampleCoverage);
 
   // Group by subgroupName across vendors
   const bySubgroup = new Map<string, { vendors: Set<string>; brand: string | null; world: string; bestAction: string }>();
   for (const n of allNeeds) {
-    const vp = data.supplyPlan.vendorPlans.find((p) => p.vendorId === n.vendorId);
-    const pos = vp?.positions.find((p) => p.subgroupName === n.subgroupName);
+    const vc = data.sampleCoverage.vendorCoverages.find((p) => p.vendorId === n.vendorId);
+    const pos = vc?.positions.find((p) => p.subgroupName === n.subgroupName);
     const world = pos?.commercialWorld ?? "";
     const key = `${n.subgroupName}:${world}`;
     if (!bySubgroup.has(key)) {
-      bySubgroup.set(key, { vendors: new Set(), brand: n.brand, world, bestAction: n.bestAction });
+      bySubgroup.set(key, { vendors: new Set(), brand: n.brand, world, bestAction: n.status });
     }
     bySubgroup.get(key)!.vendors.add(n.vendorId);
   }
@@ -662,15 +673,15 @@ export async function findMultiVendorCandidates(
 
   // Collect all candidates across all vendors
   const byRef = new Map<string, { desc: string; available: number; vendors: Set<string>; subgroup: string }>();
-  for (const vp of data.supplyPlan.vendorPlans) {
-    for (const pos of vp.positions) {
+  for (const vc of data.sampleCoverage.vendorCoverages) {
+    for (const pos of vc.positions) {
       for (const c of pos.candidates) {
-        if (!c.reference || c.action !== "REEMPLAZAR_BODEGA") continue;
+        if (!c.reference || c.status !== "B01_AVAILABLE") continue;
         const key = c.reference.toUpperCase();
         if (!byRef.has(key)) {
           byRef.set(key, { desc: c.description, available: c.availableQty ?? 0, vendors: new Set(), subgroup: pos.subgroupName });
         }
-        byRef.get(key)!.vendors.add(vp.vendorId);
+        byRef.get(key)!.vendors.add(vc.vendorId);
       }
     }
   }
@@ -703,18 +714,18 @@ export async function findOpDependentNeeds(
   const data = await loadVendorSampleData(orgId);
   const needs: OpDependentNeedItem[] = [];
 
-  for (const vp of data.supplyPlan.vendorPlans) {
-    for (const pos of vp.positions) {
-      if (pos.bestAction !== "COMPLETAR_DESDE_OP") continue;
-      const opCandidate = pos.candidates.find((c) => c.action === "COMPLETAR_DESDE_OP");
+  for (const vc of data.sampleCoverage.vendorCoverages) {
+    for (const pos of vc.positions) {
+      if (pos.status !== "OP_INCOMING") continue;
+      const opCandidate = pos.candidates.find((c) => c.status === "OP_INCOMING");
       needs.push({
-        vendorId: vp.vendorId,
-        vendorName: vp.vendorName,
+        vendorId: vc.vendorId,
+        vendorName: vc.vendorName,
         subgroupName: pos.subgroupName,
         opNumber: opCandidate?.opNumber ?? null,
         pendingQty: opCandidate?.pendingQty ?? null,
         pendingQtyQuality: opCandidate?.pendingQty != null ? "ESTIMATED" : null,
-        explanation: pos.bestActionExplanation,
+        explanation: pos.statusExplanation,
       });
     }
   }
@@ -791,8 +802,8 @@ export const PORTFOLIO_DOMAIN_TOOL_REGISTRY: DomainToolDefinition[] = [
     outputType: "DerroteroCoverageResult | null",
   },
   {
-    name: "getSalesPortfolioSupplyPlanForVendor",
-    description: "Get all missing Derrotero positions and their supply actions for a vendor",
+    name: "getSalesPortfolioCoverageForVendor",
+    description: "Get all missing Derrotero positions and their sample coverage status for a vendor",
     category: "READ",
     approvalRequired: false,
     permission: "org:read",
@@ -800,8 +811,8 @@ export const PORTFOLIO_DOMAIN_TOOL_REGISTRY: DomainToolDefinition[] = [
     outputType: "SupplyNeedsResult | null",
   },
   {
-    name: "getSalesPortfolioSupplyCandidatesForPosition",
-    description: "Get eligible supply candidates for a specific missing position (references available in warehouse or OP)",
+    name: "getSalesPortfolioCoverageCandidatesForPosition",
+    description: "Get eligible coverage candidates for a specific missing position (references available in warehouse or OP)",
     category: "READ",
     approvalRequired: false,
     permission: "org:read",

@@ -45,7 +45,7 @@ function resolveDeepLink(item: FrontlineAttentionItem): DeepLinkTarget | null {
       return { tab: "maleta", context: { section: "retiro" } };
     case "PORTFOLIO_SUPPLY_REQUIRED":
     case "PORTFOLIO_COVERAGE_AT_RISK":
-      return { tab: "maleta", context: { section: "surtido" } };
+      return { tab: "maleta", context: { section: "cobertura" } };
     case "ORDER_PENDING_SYNC":
     case "ORDER_SYNC_FAILED":
     case "ORDER_CONFIRMED":

@@ -51,11 +51,11 @@ import type {
 import { getVendorMalletBaseMetrics } from "@/lib/comercial/maletas/maletas-functional-evaluation";
 import { CommercialReferenceThumbnail } from "@/components/comercial/commercial-reference-thumbnail";
 import type {
-  SalesPortfolioSupplyPlan,
-  VendorSupplyPlan,
-  SupplyPosition,
-  SupplyAction,
-} from "@/lib/comercial/maletas/supply-plan-engine";
+  SampleCoverageResult,
+  VendorSampleCoverage,
+  CoveragePosition,
+  CoverageStatus,
+} from "@/lib/comercial/maletas/sample-coverage-engine";
 
 // ── Props ────────────────────────────────────────────────────────────────────
 
@@ -74,7 +74,7 @@ interface MaletasClientProps {
   assortmentEvaluations: VendorAssortmentResult[];
   productionThresholds: SubgroupProductionEval[];
   coverageResult: BusinessCoverageResult;
-  supplyPlan: SalesPortfolioSupplyPlan;
+  sampleCoverage: SampleCoverageResult;
 }
 
 // ── Design tokens ────────────────────────────────────────────────────────────
@@ -171,7 +171,7 @@ export function MaletasClient({
   assortmentEvaluations,
   productionThresholds,
   coverageResult,
-  supplyPlan,
+  sampleCoverage,
   opportunityCandidates,
 }: MaletasClientProps) {
   const [selectedVendor, setSelectedVendor] = useState<VendorSampleSnapshot | null>(null);
@@ -185,7 +185,7 @@ export function MaletasClient({
   // Mutable copy of assortmentEvaluations for optimistic ideal updates
   const [liveAssortmentEvals, setLiveAssortmentEvals] = useState(assortmentEvaluations);
   useEffect(() => { setLiveAssortmentEvals(assortmentEvaluations); }, [assortmentEvaluations]);
-  const [drawerTab, setDrawerTab] = useState<"referencias" | "retiro" | "inteligencia" | "derrotero" | "surtido">("referencias");
+  const [drawerTab, setDrawerTab] = useState<"referencias" | "retiro" | "inteligencia" | "derrotero" | "cobertura">("referencias");
   const [lineExpanded, setLineExpanded] = useState<Record<string, boolean>>({});
   const tableContainerRef = useRef<HTMLDivElement>(null);
 
@@ -1082,12 +1082,12 @@ export function MaletasClient({
 
               {/* Row 2: Tab switcher (COMERCIAL-MALETAS-DRAWER-OPERATIONAL-UX-02 — Phase 5) */}
               <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${C.line}` }}>
-                {(["referencias", "retiro", "inteligencia", "derrotero", "surtido"] as const).map((tab) => {
+                {(["referencias", "retiro", "inteligencia", "derrotero", "cobertura"] as const).map((tab) => {
                   const isActive = drawerTab === tab;
                   const label = tab === "referencias" ? "Referencias"
                     : tab === "retiro" ? `Retiro${retiroRefs.length > 0 ? ` (${retiroRefs.length})` : ""}`
                     : tab === "inteligencia" ? "Inteligencia"
-                    : tab === "surtido" ? "Plan surtido"
+                    : tab === "cobertura" ? "Cobertura de mostrario"
                     : "Derrotero";
                   return (
                     <button
@@ -1616,7 +1616,7 @@ export function MaletasClient({
                   commercialRefs={commercialRefs}
                   retiroRefs={retiroRefs}
                   coverageByLine={coverageByLine}
-                  supplyPlan={supplyPlan}
+                  sampleCoverage={sampleCoverage}
                   onNavigate={(target) => {
                     setDrawerTab(target.tab);
                     if (target.tab === "referencias" && target.line) {
@@ -1655,37 +1655,39 @@ export function MaletasClient({
               </div>
             )}
 
-            {/* ═══ TAB: PLAN DE SURTIDO (AGENTIK-SALES-PORTFOLIO-SUPPLY-PLAN-CERT-01) ═══ */}
-            {drawerTab === "surtido" && selectedVendor && (() => {
-              const vendorPlan = supplyPlan.vendorPlans.find((p) => p.vendorId === selectedVendor.vendorId);
-              if (!vendorPlan) {
+            {/* ═══ TAB: COBERTURA DE MOSTRARIO (MALETAS-COBERTURA-MOSTRARIO-08B2) ═══ */}
+            {drawerTab === "cobertura" && selectedVendor && (() => {
+              const vendorCov = sampleCoverage.vendorCoverages.find((p) => p.vendorId === selectedVendor.vendorId);
+              if (!vendorCov) {
                 return (
                   <div style={{ padding: S[4], fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint }}>
-                    Sin plan de surtido disponible para este vendedor.
+                    Sin cobertura de mostrario disponible para este vendedor.
                   </div>
                 );
               }
 
-              // MALETAS-PLAN-SURTIDO-08B1: Section-grouped positions
-              const bodegaPositions = vendorPlan.positions.filter((p) => p.bestAction === "REEMPLAZAR_BODEGA");
-              const opPositions = vendorPlan.positions.filter((p) => p.bestAction === "COMPLETAR_DESDE_OP");
-              const produccionPositions = vendorPlan.positions.filter(
-                (p) => p.bestAction === "PRODUCCION_SUGERIDA" || p.bestAction === "RECOMPRA_SUGERIDA" || p.bestAction === "SIN_COBERTURA",
-              );
+              // MALETAS-COBERTURA-MOSTRARIO-08B2: Section-grouped positions
+              const b01Positions = vendorCov.positions.filter((p) => p.status === "B01_AVAILABLE");
+              const opPositions = vendorCov.positions.filter((p) => p.status === "OP_INCOMING");
+              const prodPositions = vendorCov.positions.filter((p) => p.status === "PRODUCTION_REQUIRED");
+              const importPositions = vendorCov.positions.filter((p) => p.status === "IMPORT_UNAVAILABLE");
+              const unverifiedPositions = vendorCov.positions.filter((p) => p.status === "DATA_UNVERIFIED");
 
               return (
                 <div style={{ flex: 1, overflowY: "auto" as const, minHeight: 0, paddingTop: S[2] }}>
                   {/* ── Primary operational KPI strip ────────────────────────── */}
                   <div style={{
-                    display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: S[2],
+                    display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: S[2],
                     padding: `${S[2]}px ${S[3]}px`, marginBottom: S[3],
                   }}>
                     {[
-                      { label: "Por completar", value: vendorPlan.missingEntries, color: vendorPlan.missingEntries > 0 ? C.red : C.green },
-                      { label: "Listas para surtir", value: vendorPlan.bodegaCandidates, color: C.green },
-                      { label: "Proximas por OP", value: vendorPlan.opCandidates, color: C.amber },
-                      { label: "Produccion sugerida", value: vendorPlan.produccionSugerida + vendorPlan.recompraSugerida + vendorPlan.sinCobertura, color: C.red },
-                    ].map((kpi) => (
+                      { label: "Posiciones faltantes", value: vendorCov.missingEntries, color: vendorCov.missingEntries > 0 ? C.red : C.green },
+                      { label: "Disponibles en B01", value: vendorCov.b01Available, color: C.green },
+                      { label: "En camino por OP", value: vendorCov.opIncoming, color: C.amber },
+                      { label: "Requieren produccion", value: vendorCov.productionRequired, color: C.red },
+                      { label: "Import sin disponib.", value: vendorCov.importUnavailable, color: C.inkFaint },
+                      { label: "Datos sin verificar", value: vendorCov.dataUnverified, color: C.amber },
+                    ].filter((kpi) => kpi.value > 0 || kpi.label === "Posiciones faltantes" || kpi.label === "Disponibles en B01").map((kpi) => (
                       <div key={kpi.label} style={{
                         background: C.surfaceAlt, borderRadius: R.sm, padding: `${S[2]}px ${S[3]}px`,
                         border: `1px solid ${C.line}`, textAlign: "center" as const,
@@ -1705,23 +1707,23 @@ export function MaletasClient({
                     display: "flex", gap: S[3], padding: `${S[1]}px ${S[3]}px`, marginBottom: S[3],
                     fontFamily: T.mono, fontSize: 10, color: C.inkFaint,
                   }}>
-                    <span>Completitud: <strong style={{ color: C.blueDark }}>{vendorPlan.completionPct}%</strong></span>
-                    <span>{vendorPlan.completeEntries}/{vendorPlan.totalDerroteroEntries} posiciones cubiertas</span>
+                    <span>Completitud: <strong style={{ color: C.blueDark }}>{vendorCov.completionPct}%</strong></span>
+                    <span>{vendorCov.completeEntries}/{vendorCov.totalDerroteroEntries} posiciones cubiertas</span>
                   </div>
 
-                  {/* ── SECTION: LISTAS PARA SURTIR (bodega) — open by default ── */}
-                  <SupplySection
-                    title="Listas para surtir"
-                    count={bodegaPositions.length}
+                  {/* ── SECTION: DISPONIBLES EN BODEGA PRINCIPAL — open by default ── */}
+                  <CoverageSection
+                    title="Disponibles en Bodega Principal"
+                    count={b01Positions.length}
                     color={C.green}
                     defaultOpen
-                    positions={bodegaPositions}
+                    positions={b01Positions}
                     emptyMessage="Sin posiciones con candidatos disponibles en bodega"
                   />
 
-                  {/* ── SECTION: PROXIMAS POR OP — open if non-empty ── */}
-                  <SupplySection
-                    title="Proximas por OP"
+                  {/* ── SECTION: EN CAMINO POR OP — open if non-empty ── */}
+                  <CoverageSection
+                    title="En camino por OP"
                     count={opPositions.length}
                     color={C.amber}
                     defaultOpen={opPositions.length > 0}
@@ -1729,44 +1731,68 @@ export function MaletasClient({
                     emptyMessage="Sin posiciones con OP activa"
                   />
 
-                  {/* ── SECTION: PRODUCCION SUGERIDA ── */}
-                  <SupplySection
-                    title="Produccion sugerida"
-                    count={produccionPositions.length}
+                  {/* ── SECTION: REQUIEREN PRODUCCION ── */}
+                  <CoverageSection
+                    title="Requieren produccion"
+                    count={prodPositions.length}
                     color={C.red}
-                    defaultOpen={produccionPositions.length > 0}
-                    positions={produccionPositions}
+                    defaultOpen={prodPositions.length > 0}
+                    positions={prodPositions}
                     emptyMessage="Todas las posiciones tienen cobertura"
                   />
 
-                  {/* ── SECTION: CUBIERTAS — collapsed by default ── */}
-                  <SupplyCollapsedSection
-                    title="Cubiertas"
-                    count={vendorPlan.completeEntries}
+                  {/* ── SECTION: IMPORTACION SIN DISPONIBILIDAD ── */}
+                  {importPositions.length > 0 && (
+                    <CoverageSection
+                      title="Importacion sin disponibilidad"
+                      count={importPositions.length}
+                      color={C.inkFaint}
+                      defaultOpen={false}
+                      positions={importPositions}
+                      emptyMessage=""
+                    />
+                  )}
+
+                  {/* ── SECTION: POSICIONES CON DATOS SIN VERIFICAR ── */}
+                  {unverifiedPositions.length > 0 && (
+                    <CoverageSection
+                      title="Posiciones con datos sin verificar"
+                      count={unverifiedPositions.length}
+                      color={C.amber}
+                      defaultOpen={false}
+                      positions={unverifiedPositions}
+                      emptyMessage=""
+                    />
+                  )}
+
+                  {/* ── SECTION: POSICIONES CUBIERTAS — collapsed by default ── */}
+                  <CoverageCollapsedSection
+                    title="Posiciones cubiertas"
+                    count={vendorCov.completeEntries}
                     color={C.green}
                     defaultOpen={false}
                   >
                     <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint, padding: `${S[2]}px 0` }}>
-                      {vendorPlan.completeEntries} posiciones del derrotero completamente cubiertas. Sin accion requerida.
+                      {vendorCov.completeEntries} posiciones del derrotero completamente cubiertas. Sin accion requerida.
                     </div>
-                  </SupplyCollapsedSection>
+                  </CoverageCollapsedSection>
 
-                  {/* ── SECTION: REQUIEREN RETIRO — secondary/collapsed ── */}
-                  {vendorPlan.excessPositions.length > 0 && (
-                    <SupplyCollapsedSection
-                      title="Requieren retiro"
-                      count={vendorPlan.excessPositions.length}
+                  {/* ── SECTION: MUESTRAS PARA RETIRAR — secondary/collapsed ── */}
+                  {vendorCov.excessPositions.length > 0 && (
+                    <CoverageCollapsedSection
+                      title="Muestras para retirar"
+                      count={vendorCov.excessPositions.length}
                       color={C.amber}
                       defaultOpen={false}
                     >
                       <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint, padding: `${S[1]}px 0 ${S[2]}px` }}>
-                        {vendorPlan.excessPositions.length} posiciones con exceso de referencias.
+                        {vendorCov.excessPositions.length} posiciones con exceso de referencias.
                       </div>
-                      {vendorPlan.excessPositions.slice(0, 5).map((ex, i) => (
+                      {vendorCov.excessPositions.slice(0, 5).map((ex, i) => (
                         <div key={i} style={{
                           display: "flex", justifyContent: "space-between", alignItems: "center",
                           padding: `${S[1]}px 0`,
-                          borderBottom: i < Math.min(vendorPlan.excessPositions.length, 5) - 1 ? `1px solid ${C.line}` : "none",
+                          borderBottom: i < Math.min(vendorCov.excessPositions.length, 5) - 1 ? `1px solid ${C.line}` : "none",
                         }}>
                           <div style={{ fontFamily: T.mono, fontSize: 10, color: C.ink }}>
                             {ex.subgroupName}
@@ -1787,7 +1813,7 @@ export function MaletasClient({
                       >
                         Ver en Retiro
                       </button>
-                    </SupplyCollapsedSection>
+                    </CoverageCollapsedSection>
                   )}
                 </div>
               );
@@ -2870,7 +2896,7 @@ type NavigateTarget =
   | { tab: "referencias"; line?: string; filter?: DrawerFilter }
   | { tab: "retiro"; line?: string }
   | { tab: "derrotero"; line?: string }
-  | { tab: "surtido"; line?: string };
+  | { tab: "cobertura"; line?: string };
 
 type CoverageByLineEntry = { complete: number; total: number; pct: number; missing: number; excess: number; catalogName: string };
 
@@ -2883,12 +2909,12 @@ const RISK_MARGIN: Record<string, { min: number; max: number }> = {
 
 // ── IntelligencePanel ────────────────────────────────────────────────────────
 
-function IntelligencePanel({ vendor, commercialRefs, retiroRefs, coverageByLine, supplyPlan, onNavigate }: {
+function IntelligencePanel({ vendor, commercialRefs, retiroRefs, coverageByLine, sampleCoverage, onNavigate }: {
   vendor: VendorSampleSnapshot;
   commercialRefs: VendorSampleRef[];
   retiroRefs: VendorSampleRef[];
   coverageByLine: Map<string, CoverageByLineEntry>;
-  supplyPlan: SalesPortfolioSupplyPlan;
+  sampleCoverage: SampleCoverageResult;
   onNavigate?: (target: NavigateTarget) => void;
 }) {
   // ── A. Salud del derrotero ──────────────────────────────────────────
@@ -2901,11 +2927,11 @@ function IntelligencePanel({ vendor, commercialRefs, retiroRefs, coverageByLine,
 
   // ── B. Riesgo de perder cobertura (DERROTERO-driven) ────────────────
   const coverageRisk = useMemo(() => {
-    const vp = supplyPlan.vendorPlans.find((p) => p.vendorId === vendor.vendorId);
-    if (!vp) return [];
+    const vc = sampleCoverage.vendorCoverages.find((p) => p.vendorId === vendor.vendorId);
+    if (!vc) return [];
     // Group missing positions by line key derived from commercialWorld + brand
     const byLine = new Map<string, { positions: string[]; sinCobertura: number }>();
-    for (const pos of vp.positions) {
+    for (const pos of vc.positions) {
       const lineKey = pos.commercialWorld === "IMPORTACION" ? "IMPORT"
         : pos.brand === "Castillitos" ? "CS"
         : pos.brand === "Latin Kids" ? "LT"
@@ -2913,18 +2939,16 @@ function IntelligencePanel({ vendor, commercialRefs, retiroRefs, coverageByLine,
       if (!byLine.has(lineKey)) byLine.set(lineKey, { positions: [], sinCobertura: 0 });
       const entry = byLine.get(lineKey)!;
       entry.positions.push(pos.subgroupName);
-      if (pos.bestAction === "SIN_COBERTURA" || pos.bestAction === "PRODUCCION_SUGERIDA" || pos.bestAction === "RECOMPRA_SUGERIDA") {
+      if (pos.status === "PRODUCTION_REQUIRED" || pos.status === "IMPORT_UNAVAILABLE") {
         entry.sinCobertura++;
       }
     }
     const result: { line: string; label: string; positionCount: number; sinCobertura: number; dimensionLabel: string }[] = [];
     for (const [lineKey, data] of byLine) {
       if (data.positions.length === 0) continue;
-      // Use correct taxonomy per world
       const dim = lineKey === "IMPORT" ? (data.positions.length === 1 ? "tamano" : "tamanos")
         : lineKey === "LT" ? (data.positions.length === 1 ? "subgrupo" : "subgrupos")
         : (data.positions.length === 1 ? "posicion" : "posiciones");
-      const riskLevel = data.sinCobertura > 0 ? "ALTO" : "MEDIO";
       result.push({
         line: lineKey,
         label: DERROTERO_LINE_LABEL[lineKey] ?? lineKey,
@@ -2934,7 +2958,7 @@ function IntelligencePanel({ vendor, commercialRefs, retiroRefs, coverageByLine,
       });
     }
     return result;
-  }, [supplyPlan, vendor.vendorId]);
+  }, [sampleCoverage, vendor.vendorId]);
 
   // ── C. Referencias cerca del umbral de retiro ───────────────────────
   const riskByLine = useMemo(() => {
@@ -2975,21 +2999,20 @@ function IntelligencePanel({ vendor, commercialRefs, retiroRefs, coverageByLine,
     return { retiroUrgente, nearRetiro, sinClasificar };
   }, [vendor, commercialRefs, retiroRefs]);
 
-  // ── E. Potencial de cobertura (supply-plan grounded) ────────────────
+  // ── E. Potencial de cobertura (sample-coverage grounded) ────────────
   const potential = useMemo(() => {
-    const vp = supplyPlan.vendorPlans.find((p) => p.vendorId === vendor.vendorId);
-    if (!vp) return [];
+    const vc = sampleCoverage.vendorCoverages.find((p) => p.vendorId === vendor.vendorId);
+    if (!vc) return [];
     const result: { line: string; label: string; current: number; projected: number }[] = [];
     for (const lineKey of ["CS", "LT", "IMPORT"]) {
       const cov = coverageByLine.get(lineKey);
       if (!cov || cov.total === 0) continue;
-      // Count only positions with actionable candidates (BODEGA or OP)
-      const actionable = vp.positions.filter((pos) => {
+      const actionable = vc.positions.filter((pos) => {
         const posLine = pos.commercialWorld === "IMPORTACION" ? "IMPORT"
           : pos.brand === "Castillitos" ? "CS"
           : pos.brand === "Latin Kids" ? "LT"
           : pos.commercialWorld;
-        return posLine === lineKey && (pos.bestAction === "REEMPLAZAR_BODEGA" || pos.bestAction === "COMPLETAR_DESDE_OP");
+        return posLine === lineKey && (pos.status === "B01_AVAILABLE" || pos.status === "OP_INCOMING");
       }).length;
       const projectedComplete = Math.min(cov.total, cov.complete + actionable);
       const projectedPct = Math.round((projectedComplete / cov.total) * 100);
@@ -2998,15 +3021,15 @@ function IntelligencePanel({ vendor, commercialRefs, retiroRefs, coverageByLine,
       }
     }
     return result;
-  }, [supplyPlan, vendor.vendorId, coverageByLine]);
+  }, [sampleCoverage, vendor.vendorId, coverageByLine]);
 
   // ── E2. Movements summary ──────────────────────────────────────────
   const movements = useMemo(() => {
-    const vp = supplyPlan.vendorPlans.find((p) => p.vendorId === vendor.vendorId);
-    const porSurtir = vp?.missingEntries ?? 0;
+    const vc = sampleCoverage.vendorCoverages.find((p) => p.vendorId === vendor.vendorId);
+    const porSurtir = vc?.missingEntries ?? 0;
     const paraRetiro = retiroRefs.length;
     return { porSurtir, paraRetiro };
-  }, [supplyPlan, vendor.vendorId, retiroRefs]);
+  }, [sampleCoverage, vendor.vendorId, retiroRefs]);
 
   // ── Collapsible state ──────────────────────────────────────────────
   const [qualityOpen, setQualityOpen] = useState(false);
@@ -3204,7 +3227,7 @@ function IntelligencePanel({ vendor, commercialRefs, retiroRefs, coverageByLine,
         </div>
         <div style={{ display: "flex", gap: S[3], marginBottom: S[3] }}>
           <button
-            onClick={() => onNavigate?.({ tab: "surtido" })}
+            onClick={() => onNavigate?.({ tab: "cobertura" })}
             style={{
               flex: 1, padding: `${S[2]}px ${S[3]}px`, background: C.white,
               border: `1px solid ${C.line}`, borderRadius: R.sm, cursor: "pointer",
@@ -3215,7 +3238,7 @@ function IntelligencePanel({ vendor, commercialRefs, retiroRefs, coverageByLine,
               {movements.porSurtir}
             </div>
             <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint }}>posiciones por surtir</div>
-            <div style={{ fontFamily: T.mono, fontSize: 8, color: C.blueDark, marginTop: 2 }}>Ver Plan surtido →</div>
+            <div style={{ fontFamily: T.mono, fontSize: 8, color: C.blueDark, marginTop: 2 }}>Ver Cobertura de mostrario →</div>
           </button>
           <button
             onClick={() => onNavigate?.({ tab: "retiro" })}
@@ -4214,32 +4237,32 @@ function UnresolvedRefsPanel({
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Supply Plan Components (AGENTIK-SALES-PORTFOLIO-SUPPLY-PLAN-CERT-01)
+// Coverage Components (MALETAS-COBERTURA-MOSTRARIO-08B2)
 // ═══════════════════════════════════════════════════════════════════════════
 
-const SUPPLY_ACTION_LABEL: Record<SupplyAction, string> = {
-  REEMPLAZAR_BODEGA: "Surtir B01",
-  COMPLETAR_DESDE_OP: "OP activa",
-  PRODUCCION_SUGERIDA: "Producir",
-  RECOMPRA_SUGERIDA: "Recomprar",
-  SIN_COBERTURA: "Producir",
+const COVERAGE_STATUS_LABEL: Record<CoverageStatus, string> = {
+  B01_AVAILABLE: "B01",
+  OP_INCOMING: "OP activa",
+  PRODUCTION_REQUIRED: "Producir",
+  IMPORT_UNAVAILABLE: "Sin stock",
+  DATA_UNVERIFIED: "Sin verificar",
 };
 
-const SUPPLY_ACTION_COLOR: Record<SupplyAction, string> = {
-  REEMPLAZAR_BODEGA: C.green,
-  COMPLETAR_DESDE_OP: C.amber,
-  PRODUCCION_SUGERIDA: C.blueDark,
-  RECOMPRA_SUGERIDA: C.brand,
-  SIN_COBERTURA: C.red,
+const COVERAGE_STATUS_COLOR: Record<CoverageStatus, string> = {
+  B01_AVAILABLE: C.green,
+  OP_INCOMING: C.amber,
+  PRODUCTION_REQUIRED: C.red,
+  IMPORT_UNAVAILABLE: C.inkFaint,
+  DATA_UNVERIFIED: C.amber,
 };
 
 /** Collapsible section with position table */
-function SupplySection({ title, count, color, defaultOpen, positions, emptyMessage }: {
+function CoverageSection({ title, count, color, defaultOpen, positions, emptyMessage }: {
   title: string;
   count: number;
   color: string;
   defaultOpen: boolean;
-  positions: SupplyPosition[];
+  positions: CoveragePosition[];
   emptyMessage: string;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -4289,7 +4312,7 @@ function SupplySection({ title, count, color, defaultOpen, positions, emptyMessa
                 ))}
               </div>
               {positions.map((pos) => (
-                <SupplyPositionRow key={pos.positionId} pos={pos} />
+                <CoveragePositionRow key={pos.positionId} pos={pos} />
               ))}
             </div>
           )}
@@ -4300,7 +4323,7 @@ function SupplySection({ title, count, color, defaultOpen, positions, emptyMessa
 }
 
 /** Generic collapsible section for non-table content */
-function SupplyCollapsedSection({ title, count, color, defaultOpen, children }: {
+function CoverageCollapsedSection({ title, count, color, defaultOpen, children }: {
   title: string;
   count: number;
   color: string;
@@ -4330,13 +4353,12 @@ function SupplyCollapsedSection({ title, count, color, defaultOpen, children }: 
   );
 }
 
-/** MALETAS-PLAN-SURTIDO-08B1: Supply position row showing need + suggestion together */
-function SupplyPositionRow({ pos }: { pos: SupplyPosition }) {
+/** MALETAS-COBERTURA-MOSTRARIO-08B2: Coverage position row showing need + suggestion together */
+function CoveragePositionRow({ pos }: { pos: CoveragePosition }) {
   const [expanded, setExpanded] = useState(false);
-  const actionColor = SUPPLY_ACTION_COLOR[pos.bestAction];
-  const actionLabel = SUPPLY_ACTION_LABEL[pos.bestAction];
+  const statusColor = COVERAGE_STATUS_COLOR[pos.status];
+  const statusLabel = COVERAGE_STATUS_LABEL[pos.status];
 
-  // Row hierarchy: CS = group + subgroup, LT = subgroup, Import = sizeClass
   const primaryLabel = pos.subgroupName;
   const secondaryLabel = pos.commercialWorld === "IMPORTACION"
     ? "Importacion"
@@ -4344,7 +4366,6 @@ function SupplyPositionRow({ pos }: { pos: SupplyPosition }) {
       ? `${pos.brand} · ${pos.groupName}`
       : pos.groupName;
 
-  // First candidate for inline display
   const firstCandidate = pos.candidates[0];
 
   return (
@@ -4377,27 +4398,27 @@ function SupplyPositionRow({ pos }: { pos: SupplyPosition }) {
           {pos.missingReferences}
         </div>
         <div style={{
-          fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: actionColor,
+          fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: statusColor,
           textAlign: "center" as const, display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
         }}>
-          <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: actionColor, flexShrink: 0 }} />
-          {actionLabel}
+          <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: statusColor, flexShrink: 0 }} />
+          {statusLabel}
         </div>
       </div>
 
-      {/* ── Inline suggestion strip (always visible for BODEGA candidates) ── */}
+      {/* ── Inline suggestion strip (always visible for B01 candidates) ── */}
       {firstCandidate && firstCandidate.reference && (
         <div
           onClick={() => setExpanded(!expanded)}
           style={{
             display: "flex", alignItems: "center", gap: S[2],
             padding: `${S[1]}px ${S[3]}px`, cursor: "pointer",
-            background: pos.bestAction === "REEMPLAZAR_BODEGA" ? C.green + "08" : "transparent",
+            background: pos.status === "B01_AVAILABLE" ? C.green + "08" : "transparent",
             borderTop: `1px dashed ${C.line}`,
           }}
         >
           <span style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint }}>{"→"}</span>
-          <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: actionColor }}>
+          <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: statusColor }}>
             {firstCandidate.reference}
           </span>
           <span style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint, flex: 1 }}>
@@ -4419,23 +4440,22 @@ function SupplyPositionRow({ pos }: { pos: SupplyPosition }) {
       {/* ── Expanded detail ── */}
       {expanded && (
         <div style={{ padding: `${S[2]}px ${S[3]}px ${S[3]}px`, background: C.surfaceAlt, borderTop: `1px solid ${C.line}` }}>
-          {/* All candidates (one per missing reference slot) */}
           {pos.candidates.length > 0 && (
             <div>
               <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: C.inkFaint, marginBottom: S[1], textTransform: "uppercase" as const }}>
                 {pos.candidates.length === 1
-                  ? "Sugerencia"
-                  : `Sugerencias (${pos.candidates.length} para ${pos.missingReferences} faltante${pos.missingReferences > 1 ? "s" : ""})`}
+                  ? "Candidato"
+                  : `Candidatos (${pos.candidates.length} para ${pos.missingReferences} faltante${pos.missingReferences > 1 ? "s" : ""})`}
               </div>
               {pos.candidates.map((cand, ci) => {
-                const candColor = SUPPLY_ACTION_COLOR[cand.action];
+                const candColor = COVERAGE_STATUS_COLOR[cand.status];
                 return (
                   <div key={ci} style={{
                     padding: `${S[1]}px 0`, borderBottom: ci < pos.candidates.length - 1 ? `1px solid ${C.line}` : "none",
                   }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <div style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: candColor }}>
-                        {cand.reference || SUPPLY_ACTION_LABEL[cand.action]}
+                        {cand.reference || COVERAGE_STATUS_LABEL[cand.status]}
                       </div>
                       <div style={{ fontFamily: T.mono, fontSize: 10, color: C.ink }}>
                         {cand.availableQty != null ? `Disponible B01: ${cand.availableQty}` : cand.pendingQty != null ? `Pendiente: ${cand.pendingQty}` : "\u2014"}
@@ -4451,9 +4471,9 @@ function SupplyPositionRow({ pos }: { pos: SupplyPosition }) {
           )}
 
           {/* Production minimum quantity */}
-          {pos.minProductionQty != null && (
+          {pos.minWholesaleLot != null && (
             <div style={{ fontFamily: T.mono, fontSize: 9, color: C.red, marginTop: S[2] }}>
-              Cantidad minima mayorista: producir una referencia con {">"}{pos.minProductionQty}
+              Cantidad minima mayorista: producir una referencia con {">"}{pos.minWholesaleLot}
             </div>
           )}
 

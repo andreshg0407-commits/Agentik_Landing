@@ -34,7 +34,7 @@ export default async function MaletasPage({
       assortmentEvaluations={data.assortmentEvaluations}
       productionThresholds={data.productionThresholds}
       coverageResult={data.coverageResult}
-      supplyPlan={data.supplyPlan}
+      sampleCoverage={data.sampleCoverage}
       opportunityCandidates={data.opportunityCandidates}
     />
   );

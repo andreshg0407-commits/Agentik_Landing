@@ -102,9 +102,9 @@ import type {
   BusinessCoverageResult,
 } from "./maletas-functional-evaluation";
 import {
-  buildSalesPortfolioSupplyPlan,
-  type SalesPortfolioSupplyPlan,
-} from "./supply-plan-engine";
+  buildSampleCoverageResult,
+  type SampleCoverageResult,
+} from "./sample-coverage-engine";
 
 // ── Canonical diff report (Phase 6 — progressive integration) ────────────────
 
@@ -274,8 +274,8 @@ export interface VendorSampleLoadResult {
   canonicalDiffReport: CanonicalDiffReport | null;
   /** ACTIVATION-01: commercial scope filter audit */
   commercialScopeAudit: CommercialScopeAudit | null;
-  /** AGENTIK-SALES-PORTFOLIO-SUPPLY-PLAN-02: Derrotero-driven supply plan */
-  supplyPlan: SalesPortfolioSupplyPlan;
+  /** MALETAS-COBERTURA-MOSTRARIO-08B2: Sample coverage result */
+  sampleCoverage: SampleCoverageResult;
   /** 04A3R-V1: All refs above threshold, independent of maleta needs */
   opportunityCandidates: OpportunityCandidatesResult;
 }
@@ -327,7 +327,7 @@ export async function loadVendorSampleData(
       coverageResult: { textileCoverage: [], importCoverage: [], urgentProductionNeeds: [] },
       canonicalDiffReport: null,
       commercialScopeAudit: null,
-      supplyPlan: { vendorPlans: [], totalMissingPositions: 0, totalExcessPositions: 0, globalCompletionPct: 0, coverageSummary: { bodega: 0, op: 0, produccion: 0, recompra: 0, sinCobertura: 0 } },
+      sampleCoverage: { vendorCoverages: [], totalMissingPositions: 0, totalExcessPositions: 0, globalCompletionPct: 0, coverageSummary: { b01Available: 0, opIncoming: 0, productionRequired: 0, importUnavailable: 0, dataUnverified: 0 } },
       opportunityCandidates: { candidates: [], totalCS: 0, totalLT: 0 },
     };
   }
@@ -362,7 +362,7 @@ export async function loadVendorSampleData(
       coverageResult: { textileCoverage: [], importCoverage: [], urgentProductionNeeds: [] },
       canonicalDiffReport: null,
       commercialScopeAudit: null,
-      supplyPlan: { vendorPlans: [], totalMissingPositions: 0, totalExcessPositions: 0, globalCompletionPct: 0, coverageSummary: { bodega: 0, op: 0, produccion: 0, recompra: 0, sinCobertura: 0 } },
+      sampleCoverage: { vendorCoverages: [], totalMissingPositions: 0, totalExcessPositions: 0, globalCompletionPct: 0, coverageSummary: { b01Available: 0, opIncoming: 0, productionRequired: 0, importUnavailable: 0, dataUnverified: 0 } },
       opportunityCandidates: { candidates: [], totalCS: 0, totalLT: 0 },
     };
   }
@@ -1239,15 +1239,19 @@ export async function loadVendorSampleData(
     }
   }
 
-  // ── Supply plan (MALETAS-PLAN-SURTIDO-08B1) ──────────────────────────
+  // ── Sample coverage (MALETAS-COBERTURA-MOSTRARIO-08B2) ──────────────
   const vendorNameMap = new Map<string, string>();
   for (const v of vendors) vendorNameMap.set(v.vendorId, v.vendorName);
-  const supplyPlan = buildSalesPortfolioSupplyPlan(
+  const sampleCoverage = buildSampleCoverageResult(
     assortmentEvaluations,
     allCentralRefs,
     opCovCandidates,
     vendorRefSets,
     vendorNameMap,
+    {
+      b01Available: !canonical.sourceDown,
+      opAvailable: opCovCandidates.length > 0 || !canonical.sourceDown,
+    },
   );
 
   return {
@@ -1266,7 +1270,7 @@ export async function loadVendorSampleData(
     coverageResult,
     canonicalDiffReport,
     commercialScopeAudit,
-    supplyPlan,
+    sampleCoverage,
     opportunityCandidates,
   };
 }

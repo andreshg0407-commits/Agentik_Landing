@@ -4,7 +4,7 @@
  * Sprint: AGENTIK-SELLER-APP-UI-03
  *
  * Seller sees ONLY their own portfolio (server-scoped).
- * Three areas: Muestras, Retiro, Plan surtido.
+ * Three areas: Muestras, Retiro, Cobertura de mostrario.
  * No manager derrotero editing. No business rule recomputation.
  */
 "use client";
@@ -19,12 +19,12 @@ import { SellerIcon, appCard, EmptyState } from "./seller-ui-kit";
 
 // ── Sub-views ───────────────────────────────────────────────────────────────
 
-type PortfolioSection = "muestras" | "retiro" | "surtido";
+type PortfolioSection = "muestras" | "retiro" | "cobertura";
 
 const SECTIONS: Array<{ key: PortfolioSection; label: string }> = [
   { key: "muestras", label: "Muestras" },
   { key: "retiro", label: "Retiro" },
-  { key: "surtido", label: "Plan surtido" },
+  { key: "cobertura", label: "Cobertura de mostrario" },
 ];
 
 // ── Main View ───────────────────────────────────────────────────────────────
@@ -114,7 +114,7 @@ export function SellerPortfolioView({
       {/* Content */}
       {section === "muestras" && <MuestrasSection refs={vigentes} />}
       {section === "retiro" && <RetiroSection refs={retiro} />}
-      {section === "surtido" && <SurtidoSection needs={supplyNeeds} />}
+      {section === "cobertura" && <SurtidoSection needs={supplyNeeds} />}
     </div>
   );
 }
@@ -160,7 +160,7 @@ function RetiroSection({ refs }: { refs: SerializedPortfolioRef[] }) {
   );
 }
 
-// ── Plan surtido ────────────────────────────────────────────────────────────
+// ── Cobertura de mostrario ──────────────────────────────────────────────────────
 
 function SurtidoSection({ needs }: { needs: SerializedSupplyNeed[] }) {
   if (needs.length === 0) {
