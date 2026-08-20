@@ -36,6 +36,13 @@ export default async function MaletasPage({
       coverageResult={data.coverageResult}
       sampleCoverage={data.sampleCoverage}
       opportunityCandidates={data.opportunityCandidates}
+      b04Inventory={{
+        refs: data.b04Inventory.refs,
+        totalRefs: data.b04Inventory.totalRefs,
+        totalPositiveRefs: data.b04Inventory.totalPositiveRefs,
+        totalExistencia: data.b04Inventory.totalExistencia,
+        availability: data.b04Inventory.availability,
+      }}
     />
   );
 }

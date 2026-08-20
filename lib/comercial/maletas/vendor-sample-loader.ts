@@ -105,6 +105,11 @@ import {
   buildSampleCoverageResult,
   type SampleCoverageResult,
 } from "./sample-coverage-engine";
+import {
+  getB04ProductionInventory,
+  type B04InventoryResult,
+} from "./b04-production-inventory";
+import { normalizeTextileReference } from "./textile-reference-normalizer";
 
 // ── Canonical diff report (Phase 6 — progressive integration) ────────────────
 
@@ -241,6 +246,14 @@ export interface OpportunityCandidateRef {
   existenciaB01: number;
   reservadoB01: number;
   threshold: number;
+  /** SAG grupo for audit (MALETAS-08B2R3) */
+  grupoSag: string | null;
+  /** SAG subgrupo for audit (MALETAS-08B2R3) */
+  subgrupoSag: string | null;
+  /** Normalized textile classification (MALETAS-08B2R3 FASE 3) */
+  normalized: import("./textile-reference-normalizer").NormalizedReference;
+  /** Derrotero position this ref can cover, or discard reason */
+  derroteroMatch: string;
   /** How many maleta coverage needs this ref matches (0 = "Sin necesidad actual") */
   coverageMatchCount: number;
   /** Vendor names that need this ref */
@@ -278,6 +291,8 @@ export interface VendorSampleLoadResult {
   sampleCoverage: SampleCoverageResult;
   /** 04A3R-V1: All refs above threshold, independent of maleta needs */
   opportunityCandidates: OpportunityCandidatesResult;
+  /** MALETAS-08B2R3: B04 production inventory */
+  b04Inventory: B04InventoryResult;
 }
 
 // ── Main loader ──────────────────────────────────────────────────────────────
@@ -329,6 +344,7 @@ export async function loadVendorSampleData(
       commercialScopeAudit: null,
       sampleCoverage: { vendorCoverages: [], totalMissingPositions: 0, totalExcessPositions: 0, globalCompletionPct: 0, coverageSummary: { b01Available: 0, opIncoming: 0, productionRequired: 0, importUnavailable: 0, dataUnverified: 0 } },
       opportunityCandidates: { candidates: [], totalCS: 0, totalLT: 0 },
+      b04Inventory: { refs: [], byReference: new Map(), totalRefs: 0, totalPositiveRefs: 0, totalExistencia: 0, availability: "UNAVAILABLE" as const, queriedAt: new Date() },
     };
   }
 
@@ -364,6 +380,7 @@ export async function loadVendorSampleData(
       commercialScopeAudit: null,
       sampleCoverage: { vendorCoverages: [], totalMissingPositions: 0, totalExcessPositions: 0, globalCompletionPct: 0, coverageSummary: { b01Available: 0, opIncoming: 0, productionRequired: 0, importUnavailable: 0, dataUnverified: 0 } },
       opportunityCandidates: { candidates: [], totalCS: 0, totalLT: 0 },
+      b04Inventory: { refs: [], byReference: new Map(), totalRefs: 0, totalPositiveRefs: 0, totalExistencia: 0, availability: "UNAVAILABLE" as const, queriedAt: new Date() },
     };
   }
 
@@ -908,10 +925,15 @@ export async function loadVendorSampleData(
   // Only textile lines (CS>100, LT>200). Import excluded.
   const OPPORTUNITY_THRESHOLDS: Record<string, number> = { CS: 100, LT: 200 };
   const coverageMatchIndex = new Map<string, Set<string>>();
+  const derroteroPositionIndex = new Map<string, string>(); // ref → "groupName > subgroupName"
   for (const tc of coverageResult.textileCoverage) {
     const existing = coverageMatchIndex.get(tc.replacementReference) ?? new Set<string>();
     for (const t of tc.targets) existing.add(t.vendorId);
     coverageMatchIndex.set(tc.replacementReference, existing);
+    if (!derroteroPositionIndex.has(tc.replacementReference) && tc.targets.length > 0) {
+      const t = tc.targets[0];
+      derroteroPositionIndex.set(tc.replacementReference, `${t.groupName} > ${t.subgroupName}`);
+    }
   }
   const vendorNameLookup = new Map<string, string>();
   for (const v of vendors) vendorNameLookup.set(v.vendorId, v.vendorName);
@@ -940,6 +962,11 @@ export async function loadVendorSampleData(
       existenciaB01: ref.existencia,
       reservadoB01: ref.reservado,
       threshold,
+      grupoSag: ref.grupoSag,
+      subgrupoSag: ref.subgrupoSag,
+      normalized: normalizeTextileReference(ref.description, ref.grupoSag, ref.subgrupoSag, line),
+      derroteroMatch: derroteroPositionIndex.get(ref.reference)
+        ?? (ref.subgrupoSag ? `Sin posicion para subgrupo ${ref.subgrupoSag}` : "Sin subgrupo SAG"),
       coverageMatchCount: matchCount,
       coverageMatchVendors: matchVendorNames,
     });
@@ -1244,18 +1271,62 @@ export async function loadVendorSampleData(
     }
   }
 
+  // ── B04 Production Inventory (MALETAS-08B2R3) ──────────────────────────
+  let b04Inventory: B04InventoryResult;
+  try {
+    b04Inventory = await getB04ProductionInventory(db, organizationId);
+    console.log(`[MALETAS] B04 inventory: ${b04Inventory.totalRefs} refs, ${b04Inventory.totalExistencia} total units, availability=${b04Inventory.availability}`);
+  } catch (err) {
+    console.error("[MALETAS] B04 inventory load failed (non-fatal):", err);
+    b04Inventory = {
+      refs: [],
+      byReference: new Map(),
+      totalRefs: 0,
+      totalPositiveRefs: 0,
+      totalExistencia: 0,
+      availability: "UNAVAILABLE" as const,
+      queriedAt: new Date(),
+    };
+  }
+
+  // ── Build unified OP candidates from B04 SAG truth (MALETAS-08B2R3) ──
+  // B04 positive stock = active production. No temporal filter.
+  // Merge with existing opCovCandidates from ProductionOrder (legacy).
+  const b04OpCandidates: OpCoverageCandidate[] = [];
+  for (const b04Ref of b04Inventory.refs) {
+    if (b04Ref.existencia <= 0) continue;
+    if (!b04Ref.subgrupoSag) continue;
+    b04OpCandidates.push({
+      reference: b04Ref.reference,
+      description: b04Ref.description,
+      line: b04Ref.linea,
+      subgrupoSag: b04Ref.subgrupoSag,
+      grupoSag: b04Ref.grupoSag,
+      pendingQty: b04Ref.existencia,
+      opNumber: "B04", // SAG B04 does not provide individual OP numbers
+      createdAt: new Date().toISOString(),
+      lastEventDate: null,
+    });
+  }
+
+  // B04 is the SOLE authority for OP_INCOMING.
+  // Legacy ProductionOrder is diagnostic only — never generates OP_INCOMING.
+  // Only B04 candidates are passed to the coverage engine.
+  const unifiedOpCandidates: OpCoverageCandidate[] = b04OpCandidates;
+
   // ── Sample coverage (MALETAS-COBERTURA-MOSTRARIO-08B2) ──────────────
   const vendorNameMap = new Map<string, string>();
   for (const v of vendors) vendorNameMap.set(v.vendorId, v.vendorName);
+  const b04Available = b04Inventory.availability === "AVAILABLE";
   const sampleCoverage = buildSampleCoverageResult(
     assortmentEvaluations,
     allCentralRefs,
-    opCovCandidates,
+    unifiedOpCandidates,
     vendorRefSets,
     vendorNameMap,
     {
       b01Available: !canonical.sourceDown,
-      opAvailable: opCovCandidates.length > 0 || !canonical.sourceDown,
+      opAvailable: b04Available, // B04 is sole OP authority — legacy ProductionOrder is diagnostic only
     },
   );
 
@@ -1277,6 +1348,7 @@ export async function loadVendorSampleData(
     commercialScopeAudit,
     sampleCoverage,
     opportunityCandidates,
+    b04Inventory,
   };
 }
 

@@ -302,7 +302,7 @@ describe("K — Loader passes data to sample coverage engine", () => {
     const callSite = loaderSrc.indexOf("buildSampleCoverageResult(");
     const chunk = loaderSrc.slice(callSite, callSite + 300);
     expect(chunk).toContain("allCentralRefs");
-    expect(chunk).toContain("opCovCandidates");
+    expect(chunk).toContain("unifiedOpCandidates");
     expect(chunk).toContain("b01Available");
     expect(chunk).toContain("opAvailable");
   });

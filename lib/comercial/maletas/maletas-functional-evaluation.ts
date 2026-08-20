@@ -753,6 +753,11 @@ export function checkOpEligibility(
   if (op.pendingQty <= 0) {
     return { eligible: false, reason: "OP_BELOW_THRESHOLD" };
   }
+  // B04 SAG inventory: positive stock = active production. No temporal filter.
+  // B04 candidates are identified by opNumber === "B04".
+  if (op.opNumber === "B04") {
+    return { eligible: true, operationalDate: now, ageDays: 0 };
+  }
   const operationalDate = getOpOperationalDate(op);
   if (!operationalDate) {
     return { eligible: false, reason: "OP_NO_OPERATIONAL_DATE" };
