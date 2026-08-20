@@ -4943,7 +4943,7 @@ function CoverageReportExportButton({
                 border: "none",
                 background: "transparent",
                 cursor: "pointer",
-                color: C.inkDark,
+                color: C.ink,
               }}
               onMouseEnter={(e) => { (e.target as HTMLElement).style.background = C.surfaceAlt; }}
               onMouseLeave={(e) => { (e.target as HTMLElement).style.background = "transparent"; }}

@@ -2,16 +2,17 @@
  * lib/comercial/maletas/assortment-catalog/castillitos-mallet-assortment-catalog.ts
  *
  * Tenant-specific assortment catalogs for Castillitos.
- * Transcribed EXACTLY from DERROTERO CS.xlsx and existing Latin Kids data.
+ * Transcribed EXACTLY from DERROTERO CS.xlsx and official Latin Kids matrix.
  *
  * Three catalogs:
  *   1. Castillitos Textil — 4 groups, 32 entries (from DERROTERO CS.xlsx)
- *   2. Latin Kids Textil  — 1 group, 11 entries (from official DERROTERO LT document)
+ *   2. Latin Kids Textil  — 4 groups, 24 entries (gender + age sections)
  *   3. Importacion/Accesorios — 3 entries by sizeClass
  *
  * SCOPE: Maletas de vendedores ONLY. NOT for tiendas.
  *
  * Sprint: CASTILLITOS-MALLET-POLICIES-01
+ * Sprint: MALETAS-DERROTERO-CANONICO-08B2R5 — LT 4-section matrix + VESTIDO 3→5
  */
 
 import type {
@@ -73,7 +74,7 @@ const CS_NINA_BEBE: MalletAssortmentGroup = {
     entry("CONJUNTO_CC", "Conjunto Niña BB CC", 3, 3, CS_EVIDENCE, "CONJUNTO NIÑA BB CC"),
     entry("CONJUNTO_CL", "Conjunto Niña BB CL", 2, 4, CS_EVIDENCE, "CONJUNTO NIÑA BB CL"),
     entry("BLUSAS", "Blusas", 2, 5, CS_EVIDENCE, "BLUSAS"),
-    entry("VESTIDO", "Vestido", 3, 6, CS_EVIDENCE, "VESTIDO"),
+    entry("VESTIDO", "Vestido", 5, 6, CS_EVIDENCE, "VESTIDO"), // 08B2R5: 3→5
     entry("CAMISETA", "Camiseta", 1, 7, CS_EVIDENCE, "CAMISETA"),
     entry("MAMELUCO", "Mameluco", 1, 8, CS_EVIDENCE, ["MAMELUCO", "MAMELUCO LARGO"]),
     entry("BUZO_CAMIBUSO", "Buzo / Camibuso", 1, 9, CS_EVIDENCE, ["BUZO", "CAMIBUSO"]),
@@ -108,7 +109,7 @@ const CS_NINA_KIDS: MalletAssortmentGroup = {
     entry("CONJUNTO_CC", "Conjunto Niña Kids CC", 2, 3, CS_EVIDENCE, "CONJUNTO NIÑA KIDS CC"),
     entry("CONJUNTO_CL", "Conjunto Niña Kids CL", 2, 4, CS_EVIDENCE, "CONJUNTO NIÑA KIDS CL"),
     entry("BLUSA", "Blusa", 2, 5, CS_EVIDENCE, "BLUSA"),
-    entry("VESTIDO", "Vestido", 3, 6, CS_EVIDENCE, "VESTIDO"),
+    entry("VESTIDO", "Vestido", 5, 6, CS_EVIDENCE, "VESTIDO"), // 08B2R5: 3→5
     entry("CAMISETA", "Camiseta", 1, 7, CS_EVIDENCE, "CAMISETA"),
     entry("BUZO_CAMIBUSO", "Buzo / Camibuso", 1, 8, CS_EVIDENCE, ["BUZO", "CAMIBUSO"]),
   ],
@@ -131,34 +132,89 @@ const CS_NINO_KIDS: MalletAssortmentGroup = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 2. LATIN KIDS TEXTIL — Official derrotero (11 entries, 1:1 SAG subgrupo)
-//    Source: Official Latin Kids derrotero document
-//    Each entry = exactly one SAG subgrupo, no consolidation.
+// 2. LATIN KIDS TEXTIL — 4 sections by gender + age stage
+//    Source: Official Latin Kids derrotero matrix (Aug 2026)
+//    Each entry = exactly one SAG subgrupo, gender-discriminated.
 //    Closed universe: only subgrupos in the official document participate.
+//
+//    COLLISION GUARD: "CONJUNTO MESES BB NIÑO" appears in BOTH
+//    LT_NINO_KIDS (ideal=5) and LT_NINO_BEBE (ideal=3).
+//    They MUST remain as two distinct positions — never merged.
+//
+//    Invariants:
+//      4 sections, 24 positions, 78 total ideal
+//      Subtotals: 25 + 35 + 9 + 9 = 78
+//
+//    Sprint: MALETAS-DERROTERO-CANONICO-08B2R5
 // ═══════════════════════════════════════════════════════════════════════════
 
 const LT_EVIDENCE_OFFICIAL: MalletAssortmentEntryEvidence = {
-  source: "DERROTERO LT (official document)",
+  source: "DERROTERO LT (official matrix Aug 2026)",
   confidence: 1.0,
-  note: "Transcribed from official Latin Kids derrotero",
+  note: "Transcribed from official Latin Kids derrotero — 4 sections, gender + age",
 };
 
-const LT_SUBGRUPOS: MalletAssortmentGroup = {
-  groupCode: "LT_SUBGRUPOS",
-  groupName: "Latin Kids",
-  sagGrupo: null, // Latin Kids uses subgrupo only for matching
+// ── A. LT NIÑA KIDS — 8 positions, subtotal 25 ─────────────────────────
+
+const LT_NINA_KIDS: MalletAssortmentGroup = {
+  groupCode: "LT_NINA_KIDS",
+  groupName: "LT Niña Kids",
+  sagGrupo: null,
   entries: [
-    entry("PIJAMA_CC_10_16", "Pijama CC 10-16", 3, 1, LT_EVIDENCE_OFFICIAL, "PIJAMA CC 10-16"),
-    entry("PIJAMA_CC_2_8", "Pijama CC 2-8", 4, 2, LT_EVIDENCE_OFFICIAL, "PIJAMA CC 2-8"),
-    entry("PIJAMA_CL_10_16", "Pijama CL 10-16", 4, 3, LT_EVIDENCE_OFFICIAL, "PIJAMA CL 10-16"),
-    entry("PIJAMA_CL_2_8", "Pijama CL 2-8", 5, 4, LT_EVIDENCE_OFFICIAL, "PIJAMA CL 2-8"),
-    entry("PIJAMA_LL_10_16", "Pijama LL 10-16", 2, 5, LT_EVIDENCE_OFFICIAL, "PIJAMA LL 10-16"),
-    entry("PIJAMA_LL_2_8", "Pijama LL 2-8", 3, 6, LT_EVIDENCE_OFFICIAL, "PIJAMA LL 2-8"),
-    entry("PIJAMA_CL_18_22", "Pijama CL 18-22", 2, 7, LT_EVIDENCE_OFFICIAL, "PIJAMA CL 18-22"),
-    entry("PIJAMA_CC_18_22", "Pijama CC 18-22", 2, 8, LT_EVIDENCE_OFFICIAL, "PIJAMA CC 18-22"),
-    entry("CONJUNTO_2_12", "Conjunto 2-12", 5, 9, LT_EVIDENCE_OFFICIAL, "CONJUNTO 2-12"),
-    entry("CONJUNTO_NAUTICO_MESES", "Conjunto Náutico Meses", 5, 10, LT_EVIDENCE_OFFICIAL, "CONJUNTO NAUTICO MESES"),
-    entry("CONJUNTO_MESES", "Conjunto Meses", 3, 11, LT_EVIDENCE_OFFICIAL, "CONJUNTO MESES"),
+    entry("PIJAMA_CC_10_16_NINA", "Pijama CC 10-16 Niña", 3, 1, LT_EVIDENCE_OFFICIAL, "PIJAMA CC 10-16 NIÑA"),
+    entry("PIJAMA_CC_2_8_NINA",   "Pijama CC 2-8 Niña",   4, 2, LT_EVIDENCE_OFFICIAL, "PIJAMA CC 2-8 NIÑA"),
+    entry("PIJAMA_CL_10_16_NINA", "Pijama CL 10-16 Niña", 4, 3, LT_EVIDENCE_OFFICIAL, "PIJAMA CL 10-16 NIÑA"),
+    entry("PIJAMA_CL_2_8_NINA",   "Pijama CL 2-8 Niña",   5, 4, LT_EVIDENCE_OFFICIAL, "PIJAMA CL 2-8 NIÑA"),
+    entry("PIJAMA_LL_10_16_NINA", "Pijama LL 10-16 Niña", 2, 5, LT_EVIDENCE_OFFICIAL, "PIJAMA LL 10-16 NIÑA"),
+    entry("PIJAMA_LL_2_8_NINA",   "Pijama LL 2-8 Niña",   3, 6, LT_EVIDENCE_OFFICIAL, "PIJAMA LL 2-8 NIÑA"),
+    entry("PIJAMA_CL_18_22_NINA", "Pijama CL 18-22 Niña", 2, 7, LT_EVIDENCE_OFFICIAL, "PIJAMA CL 18-22 NIÑA"),
+    entry("PIJAMA_CC_18_22_NINA", "Pijama CC 18-22 Niña", 2, 8, LT_EVIDENCE_OFFICIAL, "PIJAMA CC 18-22 NIÑA"),
+  ],
+};
+
+// ── B. LT NIÑO KIDS — 10 positions, subtotal 35 ────────────────────────
+
+const LT_NINO_KIDS: MalletAssortmentGroup = {
+  groupCode: "LT_NINO_KIDS",
+  groupName: "LT Niño Kids",
+  sagGrupo: null,
+  entries: [
+    entry("PIJAMA_CC_10_16_NINO", "Pijama CC 10-16 Niño", 3, 1, LT_EVIDENCE_OFFICIAL, "PIJAMA CC 10-16 NIÑO"),
+    entry("PIJAMA_CC_2_8_NINO",   "Pijama CC 2-8 Niño",   4, 2, LT_EVIDENCE_OFFICIAL, "PIJAMA CC 2-8 NIÑO"),
+    entry("PIJAMA_CL_10_16_NINO", "Pijama CL 10-16 Niño", 4, 3, LT_EVIDENCE_OFFICIAL, "PIJAMA CL 10-16 NIÑO"),
+    entry("PIJAMA_CL_2_8_NINO",   "Pijama CL 2-8 Niño",   5, 4, LT_EVIDENCE_OFFICIAL, "PIJAMA CL 2-8 NIÑO"),
+    entry("PIJAMA_LL_10_16_NINO", "Pijama LL 10-16 Niño", 2, 5, LT_EVIDENCE_OFFICIAL, "PIJAMA LL 10-16 NIÑO"),
+    entry("PIJAMA_LL_2_8_NINO",   "Pijama LL 2-8 Niño",   3, 6, LT_EVIDENCE_OFFICIAL, "PIJAMA LL 2-8 NIÑO"),
+    entry("PIJAMA_CL_18_22_NINO", "Pijama CL 18-22 Niño", 2, 7, LT_EVIDENCE_OFFICIAL, "PIJAMA CL 18-22 NIÑO"),
+    entry("PIJAMA_CC_18_22_NINO", "Pijama CC 18-22 Niño", 2, 8, LT_EVIDENCE_OFFICIAL, "PIJAMA CC 18-22 NIÑO"),
+    entry("CONJUNTO_2_12_NINO",   "Conjunto 2-12 Niño",   5, 9, LT_EVIDENCE_OFFICIAL, "CONJUNTO 2-12 NIÑO"),
+    entry("CONJUNTO_MESES_BB_NINO_KIDS", "Conjunto Meses BB Niño", 5, 10, LT_EVIDENCE_OFFICIAL, "CONJUNTO MESES BB NIÑO"),
+  ],
+};
+
+// ── C. LT NIÑA BEBE — 3 positions, subtotal 9 ──────────────────────────
+
+const LT_NINA_BEBE: MalletAssortmentGroup = {
+  groupCode: "LT_NINA_BEBE",
+  groupName: "LT Niña Bebe",
+  sagGrupo: null,
+  entries: [
+    entry("CONJUNTO_MESES_BB_NINA", "Conjunto Meses BB Niña", 3, 1, LT_EVIDENCE_OFFICIAL, "CONJUNTO MESES BB NIÑA"),
+    entry("PIJAMA_MESES_CL_NINA_BB", "Pijama Meses CL Niña BB", 3, 2, LT_EVIDENCE_OFFICIAL, "PIJAMA MESES CL NIÑA BB"),
+    entry("PIJAMA_MESES_LL_NINA_BB", "Pijama Meses LL Niña BB", 3, 3, LT_EVIDENCE_OFFICIAL, "PIJAMA MESES LL NIÑA BB"),
+  ],
+};
+
+// ── D. LT NIÑO BEBE — 3 positions, subtotal 9 ──────────────────────────
+
+const LT_NINO_BEBE: MalletAssortmentGroup = {
+  groupCode: "LT_NINO_BEBE",
+  groupName: "LT Niño Bebe",
+  sagGrupo: null,
+  entries: [
+    entry("CONJUNTO_MESES_BB_NINO_BEBE", "Conjunto Meses BB Niño", 3, 1, LT_EVIDENCE_OFFICIAL, "CONJUNTO MESES BB NIÑO"),
+    entry("PIJAMA_MESES_CL_NINO_BB", "Pijama Meses CL Niño BB", 3, 2, LT_EVIDENCE_OFFICIAL, "PIJAMA MESES CL NIÑO BB"),
+    entry("PIJAMA_MESES_LL_NINO_BB", "Pijama Meses LL Niño BB", 3, 3, LT_EVIDENCE_OFFICIAL, "PIJAMA MESES LL NIÑO BB"),
   ],
 };
 
@@ -215,29 +271,29 @@ export function buildCastillitosTextilCatalog(): MalletAssortmentCatalog {
 
 export function buildLatinKidsTextilCatalog(): MalletAssortmentCatalog {
   return {
-    catalogId: "cat-lt-textil-v1",
+    catalogId: "cat-lt-textil-v2",
     tenantId: CASTILLITOS_TENANT_ID,
-    name: "Derrotero Latin Kids Textil v1",
+    name: "Derrotero Latin Kids Textil v2",
     commercialWorld: "TEXTIL",
     brand: "Latin Kids",
-    version: "1.0.0",
+    version: "2.0.0",
     status: "ACTIVE",
-    validFrom: new Date("2026-01-01"),
+    validFrom: new Date("2026-08-20"),
     validUntil: null,
-    groups: [LT_SUBGRUPOS],
-    source: "DERROTERO LT (official document)",
+    groups: [LT_NINA_KIDS, LT_NINO_KIDS, LT_NINA_BEBE, LT_NINO_BEBE],
+    source: "DERROTERO LT (official matrix Aug 2026)",
     evidence: {
       domain: "MALLET_ASSORTMENT",
-      traceId: "castillitos-mallet-policies-01",
+      traceId: "maletas-derrotero-canonico-08b2r5",
       tenantId: CASTILLITOS_TENANT_ID,
-      catalogId: "cat-lt-textil-v1",
-      source: "DERROTERO LT (official document)",
+      catalogId: "cat-lt-textil-v2",
+      source: "DERROTERO LT (official matrix Aug 2026)",
       confidence: 1.0,
-      observedAt: new Date("2026-07-16"),
-      note: "Transcribed from official Latin Kids derrotero — 11 entries, 1:1 SAG subgrupo",
+      observedAt: new Date("2026-08-20"),
+      note: "Latin Kids 4-section matrix — gender (NIÑA/NIÑO) + age (KIDS/BEBE), 24 positions, 78 ideal",
     },
-    createdAt: new Date("2026-07-13"),
-    activatedAt: new Date("2026-07-13"),
+    createdAt: new Date("2026-08-20"),
+    activatedAt: new Date("2026-08-20"),
   };
 }
 
@@ -279,7 +335,10 @@ export const CS_GROUPS = {
 } as const;
 
 export const LT_GROUPS = {
-  LT_SUBGRUPOS,
+  LT_NINA_KIDS,
+  LT_NINO_KIDS,
+  LT_NINA_BEBE,
+  LT_NINO_BEBE,
 } as const;
 
 export const IMPORT_GROUPS = {

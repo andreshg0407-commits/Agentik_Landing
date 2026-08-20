@@ -125,18 +125,19 @@ describe("CUARTO: Taxonomy Certification", () => {
     assert.strictEqual(g.entries.length, 8);
   });
 
-  it("Latin Kids has 1 group with 11 entries", () => {
-    assert.strictEqual(derrotero.lines.latinKids.length, 1);
-    assert.strictEqual(derrotero.lines.latinKids[0].entries.length, 11);
+  it("Latin Kids has 4 groups with 24 entries (08B2R5)", () => {
+    assert.strictEqual(derrotero.lines.latinKids.length, 4);
+    const totalLtEntries = derrotero.lines.latinKids.reduce((s: number, g: any) => s + g.entries.length, 0);
+    assert.strictEqual(totalLtEntries, 24);
   });
 
-  it("Accessories has 1 group with 3 entries", () => {
+  it("Accessories has 1 group with 2 active entries (GRANDE excluded)", () => {
     assert.strictEqual(derrotero.lines.accessories.length, 1);
-    assert.strictEqual(derrotero.lines.accessories[0].entries.length, 3);
+    assert.strictEqual(derrotero.lines.accessories[0].entries.length, 2);
   });
 
-  it("totalEntries = 32 + 11 + 3 = 46", () => {
-    assert.strictEqual(derrotero.totalEntries, 46);
+  it("totalEntries = 32 + 24 + 2 = 58 (08B2R5, GRANDE excluded)", () => {
+    assert.strictEqual(derrotero.totalEntries, 58);
   });
 
   it("no duplicate entries within any group", () => {
@@ -175,7 +176,7 @@ describe("CUARTO: Taxonomy Certification", () => {
   });
 
   it("version combines all 3 catalog versions", () => {
-    assert.strictEqual(derrotero.version, "1.0.0+1.0.0+1.0.0");
+    assert.strictEqual(derrotero.version, "1.0.0+2.0.0+1.0.0");
   });
 });
 
@@ -486,8 +487,8 @@ describe("Full coverage evaluation", () => {
   it("correct entry counts per line", () => {
     const result = evaluateStoreDerroteroCoverage("x", "X", derrotero, [], new Map());
     assert.strictEqual(result.castillitos.totalEntries, 32);
-    assert.strictEqual(result.latinKids.totalEntries, 11);
-    assert.strictEqual(result.accessories.totalEntries, 3);
+    assert.strictEqual(result.latinKids.totalEntries, 24);
+    assert.strictEqual(result.accessories.totalEntries, 2);
   });
 
   it("matching ref marks entry as COVERED", () => {
@@ -501,15 +502,15 @@ describe("Full coverage evaluation", () => {
     assert.strictEqual(entry.totalUnitsInMainWarehouse, 50);
   });
 
-  it("Latin Kids matches by subgroup only", () => {
+  it("Latin Kids matches by subgroup only (08B2R5: gendered)", () => {
     const items = [
       makeStoreItem({
         referenceCode: "LT1", canonicalLine: "latin_kids", line: "latin_kids",
-        group: "SIN_GRUPO_SAG", subgroup: "PIJAMA CC 2-8", currentUnits: 10,
+        group: "SIN_GRUPO_SAG", subgroup: "PIJAMA CC 2-8 NIÑA", currentUnits: 10,
       }),
     ];
     const result = evaluateStoreDerroteroCoverage("x", "X", derrotero, items, new Map());
-    const entry = result.latinKids.items.find(i => i.entry.sagSubgrupo === "PIJAMA CC 2-8")!;
+    const entry = result.latinKids.items.find(i => i.entry.sagSubgrupo === "PIJAMA CC 2-8 NIÑA")!;
     assert.strictEqual(entry.coverageStatus, "COVERED");
   });
 });
