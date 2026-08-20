@@ -1,12 +1,13 @@
 /**
  * components/marketing-studio/library/reference-folder-drawer.tsx
  *
- * MARKETING-LIBRARY-FOLDER-DRAWER-02A-R3 — Reference Folder Drawer
+ * MARKETING-LIBRARY-ACTIVE-ASSET-INGESTION-02A-R4 — Reference Folder Drawer
  *
  * Slide-over panel showing the full folder view for an inventory reference:
  *   - Header with reference identity (refCode, description, world, stock)
  *   - Tabs: Todos | Fotos | Videos | Banners/Piezas
  *   - Lazy-loaded asset gallery from /api/.../biblioteca/reference-assets
+ *   - Upload engines: Subir archivo, Importar desde Drive, Foto Estudio
  *   - Empty state for references without assets
  *   - Loading / error states
  *
@@ -16,9 +17,10 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { X, FolderOpen, ImageIcon, Video, Layers } from "lucide-react";
+import { FolderOpen, Upload, HardDrive, Camera } from "lucide-react";
 import { C, T, S, R }          from "@/lib/ui/tokens";
-import { MS_PALETTE, MS_SHADOWS } from "@/lib/marketing-studio/ms-design-system";
+import { MS_PALETTE, MS_SHADOWS, MS_CTA } from "@/lib/marketing-studio/ms-design-system";
+import { UploadAssetsModal }    from "./upload-assets-modal";
 import { MSDrawer }             from "@/components/marketing-studio/shared/ms-drawer";
 import { MSDrawerHeader }       from "@/components/marketing-studio/shared/ms-drawer-header";
 import { MSDrawerTabs }         from "@/components/marketing-studio/shared/ms-drawer-tabs";
@@ -92,20 +94,27 @@ function stockStatusLabel(ref: InventoryReference): string {
 // -- Props --
 
 interface ReferenceFolderDrawerProps {
-  reference: InventoryReference;
-  orgSlug:   string;
-  onClose:   () => void;
+  reference:      InventoryReference;
+  orgSlug:        string;
+  organizationId: string;
+  onClose:        () => void;
 }
 
 // -- Component --
 
 export function ReferenceFolderDrawer({
-  reference, orgSlug, onClose,
+  reference, orgSlug, organizationId, onClose,
 }: ReferenceFolderDrawerProps) {
   const [assets,    setAssets]    = useState<ReferenceAsset[]>([]);
   const [loading,   setLoading]  = useState(true);
   const [error,     setError]    = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("todos");
+
+  // -- Upload engine state --
+  const [showUploadModal,  setShowUploadModal]  = useState(false);
+  const [resolvedProductId, setResolvedProductId] = useState<string | null>(reference.productId);
+  const [ensuring, setEnsuring] = useState(false);
+  const [driveStatus, setDriveStatus] = useState<"unknown" | "connected" | "disconnected">("unknown");
 
   const worldColor = WORLD_ACCENT[reference.world] ?? C.inkLight;
 
@@ -134,6 +143,49 @@ export function ReferenceFolderDrawer({
   }, [reference.refCode, reference.productId, orgSlug]);
 
   useEffect(() => { loadAssets(); }, [loadAssets]);
+
+  // Check Drive connection status on mount
+  useEffect(() => {
+    fetch(`/api/orgs/${orgSlug}/marketing-studio/drive?action=status`)
+      .then(r => r.ok ? r.json() : { connected: false })
+      .then((data: { connected: boolean }) => {
+        setDriveStatus(data.connected ? "connected" : "disconnected");
+      })
+      .catch(() => setDriveStatus("disconnected"));
+  }, [orgSlug]);
+
+  // Ensure ProductEntity exists before opening upload modal
+  const handleUploadClick = useCallback(async () => {
+    if (resolvedProductId) {
+      setShowUploadModal(true);
+      return;
+    }
+    setEnsuring(true);
+    try {
+      const res = await fetch(`/api/orgs/${orgSlug}/marketing-studio/biblioteca/ensure-product`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refCode: reference.refCode, description: reference.description }),
+      });
+      const data = await res.json();
+      if (data.ok && data.productId) {
+        setResolvedProductId(data.productId);
+        setShowUploadModal(true);
+      } else {
+        setError("No se pudo preparar la referencia para carga.");
+      }
+    } catch {
+      setError("Error preparando referencia para carga.");
+    } finally {
+      setEnsuring(false);
+    }
+  }, [resolvedProductId, orgSlug, reference.refCode, reference.description]);
+
+  // Handle upload success — reload assets
+  const handleUploadSuccess = useCallback(() => {
+    setShowUploadModal(false);
+    loadAssets();
+  }, [loadAssets]);
 
   // Close on Escape
   useEffect(() => {
@@ -286,11 +338,17 @@ export function ReferenceFolderDrawer({
               <div style={{
                 fontFamily: T.mono, fontSize: T.sz.xs,
                 color: C.inkFaint, textAlign: "center" as const,
-                maxWidth: 320,
+                maxWidth: 320, marginBottom: S[3],
               }}>
-                Los recursos aparecen cuando se suben desde Foto Estudio,
-                se importan desde Drive, o se cargan manualmente.
+                Agrega recursos desde cualquiera de estas fuentes:
               </div>
+              <UploadActionTray
+                onUploadClick={handleUploadClick}
+                ensuring={ensuring}
+                driveStatus={driveStatus}
+                orgSlug={orgSlug}
+                refCode={reference.refCode}
+              />
             </div>
           </MSDrawerSection>
         )}
@@ -336,8 +394,119 @@ export function ReferenceFolderDrawer({
             </div>
           </MSDrawerSection>
         )}
+
+        {/* Upload engines (always visible when not loading) */}
+        {!loading && !error && assets.length > 0 && (
+          <div style={{ marginTop: S[5] }}>
+            <MSDrawerSection title="Agregar recursos">
+              <UploadActionTray
+                onUploadClick={handleUploadClick}
+                ensuring={ensuring}
+                driveStatus={driveStatus}
+                orgSlug={orgSlug}
+                refCode={reference.refCode}
+              />
+            </MSDrawerSection>
+          </div>
+        )}
       </div>
+
+      {/* Upload Modal */}
+      {showUploadModal && resolvedProductId && (
+        <UploadAssetsModal
+          organizationId={organizationId}
+          orgSlug={orgSlug}
+          productId={resolvedProductId}
+          onSuccess={handleUploadSuccess}
+          onClose={() => setShowUploadModal(false)}
+        />
+      )}
     </MSDrawer>
+  );
+}
+
+// -- UploadActionTray --
+
+function UploadActionTray({
+  onUploadClick, ensuring, driveStatus, orgSlug, refCode,
+}: {
+  onUploadClick: () => void;
+  ensuring:      boolean;
+  driveStatus:   "unknown" | "connected" | "disconnected";
+  orgSlug:       string;
+  refCode:       string;
+}) {
+  const btnBase: React.CSSProperties = {
+    display:      "flex",
+    alignItems:   "center",
+    gap:          S[2],
+    fontFamily:   T.mono,
+    fontSize:     T.sz.xs,
+    fontWeight:   T.wt.semibold,
+    padding:      `${S[2]}px ${S[3]}px`,
+    borderRadius: R.md,
+    cursor:       "pointer",
+    transition:   "background .1s",
+    border:       "none",
+    width:        "100%",
+    textAlign:    "left" as const,
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column" as const, gap: S[2], width: "100%", maxWidth: 280 }}>
+      {/* Manual upload */}
+      <button
+        onClick={onUploadClick}
+        disabled={ensuring}
+        style={{
+          ...btnBase,
+          background: MS_CTA.primaryButtonBg,
+          color:      "#fff",
+          boxShadow:  MS_CTA.primaryBoxShadow,
+          opacity:    ensuring ? 0.7 : 1,
+        }}
+      >
+        <Upload size={14} />
+        {ensuring ? "Preparando..." : "Subir archivo"}
+      </button>
+
+      {/* Drive import */}
+      <button
+        disabled={driveStatus !== "connected"}
+        onClick={() => {
+          // Drive import — navigates to Drive picker (Phase 3)
+          // For now, show connection status
+        }}
+        style={{
+          ...btnBase,
+          background: driveStatus === "connected" ? C.surface : `${C.surface}88`,
+          color:      driveStatus === "connected" ? C.inkMid : C.inkFaint,
+          border:     `1px solid ${C.line}`,
+          opacity:    driveStatus === "connected" ? 1 : 0.6,
+        }}
+        title={driveStatus !== "connected" ? "Google Drive no conectado" : "Importar desde Drive"}
+      >
+        <HardDrive size={14} />
+        {driveStatus === "unknown" ? "Drive..." :
+         driveStatus === "disconnected" ? "Drive no conectado" :
+         "Importar desde Drive"}
+      </button>
+
+      {/* Foto Estudio */}
+      <a
+        href={`/${orgSlug}/agentik/marketing-studio/foto-estudio/new?ref=${encodeURIComponent(refCode)}`}
+        style={{
+          ...btnBase,
+          background:     C.surface,
+          color:          C.inkMid,
+          border:         `1px solid ${C.line}`,
+          textDecoration: "none",
+        }}
+      >
+        <Camera size={14} />
+        Abrir Foto Estudio
+      </a>
+    </div>
   );
 }
 

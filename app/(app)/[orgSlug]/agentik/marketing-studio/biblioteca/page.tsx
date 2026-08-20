@@ -47,6 +47,30 @@ export default async function BibliotecaPage({
   const inventoryMode   = inventoryResult.hasSnapshot;
   const truthState      = inventoryResult.truthState;
 
+  // ── R4: Active-only filtering ──
+  // Biblioteca shows ONLY references with available inventory.
+  // Sin stock references are hidden from grid/tabs/filters — not deleted from DB/R2.
+  const activeRefs = inventoryResult.references.filter(r => r.isAvailable);
+
+  // Recompute world counts over active references only
+  const activeWorldCounts: import("@/lib/marketing-studio/library/world-classification").WorldCounts = {
+    castillitos:    activeRefs.filter(r => r.world === "castillitos").length,
+    latin_kids:     activeRefs.filter(r => r.world === "latin_kids").length,
+    importacion:    activeRefs.filter(r => r.world === "importacion").length,
+    sin_clasificar: activeRefs.filter(r => r.world === "sin_clasificar").length,
+    total:          activeRefs.length,
+  };
+
+  // Recompute visual state counts over active references only
+  const activeVs = {
+    with_hero:      activeRefs.filter(r => r.visualState === "with_hero").length,
+    with_assets:    activeRefs.filter(r => r.visualState === "with_assets").length,
+    no_assets:      activeRefs.filter(r => r.visualState === "no_assets").length,
+    sin_clasificar: activeRefs.filter(r => r.visualState === "sin_clasificar").length,
+    inactive:       0, // excluded by definition
+    total:          activeRefs.length,
+  };
+
   // ── Fallback: load legacy data if no inventory snapshot ──
   const [products, legacyAssets] = inventoryMode
     ? [[], []]
@@ -62,11 +86,10 @@ export default async function BibliotecaPage({
 
   const productMode = !inventoryMode && products.length > 0;
 
-  // ── Status line ──
-  const totalRefs      = inventoryResult.worldCounts.total;
-  const available      = inventoryResult.references.filter(r => r.isAvailable).length;
-  const sinClasificar  = inventoryResult.worldCounts.sin_clasificar;
-  const vs             = inventoryResult.visualStateCounts;
+  // ── Status line (R4: active-only counts) ──
+  const totalRefs      = activeRefs.length;
+  const sinClasificar  = activeWorldCounts.sin_clasificar;
+  const vs             = activeVs;
 
   // Pre-compute display model for legacy assets (backward compat)
   const displayAssets: BibliotecaAssetDisplay[] = legacyAssets.map((asset) => ({
@@ -90,10 +113,8 @@ export default async function BibliotecaPage({
 
   // ── Presets ──
   const inventoryPresets = [
-    { id: "available",        label: "Con stock",            accent: "green",  description: "Referencias con inventario disponible" },
     { id: "with_hero",        label: "Con imagen principal", accent: "blue",   description: "Referencias con hero image" },
     { id: "no_assets",        label: "Sin recursos",         accent: "gray",   description: "Sin ningún asset visual" },
-    { id: "inactive",         label: "Sin stock",            accent: "red",    description: "Inventario agotado — conservan assets" },
     { id: "sin_clasificar",   label: "Sin clasificar",       accent: "amber",  description: "Mundo no determinado — requiere revisión" },
   ];
 
@@ -114,7 +135,7 @@ export default async function BibliotecaPage({
         ]}
         title="Biblioteca / Asset Hub"
         subtitle={inventoryMode
-          ? `Registro visual canónico · ${totalRefs} referencias · ${available} disponibles`
+          ? `Registro visual canónico · ${totalRefs} referencias disponibles`
           : "Sistema nervioso visual de marketing — assets, catálogos, destinos, inteligencia."
         }
         status={
@@ -134,8 +155,8 @@ export default async function BibliotecaPage({
             ? `PARTIAL — ${!inventoryResult.sourceHealth.ccs.ok ? "CCS" : "PIL"} no disponible`
             : inventoryMode
               ? sinClasificar > 0
-                ? `${sinClasificar} sin clasificar`
-                : `${totalRefs} referencias clasificadas`
+                ? `${totalRefs} disponibles · ${sinClasificar} sin clasificar`
+                : `${totalRefs} referencias disponibles`
               : `${displayAssets.length} assets aprobados`
         }
       />
@@ -205,8 +226,8 @@ export default async function BibliotecaPage({
       <BibliotecaClient
         assets={displayAssets}
         products={productMode ? products : undefined}
-        inventoryReferences={inventoryMode ? inventoryResult.references : undefined}
-        inventoryWorldCounts={inventoryMode ? inventoryResult.worldCounts : undefined}
+        inventoryReferences={inventoryMode ? activeRefs : undefined}
+        inventoryWorldCounts={inventoryMode ? activeWorldCounts : undefined}
         inventorySnapshotAt={inventoryResult.snapshotAt}
         reconciliation={inventoryMode ? inventoryResult.reconciliation : undefined}
         orgSlug={orgSlug}
@@ -222,11 +243,10 @@ export default async function BibliotecaPage({
           background: C.surface, borderRadius: 6,
           fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid,
         }}>
-          <span>Estados visuales:</span>
+          <span>Estados visuales (disponibles):</span>
           <span style={{ color: C.green }}>Con hero: {vs.with_hero}</span>
           <span style={{ color: C.amber }}>Con assets: {vs.with_assets}</span>
           <span style={{ color: C.inkFaint }}>Sin recursos: {vs.no_assets}</span>
-          <span style={{ color: C.red }}>Inactivas: {vs.inactive}</span>
           <span style={{ color: C.amber }}>Sin clasificar: {vs.sin_clasificar}</span>
           <span style={{ fontWeight: 700, color: C.ink }}>Total: {vs.total}</span>
         </div>
@@ -245,7 +265,7 @@ export default async function BibliotecaPage({
           </div>
         ))}
         <div style={{ marginLeft: "auto", fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost }}>
-          MARKETING-LIBRARY-INVENTORY-TRUTH-02A-R1
+          MARKETING-LIBRARY-ACTIVE-ASSET-INGESTION-02A-R4
         </div>
       </div>
 
@@ -259,6 +279,5 @@ const LEGEND = [
   { dot: "#22c55e", label: "Con imagen principal" },
   { dot: "#f59e0b", label: "Con assets, sin principal" },
   { dot: "#94a3b8", label: "Sin recursos visuales" },
-  { dot: "#ef4444", label: "Inactiva (sin stock)" },
   { dot: "#f59e0b", label: "Sin clasificar" },
 ];

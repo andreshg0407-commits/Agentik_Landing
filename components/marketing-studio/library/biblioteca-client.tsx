@@ -552,11 +552,9 @@ export function BibliotecaClient({
     let result = inventoryReferences;
     // World filter
     if (activeWorld !== "todas") result = result.filter(r => r.world === activeWorld);
-    // Preset filter
-    if (activePreset === "available")      result = result.filter(r => r.isAvailable);
-    else if (activePreset === "with_hero") result = result.filter(r => r.hasHeroImage);
-    else if (activePreset === "no_assets") result = result.filter(r => r.assetCount === 0);
-    else if (activePreset === "inactive")  result = result.filter(r => !r.isAvailable);
+    // Preset filter (R4: "available"/"inactive" removed — all refs are active)
+    if (activePreset === "with_hero")           result = result.filter(r => r.hasHeroImage);
+    else if (activePreset === "no_assets")      result = result.filter(r => r.assetCount === 0);
     else if (activePreset === "sin_clasificar") result = result.filter(r => r.world === "sin_clasificar");
     // Search filter
     if (searchText) {
@@ -1158,6 +1156,7 @@ export function BibliotecaClient({
         <ReferenceFolderDrawer
           reference={selectedRef}
           orgSlug={orgSlug}
+          organizationId={organizationId}
           onClose={() => setSelectedRef(null)}
         />
       )}
