@@ -20,8 +20,9 @@ import { WORLD_ACCENT } from "@/lib/marketing-studio/library/world-classificatio
 import type { InventoryReference, InventoryRefVisualState } from "@/lib/marketing-studio/library/inventory-reference-types";
 
 interface InventoryReferenceCardProps {
-  reference: InventoryReference;
-  onClick:   () => void;
+  reference:   InventoryReference;
+  onClick:     () => void;
+  isSelected?: boolean;
 }
 
 const STATE_CONFIG: Record<InventoryRefVisualState, {
@@ -34,25 +35,27 @@ const STATE_CONFIG: Record<InventoryRefVisualState, {
   inactive:       { label: "Inactiva",             color: C.red,      bg: C.redLight },
 };
 
-export function InventoryReferenceCard({ reference, onClick }: InventoryReferenceCardProps) {
+export function InventoryReferenceCard({ reference, onClick, isSelected }: InventoryReferenceCardProps) {
   const worldAccent = WORLD_ACCENT[reference.world];
   const stateConf = STATE_CONFIG[reference.visualState];
 
   return (
     <button
       onClick={onClick}
+      aria-label={`Abrir carpeta ${reference.refCode} — ${reference.description}`}
       style={{
         display:       "flex",
         flexDirection: "column" as const,
         background:    C.white,
-        border:        `1px solid ${C.line}`,
+        border:        isSelected ? `2px solid ${C.blueDark}` : `1px solid ${C.line}`,
         borderRadius:  MS_CARD.borderRadius,
         overflow:      "hidden",
         cursor:        "pointer",
         textAlign:     "left" as const,
-        boxShadow:     MS_SHADOWS.card,
+        boxShadow:     isSelected ? `0 0 0 2px ${C.blueDark}22` : MS_SHADOWS.card,
         transition:    "border-color .12s, box-shadow .12s",
         width:         "100%",
+        outline:       "none",
       }}
     >
       {/* Thumbnail */}

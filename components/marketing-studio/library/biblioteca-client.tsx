@@ -36,6 +36,7 @@ import { ImportCatalogWizard }         from "./import-catalog-wizard";
 import { CategoriaNav }               from "./categoria-nav";
 import { WorldTabBar }                from "./world-tab-bar";
 import { InventoryReferenceCard }     from "./inventory-reference-card";
+import { ReferenceFolderDrawer }     from "./reference-folder-drawer";
 import { BIBLIOTECA_EMPTY_STATES }     from "@/lib/marketing-studio/library/ui/asset-visual-tokens";
 import { MS_CARD, MS_CTA, MS_METRIC_CARD, MS_SHADOWS } from "@/lib/marketing-studio/ms-design-system";
 import type { InventoryReference, ReconciliationReport } from "@/lib/marketing-studio/library/inventory-reference-types";
@@ -933,14 +934,8 @@ export function BibliotecaClient({
               <InventoryReferenceCard
                 key={ref.refCode}
                 reference={ref}
-                onClick={() => {
-                  setSelectedRef(ref);
-                  // If the ref has a linked product, open the product drawer
-                  if (ref.productId && products) {
-                    const p = products.find(p => p.productId === ref.productId);
-                    if (p) setSelectedProduct(p);
-                  }
-                }}
+                isSelected={selectedRef?.refCode === ref.refCode}
+                onClick={() => setSelectedRef(ref)}
               />
             ))}
           </div>
@@ -1155,6 +1150,15 @@ export function BibliotecaClient({
           organizationId={organizationId}
           onClose={() => setSelectedProduct(null)}
           onAssetsUploaded={() => router.refresh()}
+        />
+      )}
+
+      {/* ── Reference Folder Drawer (inventory mode) ── */}
+      {selectedRef && (
+        <ReferenceFolderDrawer
+          reference={selectedRef}
+          orgSlug={orgSlug}
+          onClose={() => setSelectedRef(null)}
         />
       )}
 
