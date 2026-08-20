@@ -1792,6 +1792,9 @@ export function MaletasClient({
 
                   {/* ── RECONCILIACIÓN DE COBERTURA — per-vendor (08B2R4) ── */}
                   <VendorReconciliationTable vendorCov={vendorCov} />
+
+                  {/* ── EXPORT BUTTON — 08B2R4A ── */}
+                  <CoverageReportExportButton orgSlug={orgSlug} vendorId={vendorCov.vendorId} vendorName={vendorCov.vendorName} hasCoverage={vendorCov.totalDerroteroEntries > 0} />
                 </div>
               );
             })()}
@@ -4806,6 +4809,148 @@ function CoveragePositionRow({ pos }: { pos: CoveragePosition }) {
               </div>
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Coverage report export button (MALETAS-08B2R4A) */
+function CoverageReportExportButton({
+  orgSlug,
+  vendorId,
+  vendorName,
+  hasCoverage,
+}: {
+  orgSlug: string;
+  vendorId: string;
+  vendorName: string;
+  hasCoverage: boolean;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [loading, setLoading] = useState<"pdf" | "xml" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const btnRef = useRef<HTMLDivElement>(null);
+
+  // Close menu on outside click
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (btnRef.current && !btnRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [menuOpen]);
+
+  if (!hasCoverage) return null;
+
+  const download = async (format: "pdf" | "xml") => {
+    if (loading) return; // prevent double-click
+    setLoading(format);
+    setError(null);
+    setMenuOpen(false);
+    try {
+      const res = await fetch(`/api/orgs/${orgSlug}/comercial/maletas/coverage-report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vendorId, format }),
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({ error: "Error desconocido" }));
+        throw new Error(errBody.error || `HTTP ${res.status}`);
+      }
+      const blob = await res.blob();
+      const disposition = res.headers.get("Content-Disposition") || "";
+      const match = disposition.match(/filename="([^"]+)"/);
+      const fileName = match?.[1] || `cobertura-mostrario-${vendorName.toLowerCase()}.${format}`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error generando informe");
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  return (
+    <div ref={btnRef} style={{ marginTop: S[3], position: "relative", display: "inline-block" }}>
+      {/* Main button */}
+      <button
+        onClick={() => { if (!loading) setMenuOpen((v) => !v); }}
+        disabled={!!loading}
+        style={{
+          fontFamily: T.mono,
+          fontSize: 11,
+          fontWeight: 600,
+          color: C.white,
+          background: loading ? C.inkFaint : C.blueDark,
+          border: "none",
+          borderRadius: R.sm,
+          padding: `${S[2]}px ${S[3]}px`,
+          cursor: loading ? "wait" : "pointer",
+          display: "flex",
+          alignItems: "center",
+          gap: S[1],
+        }}
+      >
+        {loading ? "Generando informe\u2026" : "Generar informe \u25BE"}
+      </button>
+
+      {/* Error message */}
+      {error && (
+        <div style={{
+          fontFamily: T.mono, fontSize: 10, color: C.red,
+          marginTop: S[1], maxWidth: 300,
+        }}>
+          {error}
+        </div>
+      )}
+
+      {/* Dropdown menu */}
+      {menuOpen && (
+        <div style={{
+          position: "absolute",
+          top: "100%",
+          left: 0,
+          marginTop: 2,
+          background: C.white,
+          border: `1px solid ${C.line}`,
+          borderRadius: R.sm,
+          boxShadow: E.md,
+          zIndex: 10,
+          minWidth: 180,
+          overflow: "hidden",
+        }}>
+          {(["pdf", "xml"] as const).map((fmt) => (
+            <button
+              key={fmt}
+              onClick={() => download(fmt)}
+              style={{
+                display: "block",
+                width: "100%",
+                textAlign: "left",
+                fontFamily: T.mono,
+                fontSize: 11,
+                padding: `${S[2]}px ${S[3]}px`,
+                border: "none",
+                background: "transparent",
+                cursor: "pointer",
+                color: C.inkDark,
+              }}
+              onMouseEnter={(e) => { (e.target as HTMLElement).style.background = C.surfaceAlt; }}
+              onMouseLeave={(e) => { (e.target as HTMLElement).style.background = "transparent"; }}
+            >
+              Descargar {fmt.toUpperCase()}
+            </button>
+          ))}
         </div>
       )}
     </div>
