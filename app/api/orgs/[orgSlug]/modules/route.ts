@@ -36,7 +36,26 @@ async function resolveOrg(orgSlug: string) {
   });
   if (!membership) return null;
 
-  return { userId: user.id, orgId: org.id, role: membership.role };
+  // Read platform authority from User table (backward-compatible).
+  // Only suppress P2022 (column not found). All other errors propagate.
+  let platformRole: "SUPER_ADMIN" | "AGENTIK_ADMIN" | null = null;
+  try {
+    const u = await (prisma as any).user.findUnique({
+      where: { id: user.id },
+      select: { platformRole: true },
+    });
+    const pr = u?.platformRole as string | null | undefined;
+    if (pr === "SUPER_ADMIN" || pr === "AGENTIK_ADMIN") platformRole = pr;
+  } catch (err: unknown) {
+    const isColumnMissing =
+      (typeof err === "object" && err !== null && "code" in err && (err as { code: string }).code === "P2022") ||
+      (typeof err === "object" && err !== null && "message" in err &&
+        String((err as { message: string }).message).includes("platformRole") &&
+        String((err as { message: string }).message).includes("does not exist"));
+    if (!isColumnMissing) throw err;
+  }
+
+  return { userId: user.id, orgId: org.id, role: membership.role, platformRole };
 }
 
 // ── GET — entitlements + billing preview ─────────────────────────────────────
@@ -46,8 +65,8 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
   const ctx = await resolveOrg(orgSlug);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  // Only SUPER_ADMIN and AGENTIK_ADMIN can view entitlements
-  if (ctx.role !== "SUPER_ADMIN" && ctx.role !== "AGENTIK_ADMIN") {
+  // Only platform users can view entitlements (User.platformRole, NOT Membership.role)
+  if (ctx.platformRole !== "SUPER_ADMIN" && ctx.platformRole !== "AGENTIK_ADMIN") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -68,8 +87,8 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
   const ctx = await resolveOrg(orgSlug);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  // Only SUPER_ADMIN and AGENTIK_ADMIN can modify entitlements
-  if (ctx.role !== "SUPER_ADMIN" && ctx.role !== "AGENTIK_ADMIN") {
+  // Only platform users can modify entitlements (User.platformRole, NOT Membership.role)
+  if (ctx.platformRole !== "SUPER_ADMIN" && ctx.platformRole !== "AGENTIK_ADMIN") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

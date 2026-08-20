@@ -23,7 +23,8 @@ import { redirect }      from "next/navigation";
 import { requireTenant } from "@/lib/tenant";
 import { prisma }        from "@/lib/prisma";
 import { getEnabledModules }                    from "@/lib/tenant/modules";
-import { filterModulesByRole, isInternalRole }  from "@/lib/auth/module-access";
+import { filterModulesByRole, getModulesForRole }  from "@/lib/auth/module-access";
+import { resolvePlatformAuthority }             from "@/lib/auth/platform-authority";
 import { buildNavDomains }                      from "@/components/shell/module-nav-config";
 import { EnterpriseLauncherClient }             from "./enterprise-launcher-client";
 
@@ -40,7 +41,7 @@ export default async function OrgRootPage({
   const ctx = await requireTenant(orgSlug);
 
   // ── Seller confinement (UNCHANGED) ──────────────────────────────────────────
-  if (SELLER_ROLES.has(ctx.role)) {
+  if (ctx.role !== null && SELLER_ROLES.has(ctx.role)) {
     const membership = await prisma.membership.findUnique({
       where: { organizationId_userId: { organizationId: ctx.orgId, userId: ctx.userId } },
       select: { permissionsJson: true },
@@ -53,7 +54,7 @@ export default async function OrgRootPage({
 
   // ── Manager App redirect (mobile/tablet ORG_ADMIN/MANAGER) ─────────────────
   // Viewport determines WHICH presentation — never grants access.
-  if (MANAGER_MOBILE_ROLES.has(ctx.role)) {
+  if (ctx.role !== null && MANAGER_MOBILE_ROLES.has(ctx.role)) {
     const headersList = await headers();
     const ua = headersList.get("user-agent") ?? "";
     if (MOBILE_TABLET_RE.test(ua)) {
@@ -63,10 +64,13 @@ export default async function OrgRootPage({
 
   // ── Module visibility (same source of truth as layout sidebar) ─────────────
   const orgMods = await getEnabledModules(ctx.orgId);
-  const mods = filterModulesByRole(orgMods, ctx.role);
-  const showInternal = isInternalRole(ctx.role);
+  const platformAuth = resolvePlatformAuthority(ctx.platformRole);
+  const mods = platformAuth.bypassEntitlementCensorship
+    ? getModulesForRole("SUPER_ADMIN")
+    : filterModulesByRole(orgMods, ctx.role ?? "VIEWER");
+  const showInternal = platformAuth.canAccessInternalConsole;
   const showMarketing = mods.has("marketing_studio");
-  const showPlatformAdmin = ctx.role === "SUPER_ADMIN";
+  const showPlatformAdmin = platformAuth.bypassEntitlementCensorship;
 
   const domains = buildNavDomains({
     orgSlug,
@@ -112,7 +116,7 @@ export default async function OrgRootPage({
     <EnterpriseLauncherClient
       orgSlug={orgSlug}
       orgName={orgName}
-      role={ctx.role}
+      role={ctx.role ?? "PLATFORM"}
       domains={launcherDomains}
     />
   );

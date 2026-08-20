@@ -3,59 +3,53 @@
  *
  * Canonical resolvers for the PLATFORM vs TENANT authority boundary.
  *
- * Sprint: PLATFORM-REVIEW-PERSONAS-01
+ * Sprint: PLATFORM-AUTHORITY-SEPARATION-01
  *
  * ── Design ──────────────────────────────────────────────────────────────────────
  *
  * Platform identity and tenant membership are INDEPENDENT dimensions:
  *
- *   platformAuthority — derived from membership role being SUPER_ADMIN or AGENTIK_ADMIN.
- *                       Never inferred from email domain, org membership in "agentik", or flags.
+ *   platformRole      — stored on User.platformRole (global, independent of org).
+ *                       NEVER derived from Membership.role, email, org slug, or flags.
  *
- *   tenantAuthority   — derived from org membership role + entitlements + feature flags.
- *                       Scoped to the selected tenant context.
- *
- * A single account can possess both (explicit dual capacity), calculated separately.
+ *   membershipRole    — stored on Membership.role (scoped to one organization).
+ *                       Represents tenant authority only.
  *
  * ── Platform roles ──────────────────────────────────────────────────────────────
  *
  *   SUPER_ADMIN   — full platform override; bypasses tenant entitlement censorship
  *   AGENTIK_ADMIN — internal console access; no client business data
- *
- * ── Tenant roles ────────────────────────────────────────────────────────────────
- *
- *   ORG_ADMIN, MANAGER, OPERATOR, VIEWER, BILLING — client-facing, scoped to tenant
+ *   null          — no platform authority (tenant-only user)
  *
  * ── Key rules ───────────────────────────────────────────────────────────────────
  *
- *   • Platform authority is NEVER inferred from email, org slug, cookies, or URL params.
- *   • Selecting a tenant scopes DATA, never degrades globalRole.
- *   • ORG_ADMIN in the "agentik" org ≠ platform user.
- *   • Seller in the "agentik" org ≠ platform user.
- *   • External email with explicit SUPER_ADMIN membership = platform user.
+ *   - Platform authority is NEVER inferred from Membership.role.
+ *   - A membership with role=SUPER_ADMIN does NOT grant platform authority.
+ *   - Only User.platformRole grants platform authority.
+ *   - Selecting a tenant scopes DATA, never degrades platformRole.
+ *   - ORG_ADMIN in the "agentik" org does NOT equal platform user.
  */
 
 import type { Role } from "@prisma/client";
+import type { PlatformRoleValue } from "@/lib/tenant";
 import type { ModuleKey } from "@/lib/tenant/modules";
-import { getModulesForRole, isInternalRole } from "./module-access";
+import { getModulesForRole } from "./module-access";
 
 // ── Types ────────────────────────────────────────────────────────────────────────
 
-export type PlatformRole = "SUPER_ADMIN" | "AGENTIK_ADMIN";
-
 export interface PlatformAuthority {
-  /** True when the user holds a platform-level role (SUPER_ADMIN or AGENTIK_ADMIN). */
+  /** True when the user holds a global platform role (User.platformRole != null). */
   isPlatformUser: boolean;
   /** The platform role, or null for tenant-only users. */
-  platformRole: PlatformRole | null;
-  /** Platform user can bypass tenant entitlement censorship in nav/UI. */
+  platformRole: PlatformRoleValue | null;
+  /** Platform SUPER_ADMIN can bypass tenant entitlement censorship in nav/UI. */
   bypassEntitlementCensorship: boolean;
   /** Platform user can access internal console surfaces. */
   canAccessInternalConsole: boolean;
 }
 
 export interface TenantAuthority {
-  /** The org-level membership role. */
+  /** The org-level membership role (tenant authority). */
   orgRole: Role;
   /** Modules enabled for the tenant (entitlement layer). */
   orgEntitledModules: Set<ModuleKey>;
@@ -68,53 +62,50 @@ export interface EffectiveAccess {
   grantedBy: "platform" | "tenant" | "both";
   /** Whether the module is accessible. */
   accessible: boolean;
-  /** Whether the nav should show the full module (vs stub/Próximamente). */
+  /** Whether the nav should show the full module (vs stub). */
   showFullNav: boolean;
 }
 
 // ── Platform Authority Resolution ────────────────────────────────────────────────
 
-const PLATFORM_ROLES = new Set<Role>(["SUPER_ADMIN", "AGENTIK_ADMIN"]);
-
 /**
- * Resolves platform authority from the user's membership role in the current org.
+ * Resolves platform authority from User.platformRole.
  *
- * Platform authority is determined SOLELY by the membership role being one of
- * SUPER_ADMIN or AGENTIK_ADMIN. It is NEVER derived from:
- *   - email domain
- *   - org slug being "agentik"
- *   - feature flags or cookies
- *   - URL parameters
+ * This is the CANONICAL source of platform authority. It takes the global
+ * platformRole from the User record — NOT from Membership.role.
+ *
+ * @param platformRole — User.platformRole value (null for tenant-only users).
  */
-export function resolvePlatformAuthority(membershipRole: Role): PlatformAuthority {
-  const isPlatformUser = PLATFORM_ROLES.has(membershipRole);
-  const platformRole = isPlatformUser ? (membershipRole as PlatformRole) : null;
+export function resolvePlatformAuthority(platformRole: PlatformRoleValue | null): PlatformAuthority {
+  const isPlatformUser = platformRole !== null;
 
   return {
     isPlatformUser,
     platformRole,
-    bypassEntitlementCensorship: membershipRole === "SUPER_ADMIN",
-    canAccessInternalConsole: isInternalRole(membershipRole),
+    bypassEntitlementCensorship: platformRole === "SUPER_ADMIN",
+    canAccessInternalConsole: platformRole === "SUPER_ADMIN" || platformRole === "AGENTIK_ADMIN",
   };
 }
 
 /**
  * Resolves tenant authority from org membership and entitlements.
+ * orgRole may be null when a platform SUPER_ADMIN reviews without membership.
+ * In that case, role-based module filtering defaults to VIEWER (minimum).
  */
 export function resolveTenantAuthority(
-  orgRole: Role,
+  orgRole: Role | null,
   orgEntitledModules: Set<ModuleKey>,
   isSellerConfined: boolean,
 ): TenantAuthority {
-  return { orgRole, orgEntitledModules, isSellerConfined };
+  return { orgRole: orgRole ?? ("VIEWER" as Role), orgEntitledModules, isSellerConfined };
 }
 
 /**
  * Resolves effective access for a specific module given platform and tenant authority.
  *
  * Decision logic:
- *   1. SUPER_ADMIN: always accessible, full nav (platform bypass).
- *   2. AGENTIK_ADMIN: accessible only if role-permitted (internal modules).
+ *   1. Platform SUPER_ADMIN: always accessible, full nav (platform bypass).
+ *   2. Platform AGENTIK_ADMIN: accessible only if in internal module set.
  *   3. Tenant users: accessible only if BOTH role-permitted AND org-entitled.
  */
 export function resolveEffectiveAccess(
@@ -126,7 +117,7 @@ export function resolveEffectiveAccess(
   const rolePermits = roleModules.has(moduleKey);
   const orgEntitles = tenant.orgEntitledModules.has(moduleKey);
 
-  // SUPER_ADMIN: full override — role permits all, entitlement bypassed
+  // Platform SUPER_ADMIN: full override — bypasses all tenant entitlements
   if (platform.bypassEntitlementCensorship) {
     return {
       grantedBy: "platform",
@@ -135,16 +126,20 @@ export function resolveEffectiveAccess(
     };
   }
 
-  // Non-SUPER platform user (AGENTIK_ADMIN): only role-permitted modules
-  if (platform.isPlatformUser) {
-    return {
-      grantedBy: rolePermits ? "platform" : "tenant",
-      accessible: rolePermits,
-      showFullNav: rolePermits,
-    };
+  // Platform AGENTIK_ADMIN: internal modules only via platform authority
+  if (platform.canAccessInternalConsole) {
+    const agentikModules = getModulesForRole("AGENTIK_ADMIN");
+    const platformPermits = agentikModules.has(moduleKey);
+    if (platformPermits) {
+      return {
+        grantedBy: "platform",
+        accessible: true,
+        showFullNav: true,
+      };
+    }
   }
 
-  // Tenant user: intersection of role + entitlement
+  // Tenant user (or platform user accessing non-platform module): intersection
   const accessible = rolePermits && orgEntitles;
   return {
     grantedBy: "tenant",

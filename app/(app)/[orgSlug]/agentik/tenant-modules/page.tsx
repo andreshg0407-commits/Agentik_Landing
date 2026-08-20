@@ -24,8 +24,8 @@ export default async function TenantModulesPage({
   const { orgSlug } = await params;
   const ctx = await requireTenant(orgSlug);
 
-  // Gate: SUPER_ADMIN and AGENTIK_ADMIN only
-  if (ctx.role !== "SUPER_ADMIN" && ctx.role !== "AGENTIK_ADMIN") {
+  // Gate: platform authority only (User.platformRole, NOT Membership.role)
+  if (ctx.platformRole !== "SUPER_ADMIN" && ctx.platformRole !== "AGENTIK_ADMIN") {
     redirect(`/${orgSlug}`);
   }
 

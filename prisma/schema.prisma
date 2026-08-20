@@ -42,6 +42,15 @@ enum Role {
   BILLING
 }
 
+// ── Platform authority ────────────────────────────────────────────────────────
+// Global platform role — independent of any organization membership.
+// A user with platformRole=SUPER_ADMIN has platform bypass regardless of
+// their membership role in any org. This is NEVER derived from Membership.role.
+enum PlatformRole {
+  SUPER_ADMIN    // Full platform override — bypasses entitlement censorship
+  AGENTIK_ADMIN  // Internal console access — no client business data
+}
+
 enum MembershipStatus {
   INVITED
   ACTIVE
@@ -497,6 +506,14 @@ model User {
   email String  @unique
   name  String?
   phone String?
+
+  // ── Platform authority ─────────────────────────────────────────────────────
+  // Global platform role — INDEPENDENT of any organization membership.
+  // null = tenant-only user (no platform privileges).
+  // SUPER_ADMIN = full platform override regardless of membership role.
+  // AGENTIK_ADMIN = internal console access, no client data.
+  // NEVER derived from Membership.role, email domain, or org slug.
+  platformRole PlatformRole?
 
   // Auth.js v5 required fields
   emailVerified DateTime?

@@ -65,7 +65,10 @@ if (isDryRun && isExecute) {
 
 interface PersonaDef {
   email: string;
-  targetRole: Role;
+  /** Target User.platformRole (global authority). null = tenant-only. */
+  targetPlatformRole: "SUPER_ADMIN" | "AGENTIK_ADMIN" | null;
+  /** Target Membership.role (tenant authority in agentik org). */
+  targetMembershipRole: Role;
   classification: "PLATFORM" | "TENANT_ORG_ADMIN" | "TENANT_SELLER";
   description: string;
 }
@@ -73,19 +76,22 @@ interface PersonaDef {
 const PERSONAS: PersonaDef[] = [
   {
     email: "hello@agentik.com.co",
-    targetRole: Role.SUPER_ADMIN,
+    targetPlatformRole: "SUPER_ADMIN",
+    targetMembershipRole: Role.ORG_ADMIN,
     classification: "PLATFORM",
-    description: "Platform SUPER_ADMIN — full internal access, entitlement bypass",
+    description: "Platform SUPER_ADMIN — full internal access, entitlement bypass. Membership=ORG_ADMIN (data scope only).",
   },
   {
     email: "agentikflows@gmail.com",
-    targetRole: Role.ORG_ADMIN,
+    targetPlatformRole: null,
+    targetMembershipRole: Role.ORG_ADMIN,
     classification: "TENANT_ORG_ADMIN",
     description: "Tenant ORG_ADMIN — Manager App, respects entitlements, no platform access",
   },
   {
     email: "pruebas@agentik.com.co",
-    targetRole: Role.OPERATOR,
+    targetPlatformRole: null,
+    targetMembershipRole: Role.OPERATOR,
     classification: "TENANT_SELLER",
     description: "Tenant Seller — Seller App only, confined, no desktop/platform access",
   },
@@ -119,7 +125,8 @@ async function main() {
     email: string;
     userExists: boolean;
     userId?: string;
-    beforeRole?: string;
+    beforePlatformRole?: string | null;
+    beforeMembershipRole?: string;
     beforeStatus?: string;
     hasSeller?: boolean;
     sellerSlug?: string;
@@ -128,37 +135,57 @@ async function main() {
   const results: AuditResult[] = [];
 
   for (const persona of PERSONAS) {
-    const user = await prisma.user.findUnique({
+    let user: { id: string; email: string; name: string | null; platformRole?: string | null } | null = null;
+    try {
+      user = await (prisma as any).user.findUnique({
+        where: { email: persona.email },
+        select: { id: true, email: true, name: true, platformRole: true },
+      });
+    } catch (err: unknown) {
+      // Only suppress P2022 (column not found) — rethrow all other errors
+      const isP2022 =
+        (typeof err === "object" && err !== null && "code" in err && (err as { code: string }).code === "P2022") ||
+        (typeof err === "object" && err !== null && "message" in err &&
+          String((err as { message: string }).message).includes("platformRole") &&
+          String((err as { message: string }).message).includes("does not exist"));
+      if (!isP2022) throw err;
+    }
+
+    // Fallback if platformRole column doesn't exist yet
+    const userFallback = user ?? await prisma.user.findUnique({
       where: { email: persona.email },
       select: { id: true, email: true, name: true },
     });
 
-    if (!user) {
+    if (!userFallback) {
       console.log(`  ${persona.email}: USER NOT FOUND`);
       results.push({ email: persona.email, userExists: false });
       continue;
     }
 
     const membership = await prisma.membership.findUnique({
-      where: { organizationId_userId: { organizationId: org.id, userId: user.id } },
+      where: { organizationId_userId: { organizationId: org.id, userId: userFallback.id } },
       select: { role: true, status: true, permissionsJson: true },
     });
 
     const perms = membership?.permissionsJson as Record<string, unknown> | null;
     const sellerSlug = perms?.sellerSlug as string | undefined;
+    const platformRole = (user as any)?.platformRole ?? "(column not yet migrated)";
 
     console.log(`  ${persona.email}`);
-    console.log(`    User ID (partial): ${user.id.slice(0, 8)}...`);
-    console.log(`    Name:       ${user.name ?? "(none)"}`);
-    console.log(`    Membership: ${membership ? `role=${membership.role}, status=${membership.status}` : "NONE"}`);
-    console.log(`    Seller ID:  ${sellerSlug ?? "(none)"}`);
+    console.log(`    User ID (partial): ${userFallback.id.slice(0, 8)}...`);
+    console.log(`    Name:           ${(userFallback as any).name ?? "(none)"}`);
+    console.log(`    Platform Role:  ${platformRole}`);
+    console.log(`    Membership:     ${membership ? `role=${membership.role}, status=${membership.status}` : "NONE"}`);
+    console.log(`    Seller ID:      ${sellerSlug ?? "(none)"}`);
     console.log();
 
     results.push({
       email: persona.email,
       userExists: true,
-      userId: user.id,
-      beforeRole: membership?.role,
+      userId: userFallback.id,
+      beforePlatformRole: (user as any)?.platformRole ?? null,
+      beforeMembershipRole: membership?.role,
       beforeStatus: membership?.status,
       hasSeller: !!sellerSlug,
       sellerSlug,
@@ -178,11 +205,17 @@ async function main() {
   for (let i = 0; i < PERSONAS.length; i++) {
     const persona = PERSONAS[i];
     const result = results[i];
-    const before = result.userExists ? (result.beforeRole ?? "NO_MEMBERSHIP") : "USER_NOT_FOUND";
-    const after = result.userExists ? persona.targetRole : "SKIP";
-    const changed = before !== after ? " ← CHANGE" : "";
+    const beforeMembership = result.userExists ? (result.beforeMembershipRole ?? "NO_MEMBERSHIP") : "USER_NOT_FOUND";
+    const afterMembership = result.userExists ? persona.targetMembershipRole : "SKIP";
+    const beforePlatform = result.userExists ? (result.beforePlatformRole ?? "null") : "N/A";
+    const afterPlatform = result.userExists ? (persona.targetPlatformRole ?? "null") : "SKIP";
+    const mChanged = beforeMembership !== afterMembership ? "*" : "";
+    const pChanged = beforePlatform !== afterPlatform ? "*" : "";
     console.log(
-      `  │ ${persona.email.padEnd(27)} │ ${before.padEnd(13)} │ ${after.padEnd(13)} │ ${persona.classification.padEnd(19)} │${changed}`,
+      `  │ ${persona.email.padEnd(27)} │ ${beforeMembership.padEnd(13)} │ ${afterMembership.padEnd(13)} │ ${persona.classification.padEnd(19)} │${mChanged}`,
+    );
+    console.log(
+      `  │ ${"".padEnd(27)} │ P:${beforePlatform.padEnd(10)} │ P:${afterPlatform.padEnd(10)} │ ${"".padEnd(19)} │${pChanged}`,
     );
   }
 
@@ -216,7 +249,7 @@ async function main() {
     for (let i = 0; i < PERSONAS.length; i++) {
       const r = results[i];
       if (r.userExists) {
-        console.log(`    ${r.email}: role=${r.beforeRole ?? "NO_MEMBERSHIP"}, status=${r.beforeStatus ?? "N/A"}`);
+        console.log(`    ${r.email}: membership=${r.beforeMembershipRole ?? "NO_MEMBERSHIP"}, platformRole=${r.beforePlatformRole ?? "null"}, status=${r.beforeStatus ?? "N/A"}`);
       }
     }
     console.log("\n  After rollback: users must sign out and sign in again.");
@@ -238,25 +271,48 @@ async function main() {
         continue;
       }
 
+      // 1. Upsert membership role (tenant authority)
       await prisma.membership.upsert({
         where: {
           organizationId_userId: { organizationId: org.id, userId: result.userId },
         },
         update: {
-          role: persona.targetRole,
+          role: persona.targetMembershipRole,
           status: MembershipStatus.ACTIVE,
         },
         create: {
           organizationId: org.id,
           userId: result.userId,
-          role: persona.targetRole,
+          role: persona.targetMembershipRole,
           status: MembershipStatus.ACTIVE,
           acceptedAt: new Date(),
         },
       });
 
-      const action = result.beforeRole === persona.targetRole ? "CONFIRMED" : "UPDATED";
-      console.log(`  ${action} ${persona.email} → role=${persona.targetRole}`);
+      // 2. Set platformRole on User (global authority) — try/catch for missing column
+      if (persona.targetPlatformRole !== null) {
+        try {
+          await (prisma as any).user.update({
+            where: { id: result.userId },
+            data: { platformRole: persona.targetPlatformRole },
+          });
+        } catch {
+          console.log(`    WARNING: Could not set platformRole=${persona.targetPlatformRole} — column may not exist yet`);
+        }
+      } else {
+        // Clear platformRole if target is null
+        try {
+          await (prisma as any).user.update({
+            where: { id: result.userId },
+            data: { platformRole: null },
+          });
+        } catch {
+          // Column doesn't exist yet — acceptable
+        }
+      }
+
+      const mAction = result.beforeMembershipRole === persona.targetMembershipRole ? "CONFIRMED" : "UPDATED";
+      console.log(`  ${mAction} ${persona.email} → membership=${persona.targetMembershipRole}, platformRole=${persona.targetPlatformRole ?? "null"}`);
     }
 
     console.log("\n  DONE. Users must sign out and sign in again for changes to take effect.");

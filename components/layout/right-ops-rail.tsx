@@ -130,6 +130,8 @@ interface RightOpsRailProps {
   orgId:    string;
   pathname: string;
   role:     Role;
+  /** Global platform role from User.platformRole — null for tenant-only users. */
+  platformRole?: "SUPER_ADMIN" | "AGENTIK_ADMIN" | null;
 }
 
 // ── Console surface detection ────────────────────────────────────────────────
@@ -208,8 +210,10 @@ export default async function RightOpsRail({
   orgId,
   pathname,
   role,
+  platformRole,
 }: RightOpsRailProps) {
-  const isInternal = isInternalRole(role);
+  // Platform authority takes precedence over membership role for internal access.
+  const isInternal = platformRole === "SUPER_ADMIN" || platformRole === "AGENTIK_ADMIN" || isInternalRole(role);
   // showInfra: show deep infrastructure rail sections only on console/admin surfaces.
   // On all operational and AI-workspace routes the rail stays clean (Header + Signals + Alerts + Tasks).
   const showInfra  = isInternal && isConsoleSurface(pathname);

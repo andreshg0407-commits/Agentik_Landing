@@ -28,7 +28,8 @@ export default async function AgreementsPage({
   const { orgSlug } = await params;
   const ctx = await requireTenant(orgSlug);
 
-  if (ctx.role !== "SUPER_ADMIN" && ctx.role !== "AGENTIK_ADMIN") {
+  // Gate: platform authority only (User.platformRole, NOT Membership.role)
+  if (ctx.platformRole !== "SUPER_ADMIN" && ctx.platformRole !== "AGENTIK_ADMIN") {
     redirect(`/${orgSlug}`);
   }
 

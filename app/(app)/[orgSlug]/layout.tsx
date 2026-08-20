@@ -2,7 +2,7 @@ import { headers }    from "next/headers";
 import { redirect }  from "next/navigation";
 import { requireTenant }                          from "@/lib/tenant";
 import { getEnabledModules, resolveModuleForPath } from "@/lib/tenant/modules";
-import { filterModulesByRole, isInternalRole, getModulesForRole } from "@/lib/auth/module-access";
+import { filterModulesByRole, getModulesForRole } from "@/lib/auth/module-access";
 import { resolvePlatformAuthority }                              from "@/lib/auth/platform-authority";
 import RightOpsRail                               from "@/components/layout/right-ops-rail";
 import { TenantSwitcher }                         from "@/components/layout/tenant-switcher";
@@ -52,7 +52,7 @@ export default async function OrgLayout({
   const pathname    = headers().get("x-invoke-path") ?? "";
   const isSellerApp = pathname.includes(`/${ctx.orgSlug}/seller-app`);
 
-  if (SELLER_CONFINED_ROLES.has(ctx.role) && !isSellerApp) {
+  if (ctx.role !== null && SELLER_CONFINED_ROLES.has(ctx.role) && !isSellerApp) {
     const membership = await prisma.membership.findUnique({
       where: { organizationId_userId: { organizationId: ctx.orgId, userId: ctx.userId } },
       select: { permissionsJson: true },
@@ -66,18 +66,17 @@ export default async function OrgLayout({
   const orgMods = await getEnabledModules(ctx.orgId);
 
   // ── Platform authority resolution ─────────────────────────────────────────────
-  // Source of truth: Membership.role for this org (lib/tenant.ts:55).
-  // There is NO separate globalRole field on User. Platform authority is expressed
-  // by having SUPER_ADMIN or AGENTIK_ADMIN as the membership role.
-  const platformAuth = resolvePlatformAuthority(ctx.role);
+  // Source of truth: User.platformRole (global, independent of membership).
+  // ctx.platformRole is fetched from the User table by requireTenant().
+  // ctx.role is the TENANT membership role — never used for platform decisions.
+  const platformAuth = resolvePlatformAuthority(ctx.platformRole);
 
-  // SUPER_ADMIN BYPASS: sees all role-permitted modules regardless of tenant
-  // entitlements. This is a read-only visibility override — no TenantModule rows,
-  // commercial terms, or billing periods are created. Tenant truth is unchanged.
-  // ORG_ADMIN/MANAGER: only see the intersection of org-entitled + role-permitted.
+  // Platform SUPER_ADMIN: sees all modules regardless of tenant entitlements.
+  // This is a read-only visibility override — no TenantModule rows created.
+  // Tenant users: only see the intersection of org-entitled + role-permitted.
   const mods = platformAuth.bypassEntitlementCensorship
-    ? getModulesForRole(ctx.role)
-    : filterModulesByRole(orgMods, ctx.role);
+    ? getModulesForRole("SUPER_ADMIN")
+    : filterModulesByRole(orgMods, ctx.role ?? "VIEWER");
 
   // Capability flags
   const showInternal      = platformAuth.canAccessInternalConsole;
@@ -133,7 +132,7 @@ export default async function OrgLayout({
   // ORG_ADMIN / MANAGER get a responsive executive presentation on mobile/tablet.
   // Viewport NEVER grants access — same authorization, different chrome.
   const EXECUTIVE_MOBILE_ROLES = new Set(["ORG_ADMIN", "MANAGER"]);
-  const enableMobileShell = EXECUTIVE_MOBILE_ROLES.has(ctx.role);
+  const enableMobileShell = ctx.role !== null && EXECUTIVE_MOBILE_ROLES.has(ctx.role);
 
   let mobileShell: { orgSlug: string; orgName: string } | null = null;
   if (enableMobileShell) {
@@ -168,13 +167,14 @@ export default async function OrgLayout({
             showSwitcher={showInternal}
           />
         }
-        roleBadge={{ label: ctx.role, accent: ROLE_ACCENT[ctx.role] ?? C.inkLight }}
+        roleBadge={{ label: ctx.role ?? "PLATFORM", accent: ROLE_ACCENT[ctx.role ?? ""] ?? (ctx.platformRole ? "#0f172a" : C.inkLight) }}
         railContent={
           <RightOpsRail
             orgSlug={ctx.orgSlug}
             orgId={ctx.orgId}
             pathname={pathname}
-            role={ctx.role}
+            role={ctx.role ?? "VIEWER"}
+            platformRole={ctx.platformRole}
           />
         }
         isBlocked={isBlocked}
