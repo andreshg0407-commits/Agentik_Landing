@@ -131,6 +131,14 @@ export interface MalletAssortmentGroup {
    * Sprint: MALETAS-TEXTIL-DERROTERO-SAG-MATCH-01
    */
   readonly sagGrupo: string | null;
+  /**
+   * Additional SAG grupo codes accepted for matching.
+   * SAG classifies basic items (CAMISETA, CAMIBUSO, POLO) under cross-cutting
+   * grupos like "BASICAS BEBE" / "BASICAS KIDS" instead of the gender/age grupo.
+   * These aliases allow matching refs from those cross-cutting grupos.
+   * Sprint: MALETAS-08B2R2
+   */
+  readonly additionalSagGrupos?: readonly string[];
 }
 
 export interface MalletAssortmentCatalog {

@@ -66,6 +66,7 @@ const CS_NINA_BEBE: MalletAssortmentGroup = {
   groupCode: "CS_NINA_BEBE",
   groupName: "CS Niña Bebé",
   sagGrupo: "CS NIÑA BEBE",
+  additionalSagGrupos: ["BASICAS BEBE"],
   entries: [
     entry("PIJAMA_CL", "Pijama Niña BB CL", 3, 1, CS_EVIDENCE, "PIJAMA NIÑA BB CL"),
     entry("PIJAMA_LL", "Pijama Niña BB LL", 2, 2, CS_EVIDENCE, "PIJAMA NIÑA BB LL"),
@@ -83,6 +84,7 @@ const CS_NINO_BEBE: MalletAssortmentGroup = {
   groupCode: "CS_NINO_BEBE",
   groupName: "CS Niño Bebé",
   sagGrupo: "CS NIÑO BEBE",
+  additionalSagGrupos: ["BASICAS BEBE"],
   entries: [
     entry("PIJAMA_CL", "Pijama Niño BB CL", 3, 1, CS_EVIDENCE, "PIJAMA NIÑO BB CL"),
     entry("PIJAMA_LL", "Pijama Niño BB LL", 2, 2, CS_EVIDENCE, "PIJAMA NIÑO BB LL"),
@@ -99,6 +101,7 @@ const CS_NINA_KIDS: MalletAssortmentGroup = {
   groupCode: "CS_NINA_KIDS",
   groupName: "CS Niña Kids",
   sagGrupo: "CS NIÑA KIDS",
+  additionalSagGrupos: ["BASICAS KIDS"],
   entries: [
     entry("PIJAMA_CL", "Pijama Niña Kids CL", 3, 1, CS_EVIDENCE, "PIJAMA NIÑA KIDS CL"),
     entry("PIJAMA_LL", "Pijama Niña Kids LL", 2, 2, CS_EVIDENCE, "PIJAMA NIÑA KIDS LL"),
@@ -115,6 +118,7 @@ const CS_NINO_KIDS: MalletAssortmentGroup = {
   groupCode: "CS_NINO_KIDS",
   groupName: "CS Niño Kids",
   sagGrupo: "CS NIÑO KIDS",
+  additionalSagGrupos: ["BASICAS KIDS"],
   entries: [
     entry("PIJAMA_CL", "Pijama Niño Kids CL", 3, 1, CS_EVIDENCE, "PIJAMA NIÑO KIDS CL"),
     entry("PIJAMA_LL", "Pijama Niño Kids LL", 2, 2, CS_EVIDENCE, "PIJAMA NIÑO KIDS LL"),

@@ -32,6 +32,7 @@ export interface AssortmentGroupEval {
   groupCode: string;
   groupName: string;
   sagGrupo: string | null;
+  additionalSagGrupos: string[];
   entries: AssortmentEntryEval[];
   completeEntries: number;
   missingEntries: number;
@@ -271,6 +272,7 @@ export function evaluateCatalog(
       groupCode: group.groupCode,
       groupName: group.groupName,
       sagGrupo: group.sagGrupo ?? null,
+      additionalSagGrupos: [...(group.additionalSagGrupos ?? [])],
       entries: entryResults,
       completeEntries: gc,
       missingEntries: gm,
@@ -321,8 +323,10 @@ function matchRefs(
 
   if (group.sagGrupo != null) {
     // Castillitos: must match grupo SAG + subgrupo SAG
+    // Accept both primary grupo and additional cross-cutting grupos (e.g., "BASICAS BEBE")
+    const acceptedGrupos = [group.sagGrupo, ...(group.additionalSagGrupos ?? [])];
     return refs.filter(
-      (r) => r.grupoSag === group.sagGrupo && sagValues.includes(r.subgrupoSag),
+      (r) => r.grupoSag != null && acceptedGrupos.includes(r.grupoSag) && sagValues.includes(r.subgrupoSag),
     );
   }
 
@@ -767,13 +771,15 @@ function matchesTextilEntry(
   candidateSubgrupoSag: string | null,
   candidateGrupoSag: string | null,
   requiredLine: string,
-  sagGrupo: string | null,
+  sagGrupos: string[],
   sagSubgrupos: string[],
 ): boolean {
   if (candidateLine !== requiredLine) return false;
   if (!candidateSubgrupoSag) return false;
   if (!sagSubgrupos.includes(candidateSubgrupoSag)) return false;
-  if (sagGrupo && candidateGrupoSag !== sagGrupo) return false;
+  if (sagGrupos.length > 0 && candidateGrupoSag) {
+    if (!sagGrupos.includes(candidateGrupoSag)) return false;
+  }
   return true;
 }
 
@@ -905,6 +911,11 @@ export function findBusinessCoverageOpportunities(
       );
 
       for (const group of catalog.groups) {
+        // Build full grupo list: primary + additional (SAG cross-cutting grupos)
+        const sagGrupos: string[] = [];
+        if (group.sagGrupo) sagGrupos.push(group.sagGrupo);
+        if (group.additionalSagGrupos) sagGrupos.push(...group.additionalSagGrupos);
+
         for (const entry of group.entries) {
           // Inactive entries already excluded by evaluateCatalog; active guard not needed here.
           if (entry.complete) continue;
@@ -963,7 +974,7 @@ export function findBusinessCoverageOpportunities(
             if (r.disponible <= 0) return false;
             if (!matchesTextilEntry(
               r.line, r.subgrupoSag, r.grupoSag,
-              requiredLine, group.sagGrupo, entry.sagSubgrupos,
+              requiredLine, sagGrupos, entry.sagSubgrupos,
             )) return false;
             if (!(r.disponible > threshold)) return false;
             return true;
@@ -1004,7 +1015,7 @@ export function findBusinessCoverageOpportunities(
             if (vendorRefs.has(op.reference.trim().toUpperCase())) return false;
             if (!matchesTextilEntry(
               op.line, op.subgrupoSag, op.grupoSag,
-              requiredLine, group.sagGrupo, entry.sagSubgrupos,
+              requiredLine, sagGrupos, entry.sagSubgrupos,
             )) return false;
             if (op.pendingQty <= 0) return false;
             return true;

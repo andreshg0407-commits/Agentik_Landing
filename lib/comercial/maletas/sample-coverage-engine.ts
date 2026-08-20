@@ -446,6 +446,11 @@ function resolveTextileSlots(
   candidates: CoverageCandidate[],
   dataAvailability: CoverageDataAvailability,
 ): void {
+  // Build full grupo list: primary + additional (SAG cross-cutting grupos like "BASICAS BEBE")
+  const sagGrupos: string[] = [];
+  if (group.sagGrupo) sagGrupos.push(group.sagGrupo);
+  if (group.additionalSagGrupos) sagGrupos.push(...group.additionalSagGrupos);
+
   for (let slot = 0; slot < missing; slot++) {
     // DATA_UNVERIFIED guard: if sources are not available, cannot certify absence
     if (!dataAvailability.b01Available) {
@@ -471,7 +476,7 @@ function resolveTextileSlots(
       if (!(r.disponible > threshold)) return false;
       if (!matchesTextilEntry(
         r.line, r.subgrupoSag, r.grupoSag,
-        requiredLine, group.sagGrupo, entry.sagSubgrupos,
+        requiredLine, sagGrupos, entry.sagSubgrupos,
       )) return false;
       return true;
     });
@@ -514,7 +519,7 @@ function resolveTextileSlots(
       if (op.pendingQty <= 0) return false;
       if (!matchesTextilEntry(
         op.line, op.subgrupoSag, op.grupoSag,
-        requiredLine, group.sagGrupo, entry.sagSubgrupos,
+        requiredLine, sagGrupos, entry.sagSubgrupos,
       )) return false;
       return true;
     });
@@ -662,7 +667,7 @@ function matchesTextilEntry(
   candidateSubgrupoSag: string | null,
   candidateGrupoSag: string | null,
   requiredLine: string,
-  sagGrupo: string | null,
+  sagGrupos: string[],
   sagSubgrupos: string[],
 ): boolean {
   if (candidateLine !== requiredLine) return false;
@@ -670,8 +675,9 @@ function matchesTextilEntry(
   const normalizedCandidate = candidateSubgrupoSag.trim().toUpperCase();
   const matches = sagSubgrupos.some((s) => s.trim().toUpperCase() === normalizedCandidate);
   if (!matches) return false;
-  if (sagGrupo && candidateGrupoSag) {
-    if (candidateGrupoSag.trim().toUpperCase() !== sagGrupo.trim().toUpperCase()) return false;
+  if (sagGrupos.length > 0 && candidateGrupoSag) {
+    const normalizedGrupo = candidateGrupoSag.trim().toUpperCase();
+    if (!sagGrupos.some((g) => g.trim().toUpperCase() === normalizedGrupo)) return false;
   }
   return true;
 }

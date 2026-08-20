@@ -312,3 +312,490 @@ describe("K — Loader passes data to sample coverage engine", () => {
     expect(loaderSrc).not.toContain("supplyPlan: SalesPortfolioSupplyPlan");
   });
 });
+
+// ── L. Cross-grupo matching (MALETAS-08B2R2) ──────────────────────────────
+
+describe("L — Cross-grupo matching via additionalSagGrupos", () => {
+  const typeSrc = readSrc("lib/comercial/maletas/assortment-catalog/mallet-assortment-types.ts");
+  const catalogSrc = readSrc("lib/comercial/maletas/assortment-catalog/castillitos-mallet-assortment-catalog.ts");
+  const engineSrc = readSrc("lib/comercial/maletas/sample-coverage-engine.ts");
+  const evalSrc = readSrc("lib/comercial/maletas/maletas-functional-evaluation.ts");
+
+  test("T40: MalletAssortmentGroup has additionalSagGrupos field", () => {
+    expect(typeSrc).toContain("additionalSagGrupos");
+  });
+
+  test("T41: CS NIÑA BEBE accepts BASICAS BEBE", () => {
+    expect(catalogSrc).toContain('sagGrupo: "CS NIÑA BEBE"');
+    expect(catalogSrc).toContain('additionalSagGrupos: ["BASICAS BEBE"]');
+  });
+
+  test("T42: CS NIÑO BEBE accepts BASICAS BEBE", () => {
+    const idx = catalogSrc.indexOf('"CS NIÑO BEBE"');
+    const chunk = catalogSrc.slice(idx, idx + 200);
+    expect(chunk).toContain("BASICAS BEBE");
+  });
+
+  test("T43: CS NIÑA KIDS accepts BASICAS KIDS", () => {
+    const idx = catalogSrc.indexOf('"CS NIÑA KIDS"');
+    const chunk = catalogSrc.slice(idx, idx + 200);
+    expect(chunk).toContain("BASICAS KIDS");
+  });
+
+  test("T44: CS NIÑO KIDS accepts BASICAS KIDS", () => {
+    const idx = catalogSrc.indexOf('"CS NIÑO KIDS"');
+    const chunk = catalogSrc.slice(idx, idx + 200);
+    expect(chunk).toContain("BASICAS KIDS");
+  });
+
+  test("T45: matchesTextilEntry accepts sagGrupos array (not single string)", () => {
+    expect(engineSrc).toContain("sagGrupos: string[]");
+    expect(engineSrc).toContain("sagGrupos.some(");
+  });
+
+  test("T46: AssortmentGroupEval has additionalSagGrupos field", () => {
+    expect(evalSrc).toContain("additionalSagGrupos: string[]");
+  });
+
+  test("T47: Evaluation propagates additionalSagGrupos from catalog", () => {
+    expect(evalSrc).toContain("additionalSagGrupos: [...(group.additionalSagGrupos");
+  });
+
+  test("T48: Coverage engine builds sagGrupos from primary + additional", () => {
+    expect(engineSrc).toContain("if (group.sagGrupo) sagGrupos.push(group.sagGrupo)");
+    expect(engineSrc).toContain("if (group.additionalSagGrupos) sagGrupos.push(...group.additionalSagGrupos)");
+  });
+});
+
+// ── M. Enrichment from ProductEntity (MALETAS-08B2R1) ───────────────────────
+
+describe("M — Loader enriches allCentralRefs from ProductEntity canonicalMap", () => {
+  const loaderSrc = readSrc("lib/comercial/maletas/vendor-sample-loader.ts");
+
+  test("T49: allCentralRefs uses canonicalMap for grupoSag", () => {
+    expect(loaderSrc).toContain("classified?.grupoSag ?? cr.grupoSag");
+  });
+
+  test("T50: allCentralRefs uses canonicalMap for subgrupoSag", () => {
+    expect(loaderSrc).toContain("classified?.subgrupoSag ?? cr.subgrupoSag");
+  });
+
+  test("T51: canonicalMap variable is classifyMaletaReferencesBatch result", () => {
+    expect(loaderSrc).toContain("const canonicalMap = await classifyMaletaReferencesBatch");
+  });
+
+  test("T52: Enrichment comment documents the root cause", () => {
+    expect(loaderSrc).toContain("canonical.refs have grupoSag/subgrupoSag=null");
+  });
+});
+
+// ── N. MAMELUCO LARGO alias (MALETAS-08B2R1) ────────────────────────────────
+
+describe("N — MAMELUCO LARGO SAG alias for Mameluco positions", () => {
+  const catalogSrc = readSrc("lib/comercial/maletas/assortment-catalog/castillitos-mallet-assortment-catalog.ts");
+
+  test("T53: CS NIÑA BEBE Mameluco accepts MAMELUCO LARGO", () => {
+    const idx = catalogSrc.indexOf('"CS NIÑA BEBE"');
+    const chunk = catalogSrc.slice(idx, idx + 800);
+    expect(chunk).toContain('"MAMELUCO LARGO"');
+  });
+
+  test("T54: CS NIÑO BEBE Mameluco accepts MAMELUCO LARGO", () => {
+    const idx = catalogSrc.indexOf('"CS NIÑO BEBE"');
+    const chunk = catalogSrc.slice(idx, idx + 800);
+    expect(chunk).toContain('"MAMELUCO LARGO"');
+  });
+});
+
+// ── O. OP cascade structural invariants ─────────────────────────────────────
+
+describe("O — OP cascade: B01 → OP → PRODUCTION_REQUIRED", () => {
+  const engineSrc = readSrc("lib/comercial/maletas/sample-coverage-engine.ts");
+  const loaderSrc = readSrc("lib/comercial/maletas/vendor-sample-loader.ts");
+
+  test("T55: OP candidates loaded from ProductionOrder + ProductionOrderLine", () => {
+    expect(loaderSrc).toContain('"ProductionOrderLine"');
+    expect(loaderSrc).toContain('"ProductionOrder"');
+  });
+
+  test("T56: OP candidates filtered to open + not closed", () => {
+    expect(loaderSrc).toContain("status = 'open'");
+    expect(loaderSrc).toContain('"isClosed" = false');
+  });
+
+  test("T57: OP candidates resolved to subgrupoId via ProductEntity", () => {
+    expect(loaderSrc).toContain("subgrupoId: { not: null }");
+    expect(loaderSrc).toContain("peMap.set(p.sku");
+  });
+
+  test("T58: OP matching uses same matchesTextilEntry as B01", () => {
+    const opSection = engineSrc.slice(
+      engineSrc.indexOf("// STEP 2: OP Activa"),
+      engineSrc.indexOf("// STEP 3: PRODUCTION_REQUIRED"),
+    );
+    expect(opSection).toContain("matchesTextilEntry(");
+    expect(opSection).toContain("sagGrupos");
+    expect(opSection).toContain("entry.sagSubgrupos");
+  });
+
+  test("T59: OP matching excludes refs in vendor bag", () => {
+    const opSection = engineSrc.slice(
+      engineSrc.indexOf("// STEP 2: OP Activa"),
+      engineSrc.indexOf("// STEP 3: PRODUCTION_REQUIRED"),
+    );
+    expect(opSection).toContain("vendorRefs.has(op.reference.trim().toUpperCase())");
+  });
+
+  test("T60: OP matching excludes usedReferences", () => {
+    const opSection = engineSrc.slice(
+      engineSrc.indexOf("// STEP 2: OP Activa"),
+      engineSrc.indexOf("// STEP 3: PRODUCTION_REQUIRED"),
+    );
+    expect(opSection).toContain("usedReferences.has(op.reference.trim().toUpperCase())");
+  });
+
+  test("T61: PRODUCTION_REQUIRED only emitted after B01 AND OP miss (STEP 3)", () => {
+    const step3Idx = engineSrc.indexOf("// STEP 3: PRODUCTION_REQUIRED");
+    expect(step3Idx).toBeGreaterThan(0);
+    const after = engineSrc.slice(step3Idx, step3Idx + 400);
+    expect(after).toContain('"PRODUCTION_REQUIRED"');
+    expect(after).toContain("Sin referencia mayorista disponible en B01 ni en OP activa");
+  });
+
+  test("T62: A single B01 ref cannot fill two positions (usedReferences dedup)", () => {
+    expect(engineSrc).toContain("usedReferences.add(bodegaMatch.reference.trim().toUpperCase())");
+    expect(engineSrc).toContain("usedReferences.add(opMatch.reference.trim().toUpperCase())");
+  });
+});
+
+// ── P. Behavioral tests — buildSampleCoverageResult with fixtures ────────────
+
+import { vi } from "vitest";
+vi.mock("server-only", () => ({}));
+vi.mock("../../comercial/maletas/maletas-canonical-inventory", () => ({
+  MALETA_COVERAGE_MINIMUMS: { CASTILLITOS: 100, LATIN_KIDS: 200, IMPORTACION: 10 },
+}));
+
+import {
+  buildSampleCoverageResult,
+  type CentralRef,
+  type CoverageDataAvailability,
+} from "../../comercial/maletas/sample-coverage-engine";
+import type {
+  VendorAssortmentResult,
+  AssortmentGroupEval,
+  AssortmentEntryEval,
+  CatalogEvaluation,
+  OpCoverageCandidate,
+} from "../../comercial/maletas/maletas-functional-evaluation";
+
+// ── Fixtures ──
+
+function makeEntry(overrides: Partial<AssortmentEntryEval> = {}): AssortmentEntryEval {
+  return {
+    subgroupCode: "CAMISETA",
+    subgroupName: "Camiseta",
+    sagSubgrupos: ["CAMISETA"],
+    measurementUnit: "REFERENCES",
+    targetReferences: 1,
+    currentReferences: 0,
+    targetUnits: 1,
+    officialIdeal: 1,
+    isCustomIdeal: false,
+    currentUnits: 0,
+    delta: -1,
+    complete: false,
+    excess: false,
+    matchedReferences: [],
+    ...overrides,
+  };
+}
+
+function makeGroup(overrides: Partial<AssortmentGroupEval> & { entries?: AssortmentEntryEval[] } = {}): AssortmentGroupEval {
+  return {
+    groupCode: "CS_NINA_BEBE",
+    groupName: "CS Niña Bebé",
+    sagGrupo: "CS NIÑA BEBE",
+    additionalSagGrupos: ["BASICAS BEBE"],
+    completeEntries: 0,
+    missingEntries: 1,
+    excessEntries: 0,
+    groupCompletion: 0,
+    entries: [makeEntry()],
+    ...overrides,
+  };
+}
+
+function makeCatalog(overrides: Partial<CatalogEvaluation> & { groups?: AssortmentGroupEval[] } = {}): CatalogEvaluation {
+  return {
+    catalogId: "CS_TEXTIL_V3",
+    catalogName: "Castillitos Textil",
+    catalogVersion: "3.0",
+    commercialWorld: "TEXTIL",
+    brand: "Castillitos",
+    overallCompletion: 0,
+    totalComplete: 0,
+    totalMissing: 1,
+    totalExcess: 0,
+    totalEntries: 1,
+    groups: [makeGroup()],
+    ...overrides,
+  };
+}
+
+function makeVendorEval(catalogs?: CatalogEvaluation[]): VendorAssortmentResult {
+  return {
+    vendorId: "vendor-nestor",
+    catalogs: catalogs ?? [makeCatalog()],
+    unresolvedRefs: [],
+    unresolvedSummary: { total: 0, sinSizeClassEnSag: 0, productoNoResuelto: 0, valorNoHomologado: 0, noEsImportacion: 0 },
+  };
+}
+
+function makeRef(overrides: Partial<CentralRef> = {}): CentralRef {
+  return {
+    reference: "REF-001",
+    description: "Camiseta Niña Bebé",
+    line: "CS",
+    grupoSag: "CS NIÑA BEBE",
+    subgrupoSag: "CAMISETA",
+    sizeClass: null,
+    disponible: 150,
+    ...overrides,
+  };
+}
+
+function makeOp(overrides: Partial<OpCoverageCandidate> = {}): OpCoverageCandidate {
+  return {
+    reference: "REF-OP-001",
+    description: "Camiseta OP",
+    line: "CS",
+    subgrupoSag: "CAMISETA",
+    grupoSag: "CS NIÑA BEBE",
+    pendingQty: 500,
+    opNumber: "3500",
+    createdAt: new Date().toISOString(),
+    lastEventDate: null,
+    ...overrides,
+  };
+}
+
+const DATA_BOTH: CoverageDataAvailability = { b01Available: true, opAvailable: true };
+const DATA_NONE: CoverageDataAvailability = { b01Available: false, opAvailable: false };
+const DATA_B01_ONLY: CoverageDataAvailability = { b01Available: true, opAvailable: false };
+
+describe("P — Behavioral: buildSampleCoverageResult with fixtures", () => {
+  test("T63: B01 ref disponible > threshold → B01_AVAILABLE", () => {
+    const result = buildSampleCoverageResult(
+      [makeVendorEval()],
+      [makeRef({ disponible: 150 })],
+      [],
+      new Map([["vendor-nestor", new Set<string>()]]),
+      new Map([["vendor-nestor", "Néstor"]]),
+      DATA_BOTH,
+    );
+    const pos = result.vendorCoverages[0].positions[0];
+    expect(pos.status).toBe("B01_AVAILABLE");
+    expect(pos.candidates[0].reference).toBe("REF-001");
+    expect(pos.candidates[0].availableQty).toBe(150);
+  });
+
+  test("T64: B01 ref disponible = threshold (not >) → not B01_AVAILABLE", () => {
+    const result = buildSampleCoverageResult(
+      [makeVendorEval()],
+      [makeRef({ disponible: 100 })],
+      [],
+      new Map([["vendor-nestor", new Set<string>()]]),
+      new Map([["vendor-nestor", "Néstor"]]),
+      DATA_BOTH,
+    );
+    const pos = result.vendorCoverages[0].positions[0];
+    expect(pos.status).not.toBe("B01_AVAILABLE");
+  });
+
+  test("T65: No B01 + OP activa → OP_INCOMING", () => {
+    const result = buildSampleCoverageResult(
+      [makeVendorEval()],
+      [],
+      [makeOp()],
+      new Map([["vendor-nestor", new Set<string>()]]),
+      new Map([["vendor-nestor", "Néstor"]]),
+      DATA_BOTH,
+    );
+    const pos = result.vendorCoverages[0].positions[0];
+    expect(pos.status).toBe("OP_INCOMING");
+    expect(pos.candidates[0].opNumber).toBe("3500");
+  });
+
+  test("T66: No B01 + No OP → PRODUCTION_REQUIRED", () => {
+    const result = buildSampleCoverageResult(
+      [makeVendorEval()],
+      [],
+      [],
+      new Map([["vendor-nestor", new Set<string>()]]),
+      new Map([["vendor-nestor", "Néstor"]]),
+      DATA_BOTH,
+    );
+    const pos = result.vendorCoverages[0].positions[0];
+    expect(pos.status).toBe("PRODUCTION_REQUIRED");
+    expect(pos.candidates[0].explanation).toContain("Sin referencia mayorista disponible en B01 ni en OP activa");
+  });
+
+  test("T67: Sources unavailable → DATA_UNVERIFIED (never PRODUCTION_REQUIRED)", () => {
+    const result = buildSampleCoverageResult(
+      [makeVendorEval()],
+      [],
+      [],
+      new Map([["vendor-nestor", new Set<string>()]]),
+      new Map([["vendor-nestor", "Néstor"]]),
+      DATA_NONE,
+    );
+    const pos = result.vendorCoverages[0].positions[0];
+    expect(pos.status).toBe("DATA_UNVERIFIED");
+    expect(pos.candidates[0].explanation).toContain("No se recomienda producir");
+  });
+
+  test("T68: B01 unavailable → DATA_UNVERIFIED (B01 gate fires first)", () => {
+    const result = buildSampleCoverageResult(
+      [makeVendorEval()],
+      [],
+      [makeOp()],
+      new Map([["vendor-nestor", new Set<string>()]]),
+      new Map([["vendor-nestor", "Néstor"]]),
+      DATA_NONE,
+    );
+    const pos = result.vendorCoverages[0].positions[0];
+    expect(pos.status).toBe("DATA_UNVERIFIED");
+  });
+
+  test("T69: B01 ok + OP unavailable → DATA_UNVERIFIED after B01 miss", () => {
+    const result = buildSampleCoverageResult(
+      [makeVendorEval()],
+      [],
+      [makeOp()],
+      new Map([["vendor-nestor", new Set<string>()]]),
+      new Map([["vendor-nestor", "Néstor"]]),
+      DATA_B01_ONLY,
+    );
+    const pos = result.vendorCoverages[0].positions[0];
+    expect(pos.status).toBe("DATA_UNVERIFIED");
+  });
+
+  test("T70: Cross-grupo: BASICAS BEBE ref matches CS NIÑA BEBE position", () => {
+    const result = buildSampleCoverageResult(
+      [makeVendorEval()],
+      [makeRef({ grupoSag: "BASICAS BEBE", subgrupoSag: "CAMISETA", disponible: 150 })],
+      [],
+      new Map([["vendor-nestor", new Set<string>()]]),
+      new Map([["vendor-nestor", "Néstor"]]),
+      DATA_BOTH,
+    );
+    const pos = result.vendorCoverages[0].positions[0];
+    expect(pos.status).toBe("B01_AVAILABLE");
+  });
+
+  test("T71: Wrong grupo (not in additionalSagGrupos) → not B01_AVAILABLE", () => {
+    const group = makeGroup({ sagGrupo: "CS NIÑA BEBE", additionalSagGrupos: ["BASICAS BEBE"] });
+    const result = buildSampleCoverageResult(
+      [makeVendorEval([makeCatalog({ groups: [group] })])],
+      [makeRef({ grupoSag: "LT NIÑA KIDS", subgrupoSag: "CAMISETA", disponible: 150 })],
+      [],
+      new Map([["vendor-nestor", new Set<string>()]]),
+      new Map([["vendor-nestor", "Néstor"]]),
+      DATA_BOTH,
+    );
+    const pos = result.vendorCoverages[0].positions[0];
+    expect(pos.status).not.toBe("B01_AVAILABLE");
+  });
+
+  test("T72: Ref already in vendor bag → not assigned", () => {
+    const vendorBag = new Set(["REF-001"]);
+    const result = buildSampleCoverageResult(
+      [makeVendorEval()],
+      [makeRef({ reference: "REF-001", disponible: 150 })],
+      [],
+      new Map([["vendor-nestor", vendorBag]]),
+      new Map([["vendor-nestor", "Néstor"]]),
+      DATA_BOTH,
+    );
+    const pos = result.vendorCoverages[0].positions[0];
+    expect(pos.status).not.toBe("B01_AVAILABLE");
+  });
+
+  test("T73: Same ref cannot fill two positions (dedup)", () => {
+    const twoEntries = makeGroup({
+      entries: [
+        makeEntry({ subgroupCode: "CAMISETA", subgroupName: "Camiseta" }),
+        makeEntry({ subgroupCode: "CAMISETA2", subgroupName: "Camiseta 2" }),
+      ],
+      missingEntries: 2,
+    });
+    const result = buildSampleCoverageResult(
+      [makeVendorEval([makeCatalog({ groups: [twoEntries], totalMissing: 2, totalEntries: 2 })])],
+      [makeRef({ reference: "REF-001", disponible: 150 })],
+      [],
+      new Map([["vendor-nestor", new Set<string>()]]),
+      new Map([["vendor-nestor", "Néstor"]]),
+      DATA_BOTH,
+    );
+    const vc = result.vendorCoverages[0];
+    const b01Positions = vc.positions.filter(p => p.status === "B01_AVAILABLE");
+    expect(b01Positions.length).toBe(1);
+  });
+
+  test("T74: Deterministic: highest disponible wins", () => {
+    const result = buildSampleCoverageResult(
+      [makeVendorEval()],
+      [
+        makeRef({ reference: "REF-LOW", disponible: 110 }),
+        makeRef({ reference: "REF-HIGH", disponible: 500 }),
+      ],
+      [],
+      new Map([["vendor-nestor", new Set<string>()]]),
+      new Map([["vendor-nestor", "Néstor"]]),
+      DATA_BOTH,
+    );
+    const pos = result.vendorCoverages[0].positions[0];
+    expect(pos.candidates[0].reference).toBe("REF-HIGH");
+  });
+
+  test("T75: Sum invariant: b01 + op + production + import + unverified = total positions", () => {
+    const multiGroup = makeGroup({
+      entries: [
+        makeEntry({ subgroupCode: "CAMISETA", subgroupName: "Camiseta" }),
+        makeEntry({ subgroupCode: "POLO", subgroupName: "Polo", sagSubgrupos: ["POLO"] }),
+        makeEntry({ subgroupCode: "BUZO", subgroupName: "Buzo", sagSubgrupos: ["CAMIBUSO"] }),
+      ],
+      missingEntries: 3,
+    });
+    const result = buildSampleCoverageResult(
+      [makeVendorEval([makeCatalog({ groups: [multiGroup], totalMissing: 3, totalEntries: 3 })])],
+      [makeRef({ reference: "REF-A", subgrupoSag: "CAMISETA", disponible: 200 })],
+      [makeOp({ reference: "REF-B", subgrupoSag: "POLO", grupoSag: "CS NIÑA BEBE" })],
+      new Map([["vendor-nestor", new Set<string>()]]),
+      new Map([["vendor-nestor", "Néstor"]]),
+      DATA_BOTH,
+    );
+    const vc = result.vendorCoverages[0];
+    const sum = vc.b01Available + vc.opIncoming + vc.productionRequired + vc.importUnavailable + vc.dataUnverified;
+    expect(sum).toBe(vc.positions.length);
+    expect(vc.b01Available).toBe(1);
+    expect(vc.opIncoming).toBe(1);
+    expect(vc.productionRequired).toBe(1);
+  });
+
+  test("T76: OP with stale date (>180 days) → filtered out, PRODUCTION_REQUIRED", () => {
+    const staleDate = new Date();
+    staleDate.setDate(staleDate.getDate() - 200);
+    const result = buildSampleCoverageResult(
+      [makeVendorEval()],
+      [],
+      [makeOp({ createdAt: staleDate.toISOString(), lastEventDate: null })],
+      new Map([["vendor-nestor", new Set<string>()]]),
+      new Map([["vendor-nestor", "Néstor"]]),
+      DATA_BOTH,
+    );
+    const pos = result.vendorCoverages[0].positions[0];
+    expect(pos.status).toBe("PRODUCTION_REQUIRED");
+  });
+});
