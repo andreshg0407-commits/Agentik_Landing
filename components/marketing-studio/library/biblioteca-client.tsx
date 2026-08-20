@@ -34,8 +34,12 @@ import { CreateReferenceModal }        from "./create-reference-modal";
 import { ProductDetailDrawer }         from "./product-detail-drawer";
 import { ImportCatalogWizard }         from "./import-catalog-wizard";
 import { CategoriaNav }               from "./categoria-nav";
+import { WorldTabBar }                from "./world-tab-bar";
+import { InventoryReferenceCard }     from "./inventory-reference-card";
 import { BIBLIOTECA_EMPTY_STATES }     from "@/lib/marketing-studio/library/ui/asset-visual-tokens";
 import { MS_CARD, MS_CTA, MS_METRIC_CARD, MS_SHADOWS } from "@/lib/marketing-studio/ms-design-system";
+import type { InventoryReference, ReconciliationReport } from "@/lib/marketing-studio/library/inventory-reference-types";
+import type { WorldCode, WorldCounts } from "@/lib/marketing-studio/library/world-classification";
 
 const MS_CARD_GAP = MS_CARD.gap;
 import { EmptyOperationalState }       from "@/components/shell/operational-primitives";
@@ -61,11 +65,15 @@ interface PresetItem {
 }
 
 interface BibliotecaClientProps {
-  assets:          BibliotecaAssetDisplay[];   // legacy asset mode
-  products?:       ProductConsoleItem[];        // product console mode (MS-06+)
-  orgSlug:         string;
-  organizationId:  string;
-  presets:         PresetItem[];
+  assets:                    BibliotecaAssetDisplay[];   // legacy asset mode
+  products?:                 ProductConsoleItem[];        // product console mode (MS-06+)
+  inventoryReferences?:      InventoryReference[];        // inventory mode (02A)
+  inventoryWorldCounts?:     WorldCounts;                 // world tab counts
+  inventorySnapshotAt?:      string | null;               // last SAG sync
+  reconciliation?:           ReconciliationReport;        // audit data
+  orgSlug:                   string;
+  organizationId:            string;
+  presets:                   PresetItem[];
 }
 
 // ── Preset accent styles ───────────────────────────────────────────────────────
@@ -473,19 +481,23 @@ const FILTER_LABELS = ["Categoría", "Canal", "Estado", "Tipo", "Temporada"];
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
-export function BibliotecaClient({ assets, products, orgSlug, organizationId, presets }: BibliotecaClientProps) {
+export function BibliotecaClient({
+  assets, products, inventoryReferences, inventoryWorldCounts, inventorySnapshotAt,
+  reconciliation, orgSlug, organizationId, presets,
+}: BibliotecaClientProps) {
   const router = useRouter();
 
-  // ── Mode: product console or legacy asset grid ──
-  // productMode activates when the server passes a products array (even empty),
-  // so the product console UI (with "Nueva referencia" CTA) is always available.
-  const productMode = products !== undefined;
+  // ── Mode hierarchy: inventory > product > legacy ──
+  const inventoryMode = inventoryReferences !== undefined && inventoryReferences.length > 0;
+  const productMode = !inventoryMode && products !== undefined;
 
   // ── State ──
   const [selectedAsset,    setSelectedAsset]    = useState<BibliotecaAssetDisplay | null>(null);
   const [selectedProduct,  setSelectedProduct]  = useState<ProductConsoleItem | null>(null);
+  const [selectedRef,      setSelectedRef]      = useState<InventoryReference | null>(null);
   const [approvalAsset,    setApprovalAsset]    = useState<BibliotecaAssetDisplay | null>(null);
   const [activePreset,     setActivePreset]     = useState<string | null>(null);
+  const [activeWorld,      setActiveWorld]       = useState<WorldCode | "todas">("todas");
   const [activeCategory,   setActiveCategory]   = useState<string>("all");
   const [searchText,       setSearchText]       = useState("");
   const [showCreateModal,  setShowCreateModal]  = useState(false);
@@ -532,6 +544,31 @@ export function BibliotecaClient({ assets, products, orgSlug, organizationId, pr
     if (searchText)                  result = filterProductsBySearch(result, searchText);
     return result;
   }, [products, activeCategory, activePreset, searchText]);
+
+  // ── Filtered inventory references (inventory mode) ──
+  const filteredInventory = useMemo(() => {
+    if (!inventoryReferences) return [];
+    let result = inventoryReferences;
+    // World filter
+    if (activeWorld !== "todas") result = result.filter(r => r.world === activeWorld);
+    // Preset filter
+    if (activePreset === "available")      result = result.filter(r => r.isAvailable);
+    else if (activePreset === "with_hero") result = result.filter(r => r.hasHeroImage);
+    else if (activePreset === "no_assets") result = result.filter(r => r.assetCount === 0);
+    else if (activePreset === "inactive")  result = result.filter(r => !r.isAvailable);
+    else if (activePreset === "sin_clasificar") result = result.filter(r => r.world === "sin_clasificar");
+    // Search filter
+    if (searchText) {
+      const q = searchText.toLowerCase();
+      result = result.filter(r =>
+        r.refCode.toLowerCase().includes(q) ||
+        r.description.toLowerCase().includes(q) ||
+        r.worldLabel.toLowerCase().includes(q) ||
+        (r.subgrupoSag ?? "").toLowerCase().includes(q)
+      );
+    }
+    return result;
+  }, [inventoryReferences, activeWorld, activePreset, searchText]);
 
   // Active preset metadata (for description strip)
   const activePresetMeta = activePreset ? presets.find(p => p.id === activePreset) : null;
@@ -599,6 +636,20 @@ export function BibliotecaClient({ assets, products, orgSlug, organizationId, pr
 
   return (
     <>
+      {/* ── World Tab Bar (inventory mode) ── */}
+      {inventoryMode && inventoryWorldCounts && (
+        <WorldTabBar
+          active={activeWorld}
+          onSelect={(w) => {
+            setActiveWorld(w);
+            setSelectedRef(null);
+            setActivePreset(null);
+          }}
+          counts={inventoryWorldCounts}
+          snapshotAt={inventorySnapshotAt ?? null}
+        />
+      )}
+
       {/* ── Operational KPI Strip ── */}
       {productMode && (
         <div style={{
@@ -846,14 +897,55 @@ export function BibliotecaClient({ assets, products, orgSlug, organizationId, pr
         </div>
 
         {/* Result count */}
-        {(searchText || activePreset || activeCategory !== "all") && (
+        {(searchText || activePreset || activeCategory !== "all" || activeWorld !== "todas") && (
           <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint }}>
-            {productMode
-              ? `${filteredProducts.length} / ${(products ?? []).length} productos`
-              : `${filteredAssets.length} / ${assets.length} assets`}
+            {inventoryMode
+              ? `${filteredInventory.length} / ${(inventoryReferences ?? []).length} referencias`
+              : productMode
+                ? `${filteredProducts.length} / ${(products ?? []).length} productos`
+                : `${filteredAssets.length} / ${assets.length} assets`}
           </div>
         )}
       </div>
+
+      {/* ── Inventory Grid (inventory mode) ── */}
+      {inventoryMode && (
+        filteredInventory.length === 0 ? (
+          <EmptyOperationalState
+            message={searchText || activePreset
+              ? "Sin referencias para este filtro"
+              : activeWorld === "sin_clasificar"
+                ? "No hay referencias sin clasificar"
+                : "No hay referencias en este mundo"
+            }
+            detail={searchText || activePreset
+              ? "Ajusta los filtros o busca con otro término."
+              : "Todas las referencias están clasificadas correctamente."
+            }
+          />
+        ) : (
+          <div style={{
+            display:             "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+            gap:                 MS_CARD.gap,
+          }}>
+            {filteredInventory.map(ref => (
+              <InventoryReferenceCard
+                key={ref.refCode}
+                reference={ref}
+                onClick={() => {
+                  setSelectedRef(ref);
+                  // If the ref has a linked product, open the product drawer
+                  if (ref.productId && products) {
+                    const p = products.find(p => p.productId === ref.productId);
+                    if (p) setSelectedProduct(p);
+                  }
+                }}
+              />
+            ))}
+          </div>
+        )
+      )}
 
       {/* ── Duplicate Resolution Mode ── */}
       {productMode && showDuplicateMode && (

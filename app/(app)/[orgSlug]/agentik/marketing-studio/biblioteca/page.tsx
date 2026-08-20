@@ -1,20 +1,15 @@
 /**
  * /[orgSlug]/agentik/marketing-studio/biblioteca
  *
- * MS-04A / MS-04A.1 / MS-04B — Biblioteca / Asset Hub
+ * MS-04A / MARKETING-LIBRARY-INVENTORY-TRUTH-02A — Biblioteca / Asset Hub
  *
- * Server Component — owns auth, data fetching, intel strip, agent signals.
+ * Server Component — owns auth, data fetching.
  * Interactive grid + drawer delegated to BibliotecaClient (client boundary).
  *
- * ── Blueprint layers ─────────────────────────────────────────────────────────
- *   1. OperationalWorkspaceHeader   (Module Pulse Header)
- *   2. Intelligence Summary Strip   (Operational Summary — IntelCard)
- *   3. Agent Signals               (Luca + Mila contextual bars)
- *   4. BibliotecaClient            (preset chips + search + grid + drawer)
- *
  * ── Data ──────────────────────────────────────────────────────────────────────
- *   Real:        listOrgApprovedAssets (asset list + count)
- *   Placeholder: intelligence summary, per-asset channels/usage/score  // PLACEHOLDER
+ *   Real:        loadInventoryReferences (CCS + PIL + ProductEntity)
+ *   Real:        listOrgApprovedAssets (orphan approved assets)
+ *   Placeholder: per-asset channels/usage/score  // PLACEHOLDER
  *
  * ── No Prisma changes · no engine changes · no SAG adapter changes ────────────
  */
@@ -23,33 +18,18 @@ import { redirect }                 from "next/navigation";
 import { requireOrgAccess }         from "@/lib/auth/org-access";
 import { canAccessMarketingStudio } from "@/lib/auth/module-access";
 import { listOrgApprovedAssets }    from "@/lib/marketing-studio/asset-service";
-import { C, T, S, R }              from "@/lib/ui/tokens";
+import { C, T, S }                  from "@/lib/ui/tokens";
 import {
   OperationalWorkspaceHeader,
 } from "@/components/workspace/operational-workspace-header";
-import { getActivePresets }         from "@/lib/marketing-studio/library/intelligence";
 import {
   BibliotecaClient,
 } from "@/components/marketing-studio/library/biblioteca-client";
 import type {
   BibliotecaAssetDisplay,
 } from "@/components/marketing-studio/library/asset-detail-drawer";
-import { listProductConsoleItems }  from "@/lib/marketing-studio/products/product-query-service";
-
-// ── Mock intelligence data ────────────────────────────────────────────────────
-// PLACEHOLDER — replace with real intelligence queries (MS-04C)
-
-const MOCK_CHANNELS: Record<string, string[]> = {
-  product_photo:   ["shopify", "catalog", "whatsapp"],
-  lifestyle_photo: ["instagram", "facebook", "catalog"],
-  short_video:     ["tiktok", "instagram"],
-  ad_creative:     ["ads", "facebook"],
-  banner:          ["shopify", "catalog"],
-  template:        ["catalog"],
-};
-
-const MOCK_USAGE    = [14, 3, 0, 7, 22, 1, 11, 5, 0, 4, 18, 2];
-const MOCK_VARIANTS = [2,  0, 1, 0,  3, 0,  1, 1, 0, 0,  2, 0];
+import { listProductConsoleItems }    from "@/lib/marketing-studio/products/product-query-service";
+import { loadInventoryReferences }    from "@/lib/marketing-studio/library/inventory-reference-service";
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
@@ -62,75 +42,64 @@ export default async function BibliotecaPage({
   const { membership, organization } = await requireOrgAccess(orgSlug);
   if (!canAccessMarketingStudio(membership.role)) redirect(`/${orgSlug}/agentik`);
 
-  // ── Real data: ProductEntity layer (MS-06) ──
-  const [products, assets] = await Promise.all([
-    listProductConsoleItems(organization.id),
-    listOrgApprovedAssets(organization.id, 60),
-  ]);
+  // ── Load inventory references (Tres Mundos) ──
+  const inventoryResult = await loadInventoryReferences(organization.id);
+  const inventoryMode   = inventoryResult.hasSnapshot;
 
-  const productMode = products.length > 0;
-  const approved    = productMode ? products.length : assets.length;
+  // ── Fallback: load legacy data if no inventory snapshot ──
+  const [products, legacyAssets] = inventoryMode
+    ? [[], []]
+    : await Promise.all([
+        listProductConsoleItems(organization.id),
+        listOrgApprovedAssets(organization.id, 60),
+      ]);
 
-  // ── Intelligence summary (real where available, PLACEHOLDER elsewhere) ──
-  const pendingReview = products.filter(p => p.status === "pending").length;            // REAL
+  // ── Also load approved assets for orphan detection ──
+  const approvedAssets = inventoryMode
+    ? await listOrgApprovedAssets(organization.id, 200)
+    : legacyAssets;
 
-  // Pre-compute display model for each asset (server side)
-  const displayAssets: BibliotecaAssetDisplay[] = assets.map((asset, idx) => {
-    const usage         = MOCK_USAGE[idx % MOCK_USAGE.length];           // PLACEHOLDER
-    const variants      = MOCK_VARIANTS[idx % MOCK_VARIANTS.length];     // PLACEHOLDER
-    const channels      = MOCK_CHANNELS[asset.assetType] ?? ["catalog"]; // PLACEHOLDER
-    const score         = usage > 10 ? 0.92 : usage > 3 ? 0.74 : 0.51;  // PLACEHOLDER
-    const highPerformer = usage >= 10;                                     // PLACEHOLDER
-    const stale         = usage === 0 && idx % 5 === 0;                   // PLACEHOLDER
+  const productMode = !inventoryMode && products.length > 0;
 
-    return {
-      id:           asset.id,
-      assetUrl:     asset.assetUrl,
-      assetType:    asset.assetType,
-      name:         asset.session.productSku
-                      ? `SKU ${asset.session.productSku}`
-                      : asset.assetType.replace(/_/g, " "),
-      sku:          asset.session.productSku ?? null,
-      status:       "approved",
-      channels,
-      usageCount:   usage,
-      variantCount: variants,
-      score,
-      highPerformer,
-      stale,
-      // PLACEHOLDER — MS-04C: pull from asset.createdAt and session/workflow metadata
-      createdAt: "May 2026",
-      origin:    "ai" as const,
-    };
-  });
+  // ── Status line ──
+  const totalRefs      = inventoryResult.worldCounts.total;
+  const available      = inventoryResult.references.filter(r => r.isAvailable).length;
+  const sinClasificar  = inventoryResult.worldCounts.sin_clasificar;
 
-  // ── Presets — product mode uses operational presets; legacy uses asset presets ──
-  const tenantCapabilities = ["whatsapp", "catalogs", "shopify"] as const;
+  // Pre-compute display model for legacy assets (backward compat)
+  const displayAssets: BibliotecaAssetDisplay[] = legacyAssets.map((asset) => ({
+    id:           asset.id,
+    assetUrl:     asset.assetUrl,
+    assetType:    asset.assetType,
+    name:         asset.session.productSku
+                    ? `SKU ${asset.session.productSku}`
+                    : asset.assetType.replace(/_/g, " "),
+    sku:          asset.session.productSku ?? null,
+    status:       "approved",
+    channels:     [],
+    usageCount:   0,
+    variantCount: 0,
+    score:        0,
+    highPerformer: false,
+    stale:         false,
+    createdAt:     "—",
+    origin:        "ai" as const,
+  }));
 
-  const productPresets = [
-    { id: "shopify_ready",    label: "Listos para Shopify",   accent: "green",  description: "Readiness OK para Shopify" },
-    { id: "whatsapp_ready",   label: "Listos para WhatsApp",  accent: "green",  description: "Nombre y disponibilidad presentes" },
-    { id: "catalog_ready",    label: "Listo para Catálogo",   accent: "blue",   description: "Categoría y nombre presentes" },
-    { id: "partial_readiness",label: "Readiness parcial",     accent: "amber",  description: "Información incompleta para al menos un canal" },
-    { id: "blocked",          label: "Bloqueados",            accent: "red",    description: "Score < 30 — metadata insuficiente" },
-    { id: "high_potential",   label: "Alto potencial · Luca", accent: "purple", description: "Oportunidades detectadas por Luca" },
-    { id: "unpublished",      label: "Sin publicar",          accent: "gray",   description: "Ningún canal publicado aún" },
-    { id: "sync_failed",      label: "Sincronización fallida", accent: "red",    description: "Al menos un canal con error de sincronización" },
+  // ── Presets ──
+  const inventoryPresets = [
+    { id: "available",        label: "Con stock",            accent: "green",  description: "Referencias con inventario disponible" },
+    { id: "with_hero",        label: "Con imagen principal", accent: "blue",   description: "Referencias con hero image" },
+    { id: "no_assets",        label: "Sin recursos",         accent: "gray",   description: "Sin ningún asset visual" },
+    { id: "inactive",         label: "Sin stock",            accent: "red",    description: "Inventario agotado — conservan assets" },
+    { id: "sin_clasificar",   label: "Sin clasificar",       accent: "amber",  description: "Mundo no determinado — requiere revisión" },
   ];
 
-  const legacyPresets = (() => {
-    const activePresets = getActivePresets([...tenantCapabilities]);
-    return [
-      "recently_approved", "whatsapp_ready", "shopify_ready",
-      "catalog_ready", "pending_review", "high_performers",
-      "missing_variants", "for_luca",
-    ]
-      .map(id => activePresets.find(p => p.id === id))
-      .filter(Boolean)
-      .map(p => ({ id: p!.id, label: p!.label, accent: p!.accent, description: p!.description }));
-  })();
+  const legacyPresets = [
+    { id: "all",              label: "Todos",                accent: "blue",   description: "Todos los assets aprobados" },
+  ];
 
-  const featuredPresets = productMode ? productPresets : legacyPresets;
+  const featuredPresets = inventoryMode ? inventoryPresets : legacyPresets;
 
   return (
     <div style={{ fontFamily: T.mono, maxWidth: 1080 }}>
@@ -142,21 +111,46 @@ export default async function BibliotecaPage({
           { label: "Biblioteca / Asset Hub" },
         ]}
         title="Biblioteca / Asset Hub"
-        subtitle="Sistema nervioso visual de marketing — assets, catálogos, destinos, inteligencia."
-        status={pendingReview > 0 ? "warning" : "ok"}
+        subtitle={inventoryMode
+          ? `Registro visual canónico · ${totalRefs} referencias · ${available} disponibles`
+          : "Sistema nervioso visual de marketing — assets, catálogos, destinos, inteligencia."
+        }
+        status={sinClasificar > 0 ? "warning" : totalRefs > 0 ? "ok" : "neutral"}
         statusLabel={
-          pendingReview > 0
-            ? `${pendingReview} pendientes de revisión`
-            : `${approved} assets aprobados`
+          inventoryMode
+            ? sinClasificar > 0
+              ? `${sinClasificar} sin clasificar`
+              : `${totalRefs} referencias clasificadas`
+            : `${displayAssets.length} assets aprobados`
         }
       />
 
-      {/* ── 2–3. KPI strip + agent signals → moved into BibliotecaClient (interactive) ── */}
+      {/* ── No snapshot banner ── */}
+      {!inventoryMode && (
+        <div style={{
+          padding:      `${S[3]}px ${S[4]}px`,
+          background:   C.amberLight,
+          border:       `1px solid ${C.amberBorder}`,
+          borderRadius: 6,
+          marginBottom: S[4],
+          fontFamily:   T.mono,
+          fontSize:     T.sz.xs,
+          color:        C.amber,
+          fontWeight:   600,
+        }}>
+          DATA_UNVERIFIED — No se encontró snapshot de inventario SAG.
+          Mostrando datos de producto/assets existentes. La fuente SAG no está disponible.
+        </div>
+      )}
 
-      {/* ── 4. Client workspace (presets + search + grid + drawer) ── */}
+      {/* ── 2. Client workspace ── */}
       <BibliotecaClient
         assets={displayAssets}
-        products={products}
+        products={productMode ? products : undefined}
+        inventoryReferences={inventoryMode ? inventoryResult.references : undefined}
+        inventoryWorldCounts={inventoryMode ? inventoryResult.worldCounts : undefined}
+        inventorySnapshotAt={inventoryResult.snapshotAt}
+        reconciliation={inventoryMode ? inventoryResult.reconciliation : undefined}
         orgSlug={orgSlug}
         organizationId={organization.id}
         presets={featuredPresets}
@@ -175,7 +169,7 @@ export default async function BibliotecaPage({
           </div>
         ))}
         <div style={{ marginLeft: "auto", fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost }}>
-          MS-03 intelligence · MS-04A.1 visual system · MS-04B drawer
+          MARKETING-LIBRARY-INVENTORY-TRUTH-02A
         </div>
       </div>
 
@@ -183,15 +177,12 @@ export default async function BibliotecaPage({
   );
 }
 
-// IntelCard removed — replaced by shared MSMetricCard via MSMetricStrip
-
 // ── Static data ───────────────────────────────────────────────────────────────
 
 const LEGEND = [
-  { dot: C.green,    label: "Aprobado y publicable"        },
-  { dot: C.amber,    label: "Pendiente de revisión"        },
-  { dot: C.blue,     label: "Generado — en procesamiento"  },
-  { dot: C.inkFaint, label: "Sin canal asignado"           },
-  { dot: C.green,    label: "Alto rendimiento (10+ usos)"  },
-  { dot: C.red,      label: "Riesgo de duplicado"          },
+  { dot: "#22c55e", label: "Con imagen principal" },
+  { dot: "#f59e0b", label: "Con assets, sin principal" },
+  { dot: "#94a3b8", label: "Sin recursos visuales" },
+  { dot: "#ef4444", label: "Inactiva (sin stock)" },
+  { dot: "#f59e0b", label: "Sin clasificar" },
 ];
