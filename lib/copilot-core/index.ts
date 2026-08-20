@@ -2,7 +2,7 @@
  * lib/copilot-core/index.ts
  *
  * Copilot Core Foundation — Client-safe barrel
- * Sprint: COPILOT-CORE-FOUNDATION-01A
+ * Sprint: COPILOT-CORE-FOUNDATION-01A-R1
  *
  * Exports only pure types and pure functions.
  * No Prisma, no SDK, no server-only dependencies.
@@ -12,8 +12,9 @@
 export type {
   ActorScope,
   PlatformRole,
-  OrganizationRole,
+  MembershipRole,
   CopilotSurface,
+  SellerBinding,
   CopilotEnvelope,
   ResourceScope,
   EnvelopeValidationResult,

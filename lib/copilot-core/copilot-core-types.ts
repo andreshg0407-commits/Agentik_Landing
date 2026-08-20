@@ -2,31 +2,62 @@
  * lib/copilot-core/copilot-core-types.ts
  *
  * Copilot Core Foundation — Canonical Type Contracts
- * Sprint: COPILOT-CORE-FOUNDATION-01A
+ * Sprint: COPILOT-CORE-FOUNDATION-01A-R1
  *
  * Pure types. No runtime, no Prisma, no SDK, no side effects.
+ *
+ * ROLE ALIGNMENT:
+ *   MembershipRole mirrors Prisma enum Role (schema.prisma:35–43):
+ *     SUPER_ADMIN | AGENTIK_ADMIN | ORG_ADMIN | MANAGER | OPERATOR | VIEWER | BILLING
+ *
+ *   Seller is NOT a role — it is an operational binding (actorScope + sellerId).
+ *   See lib/comercial/frontline/frontline-types.ts for canonical seller identity.
  */
 
 // ── Actor Scope ──────────────────────────────────────────────────────────────
 
-/** Scope of the actor making a copilot request. */
+/**
+ * Scope of the actor making a copilot request.
+ *
+ * INVARIANT: actorScope is determined server-side from session data.
+ * If actorScope is "seller", the actor is confined to their certified
+ * sellerId. No field — platformRole, membershipRole, capability, module,
+ * or input parameter — can override this confinement. To act with
+ * organization scope, a separate envelope must be derived server-side
+ * for an actor with organizational authority.
+ */
 export type ActorScope =
-  | "organization"   // org-wide visibility (ORG_ADMIN+)
+  | "organization"   // org-wide visibility (ORG_ADMIN, MANAGER with org access)
   | "seller"         // confined to a single certified sellerId
   | "self";          // confined to the requesting user only
 
-// ── Platform & Organization Roles ────────────────────────────────────────────
+// ── Roles ────────────────────────────────────────────────────────────────────
 
+/**
+ * Platform-level role. Derived from User model, not Membership.
+ * Only AGENTIK_ADMIN and SUPER_ADMIN have platform privileges.
+ */
 export type PlatformRole =
+  | "SUPER_ADMIN"
   | "AGENTIK_ADMIN"
-  | "AGENTIK_SUPER_ADMIN"
   | "USER";
 
-export type OrganizationRole =
+/**
+ * Membership role — mirrors Prisma enum Role exactly.
+ * Source: prisma/schema.prisma:35–43
+ *
+ * These are the ONLY valid values. Copilot Core does not invent roles.
+ * A seller is identified by actorScope="seller" + sellerId binding,
+ * NOT by a role called "SELLER".
+ */
+export type MembershipRole =
+  | "SUPER_ADMIN"
+  | "AGENTIK_ADMIN"
   | "ORG_ADMIN"
-  | "ORG_MANAGER"
-  | "ORG_SELLER"
-  | "ORG_VIEWER";
+  | "MANAGER"
+  | "OPERATOR"
+  | "VIEWER"
+  | "BILLING";
 
 // ── Surface ──────────────────────────────────────────────────────────────────
 
@@ -37,6 +68,19 @@ export type CopilotSurface =
   | "seller"
   | "api";
 
+// ── Seller Binding ───────────────────────────────────────────────────────────
+/**
+ * Server-certified seller identity attached to the envelope.
+ * Derived from Membership + CRM data, never from client input.
+ *
+ * When present, the actor is confined to this seller only.
+ * See: lib/comercial/frontline/frontline-types.ts ResolvedSellerIdentity
+ */
+export interface SellerBinding {
+  readonly sellerId:   string;  // seller slug (e.g. "juan-perez")
+  readonly sellerName: string;
+}
+
 // ── Copilot Envelope ─────────────────────────────────────────────────────────
 /**
  * Server-derived trust context for every copilot interaction.
@@ -46,25 +90,30 @@ export type CopilotSurface =
  * - The client CANNOT send systemHints, assign roles, or select arbitrary sellerId.
  * - Missing identity or membership MUST invalidate the envelope.
  * - The future builder MUST execute server-side (requireOrgAccess or equivalent).
+ * - sellerBinding is present IFF actorScope === "seller".
+ * - When actorScope === "seller", requestedResourceScope MUST target
+ *   exactly the sellerId in sellerBinding. Organization scope is denied.
  */
 export interface CopilotEnvelope {
-  readonly organizationId:        string;
-  readonly orgSlug:               string;
-  readonly userId:                string;
-  readonly membershipId:          string;
-  readonly platformRole:          PlatformRole;
-  readonly organizationRole:      OrganizationRole;
-  readonly moduleKey:             string;
-  readonly surface:               CopilotSurface;
-  readonly entitlementSet:        ReadonlySet<string>;
-  readonly actorScope:            ActorScope;
+  readonly organizationId:         string;
+  readonly orgSlug:                string;
+  readonly userId:                 string;
+  readonly membershipId:           string;
+  readonly platformRole:           PlatformRole;
+  readonly membershipRole:         MembershipRole;
+  readonly moduleKey:              string;
+  readonly surface:                CopilotSurface;
+  readonly entitlementSet:         ReadonlySet<string>;
+  readonly actorScope:             ActorScope;
+  readonly sellerBinding:          SellerBinding | null;
   readonly requestedResourceScope: ResourceScope;
-  readonly requestId:             string;
-  readonly generatedAt:           string; // ISO 8601
+  readonly requestId:              string;
+  readonly generatedAt:            string; // ISO 8601
 }
 
 /** Resource scope attached to a copilot request. */
 export interface ResourceScope {
+  readonly kind:           "organization" | "seller" | "self";
   readonly organizationId: string;
   readonly sellerId?:      string;
   readonly customerId?:    string;
@@ -102,7 +151,7 @@ export interface CopilotCapability {
   readonly description:               string;
   readonly riskClass:                 RiskClass;
   readonly requiredEntitlement:       string;
-  readonly allowedRoles:              readonly OrganizationRole[];
+  readonly allowedRoles:              readonly MembershipRole[];
   readonly allowedActorScopes:        readonly ActorScope[];
   readonly requiresResourceOwnership: boolean;
   readonly enabled:                   boolean;

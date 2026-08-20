@@ -2,9 +2,12 @@
  * lib/copilot-core/__tests__/copilot-core-foundation.test.ts
  *
  * Copilot Core Foundation — Mandatory test suite
- * Sprint: COPILOT-CORE-FOUNDATION-01A
+ * Sprint: COPILOT-CORE-FOUNDATION-01A-R1
  *
- * 35 pure tests. No Prisma, no network, no side effects.
+ * Pure tests. No Prisma, no network, no side effects.
+ *
+ * ROLE ALIGNMENT: uses Prisma enum Role values only.
+ * SELLER CONFINEMENT: absolute — no escalation, no substitution.
  */
 
 import { describe, test, expect } from "bun:test";
@@ -25,39 +28,44 @@ import type {
   ResourceScope,
   CopilotAnswer,
   FactRef,
+  SellerBinding,
 } from "../copilot-core-types";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function makeEnvelope(overrides: Partial<Record<string, unknown>> = {}): CopilotEnvelope {
   const base: CopilotEnvelope = {
-    organizationId:   "org_cast_001",
-    orgSlug:          "castillitos",
-    userId:           "usr_001",
-    membershipId:     "mem_001",
-    platformRole:     "USER",
-    organizationRole: "ORG_ADMIN",
-    moduleKey:        "comercial",
-    surface:          "desktop",
-    entitlementSet:   new Set(["copilot:commercial:read"]),
-    actorScope:       "organization",
-    requestedResourceScope: { organizationId: "org_cast_001" },
-    requestId:        "req_001",
-    generatedAt:      new Date().toISOString(),
+    organizationId:         "org_cast_001",
+    orgSlug:                "castillitos",
+    userId:                 "usr_001",
+    membershipId:           "mem_001",
+    platformRole:           "USER",
+    membershipRole:         "ORG_ADMIN",
+    moduleKey:              "comercial",
+    surface:                "desktop",
+    entitlementSet:         new Set(["copilot:commercial:read"]),
+    actorScope:             "organization",
+    sellerBinding:          null,
+    requestedResourceScope: { kind: "organization", organizationId: "org_cast_001" },
+    requestId:              "req_001",
+    generatedAt:            new Date().toISOString(),
   };
   return { ...base, ...overrides } as CopilotEnvelope;
 }
 
 function makeSellerEnvelope(
-  certifiedSellerId: string,
+  sellerId: string,
   scopeSellerId?: string,
 ): CopilotEnvelope {
+  const binding: SellerBinding = { sellerId, sellerName: "Test Seller" };
   return makeEnvelope({
-    organizationRole: "ORG_SELLER",
-    actorScope:       "seller",
+    membershipRole: "OPERATOR",
+    actorScope:     "seller",
+    sellerBinding:  binding,
     requestedResourceScope: {
+      kind:           "seller",
       organizationId: "org_cast_001",
-      sellerId:       scopeSellerId ?? certifiedSellerId,
+      sellerId:       scopeSellerId ?? sellerId,
     } as ResourceScope,
   });
 }
@@ -119,10 +127,9 @@ describe("Envelope validation", () => {
   test("5 — systemHints is not part of the envelope contract", () => {
     const env = makeEnvelope();
     expect("systemHints" in env).toBe(false);
-    // Even if someone injects it, it has no effect on validation
     const withHints = { ...env, systemHints: ["hack"] };
     const result = validateEnvelope(withHints);
-    expect(result.valid).toBe(true); // extra fields ignored, contract unaffected
+    expect(result.valid).toBe(true);
   });
 
   test("null envelope fails", () => {
@@ -134,6 +141,75 @@ describe("Envelope validation", () => {
     expect(isValidEnvelope(makeEnvelope())).toBe(true);
     expect(isValidEnvelope(null)).toBe(false);
     expect(isValidEnvelope({})).toBe(false);
+  });
+
+  test("R1-9a — roles used match Prisma enum Role exactly", () => {
+    // Valid canonical roles
+    for (const role of ["SUPER_ADMIN", "AGENTIK_ADMIN", "ORG_ADMIN", "MANAGER", "OPERATOR", "VIEWER", "BILLING"]) {
+      const env = makeEnvelope({ membershipRole: role });
+      const result = validateEnvelope(env);
+      expect(result.valid).toBe(true);
+    }
+  });
+
+  test("R1-10 — unknown role fails closed", () => {
+    const env = makeEnvelope({ membershipRole: "ORG_SELLER" });
+    const result = validateEnvelope(env);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("membershipRole"))).toBe(true);
+  });
+
+  test("R1-10b — invented ORG_MANAGER role fails closed", () => {
+    const env = makeEnvelope({ membershipRole: "ORG_MANAGER" });
+    const result = validateEnvelope(env);
+    expect(result.valid).toBe(false);
+  });
+
+  test("R1-10c — invented ORG_VIEWER role fails closed", () => {
+    const env = makeEnvelope({ membershipRole: "ORG_VIEWER" });
+    const result = validateEnvelope(env);
+    expect(result.valid).toBe(false);
+  });
+
+  test("seller envelope with valid binding passes", () => {
+    const env = makeSellerEnvelope("seller_X");
+    const result = validateEnvelope(env);
+    expect(result.valid).toBe(true);
+  });
+
+  test("seller envelope without sellerBinding fails", () => {
+    const env = makeEnvelope({
+      actorScope:     "seller",
+      sellerBinding:  null,
+      requestedResourceScope: { kind: "seller", organizationId: "org_cast_001", sellerId: "s1" },
+    });
+    const result = validateEnvelope(env);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("sellerBinding"))).toBe(true);
+  });
+
+  test("seller envelope with org scope kind fails", () => {
+    const binding: SellerBinding = { sellerId: "s1", sellerName: "S" };
+    const env = makeEnvelope({
+      actorScope:     "seller",
+      sellerBinding:  binding,
+      requestedResourceScope: { kind: "organization", organizationId: "org_cast_001" },
+    });
+    const result = validateEnvelope(env);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("escalation denied"))).toBe(true);
+  });
+
+  test("seller envelope with mismatched sellerId fails", () => {
+    const binding: SellerBinding = { sellerId: "seller_A", sellerName: "A" };
+    const env = makeEnvelope({
+      actorScope:     "seller",
+      sellerBinding:  binding,
+      requestedResourceScope: { kind: "seller", organizationId: "org_cast_001", sellerId: "seller_B" },
+    });
+    const result = validateEnvelope(env);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("substitution denied"))).toBe(true);
   });
 });
 
@@ -170,6 +246,15 @@ describe("Capability registry", () => {
     const caps = listCapabilitiesByModule("unknown");
     expect(caps.length).toBe(0);
   });
+
+  test("capability roles use canonical Prisma enum values only", () => {
+    const validRoles = new Set(["SUPER_ADMIN", "AGENTIK_ADMIN", "ORG_ADMIN", "MANAGER", "OPERATOR", "VIEWER", "BILLING"]);
+    for (const cap of listCapabilities()) {
+      for (const role of cap.allowedRoles) {
+        expect(validRoles.has(role)).toBe(true);
+      }
+    }
+  });
 });
 
 // ── C. Authorization Tests ───────────────────────────────────────────────────
@@ -190,9 +275,7 @@ describe("Authorization — fail-closed", () => {
     expect(result.denialReason).toBe("UNKNOWN_CAPABILITY");
   });
 
-  test("8b — disabled capability denied (simulated via WRITE risk class)", () => {
-    // No WRITE capabilities exist in registry, so any WRITE cap is unknown
-    // This test validates the contract: WRITE/EXTERNAL are blocked
+  test("8b — WRITE/EXTERNAL risk class denied", () => {
     const result = authorizeCopilotCapability(makeEnvelope(), "commercial.orders.write");
     expect(result.allowed).toBe(false);
   });
@@ -204,8 +287,8 @@ describe("Authorization — fail-closed", () => {
     expect(result.denialReason).toBe("ENTITLEMENT_DISABLED");
   });
 
-  test("10 — disallowed role denied", () => {
-    const env = makeEnvelope({ organizationRole: "ORG_VIEWER" });
+  test("10 — disallowed role denied (VIEWER)", () => {
+    const env = makeEnvelope({ membershipRole: "VIEWER" });
     const result = authorizeCopilotCapability(env, CAP);
     expect(result.allowed).toBe(false);
     expect(result.denialReason).toBe("ROLE_DENIED");
@@ -218,42 +301,47 @@ describe("Authorization — fail-closed", () => {
     expect(result.denialReason).toBe("MODULE_DENIED");
   });
 
-  test("12 — disallowed actorScope denied", () => {
-    const env = makeEnvelope({ actorScope: "self" });
+  test("12 — disallowed actorScope (self) denied", () => {
+    const env = makeEnvelope({
+      actorScope: "self",
+      requestedResourceScope: { kind: "self", organizationId: "org_cast_001" },
+    });
     const result = authorizeCopilotCapability(env, CAP);
     expect(result.allowed).toBe(false);
     expect(result.denialReason).toBe("ACTOR_SCOPE_DENIED");
   });
 
-  test("13 — ownership required but absent denied", () => {
+  test("13 — ownership required: seller without binding denied", () => {
     const PORTFOLIO_CAP = "commercial.seller.portfolio.read";
-    // Seller scope with no certified seller id
-    const env = makeSellerEnvelope("seller_001");
-    const result = authorizeCopilotCapability(env, PORTFOLIO_CAP, undefined);
+    // Invalid envelope: seller scope but no sellerBinding → INVALID_ENVELOPE
+    const env = makeEnvelope({
+      membershipRole: "OPERATOR",
+      actorScope:     "seller",
+      sellerBinding:  null,
+      requestedResourceScope: { kind: "seller", organizationId: "org_cast_001", sellerId: "s1" },
+    });
+    const result = authorizeCopilotCapability(env, PORTFOLIO_CAP);
     expect(result.allowed).toBe(false);
-    expect(result.denialReason).toBe("SELLER_SCOPE_REQUIRED");
   });
 
   test("14 — cross-tenant denied", () => {
     const env = makeEnvelope({
-      requestedResourceScope: { organizationId: "org_OTHER" } as ResourceScope,
+      requestedResourceScope: { kind: "organization", organizationId: "org_OTHER" } as ResourceScope,
     });
     const result = authorizeCopilotCapability(env, CAP);
-    expect(result.allowed).toBe(false);
-    // Could be INVALID_ENVELOPE (from validation) or CROSS_TENANT_DENIED
     expect(result.allowed).toBe(false);
   });
 
   test("15 — tenant A cannot query tenant B", () => {
     const env = makeEnvelope({
       organizationId: "org_A",
-      requestedResourceScope: { organizationId: "org_B" } as ResourceScope,
+      requestedResourceScope: { kind: "organization", organizationId: "org_B" } as ResourceScope,
     });
     const result = authorizeCopilotCapability(env, CAP);
     expect(result.allowed).toBe(false);
   });
 
-  test("25 — invalid envelope (missing field) produces deny", () => {
+  test("25 — invalid envelope (empty object) produces deny", () => {
     const result = authorizeCopilotCapability({}, CAP);
     expect(result.allowed).toBe(false);
     expect(result.denialReason).toBe("INVALID_ENVELOPE");
@@ -264,63 +352,195 @@ describe("Authorization — fail-closed", () => {
     expect(result.allowed).toBe(false);
     expect(result.denialReason).toBe("INVALID_ENVELOPE");
   });
+
+  test("BILLING role denied for commercial capabilities", () => {
+    const env = makeEnvelope({ membershipRole: "BILLING" });
+    const result = authorizeCopilotCapability(env, CAP);
+    expect(result.allowed).toBe(false);
+    expect(result.denialReason).toBe("ROLE_DENIED");
+  });
+
+  test("MANAGER role allowed for commercial capabilities", () => {
+    const env = makeEnvelope({ membershipRole: "MANAGER" });
+    const result = authorizeCopilotCapability(env, CAP);
+    expect(result.allowed).toBe(true);
+  });
+
+  test("OPERATOR role allowed for commercial capabilities", () => {
+    const env = makeEnvelope({ membershipRole: "OPERATOR" });
+    const result = authorizeCopilotCapability(env, CAP);
+    expect(result.allowed).toBe(true);
+  });
 });
 
 // ── D. Seller Confinement Tests ──────────────────────────────────────────────
 
-describe("Seller confinement", () => {
+describe("Seller confinement — absolute", () => {
   const CAP = "commercial.customers.summary.read";
 
   test("16 — seller queries own sellerId succeeds", () => {
-    const env = makeSellerEnvelope("seller_X", "seller_X");
-    const result = authorizeCopilotCapability(env, CAP, "seller_X");
+    const env = makeSellerEnvelope("seller_X");
+    const result = authorizeCopilotCapability(env, CAP);
     expect(result.allowed).toBe(true);
   });
 
   test("17 — seller cannot query another sellerId", () => {
     const env = makeSellerEnvelope("seller_X", "seller_Y");
-    const result = authorizeCopilotCapability(env, CAP, "seller_X");
+    // This envelope is invalid because sellerId != sellerBinding.sellerId
+    const result = authorizeCopilotCapability(env, CAP);
     expect(result.allowed).toBe(false);
-    expect(result.denialReason).toBe("SELLER_SCOPE_REQUIRED");
   });
 
-  test("18 — seller cannot escalate to organization scope", () => {
+  test("R1-1 — actorScope seller + requested organization = deny", () => {
+    const binding: SellerBinding = { sellerId: "s1", sellerName: "S" };
     const env = makeEnvelope({
-      organizationRole: "ORG_SELLER",
-      actorScope:       "organization", // attempted escalation
+      membershipRole: "OPERATOR",
+      actorScope:     "seller",
+      sellerBinding:  binding,
+      requestedResourceScope: { kind: "organization", organizationId: "org_cast_001" },
     });
-    // ORG_SELLER with "organization" scope — allowed by capability,
-    // but in practice the server builder should never produce this envelope.
-    // The authorization layer allows it per capability definition — the
-    // confinement is enforced by the server-side envelope builder.
-    // Here we verify the contract: if the envelope says "organization",
-    // the authz layer trusts the server-derived scope.
+    // Invalid at envelope level — seller scope with org kind
     const result = authorizeCopilotCapability(env, CAP);
-    // This SHOULD be allowed because the envelope is server-derived
-    // and says organization scope. The confinement is at envelope construction.
+    expect(result.allowed).toBe(false);
+  });
+
+  test("R1-2 — actorScope seller + administrative role in same envelope = deny for organization", () => {
+    // Even ORG_ADMIN cannot access org scope when actorScope is seller
+    const binding: SellerBinding = { sellerId: "s1", sellerName: "S" };
+    const env = makeEnvelope({
+      membershipRole: "ORG_ADMIN",
+      actorScope:     "seller",
+      sellerBinding:  binding,
+      requestedResourceScope: { kind: "organization", organizationId: "org_cast_001" },
+    });
+    const result = authorizeCopilotCapability(env, CAP);
+    expect(result.allowed).toBe(false);
+  });
+
+  test("R1-3 — actorScope seller + own sellerId = allow when all else passes", () => {
+    const env = makeSellerEnvelope("seller_OK");
+    const result = authorizeCopilotCapability(env, CAP);
     expect(result.allowed).toBe(true);
+    expect(result.evaluatedScope?.sellerId).toBe("seller_OK");
+  });
+
+  test("R1-4 — actorScope seller + foreign sellerId = deny", () => {
+    const env = makeSellerEnvelope("seller_MINE", "seller_THEIRS");
+    const result = authorizeCopilotCapability(env, CAP);
+    expect(result.allowed).toBe(false);
+  });
+
+  test("R1-5 — actorScope seller + missing sellerId = deny", () => {
+    const binding: SellerBinding = { sellerId: "s1", sellerName: "S" };
+    const env = makeEnvelope({
+      membershipRole: "OPERATOR",
+      actorScope:     "seller",
+      sellerBinding:  binding,
+      requestedResourceScope: { kind: "seller", organizationId: "org_cast_001" },
+      // no sellerId in scope
+    });
+    const result = authorizeCopilotCapability(env, CAP);
+    expect(result.allowed).toBe(false);
+  });
+
+  test("R1-6 — sellerId sent by client cannot modify the certified one", () => {
+    // Envelope with sellerId=CERTIFIED, but scope requests ATTACKER
+    const env = makeSellerEnvelope("seller_CERTIFIED", "seller_ATTACKER");
+    const result = authorizeCopilotCapability(env, CAP);
+    expect(result.allowed).toBe(false);
+  });
+
+  test("18 — seller cannot escalate to organization scope (absolute rule)", () => {
+    // This is the corrected test from 01A — seller scope ALWAYS blocks org access
+    const binding: SellerBinding = { sellerId: "s1", sellerName: "S" };
+    const env = makeEnvelope({
+      membershipRole: "ORG_ADMIN", // high role does NOT override
+      actorScope:     "seller",
+      sellerBinding:  binding,
+      requestedResourceScope: { kind: "organization", organizationId: "org_cast_001" },
+    });
+    const result = authorizeCopilotCapability(env, CAP);
+    expect(result.allowed).toBe(false);
   });
 
   test("19 — parameter sellerId cannot substitute certified scope", () => {
-    // Seller with scope pointing to seller_CERTIFIED
     const env = makeSellerEnvelope("seller_CERTIFIED", "seller_ATTACKER");
-    const result = authorizeCopilotCapability(env, CAP, "seller_CERTIFIED");
+    const result = authorizeCopilotCapability(env, CAP);
     expect(result.allowed).toBe(false);
-    expect(result.denialReason).toBe("SELLER_SCOPE_REQUIRED");
+  });
+
+  test("R1-7 — platformRole does not eliminate cross-tenant", () => {
+    const env = makeEnvelope({
+      platformRole:   "SUPER_ADMIN",
+      organizationId: "org_A",
+      requestedResourceScope: { kind: "organization", organizationId: "org_B" } as ResourceScope,
+    });
+    const result = authorizeCopilotCapability(env, CAP);
+    expect(result.allowed).toBe(false);
+  });
+
+  test("R1-8 — membershipRole does not eliminate cross-tenant", () => {
+    const env = makeEnvelope({
+      membershipRole: "ORG_ADMIN",
+      organizationId: "org_A",
+      requestedResourceScope: { kind: "organization", organizationId: "org_B" } as ResourceScope,
+    });
+    const result = authorizeCopilotCapability(env, CAP);
+    expect(result.allowed).toBe(false);
   });
 
   test("20 — ORG_ADMIN cannot cross tenant", () => {
     const env = makeEnvelope({
-      organizationRole: "ORG_ADMIN",
-      organizationId:   "org_A",
-      requestedResourceScope: { organizationId: "org_B" } as ResourceScope,
+      membershipRole: "ORG_ADMIN",
+      organizationId: "org_A",
+      requestedResourceScope: { kind: "organization", organizationId: "org_B" } as ResourceScope,
     });
     const result = authorizeCopilotCapability(env, CAP);
     expect(result.allowed).toBe(false);
   });
 });
 
-// ── E. Risk Class Gate Tests ─────────────────────────────────────────────────
+// ── E. Seller-scoped capability denial for org summaries ─────────────────────
+
+describe("Seller cannot receive org-level summaries", () => {
+  test("R1-11 — customers summary org scope denied to seller actor", () => {
+    const binding: SellerBinding = { sellerId: "s1", sellerName: "S" };
+    const env = makeEnvelope({
+      membershipRole: "OPERATOR",
+      actorScope:     "seller",
+      sellerBinding:  binding,
+      requestedResourceScope: { kind: "organization", organizationId: "org_cast_001" },
+    });
+    const result = authorizeCopilotCapability(env, "commercial.customers.summary.read");
+    expect(result.allowed).toBe(false);
+  });
+
+  test("R1-12 — orders summary org scope denied to seller actor", () => {
+    const binding: SellerBinding = { sellerId: "s1", sellerName: "S" };
+    const env = makeEnvelope({
+      membershipRole: "OPERATOR",
+      actorScope:     "seller",
+      sellerBinding:  binding,
+      requestedResourceScope: { kind: "organization", organizationId: "org_cast_001" },
+    });
+    const result = authorizeCopilotCapability(env, "commercial.orders.summary.read");
+    expect(result.allowed).toBe(false);
+  });
+
+  test("R1-13 — sales performance org scope denied to seller actor", () => {
+    const binding: SellerBinding = { sellerId: "s1", sellerName: "S" };
+    const env = makeEnvelope({
+      membershipRole: "OPERATOR",
+      actorScope:     "seller",
+      sellerBinding:  binding,
+      requestedResourceScope: { kind: "organization", organizationId: "org_cast_001" },
+    });
+    const result = authorizeCopilotCapability(env, "commercial.sales.performance.read");
+    expect(result.allowed).toBe(false);
+  });
+});
+
+// ── F. Risk Class Gate Tests ─────────────────────────────────────────────────
 
 describe("Risk class gates", () => {
   test("21 — WRITE capability not enabled (no WRITE caps in registry)", () => {
@@ -342,7 +562,7 @@ describe("Risk class gates", () => {
   });
 });
 
-// ── F. CopilotAnswer & FactRef Tests ─────────────────────────────────────────
+// ── G. CopilotAnswer & FactRef Tests ─────────────────────────────────────────
 
 describe("CopilotAnswer contract", () => {
   test("23 — answer without facts cannot be VERIFIED", () => {
@@ -358,6 +578,17 @@ describe("CopilotAnswer contract", () => {
     const result = validateAnswer(answer);
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.includes("organizationId"))).toBe(true);
+  });
+
+  test("R1-14 — FactRef from another tenant invalidates the answer", () => {
+    const crossTenantFact = makeFact({ organizationId: "org_FOREIGN" });
+    const answer = makeAnswer({
+      organizationId: "org_cast_001",
+      facts: [makeFact(), crossTenantFact],
+    });
+    const result = validateAnswer(answer);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("org_FOREIGN"))).toBe(true);
   });
 
   test("valid answer passes validation", () => {
@@ -378,7 +609,6 @@ describe("CopilotAnswer contract", () => {
   test("answer with no facts gets NO_FACTS warning", () => {
     const answer = makeAnswer({ facts: [], truthState: "DATA_UNVERIFIED" });
     const result = validateAnswer(answer);
-    // valid because truthState is not VERIFIED
     expect(result.warnings.some((w) => w.code === "NO_FACTS")).toBe(true);
   });
 

@@ -2,10 +2,13 @@
  * lib/copilot-core/copilot-core-capability-registry.ts
  *
  * Copilot Core Foundation — Capability Registry
- * Sprint: COPILOT-CORE-FOUNDATION-01A
+ * Sprint: COPILOT-CORE-FOUNDATION-01A-R1
  *
  * Declarative, typed, fail-closed capability catalog.
  * Phase 01A: only READ capabilities are enabled.
+ *
+ * ROLE ALIGNMENT: uses Prisma enum Role values only.
+ * SCOPE RULES: seller-scoped actors cannot receive org-level summaries.
  *
  * Pure data. No Prisma, no fetch, no side effects.
  */
@@ -13,6 +16,40 @@
 import type { CopilotCapability } from "./copilot-core-types";
 
 // ── Commercial READ Capabilities ─────────────────────────────────────────────
+//
+// Per-capability scope documentation:
+//
+// commercial.customers.summary.read
+//   Roles:      ORG_ADMIN, MANAGER, OPERATOR
+//   Scopes:     organization, seller
+//   sellerId:   Required when actorScope=seller (confines to seller's portfolio)
+//   ownership:  false
+//   org scope:  Only for ORG_ADMIN/MANAGER — delivers org-wide aggregates
+//   seller scope: Delivers only the seller's assigned customers
+//
+// commercial.orders.summary.read
+//   Roles:      ORG_ADMIN, MANAGER, OPERATOR
+//   Scopes:     organization, seller
+//   sellerId:   Required when actorScope=seller
+//   ownership:  false
+//   org scope:  Delivers org-wide order summary
+//   seller scope: Delivers only the seller's orders
+//
+// commercial.sales.performance.read
+//   Roles:      ORG_ADMIN, MANAGER, OPERATOR
+//   Scopes:     organization, seller
+//   sellerId:   Required when actorScope=seller
+//   ownership:  false
+//   org scope:  Delivers org-wide performance KPIs
+//   seller scope: Delivers only the seller's performance
+//
+// commercial.seller.portfolio.read
+//   Roles:      ORG_ADMIN, MANAGER, OPERATOR
+//   Scopes:     organization, seller
+//   sellerId:   Required when actorScope=seller
+//   ownership:  true (seller must prove identity to view their portfolio)
+//   org scope:  Delivers cross-seller portfolio overview
+//   seller scope: Delivers only the requesting seller's portfolio
 
 const COMMERCIAL_CAPABILITIES: readonly CopilotCapability[] = [
   {
@@ -21,7 +58,7 @@ const COMMERCIAL_CAPABILITIES: readonly CopilotCapability[] = [
     description:               "Read aggregated customer summary for the organization or seller portfolio",
     riskClass:                 "READ",
     requiredEntitlement:       "copilot:commercial:read",
-    allowedRoles:              ["ORG_ADMIN", "ORG_MANAGER", "ORG_SELLER"],
+    allowedRoles:              ["ORG_ADMIN", "MANAGER", "OPERATOR"],
     allowedActorScopes:        ["organization", "seller"],
     requiresResourceOwnership: false,
     enabled:                   true,
@@ -36,7 +73,7 @@ const COMMERCIAL_CAPABILITIES: readonly CopilotCapability[] = [
     description:               "Read order summary and recent order activity",
     riskClass:                 "READ",
     requiredEntitlement:       "copilot:commercial:read",
-    allowedRoles:              ["ORG_ADMIN", "ORG_MANAGER", "ORG_SELLER"],
+    allowedRoles:              ["ORG_ADMIN", "MANAGER", "OPERATOR"],
     allowedActorScopes:        ["organization", "seller"],
     requiresResourceOwnership: false,
     enabled:                   true,
@@ -51,7 +88,7 @@ const COMMERCIAL_CAPABILITIES: readonly CopilotCapability[] = [
     description:               "Read sales performance metrics and KPIs",
     riskClass:                 "READ",
     requiredEntitlement:       "copilot:commercial:read",
-    allowedRoles:              ["ORG_ADMIN", "ORG_MANAGER", "ORG_SELLER"],
+    allowedRoles:              ["ORG_ADMIN", "MANAGER", "OPERATOR"],
     allowedActorScopes:        ["organization", "seller"],
     requiresResourceOwnership: false,
     enabled:                   true,
@@ -66,7 +103,7 @@ const COMMERCIAL_CAPABILITIES: readonly CopilotCapability[] = [
     description:               "Read seller-specific portfolio: assigned customers, territory, commission tier",
     riskClass:                 "READ",
     requiredEntitlement:       "copilot:commercial:read",
-    allowedRoles:              ["ORG_ADMIN", "ORG_MANAGER", "ORG_SELLER"],
+    allowedRoles:              ["ORG_ADMIN", "MANAGER", "OPERATOR"],
     allowedActorScopes:        ["organization", "seller"],
     requiresResourceOwnership: true,
     enabled:                   true,
