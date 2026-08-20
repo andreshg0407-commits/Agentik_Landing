@@ -9,7 +9,11 @@
 
 import { prisma }                                         from "@/lib/prisma";
 import { AssetGenerationStatus, AssetPublishStatus }      from "@prisma/client";
+import type { PrismaClient }                              from "@prisma/client";
 import type { OutputAssetType }                           from "./guided-flow";
+
+/** Minimal Prisma-like interface accepted by injectable functions. */
+export type AssetServiceDb = Pick<PrismaClient, "studioSession" | "generatedAsset">;
 
 // ── Create ────────────────────────────────────────────────────────────────────
 
@@ -140,11 +144,12 @@ export async function updateAssetsReviewStatusForSession(
   organizationId: string,
   assetIds:       string[],
   reviewStatus:   "approved" | "rejected",
+  db:             AssetServiceDb = prisma,
 ): Promise<{ updated: number }> {
   if (assetIds.length === 0) return { updated: 0 };
 
   // Verify session belongs to org
-  const session = await prisma.studioSession.findUnique({
+  const session = await db.studioSession.findUnique({
     where: { id: sessionId },
     select: { organizationId: true },
   });
@@ -153,7 +158,7 @@ export async function updateAssetsReviewStatusForSession(
   }
 
   // Verify all assets belong to this session
-  const ownedAssets = await prisma.generatedAsset.findMany({
+  const ownedAssets = await db.generatedAsset.findMany({
     where: { id: { in: assetIds }, sessionId },
     select: { id: true },
   });
@@ -164,7 +169,7 @@ export async function updateAssetsReviewStatusForSession(
   }
 
   // Batch update — idempotent (updateMany is a no-op for already-set values)
-  const result = await prisma.generatedAsset.updateMany({
+  const result = await db.generatedAsset.updateMany({
     where: { id: { in: assetIds }, sessionId },
     data: { reviewStatus },
   });
@@ -215,8 +220,9 @@ export async function listOrgApprovedAssets(
   organizationId: string,
   limit  = 50,
   offset = 0,
+  db:    AssetServiceDb = prisma,
 ): Promise<BibliotecaAsset[]> {
-  const assets = await prisma.generatedAsset.findMany({
+  const assets = await db.generatedAsset.findMany({
     where: {
       reviewStatus: "approved",
       assetUrl:     { not: null },
