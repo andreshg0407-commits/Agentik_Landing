@@ -30,6 +30,7 @@
  * Pure computation — no Prisma, no UI, no side effects.
  */
 
+import { MALETA_COVERAGE_MINIMUMS } from "./maletas-canonical-inventory";
 import type {
   VendorAssortmentResult,
   CatalogEvaluation,
@@ -166,15 +167,16 @@ export interface SampleCoverageResult {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Wholesale thresholds — consumed from the canonical coverage source
-// These prove a reference has enough inventory for wholesale selling.
+// Wholesale thresholds — derived from MALETA_COVERAGE_MINIMUMS (canonical source).
+// Both "Oportunidades de cobertura" and "Cobertura de mostrario" share
+// the same eligibility rule: disponible strictly > threshold.
 // The sample bag receives only a SAMPLE — not the threshold quantity.
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const WHOLESALE_THRESHOLDS: Readonly<Record<string, number>> = {
-  CS: 100,     // Castillitos: disponible individual > 100
-  LT: 200,     // Latin Kids: disponible individual > 200
-  IMPORT_SM: 10, // Accesorios pequeños/medianos: disponible individual > 10
+  CS: MALETA_COVERAGE_MINIMUMS.CASTILLITOS,       // 100
+  LT: MALETA_COVERAGE_MINIMUMS.LATIN_KIDS,        // 200
+  IMPORT_SM: MALETA_COVERAGE_MINIMUMS.IMPORTACION, // 10
 };
 
 // ═══════════════════════════════════════════════════════════════════════════

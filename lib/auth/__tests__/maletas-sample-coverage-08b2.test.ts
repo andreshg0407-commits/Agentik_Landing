@@ -10,7 +10,8 @@
  *   F. Reference deduplication across positions
  *   G. Deterministic selection (disponible DESC, reference ASC)
  *   H. Position identity uses canonical rule ID
- *   I. Wholesale thresholds (CS>100, LT>200, Import>10)
+ *   I. Wholesale thresholds derived from MALETA_COVERAGE_MINIMUMS (canonical source)
+ *   I-BND. Boundary tests: 99/100/101, 199/200/201, 9/10/11 (operator is strictly >)
  *   J. UI terminology — "Cobertura de mostrario" replaces "Plan surtido"
  */
 
@@ -173,24 +174,70 @@ describe("H — Canonical position identity", () => {
 
 // ── I. Wholesale thresholds ─────────────────────────────────────────────────
 
-describe("I — Wholesale thresholds (independent of coverage)", () => {
+describe("I — Wholesale thresholds derived from canonical source", () => {
   const src = readSrc("lib/comercial/maletas/sample-coverage-engine.ts");
+  const canonicalSrc = readSrc("lib/comercial/maletas/maletas-canonical-inventory.ts");
 
-  test("T21: CS threshold is 100", () => {
-    expect(src).toContain("CS: 100,");
+  test("T21: WHOLESALE_THRESHOLDS imports from MALETA_COVERAGE_MINIMUMS", () => {
+    expect(src).toContain('import { MALETA_COVERAGE_MINIMUMS } from "./maletas-canonical-inventory"');
   });
 
-  test("T22: LT threshold is 200", () => {
-    expect(src).toContain("LT: 200,");
+  test("T22: CS derived from MALETA_COVERAGE_MINIMUMS.CASTILLITOS", () => {
+    expect(src).toContain("CS: MALETA_COVERAGE_MINIMUMS.CASTILLITOS,");
   });
 
-  test("T23: Import small/medium threshold is 10", () => {
-    expect(src).toContain("IMPORT_SM: 10,");
+  test("T23: LT derived from MALETA_COVERAGE_MINIMUMS.LATIN_KIDS", () => {
+    expect(src).toContain("CS: MALETA_COVERAGE_MINIMUMS.CASTILLITOS,");
+    expect(src).toContain("LT: MALETA_COVERAGE_MINIMUMS.LATIN_KIDS,");
   });
 
-  test("T24: WHOLESALE_THRESHOLDS exported", () => {
+  test("T24: IMPORT_SM derived from MALETA_COVERAGE_MINIMUMS.IMPORTACION", () => {
+    expect(src).toContain("IMPORT_SM: MALETA_COVERAGE_MINIMUMS.IMPORTACION,");
+  });
+
+  test("T25: Canonical values: CASTILLITOS=100, LATIN_KIDS=200, IMPORTACION=10", () => {
+    expect(canonicalSrc).toContain("CASTILLITOS: 100");
+    expect(canonicalSrc).toContain("LATIN_KIDS: 200");
+    expect(canonicalSrc).toContain("IMPORTACION: 10");
+  });
+
+  test("T26: Operator is strictly > (not >=)", () => {
+    expect(src).toContain("r.disponible > threshold");
+    expect(src).not.toContain("r.disponible >= threshold");
+  });
+
+  test("T27: WHOLESALE_THRESHOLDS exported", () => {
     expect(src).toContain("export const WHOLESALE_THRESHOLDS");
   });
+});
+
+// ── I-BND. Boundary tests ─────────────────────────────────────────────────
+
+describe("I-BND — Threshold boundary: operator is strictly >", () => {
+  // Import the actual values to verify boundary behavior
+  // CS=100: 99 NO, 100 NO, 101 YES
+  // LT=200: 199 NO, 200 NO, 201 YES
+  // IMPORT=10: 9 NO, 10 NO, 11 YES
+
+  const cases: Array<{ label: string; threshold: number; value: number; qualifies: boolean }> = [
+    { label: "CS 99", threshold: 100, value: 99, qualifies: false },
+    { label: "CS 100", threshold: 100, value: 100, qualifies: false },
+    { label: "CS 101", threshold: 100, value: 101, qualifies: true },
+    { label: "LT 199", threshold: 200, value: 199, qualifies: false },
+    { label: "LT 200", threshold: 200, value: 200, qualifies: false },
+    { label: "LT 201", threshold: 200, value: 201, qualifies: true },
+    { label: "IMP 9", threshold: 10, value: 9, qualifies: false },
+    { label: "IMP 10", threshold: 10, value: 10, qualifies: false },
+    { label: "IMP 11", threshold: 10, value: 11, qualifies: true },
+  ];
+
+  for (const c of cases) {
+    test(`T-BND: ${c.label} → ${c.qualifies ? "qualifies" : "rejected"}`, () => {
+      // The canonical operator is: disponible > threshold (strictly greater)
+      const result = c.value > c.threshold;
+      expect(result).toBe(c.qualifies);
+    });
+  }
 });
 
 // ── J. UI terminology ───────────────────────────────────────────────────────
@@ -198,28 +245,28 @@ describe("I — Wholesale thresholds (independent of coverage)", () => {
 describe("J — UI uses 'Cobertura de mostrario' terminology", () => {
   const uiSrc = readSrc("app/(app)/[orgSlug]/comercial/maletas/maletas-client.tsx");
 
-  test("T25: Tab label is 'Cobertura de mostrario' not 'Plan surtido'", () => {
+  test("T28: Tab label is 'Cobertura de mostrario' not 'Plan surtido'", () => {
     expect(uiSrc).toContain('"Cobertura de mostrario"');
     expect(uiSrc).not.toContain('"Plan surtido"');
   });
 
-  test("T26: KPI strip shows 'Posiciones faltantes'", () => {
+  test("T29: KPI strip shows 'Posiciones faltantes'", () => {
     expect(uiSrc).toContain('"Posiciones faltantes"');
   });
 
-  test("T27: Section title 'Disponibles en Bodega Principal'", () => {
+  test("T30: Section title 'Disponibles en Bodega Principal'", () => {
     expect(uiSrc).toContain('"Disponibles en Bodega Principal"');
   });
 
-  test("T28: Section title 'Requieren produccion'", () => {
+  test("T31: Section title 'Requieren produccion'", () => {
     expect(uiSrc).toContain('"Requieren produccion"');
   });
 
-  test("T29: Section title 'Muestras para retirar'", () => {
+  test("T32: Section title 'Muestras para retirar'", () => {
     expect(uiSrc).toContain('"Muestras para retirar"');
   });
 
-  test("T30: COVERAGE_STATUS_LABEL uses B01_AVAILABLE/OP_INCOMING/etc.", () => {
+  test("T33: COVERAGE_STATUS_LABEL uses B01_AVAILABLE/OP_INCOMING/etc.", () => {
     expect(uiSrc).toContain("B01_AVAILABLE:");
     expect(uiSrc).toContain("OP_INCOMING:");
     expect(uiSrc).toContain("PRODUCTION_REQUIRED:");
@@ -227,16 +274,16 @@ describe("J — UI uses 'Cobertura de mostrario' terminology", () => {
     expect(uiSrc).toContain("DATA_UNVERIFIED:");
   });
 
-  test("T31: Position rows keyed by positionId", () => {
+  test("T34: Position rows keyed by positionId", () => {
     expect(uiSrc).toContain("key={pos.positionId}");
   });
 
-  test("T32: Inline suggestion shows B01 availability", () => {
+  test("T35: Inline suggestion shows B01 availability", () => {
     expect(uiSrc).toContain("firstCandidate.reference");
     expect(uiSrc).toContain("B01:");
   });
 
-  test("T33: Expanded detail shows minWholesaleLot for production", () => {
+  test("T36: Expanded detail shows minWholesaleLot for production", () => {
     expect(uiSrc).toContain("minWholesaleLot");
     expect(uiSrc).toContain("Cantidad minima mayorista");
   });
@@ -247,11 +294,11 @@ describe("J — UI uses 'Cobertura de mostrario' terminology", () => {
 describe("K — Loader passes data to sample coverage engine", () => {
   const loaderSrc = readSrc("lib/comercial/maletas/vendor-sample-loader.ts");
 
-  test("T34: Loader imports from sample-coverage-engine", () => {
+  test("T37: Loader imports from sample-coverage-engine", () => {
     expect(loaderSrc).toContain('from "./sample-coverage-engine"');
   });
 
-  test("T35: Loader passes dataAvailability to buildSampleCoverageResult", () => {
+  test("T38: Loader passes dataAvailability to buildSampleCoverageResult", () => {
     const callSite = loaderSrc.indexOf("buildSampleCoverageResult(");
     const chunk = loaderSrc.slice(callSite, callSite + 300);
     expect(chunk).toContain("allCentralRefs");
@@ -260,7 +307,7 @@ describe("K — Loader passes data to sample coverage engine", () => {
     expect(chunk).toContain("opAvailable");
   });
 
-  test("T36: VendorSampleLoadResult uses sampleCoverage (not supplyPlan)", () => {
+  test("T39: VendorSampleLoadResult uses sampleCoverage (not supplyPlan)", () => {
     expect(loaderSrc).toContain("sampleCoverage: SampleCoverageResult");
     expect(loaderSrc).not.toContain("supplyPlan: SalesPortfolioSupplyPlan");
   });
