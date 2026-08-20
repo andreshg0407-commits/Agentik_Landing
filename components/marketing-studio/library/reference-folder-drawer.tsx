@@ -111,8 +111,11 @@ export function ReferenceFolderDrawer({
   const [activeTab, setActiveTab] = useState("todos");
 
   // -- Upload engine state --
-  const [showUploadModal,  setShowUploadModal]  = useState(false);
-  const [resolvedProductId, setResolvedProductId] = useState<string | null>(reference.productId);
+  // Write boundary: ProductEntity is created ONLY when user confirms upload,
+  // never on modal open. Cancel = zero writes, zero orphan ProductEntity.
+  const [showUploadModal,    setShowUploadModal]    = useState(false);
+  const [showUploadConfirm,  setShowUploadConfirm]  = useState(false);
+  const [resolvedProductId,  setResolvedProductId]  = useState<string | null>(reference.productId);
   const [ensuring, setEnsuring] = useState(false);
   const [driveStatus, setDriveStatus] = useState<"unknown" | "connected" | "disconnected">("unknown");
 
@@ -154,12 +157,18 @@ export function ReferenceFolderDrawer({
       .catch(() => setDriveStatus("disconnected"));
   }, [orgSlug]);
 
-  // Ensure ProductEntity exists before opening upload modal
-  const handleUploadClick = useCallback(async () => {
+  // Upload click: if productId exists, open modal directly.
+  // If not, show confirmation — NO write until user confirms.
+  const handleUploadClick = useCallback(() => {
     if (resolvedProductId) {
       setShowUploadModal(true);
-      return;
+    } else {
+      setShowUploadConfirm(true);
     }
+  }, [resolvedProductId]);
+
+  // User confirmed — NOW create ProductEntity, then open modal.
+  const handleUploadConfirm = useCallback(async () => {
     setEnsuring(true);
     try {
       const res = await fetch(`/api/orgs/${orgSlug}/marketing-studio/biblioteca/ensure-product`, {
@@ -170,16 +179,19 @@ export function ReferenceFolderDrawer({
       const data = await res.json();
       if (data.ok && data.productId) {
         setResolvedProductId(data.productId);
+        setShowUploadConfirm(false);
         setShowUploadModal(true);
       } else {
         setError("No se pudo preparar la referencia para carga.");
+        setShowUploadConfirm(false);
       }
     } catch {
       setError("Error preparando referencia para carga.");
+      setShowUploadConfirm(false);
     } finally {
       setEnsuring(false);
     }
-  }, [resolvedProductId, orgSlug, reference.refCode, reference.description]);
+  }, [orgSlug, reference.refCode, reference.description]);
 
   // Handle upload success — reload assets
   const handleUploadSuccess = useCallback(() => {
@@ -411,7 +423,63 @@ export function ReferenceFolderDrawer({
         )}
       </div>
 
-      {/* Upload Modal */}
+      {/* Upload confirm dialog — shown when no ProductEntity exists yet */}
+      {showUploadConfirm && (
+        <div style={{
+          position: "fixed" as const, inset: 0,
+          background: "rgba(0,0,0,0.4)", zIndex: 1100,
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <div style={{
+            background: C.white, borderRadius: R.md, padding: S[5],
+            maxWidth: 380, width: "90%", boxShadow: MS_SHADOWS.card,
+          }}>
+            <div style={{
+              fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: T.wt.bold,
+              color: C.ink, marginBottom: S[3],
+            }}>
+              Preparar referencia para carga
+            </div>
+            <div style={{
+              fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkMid,
+              marginBottom: S[4], lineHeight: 1.5,
+            }}>
+              Se creara un registro de producto para <strong>{reference.refCode}</strong> para
+              poder vincular archivos. Esta accion es necesaria antes de la primera carga.
+            </div>
+            <div style={{ display: "flex", gap: S[2], justifyContent: "flex-end" }}>
+              <button
+                onClick={() => setShowUploadConfirm(false)}
+                disabled={ensuring}
+                style={{
+                  fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.semibold,
+                  padding: `${S[2]}px ${S[3]}px`, borderRadius: R.md,
+                  background: C.surface, border: `1px solid ${C.line}`,
+                  color: C.inkMid, cursor: "pointer",
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleUploadConfirm}
+                disabled={ensuring}
+                style={{
+                  fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: T.wt.bold,
+                  padding: `${S[2]}px ${S[3]}px`, borderRadius: R.md,
+                  background: MS_CTA.primaryButtonBg, border: "none",
+                  color: "#fff", cursor: ensuring ? "wait" : "pointer",
+                  boxShadow: MS_CTA.primaryBoxShadow,
+                  opacity: ensuring ? 0.7 : 1,
+                }}
+              >
+                {ensuring ? "Preparando..." : "Continuar y subir"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Upload Modal — only opens with a valid productId */}
       {showUploadModal && resolvedProductId && (
         <UploadAssetsModal
           organizationId={organizationId}

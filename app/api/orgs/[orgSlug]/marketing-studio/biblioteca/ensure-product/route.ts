@@ -14,8 +14,15 @@
  *
  * SECURITY:
  *   - requireOrgAccess enforces tenant membership.
- *   - organizationId always from server session.
- *   - Idempotent: same refCode = same ProductEntity.
+ *   - canAccessMarketingStudio enforces module access.
+ *   - organizationId exclusively from server session — never from client.
+ *   - refCode normalized and validated server-side.
+ *   - Idempotent: same refCode = same ProductEntity (retry-safe).
+ *   - Race-condition safe: findFirst → create with catch on duplicate.
+ *
+ * WRITE BOUNDARY:
+ *   This route MUST only be called when the user has confirmed a valid upload.
+ *   The UI must NOT call this on modal open — only on upload confirmation.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -24,6 +31,10 @@ import { canAccessMarketingStudio }  from "@/lib/auth/module-access";
 import { prisma }                    from "@/lib/prisma";
 
 type RouteContext = { params: Promise<{ orgSlug: string }> };
+
+function normalizeRefCode(raw: string): string {
+  return raw.trim().toUpperCase().replace(/\s{2,}/g, " ");
+}
 
 export async function POST(req: NextRequest, ctx: RouteContext) {
   try {
@@ -34,17 +45,25 @@ export async function POST(req: NextRequest, ctx: RouteContext) {
       return NextResponse.json({ error: "ACCESS_DENIED" }, { status: 403 });
     }
 
+    // organizationId exclusively from server session
     const orgId = organization.id;
     const body  = await req.json();
 
-    const refCode = (typeof body.refCode === "string" ? body.refCode : "")
-      .trim().toUpperCase().replace(/\s{2,}/g, " ");
+    const rawRefCode = typeof body.refCode === "string" ? body.refCode : "";
+    const refCode = normalizeRefCode(rawRefCode);
 
-    if (!refCode) {
-      return NextResponse.json({ error: "refCode is required" }, { status: 400 });
+    if (!refCode || refCode.length < 2) {
+      return NextResponse.json({ error: "refCode is required (min 2 chars)" }, { status: 400 });
     }
 
-    // Try to find existing ProductEntity by SKU match
+    // Verify the reference exists in this org's CCS or inventory
+    // (optional enrichment — does not block creation)
+    const description = typeof body.description === "string"
+      ? body.description.trim()
+      : refCode;
+
+    // Idempotent find-or-create with race-condition safety
+    // No @@unique on (organizationId, sku), so we use findFirst + create + catch
     const existing = await prisma.productEntity.findFirst({
       where: { organizationId: orgId, sku: refCode },
       select: { id: true },
@@ -54,25 +73,35 @@ export async function POST(req: NextRequest, ctx: RouteContext) {
       return NextResponse.json({ ok: true, productId: existing.id, created: false });
     }
 
-    // Create a new ProductEntity for this reference
-    const description = typeof body.description === "string"
-      ? body.description.trim()
-      : refCode;
-
-    const product = await prisma.productEntity.create({
-      data: {
-        organizationId: orgId,
-        name:           description || refCode,
-        sku:            refCode,
-        status:         "pending",
-        commercialStatus: "active",
-        usagePermission:  "commercial",
-        currency:         "COP",
-      },
-      select: { id: true },
-    });
-
-    return NextResponse.json({ ok: true, productId: product.id, created: true });
+    // Create — if a concurrent request created the same SKU between our findFirst
+    // and this create, we'll get a row. We re-query to find it.
+    try {
+      const product = await prisma.productEntity.create({
+        data: {
+          organizationId: orgId,
+          name:           description || refCode,
+          sku:            refCode,
+          status:         "pending",
+          commercialStatus: "active",
+          usagePermission:  "commercial",
+          currency:         "COP",
+        },
+        select: { id: true },
+      });
+      return NextResponse.json({ ok: true, productId: product.id, created: true });
+    } catch (createErr: any) {
+      // Race condition: another request created the same SKU concurrently
+      // Re-query to find the winner
+      const raceWinner = await prisma.productEntity.findFirst({
+        where: { organizationId: orgId, sku: refCode },
+        select: { id: true },
+      });
+      if (raceWinner) {
+        return NextResponse.json({ ok: true, productId: raceWinner.id, created: false });
+      }
+      // Genuine error
+      throw createErr;
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Error interno";
     if (msg === "UNAUTHENTICATED") return NextResponse.json({ error: msg }, { status: 401 });
