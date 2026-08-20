@@ -2,13 +2,17 @@
  * lib/copilot-core/copilot-core-types.ts
  *
  * Copilot Core Foundation — Canonical Type Contracts
- * Sprint: COPILOT-CORE-FOUNDATION-01A-R1
+ * Sprint: COPILOT-CORE-FOUNDATION-01B1
  *
  * Pure types. No runtime, no Prisma, no SDK, no side effects.
  *
  * ROLE ALIGNMENT:
  *   MembershipRole mirrors Prisma enum Role (schema.prisma:35–43):
  *     SUPER_ADMIN | AGENTIK_ADMIN | ORG_ADMIN | MANAGER | OPERATOR | VIEWER | BILLING
+ *
+ *   PlatformRole is a separate dimension from MembershipRole.
+ *   Only SUPER_ADMIN and AGENTIK_ADMIN have platform privileges.
+ *   Regular users have platformRole = null (not "USER").
  *
  *   Seller is NOT a role — it is an operational binding (actorScope + sellerId).
  *   See lib/comercial/frontline/frontline-types.ts for canonical seller identity.
@@ -36,11 +40,11 @@ export type ActorScope =
 /**
  * Platform-level role. Derived from User model, not Membership.
  * Only AGENTIK_ADMIN and SUPER_ADMIN have platform privileges.
+ * Regular users have platformRole = null.
  */
 export type PlatformRole =
   | "SUPER_ADMIN"
-  | "AGENTIK_ADMIN"
-  | "USER";
+  | "AGENTIK_ADMIN";
 
 /**
  * Membership role — mirrors Prisma enum Role exactly.
@@ -69,16 +73,61 @@ export type CopilotSurface =
   | "api";
 
 // ── Seller Binding ───────────────────────────────────────────────────────────
+
+/**
+ * How the seller identity was resolved.
+ *
+ * CERTIFICATION RULES:
+ *   - "membership_seller_slug" is the ONLY CERTIFIED source.
+ *     Derived from Membership.permissionsJson.sellerSlug, set by admin.
+ *   - All other sources are UNVERIFIED and CANNOT produce actorScope="seller".
+ *   - "unmapped" and "ambiguous" always fail closed.
+ *
+ * See: lib/comercial/frontline/frontline-types.ts SellerMappingSource
+ */
+export type SellerBindingSource =
+  | "membership_seller_slug"   // CERTIFIED — admin-assigned slug on Membership
+  | "email_crm_match"          // UNVERIFIED — email matched a CRM seller record
+  | "name_match"               // UNVERIFIED — name fuzzy-matched a seller
+  | "unmapped"                 // no seller identity found
+  | "ambiguous";               // multiple matches, cannot determine
+
+/**
+ * The ONLY certified seller sources — immutable, no runtime mutation.
+ * Only these sources can produce actorScope="seller".
+ */
+export const CERTIFIED_SELLER_SOURCES = [
+  "membership_seller_slug",
+] as const;
+
+/**
+ * Authoritative check: is a seller binding source certified?
+ * This function is the single authority used by envelope validation
+ * and scope resolver. No other path should check certification.
+ */
+export function isCertifiedSellerSource(
+  source: SellerBindingSource,
+): boolean {
+  return source === "membership_seller_slug";
+}
+
 /**
  * Server-certified seller identity attached to the envelope.
  * Derived from Membership + CRM data, never from client input.
  *
  * When present, the actor is confined to this seller only.
  * See: lib/comercial/frontline/frontline-types.ts ResolvedSellerIdentity
+ *
+ * IDENTITY_UNSTABLE: sellerSlug is name-derived and mutable.
+ * See: lib/comercial/manager/manager-commercial-types.ts:392
  */
 export interface SellerBinding {
-  readonly sellerId:   string;  // seller slug (e.g. "juan-perez")
-  readonly sellerName: string;
+  readonly sellerId:       string;  // seller slug (e.g. "juan-perez")
+  readonly sellerName:     string;
+  readonly sellerSlug:     string;  // canonical slug, same as sellerId currently
+  readonly source:         SellerBindingSource;
+  readonly confidence:     number;  // 0–1, only 1.0 for CERTIFIED
+  readonly organizationId: string;  // tenant the binding belongs to
 }
 
 // ── Copilot Envelope ─────────────────────────────────────────────────────────
@@ -93,13 +142,14 @@ export interface SellerBinding {
  * - sellerBinding is present IFF actorScope === "seller".
  * - When actorScope === "seller", requestedResourceScope MUST target
  *   exactly the sellerId in sellerBinding. Organization scope is denied.
+ * - platformRole is null for regular users (not "USER").
  */
 export interface CopilotEnvelope {
   readonly organizationId:         string;
   readonly orgSlug:                string;
   readonly userId:                 string;
   readonly membershipId:           string;
-  readonly platformRole:           PlatformRole;
+  readonly platformRole:           PlatformRole | null;
   readonly membershipRole:         MembershipRole;
   readonly moduleKey:              string;
   readonly surface:                CopilotSurface;
@@ -230,4 +280,52 @@ export interface CopilotAnswer {
   readonly capabilityId:   string;
   readonly organizationId: string;
   readonly requestId:      string;
+}
+
+// ── Scope Resolver Types ─────────────────────────────────────────────────────
+
+/**
+ * Input for resolveCopilotActorScope().
+ * All fields are server-derived — none come from client input.
+ */
+export interface AuthorityInput {
+  readonly platformRole:            PlatformRole | null;
+  readonly membershipRole:          MembershipRole;
+  readonly membershipStatus:        "ACTIVE" | "SUSPENDED" | "REMOVED";
+  readonly organizationStatus:      "ACTIVE" | "SUSPENDED";
+  readonly enabledModules:          ReadonlySet<string>;
+  readonly resolvedSellerIdentity:  ResolvedSellerInput | null;
+  readonly requestedModuleKey:      string;
+}
+
+/**
+ * Server-resolved seller identity input.
+ * Source: resolveCurrentSeller() in lib/comercial/frontline/seller-user-mapping.ts
+ */
+export interface ResolvedSellerInput {
+  readonly sellerSlug:      string;
+  readonly sellerName:      string;
+  readonly source:          SellerBindingSource;
+  readonly confidence:      number; // 0–1
+  readonly organizationId:  string;
+}
+
+/** Warning emitted during scope resolution. */
+export interface ScopeResolutionWarning {
+  readonly code:    string;
+  readonly message: string;
+}
+
+/**
+ * Result of resolveCopilotActorScope().
+ * Determines what actorScope, sellerBinding, and resourceScope
+ * should be set on the CopilotEnvelope.
+ */
+export interface ScopeResolutionResult {
+  readonly resolved:        boolean;
+  readonly actorScope:      ActorScope | null;
+  readonly sellerBinding:   SellerBinding | null;
+  readonly resourceScope:   ResourceScope | null;
+  readonly denialReason:    DenialReason | null;
+  readonly warnings:        readonly ScopeResolutionWarning[];
 }

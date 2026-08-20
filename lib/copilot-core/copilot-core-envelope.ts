@@ -2,7 +2,7 @@
  * lib/copilot-core/copilot-core-envelope.ts
  *
  * Copilot Core Foundation — Envelope Validation
- * Sprint: COPILOT-CORE-FOUNDATION-01A-R1
+ * Sprint: COPILOT-CORE-FOUNDATION-01B1
  *
  * Pure validation. No Prisma, no fetch, no side effects.
  *
@@ -14,12 +14,18 @@
  * ROLE ALIGNMENT:
  *   Valid membership roles mirror Prisma enum Role exactly.
  *   Seller is a binding (actorScope + sellerId), not a role.
+ *
+ * PLATFORM ROLE:
+ *   Only SUPER_ADMIN and AGENTIK_ADMIN are valid platform roles.
+ *   Regular users have platformRole = null.
  */
 
 import type {
   CopilotEnvelope,
   EnvelopeValidationResult,
 } from "./copilot-core-types";
+
+import { isCertifiedSellerSource } from "./copilot-core-types";
 
 /** Prisma enum Role — source: prisma/schema.prisma:35–43 */
 const VALID_MEMBERSHIP_ROLES = new Set([
@@ -32,10 +38,18 @@ const VALID_MEMBERSHIP_ROLES = new Set([
   "BILLING",
 ]);
 
-const VALID_PLATFORM_ROLES = new Set(["SUPER_ADMIN", "AGENTIK_ADMIN", "USER"]);
+const VALID_PLATFORM_ROLES = new Set(["SUPER_ADMIN", "AGENTIK_ADMIN"]);
 const VALID_SURFACES       = new Set(["desktop", "manager", "seller", "api"]);
 const VALID_ACTOR_SCOPES   = new Set(["organization", "seller", "self"]);
 const VALID_SCOPE_KINDS    = new Set(["organization", "seller", "self"]);
+
+const VALID_SELLER_BINDING_SOURCES = new Set([
+  "membership_seller_slug",
+  "email_crm_match",
+  "name_match",
+  "unmapped",
+  "ambiguous",
+]);
 
 /**
  * Validates structural correctness of a CopilotEnvelope.
@@ -68,9 +82,12 @@ export function validateEnvelope(envelope: unknown): EnvelopeValidationResult {
     }
   }
 
-  // Platform role
-  if (!VALID_PLATFORM_ROLES.has(e.platformRole as string)) {
-    errors.push(`Invalid platformRole: ${String(e.platformRole)}`);
+  // Platform role — null is valid (regular user), otherwise must be SUPER_ADMIN or AGENTIK_ADMIN
+  const platformRole = e.platformRole;
+  if (platformRole !== null && platformRole !== undefined) {
+    if (!VALID_PLATFORM_ROLES.has(platformRole as string)) {
+      errors.push(`Invalid platformRole: ${String(platformRole)}. Must be SUPER_ADMIN, AGENTIK_ADMIN, or null`);
+    }
   }
 
   // Membership role — must match Prisma enum Role exactly
@@ -130,6 +147,25 @@ export function validateEnvelope(envelope: unknown): EnvelopeValidationResult {
       if (typeof sellerBinding.sellerId !== "string" || sellerBinding.sellerId.length === 0) {
         errors.push("sellerBinding.sellerId is required when actorScope is 'seller'");
       }
+      if (typeof sellerBinding.sellerSlug !== "string" || sellerBinding.sellerSlug.length === 0) {
+        errors.push("sellerBinding.sellerSlug is required when actorScope is 'seller'");
+      }
+      // Source must be valid and CERTIFIED for seller scope
+      if (!VALID_SELLER_BINDING_SOURCES.has(sellerBinding.source as string)) {
+        errors.push(`Invalid sellerBinding.source: ${String(sellerBinding.source)}`);
+      } else if (!isCertifiedSellerSource(sellerBinding.source as any)) {
+        errors.push(`sellerBinding.source "${String(sellerBinding.source)}" is not CERTIFIED — cannot produce actorScope="seller"`);
+      }
+      // Confidence must be a number
+      if (typeof sellerBinding.confidence !== "number" || sellerBinding.confidence < 0 || sellerBinding.confidence > 1) {
+        errors.push("sellerBinding.confidence must be a number between 0 and 1");
+      }
+      // organizationId on binding must match envelope
+      if (typeof sellerBinding.organizationId === "string" && typeof e.organizationId === "string") {
+        if (sellerBinding.organizationId !== e.organizationId) {
+          errors.push("sellerBinding.organizationId does not match envelope organizationId");
+        }
+      }
     }
 
     // Seller scope MUST have resourceScope.kind === "seller"
@@ -158,9 +194,6 @@ export function validateEnvelope(envelope: unknown): EnvelopeValidationResult {
         errors.push("actorScope is 'seller' but requestedResourceScope.sellerId is missing");
       }
     }
-  } else {
-    // Non-seller scope should NOT have a sellerBinding (informational, not blocking)
-    // This is acceptable — sellerBinding can be null for non-seller scopes
   }
 
   return { valid: errors.length === 0, errors };

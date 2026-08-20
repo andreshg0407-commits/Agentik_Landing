@@ -2,12 +2,14 @@
  * lib/copilot-core/__tests__/copilot-core-foundation.test.ts
  *
  * Copilot Core Foundation — Mandatory test suite
- * Sprint: COPILOT-CORE-FOUNDATION-01A-R1
+ * Sprint: COPILOT-CORE-FOUNDATION-01B1
  *
  * Pure tests. No Prisma, no network, no side effects.
  *
  * ROLE ALIGNMENT: uses Prisma enum Role values only.
  * SELLER CONFINEMENT: absolute — no escalation, no substitution.
+ * MODULE KEY: "sales" is the canonical TenantModule key for commercial.
+ * PLATFORM ROLE: null for regular users, not "USER".
  */
 
 import { describe, test, expect } from "bun:test";
@@ -21,6 +23,8 @@ import {
   authorizeCopilotCapability,
   resolveTruthState,
   validateAnswer,
+  CERTIFIED_SELLER_SOURCES,
+  isCertifiedSellerSource,
 } from "../index";
 
 import type {
@@ -39,11 +43,11 @@ function makeEnvelope(overrides: Partial<Record<string, unknown>> = {}): Copilot
     orgSlug:                "castillitos",
     userId:                 "usr_001",
     membershipId:           "mem_001",
-    platformRole:           "USER",
+    platformRole:           null,
     membershipRole:         "ORG_ADMIN",
-    moduleKey:              "comercial",
+    moduleKey:              "sales",
     surface:                "desktop",
-    entitlementSet:         new Set(["copilot:commercial:read"]),
+    entitlementSet:         new Set(["sales"]),
     actorScope:             "organization",
     sellerBinding:          null,
     requestedResourceScope: { kind: "organization", organizationId: "org_cast_001" },
@@ -53,11 +57,25 @@ function makeEnvelope(overrides: Partial<Record<string, unknown>> = {}): Copilot
   return { ...base, ...overrides } as CopilotEnvelope;
 }
 
+function makeSellerBinding(
+  sellerId: string,
+  organizationId: string = "org_cast_001",
+): SellerBinding {
+  return {
+    sellerId,
+    sellerName:     "Test Seller",
+    sellerSlug:     sellerId,
+    source:         "membership_seller_slug",
+    confidence:     1.0,
+    organizationId,
+  };
+}
+
 function makeSellerEnvelope(
   sellerId: string,
   scopeSellerId?: string,
 ): CopilotEnvelope {
-  const binding: SellerBinding = { sellerId, sellerName: "Test Seller" };
+  const binding = makeSellerBinding(sellerId);
   return makeEnvelope({
     membershipRole: "OPERATOR",
     actorScope:     "seller",
@@ -144,7 +162,6 @@ describe("Envelope validation", () => {
   });
 
   test("R1-9a — roles used match Prisma enum Role exactly", () => {
-    // Valid canonical roles
     for (const role of ["SUPER_ADMIN", "AGENTIK_ADMIN", "ORG_ADMIN", "MANAGER", "OPERATOR", "VIEWER", "BILLING"]) {
       const env = makeEnvelope({ membershipRole: role });
       const result = validateEnvelope(env);
@@ -171,6 +188,31 @@ describe("Envelope validation", () => {
     expect(result.valid).toBe(false);
   });
 
+  test("B1-1 — platformRole null is valid (regular user)", () => {
+    const env = makeEnvelope({ platformRole: null });
+    const result = validateEnvelope(env);
+    expect(result.valid).toBe(true);
+  });
+
+  test("B1-2 — platformRole SUPER_ADMIN is valid", () => {
+    const env = makeEnvelope({ platformRole: "SUPER_ADMIN" });
+    const result = validateEnvelope(env);
+    expect(result.valid).toBe(true);
+  });
+
+  test("B1-3 — platformRole AGENTIK_ADMIN is valid", () => {
+    const env = makeEnvelope({ platformRole: "AGENTIK_ADMIN" });
+    const result = validateEnvelope(env);
+    expect(result.valid).toBe(true);
+  });
+
+  test("B1-4 — platformRole USER is no longer valid", () => {
+    const env = makeEnvelope({ platformRole: "USER" });
+    const result = validateEnvelope(env);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("platformRole"))).toBe(true);
+  });
+
   test("seller envelope with valid binding passes", () => {
     const env = makeSellerEnvelope("seller_X");
     const result = validateEnvelope(env);
@@ -189,7 +231,7 @@ describe("Envelope validation", () => {
   });
 
   test("seller envelope with org scope kind fails", () => {
-    const binding: SellerBinding = { sellerId: "s1", sellerName: "S" };
+    const binding = makeSellerBinding("s1");
     const env = makeEnvelope({
       actorScope:     "seller",
       sellerBinding:  binding,
@@ -201,7 +243,7 @@ describe("Envelope validation", () => {
   });
 
   test("seller envelope with mismatched sellerId fails", () => {
-    const binding: SellerBinding = { sellerId: "seller_A", sellerName: "A" };
+    const binding = makeSellerBinding("seller_A");
     const env = makeEnvelope({
       actorScope:     "seller",
       sellerBinding:  binding,
@@ -210,6 +252,38 @@ describe("Envelope validation", () => {
     const result = validateEnvelope(env);
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.includes("substitution denied"))).toBe(true);
+  });
+
+  test("B1-5 — seller binding with UNVERIFIED source fails envelope validation", () => {
+    const binding = {
+      ...makeSellerBinding("s1"),
+      source: "email_crm_match" as const,
+      confidence: 0.7,
+    };
+    const env = makeEnvelope({
+      actorScope:     "seller",
+      sellerBinding:  binding,
+      requestedResourceScope: { kind: "seller", organizationId: "org_cast_001", sellerId: "s1" },
+    });
+    const result = validateEnvelope(env);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("not CERTIFIED"))).toBe(true);
+  });
+
+  test("B1-6 — seller binding with name_match source fails envelope validation", () => {
+    const binding = {
+      ...makeSellerBinding("s1"),
+      source: "name_match" as const,
+      confidence: 0.5,
+    };
+    const env = makeEnvelope({
+      actorScope:     "seller",
+      sellerBinding:  binding,
+      requestedResourceScope: { kind: "seller", organizationId: "org_cast_001", sellerId: "s1" },
+    });
+    const result = validateEnvelope(env);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("not CERTIFIED"))).toBe(true);
   });
 });
 
@@ -237,9 +311,23 @@ describe("Capability registry", () => {
     }
   });
 
-  test("listCapabilitiesByModule returns comercial capabilities", () => {
-    const caps = listCapabilitiesByModule("comercial");
+  test("B1-7 — capabilities use canonical moduleKey sales", () => {
+    const caps = listCapabilitiesByModule("sales");
     expect(caps.length).toBe(4);
+    for (const cap of caps) {
+      expect(cap.moduleKey).toBe("sales");
+    }
+  });
+
+  test("B1-8 — comercial moduleKey returns no capabilities", () => {
+    const caps = listCapabilitiesByModule("comercial");
+    expect(caps.length).toBe(0);
+  });
+
+  test("B1-9 — capabilities use sales as requiredEntitlement", () => {
+    for (const cap of listCapabilities()) {
+      expect(cap.requiredEntitlement).toBe("sales");
+    }
   });
 
   test("listCapabilitiesByModule returns empty for unknown module", () => {
@@ -313,7 +401,6 @@ describe("Authorization — fail-closed", () => {
 
   test("13 — ownership required: seller without binding denied", () => {
     const PORTFOLIO_CAP = "commercial.seller.portfolio.read";
-    // Invalid envelope: seller scope but no sellerBinding → INVALID_ENVELOPE
     const env = makeEnvelope({
       membershipRole: "OPERATOR",
       actorScope:     "seller",
@@ -386,27 +473,24 @@ describe("Seller confinement — absolute", () => {
 
   test("17 — seller cannot query another sellerId", () => {
     const env = makeSellerEnvelope("seller_X", "seller_Y");
-    // This envelope is invalid because sellerId != sellerBinding.sellerId
     const result = authorizeCopilotCapability(env, CAP);
     expect(result.allowed).toBe(false);
   });
 
   test("R1-1 — actorScope seller + requested organization = deny", () => {
-    const binding: SellerBinding = { sellerId: "s1", sellerName: "S" };
+    const binding = makeSellerBinding("s1");
     const env = makeEnvelope({
       membershipRole: "OPERATOR",
       actorScope:     "seller",
       sellerBinding:  binding,
       requestedResourceScope: { kind: "organization", organizationId: "org_cast_001" },
     });
-    // Invalid at envelope level — seller scope with org kind
     const result = authorizeCopilotCapability(env, CAP);
     expect(result.allowed).toBe(false);
   });
 
   test("R1-2 — actorScope seller + administrative role in same envelope = deny for organization", () => {
-    // Even ORG_ADMIN cannot access org scope when actorScope is seller
-    const binding: SellerBinding = { sellerId: "s1", sellerName: "S" };
+    const binding = makeSellerBinding("s1");
     const env = makeEnvelope({
       membershipRole: "ORG_ADMIN",
       actorScope:     "seller",
@@ -431,30 +515,27 @@ describe("Seller confinement — absolute", () => {
   });
 
   test("R1-5 — actorScope seller + missing sellerId = deny", () => {
-    const binding: SellerBinding = { sellerId: "s1", sellerName: "S" };
+    const binding = makeSellerBinding("s1");
     const env = makeEnvelope({
       membershipRole: "OPERATOR",
       actorScope:     "seller",
       sellerBinding:  binding,
       requestedResourceScope: { kind: "seller", organizationId: "org_cast_001" },
-      // no sellerId in scope
     });
     const result = authorizeCopilotCapability(env, CAP);
     expect(result.allowed).toBe(false);
   });
 
   test("R1-6 — sellerId sent by client cannot modify the certified one", () => {
-    // Envelope with sellerId=CERTIFIED, but scope requests ATTACKER
     const env = makeSellerEnvelope("seller_CERTIFIED", "seller_ATTACKER");
     const result = authorizeCopilotCapability(env, CAP);
     expect(result.allowed).toBe(false);
   });
 
   test("18 — seller cannot escalate to organization scope (absolute rule)", () => {
-    // This is the corrected test from 01A — seller scope ALWAYS blocks org access
-    const binding: SellerBinding = { sellerId: "s1", sellerName: "S" };
+    const binding = makeSellerBinding("s1");
     const env = makeEnvelope({
-      membershipRole: "ORG_ADMIN", // high role does NOT override
+      membershipRole: "ORG_ADMIN",
       actorScope:     "seller",
       sellerBinding:  binding,
       requestedResourceScope: { kind: "organization", organizationId: "org_cast_001" },
@@ -504,7 +585,7 @@ describe("Seller confinement — absolute", () => {
 
 describe("Seller cannot receive org-level summaries", () => {
   test("R1-11 — customers summary org scope denied to seller actor", () => {
-    const binding: SellerBinding = { sellerId: "s1", sellerName: "S" };
+    const binding = makeSellerBinding("s1");
     const env = makeEnvelope({
       membershipRole: "OPERATOR",
       actorScope:     "seller",
@@ -516,7 +597,7 @@ describe("Seller cannot receive org-level summaries", () => {
   });
 
   test("R1-12 — orders summary org scope denied to seller actor", () => {
-    const binding: SellerBinding = { sellerId: "s1", sellerName: "S" };
+    const binding = makeSellerBinding("s1");
     const env = makeEnvelope({
       membershipRole: "OPERATOR",
       actorScope:     "seller",
@@ -528,7 +609,7 @@ describe("Seller cannot receive org-level summaries", () => {
   });
 
   test("R1-13 — sales performance org scope denied to seller actor", () => {
-    const binding: SellerBinding = { sellerId: "s1", sellerName: "S" };
+    const binding = makeSellerBinding("s1");
     const env = makeEnvelope({
       membershipRole: "OPERATOR",
       actorScope:     "seller",
@@ -644,5 +725,98 @@ describe("TruthState resolution", () => {
       makeFact({ truthState: "DATA_UNVERIFIED" }),
     ];
     expect(resolveTruthState(facts, "VERIFIED")).toBe("PARTIAL");
+  });
+});
+
+// ── H. Certified Seller Sources (Immutable) ──────────────────────────────────
+
+describe("Certified seller sources — immutable authority", () => {
+  test("B1-10 — membership_seller_slug is certified", () => {
+    expect(isCertifiedSellerSource("membership_seller_slug")).toBe(true);
+  });
+
+  test("B1-11 — email_crm_match is NOT certified", () => {
+    expect(isCertifiedSellerSource("email_crm_match")).toBe(false);
+  });
+
+  test("B1-12 — name_match is NOT certified", () => {
+    expect(isCertifiedSellerSource("name_match")).toBe(false);
+  });
+
+  test("B1-13 — unmapped is NOT certified", () => {
+    expect(isCertifiedSellerSource("unmapped")).toBe(false);
+  });
+
+  test("B1-14 — ambiguous is NOT certified", () => {
+    expect(isCertifiedSellerSource("ambiguous")).toBe(false);
+  });
+
+  test("B1-15 — CERTIFIED_SELLER_SOURCES is a frozen array, no mutable API", () => {
+    // as const produces a readonly tuple — no push, pop, splice, etc.
+    expect(Array.isArray(CERTIFIED_SELLER_SOURCES)).toBe(true);
+    expect(CERTIFIED_SELLER_SOURCES.length).toBe(1);
+    expect(CERTIFIED_SELLER_SOURCES[0]).toBe("membership_seller_slug");
+    // Verify no Set-like add/delete methods exist
+    expect("add" in CERTIFIED_SELLER_SOURCES).toBe(false);
+    expect("delete" in CERTIFIED_SELLER_SOURCES).toBe(false);
+  });
+
+  test("B1-16 — high confidence does not make uncertified source certified", () => {
+    // email_crm_match with 1.0 confidence is still not certified
+    expect(isCertifiedSellerSource("email_crm_match")).toBe(false);
+    // name_match with 1.0 confidence is still not certified
+    expect(isCertifiedSellerSource("name_match")).toBe(false);
+  });
+
+  test("B1-17 — seller binding requires source+confidence+orgId+sellerId simultaneously", () => {
+    // Valid: all fields present and certified
+    const validBinding = makeSellerBinding("seller_X");
+    const validEnv = makeSellerEnvelope("seller_X");
+    const validResult = validateEnvelope(validEnv);
+    expect(validResult.valid).toBe(true);
+
+    // Invalid: uncertified source (even with correct confidence, orgId, sellerId)
+    const uncertifiedBinding = { ...validBinding, source: "email_crm_match" as const };
+    const uncertifiedEnv = makeEnvelope({
+      actorScope: "seller",
+      sellerBinding: uncertifiedBinding,
+      membershipRole: "OPERATOR",
+      requestedResourceScope: { kind: "seller", organizationId: "org_cast_001", sellerId: "seller_X" },
+    });
+    const uncertifiedResult = validateEnvelope(uncertifiedEnv);
+    expect(uncertifiedResult.valid).toBe(false);
+
+    // Invalid: missing sellerId
+    const noSellerIdBinding = { ...validBinding, sellerId: "" };
+    const noSellerIdEnv = makeEnvelope({
+      actorScope: "seller",
+      sellerBinding: noSellerIdBinding,
+      membershipRole: "OPERATOR",
+      requestedResourceScope: { kind: "seller", organizationId: "org_cast_001", sellerId: "" },
+    });
+    const noSellerIdResult = validateEnvelope(noSellerIdEnv);
+    expect(noSellerIdResult.valid).toBe(false);
+
+    // Invalid: mismatched organizationId
+    const mismatchOrgBinding = { ...validBinding, organizationId: "org_OTHER" };
+    const mismatchOrgEnv = makeEnvelope({
+      actorScope: "seller",
+      sellerBinding: mismatchOrgBinding,
+      membershipRole: "OPERATOR",
+      requestedResourceScope: { kind: "seller", organizationId: "org_cast_001", sellerId: "seller_X" },
+    });
+    const mismatchOrgResult = validateEnvelope(mismatchOrgEnv);
+    expect(mismatchOrgResult.valid).toBe(false);
+
+    // Invalid: confidence out of range
+    const badConfidenceBinding = { ...validBinding, confidence: 1.5 };
+    const badConfidenceEnv = makeEnvelope({
+      actorScope: "seller",
+      sellerBinding: badConfidenceBinding,
+      membershipRole: "OPERATOR",
+      requestedResourceScope: { kind: "seller", organizationId: "org_cast_001", sellerId: "seller_X" },
+    });
+    const badConfidenceResult = validateEnvelope(badConfidenceEnv);
+    expect(badConfidenceResult.valid).toBe(false);
   });
 });

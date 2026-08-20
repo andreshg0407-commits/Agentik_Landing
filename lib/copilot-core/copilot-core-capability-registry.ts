@@ -2,13 +2,23 @@
  * lib/copilot-core/copilot-core-capability-registry.ts
  *
  * Copilot Core Foundation — Capability Registry
- * Sprint: COPILOT-CORE-FOUNDATION-01A-R1
+ * Sprint: COPILOT-CORE-FOUNDATION-01B1
  *
  * Declarative, typed, fail-closed capability catalog.
  * Phase 01A: only READ capabilities are enabled.
  *
  * ROLE ALIGNMENT: uses Prisma enum Role values only.
  * SCOPE RULES: seller-scoped actors cannot receive org-level summaries.
+ *
+ * MODULE KEY ALIGNMENT:
+ *   Commercial capabilities use moduleKey "sales" — the canonical
+ *   TenantModule key from lib/tenant/modules.ts:78 (ROUTE_MODULE_MAP).
+ *   NOT "comercial" (URL path) or "commercial" (English name).
+ *
+ * ENTITLEMENT ALIGNMENT:
+ *   requiredEntitlement uses the canonical TenantModule key ("sales"),
+ *   not an invented copilot namespace like "copilot:commercial:read".
+ *   The entitlement check verifies the org has the module enabled.
  *
  * Pure data. No Prisma, no fetch, no side effects.
  */
@@ -54,10 +64,10 @@ import type { CopilotCapability } from "./copilot-core-types";
 const COMMERCIAL_CAPABILITIES: readonly CopilotCapability[] = [
   {
     capabilityId:              "commercial.customers.summary.read",
-    moduleKey:                 "comercial",
+    moduleKey:                 "sales",
     description:               "Read aggregated customer summary for the organization or seller portfolio",
     riskClass:                 "READ",
-    requiredEntitlement:       "copilot:commercial:read",
+    requiredEntitlement:       "sales",
     allowedRoles:              ["ORG_ADMIN", "MANAGER", "OPERATOR"],
     allowedActorScopes:        ["organization", "seller"],
     requiresResourceOwnership: false,
@@ -69,10 +79,10 @@ const COMMERCIAL_CAPABILITIES: readonly CopilotCapability[] = [
   },
   {
     capabilityId:              "commercial.orders.summary.read",
-    moduleKey:                 "comercial",
+    moduleKey:                 "sales",
     description:               "Read order summary and recent order activity",
     riskClass:                 "READ",
-    requiredEntitlement:       "copilot:commercial:read",
+    requiredEntitlement:       "sales",
     allowedRoles:              ["ORG_ADMIN", "MANAGER", "OPERATOR"],
     allowedActorScopes:        ["organization", "seller"],
     requiresResourceOwnership: false,
@@ -84,10 +94,10 @@ const COMMERCIAL_CAPABILITIES: readonly CopilotCapability[] = [
   },
   {
     capabilityId:              "commercial.sales.performance.read",
-    moduleKey:                 "comercial",
+    moduleKey:                 "sales",
     description:               "Read sales performance metrics and KPIs",
     riskClass:                 "READ",
-    requiredEntitlement:       "copilot:commercial:read",
+    requiredEntitlement:       "sales",
     allowedRoles:              ["ORG_ADMIN", "MANAGER", "OPERATOR"],
     allowedActorScopes:        ["organization", "seller"],
     requiresResourceOwnership: false,
@@ -99,10 +109,10 @@ const COMMERCIAL_CAPABILITIES: readonly CopilotCapability[] = [
   },
   {
     capabilityId:              "commercial.seller.portfolio.read",
-    moduleKey:                 "comercial",
+    moduleKey:                 "sales",
     description:               "Read seller-specific portfolio: assigned customers, territory, commission tier",
     riskClass:                 "READ",
-    requiredEntitlement:       "copilot:commercial:read",
+    requiredEntitlement:       "sales",
     allowedRoles:              ["ORG_ADMIN", "MANAGER", "OPERATOR"],
     allowedActorScopes:        ["organization", "seller"],
     requiresResourceOwnership: true,

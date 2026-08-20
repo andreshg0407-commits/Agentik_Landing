@@ -1,9 +1,9 @@
-# COPILOT-CORE-FOUNDATION-01A (R1)
+# COPILOT-CORE-FOUNDATION-01A (R1 + 01B1)
 
-**Sprint:** COPILOT-CORE-FOUNDATION-01A-R1
+**Sprint:** COPILOT-CORE-FOUNDATION-01A-R1 + 01B1
 **Base:** f476447
 **Branch:** feature/copilot-core-foundation-01
-**Status:** Fail-closed authorization foundation, canonical roles aligned
+**Status:** Fail-closed authorization foundation, canonical roles aligned, pure authority resolution
 
 ---
 
@@ -14,17 +14,42 @@ Server-derived trust context. Every field is readonly. The client cannot inject
 systemHints, assign roles, or select arbitrary sellerId. The future builder
 executes server-side via requireOrgAccess or equivalent.
 
+### PlatformRole (01B1 correction)
+Values: `SUPER_ADMIN | AGENTIK_ADMIN | null`
+
+- `null` is the default for regular users. NOT "USER".
+- `null` is the fail-closed behavior: absence of platform privilege.
+- PlatformRole is a SEPARATE dimension from MembershipRole.
+- A MembershipRole (even SUPER_ADMIN) does NOT automatically create a PlatformRole.
+- PlatformRole is derived from the User model, not from Membership.
+- Platform Authority commit (4f834ba) is NOT yet integrated on this branch.
+
 ### MembershipRole (aligned to Prisma enum Role)
 Source: `prisma/schema.prisma:35-43`
 
 Values: `SUPER_ADMIN | AGENTIK_ADMIN | ORG_ADMIN | MANAGER | OPERATOR | VIEWER | BILLING`
 
 Seller is NOT a role. It is an operational binding (`actorScope: "seller"` +
-`sellerBinding: { sellerId, sellerName }`). See `lib/comercial/frontline/frontline-types.ts`.
+`sellerBinding`). See `lib/comercial/frontline/frontline-types.ts`.
 
-### SellerBinding
+### SellerBinding (01B1 expansion)
 Server-certified seller identity attached to the envelope. Derived from
 Membership + CRM data, never from client input. Present IFF `actorScope === "seller"`.
+
+Fields: `sellerId, sellerName, sellerSlug, source, confidence, organizationId`
+
+### SellerBindingSource (01B1)
+Values: `membership_seller_slug | email_crm_match | name_match | unmapped | ambiguous`
+
+**Certification rules:**
+- `membership_seller_slug` is the ONLY certified source.
+- `email_crm_match` NEVER grants seller access.
+- `name_match` NEVER grants seller access.
+- `unmapped` and `ambiguous` always fail closed.
+- Confidence value alone CANNOT make an uncertified source certified.
+- The authority function `isCertifiedSellerSource()` is the single check point.
+- `CERTIFIED_SELLER_SOURCES` is an immutable `as const` array — no runtime mutation.
+- `sellerSlug` continues as IDENTITY_UNSTABLE (see `manager-commercial-types.ts:392`).
 
 ### CopilotCapability
 Declarative descriptor with: capabilityId, moduleKey, riskClass, requiredEntitlement,
@@ -37,15 +62,36 @@ Typed deny/allow with: capabilityId, riskClass, denialReason (10 codes), evaluat
 Response envelope with truth-state invariants. A response without facts cannot be VERIFIED.
 Every FactRef.organizationId must match the answer's organizationId.
 
+### ScopeResolutionResult (01B1)
+Result of `resolveCopilotActorScope()`: resolved, actorScope, sellerBinding,
+resourceScope, denialReason, warnings.
+
+---
+
+## TenantModule Alignment (01B1)
+
+| Concept | Value | Source |
+|---------|-------|--------|
+| Canonical TenantModule key for commercial | `sales` | `lib/tenant/modules.ts:78` |
+| URL path for commercial | `comercial` | Route convention |
+| Capability moduleKey | `sales` | Aligned to TenantModule |
+| requiredEntitlement | `sales` | TenantModule key (NOT invented namespace) |
+| Copilot TenantModule key | `copilot` | Separate opt-in module |
+
+**Capability ID and TenantModule key are separate concepts:**
+- Capability ID: `commercial.customers.summary.read` (copilot-specific)
+- TenantModule key: `sales` (tenant entitlement system)
+- Do NOT conflate them. Do NOT invent: `copilot:commercial:read`, `copilot:core:enabled`.
+
 ---
 
 ## Canonical Role Sources
 
 | Type | Source | Values |
 |------|--------|--------|
-| PlatformRole | User model | SUPER_ADMIN, AGENTIK_ADMIN, USER |
+| PlatformRole | User model | SUPER_ADMIN, AGENTIK_ADMIN, null |
 | MembershipRole | Prisma enum Role (schema.prisma:35) | SUPER_ADMIN, AGENTIK_ADMIN, ORG_ADMIN, MANAGER, OPERATOR, VIEWER, BILLING |
-| Seller identity | Membership + CRM join | SellerBinding { sellerId, sellerName } |
+| Seller identity | Membership + CRM join | SellerBinding { sellerId, sellerName, sellerSlug, source, confidence, organizationId } |
 | Actor scope | Server-derived from session | organization, seller, self |
 
 ---
@@ -90,6 +136,27 @@ No exceptions via: platformRole, membershipRole, capability, module, or input pa
 
 ---
 
+## Scope Resolution Rules (01B1)
+
+`resolveCopilotActorScope(authorityInput)` — pure function, no DB, no network.
+
+| MembershipRole | Certified Seller? | Module Enabled? | Result |
+|----------------|-------------------|-----------------|--------|
+| SUPER_ADMIN    | any               | Yes             | organization |
+| AGENTIK_ADMIN  | any               | Yes             | organization |
+| ORG_ADMIN      | any               | Yes             | organization |
+| MANAGER        | any               | Yes             | organization |
+| OPERATOR       | Yes (CERTIFIED)   | Yes             | seller |
+| OPERATOR       | No/Unverified     | Yes             | self |
+| VIEWER         | any               | Yes (sales)     | ROLE_DENIED |
+| BILLING        | any               | Yes (sales)     | ROLE_DENIED |
+| VIEWER         | any               | Yes (other)     | self |
+| BILLING        | any               | Yes (other)     | self |
+| any            | any               | No              | MODULE_DENIED |
+| any            | any               | (suspended)     | INVALID_ENVELOPE |
+
+---
+
 ## MembershipRole x ActorScope Matrix
 
 | MembershipRole | organization scope | seller scope | self scope |
@@ -109,19 +176,17 @@ No exceptions via: platformRole, membershipRole, capability, module, or input pa
 
 ---
 
-## Initial Capabilities (Phase 01A)
+## Initial Capabilities (Phase 01A, aligned 01B1)
 
-| Capability ID | Module | Risk | Roles | Scopes | Ownership | sellerId required |
+| Capability ID | Module | Risk | Roles | Scopes | Ownership | Entitlement |
 |---|---|---|---|---|---|---|
-| commercial.customers.summary.read | comercial | READ | ORG_ADMIN, MANAGER, OPERATOR | organization, seller | No | When seller scope |
-| commercial.orders.summary.read | comercial | READ | ORG_ADMIN, MANAGER, OPERATOR | organization, seller | No | When seller scope |
-| commercial.sales.performance.read | comercial | READ | ORG_ADMIN, MANAGER, OPERATOR | organization, seller | No | When seller scope |
-| commercial.seller.portfolio.read | comercial | READ | ORG_ADMIN, MANAGER, OPERATOR | organization, seller | Yes | When seller scope |
-
-All require entitlement `copilot:commercial:read`.
+| commercial.customers.summary.read | sales | READ | ORG_ADMIN, MANAGER, OPERATOR | organization, seller | No | sales |
+| commercial.orders.summary.read | sales | READ | ORG_ADMIN, MANAGER, OPERATOR | organization, seller | No | sales |
+| commercial.sales.performance.read | sales | READ | ORG_ADMIN, MANAGER, OPERATOR | organization, seller | No | sales |
+| commercial.seller.portfolio.read | sales | READ | ORG_ADMIN, MANAGER, OPERATOR | organization, seller | Yes | sales |
 
 When actorScope=seller, responses deliver ONLY that seller's data.
-When actorScope=organization, responses deliver org-wide aggregates (requires ORG_ADMIN/MANAGER/OPERATOR with org authority).
+When actorScope=organization, responses deliver org-wide aggregates.
 
 ---
 
@@ -134,6 +199,7 @@ When actorScope=organization, responses deliver org-wide aggregates (requires OR
 - Memory read/write (CopilotMemory model)
 - AI usage tracking (AiUsage model)
 - Runtime orchestrator
+- **Server-side envelope builder** (BLOCKED — requires Platform Authority 4f834ba)
 
 ### Quarantined capabilities
 - **Maletas** and **Inventario** -- quarantined due to P0 SAG availability incident.
@@ -142,6 +208,11 @@ When actorScope=organization, responses deliver org-wide aggregates (requires OR
 ### Excluded capability domains
 Cobertura, Oportunidades, Produccion, B01, B04, PDF/XML, Cobranza, Finanzas,
 Marketing, and all WRITE/EXTERNAL operations.
+
+### Not integrated
+- Platform Authority commit 4f834ba (adds PlatformRole enum and User.platformRole to Prisma).
+  This commit is NOT on the current feature branch. The envelope builder remains blocked
+  until it lands on main.
 
 ---
 
