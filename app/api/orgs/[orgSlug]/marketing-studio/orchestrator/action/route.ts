@@ -11,7 +11,7 @@
 
 import { NextRequest, NextResponse }           from "next/server";
 import { requireOrgAccess }                    from "@/lib/auth/org-access";
-import { isInternalRole }                      from "@/lib/auth/module-access";
+import { hasPlatformConsoleAccess }            from "@/lib/auth/module-access";
 import { dispatchOrchestratorAction }          from "@/lib/marketing-studio/orchestrator/orchestrator-action-dispatcher";
 import { buildActionIdempotencyKey }           from "@/lib/marketing-studio/orchestrator/orchestrator-actions";
 import type { OrchestratorActionType }         from "@/lib/marketing-studio/orchestrator/orchestrator-actions";
@@ -31,9 +31,9 @@ export async function POST(
 ) {
   try {
     const { orgSlug }                  = context.params;
-    const { user, membership, organization } = await requireOrgAccess(orgSlug);
+    const { user, membership, organization, platformRole } = await requireOrgAccess(orgSlug);
 
-    if (!isInternalRole(membership.role)) {
+    if (!hasPlatformConsoleAccess(platformRole)) {
       return NextResponse.json({ error: "Forbidden — platform-admin only" }, { status: 403 });
     }
 

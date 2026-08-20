@@ -29,7 +29,7 @@ import Link                          from "next/link";
 import { formatDateWeekday }         from "@/lib/utils/formatDate";
 import { MembershipStatus }          from "@prisma/client";
 import { requireOrgAccess }          from "@/lib/auth/org-access";
-import { isInternalRole }            from "@/lib/auth/module-access";
+import { hasPlatformConsoleAccess }  from "@/lib/auth/module-access";
 import { getEnabledModules }         from "@/lib/tenant/modules";
 import { statusLabel, severityLabel } from "@/lib/ui/status-labels";
 import { getAccessibleOrganizations } from "@/lib/auth/user-orgs";
@@ -94,9 +94,9 @@ export default async function CentroDeOperacionesPage({
 }: {
   params: { orgSlug: string };
 }) {
-  const { user, organization, membership } = await requireOrgAccess(params.orgSlug);
+  const { user, organization, membership, platformRole } = await requireOrgAccess(params.orgSlug);
   const firstName  = user.name?.split(" ")[0] ?? "usuario";
-  const isInternal = isInternalRole(membership.role);
+  const isInternal = hasPlatformConsoleAccess(platformRole);
 
   const yesterday = new Date(Date.now() - 86_400_000);
 

@@ -14,7 +14,7 @@
 
 import { NextResponse }       from "next/server";
 import { requireOrgAccess }   from "@/lib/auth/org-access";
-import { isInternalRole }     from "@/lib/auth/module-access";
+import { hasPlatformConsoleAccess } from "@/lib/auth/module-access";
 import {
   getKpiDefinition,
   updateKpiDefinition,
@@ -40,7 +40,7 @@ export const runtime = "nodejs";
 
 async function requireInternalAccess(orgSlug: string) {
   const result = await requireOrgAccess(orgSlug);
-  if (!isInternalRole(result.membership.role)) throw new Error("FORBIDDEN");
+  if (!hasPlatformConsoleAccess(result.platformRole)) throw new Error("FORBIDDEN");
   return result;
 }
 

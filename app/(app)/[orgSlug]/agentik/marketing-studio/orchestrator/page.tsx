@@ -9,8 +9,7 @@
 
 import { redirect }                       from "next/navigation";
 import { requireOrgAccess }              from "@/lib/auth/org-access";
-import { canAccessMarketingStudio }      from "@/lib/auth/module-access";
-import { isInternalRole }                from "@/lib/auth/module-access";
+import { canAccessMarketingStudio, hasPlatformConsoleAccess } from "@/lib/auth/module-access";
 import { OperationalWorkspaceHeader }    from "@/components/workspace/operational-workspace-header";
 import { OrchestratorDashboard }         from "@/components/marketing-studio/orchestrator/orchestrator-dashboard";
 import { buildOrchestratorRuntimeState } from "@/lib/marketing-studio/orchestrator/orchestrator-engine";
@@ -21,10 +20,10 @@ export default async function OrchestratorPage({
   params: { orgSlug: string };
 }) {
   const { orgSlug }                  = params;
-  const { membership, organization } = await requireOrgAccess(orgSlug);
+  const { membership, organization, platformRole } = await requireOrgAccess(orgSlug);
 
   // Platform-admin gate: only SUPER_ADMIN / AGENTIK_ADMIN
-  if (!isInternalRole(membership.role)) {
+  if (!hasPlatformConsoleAccess(platformRole)) {
     redirect(`/${orgSlug}/agentik`);
   }
 

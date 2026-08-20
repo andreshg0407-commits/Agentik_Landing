@@ -12,7 +12,6 @@
 
 import type { Role } from "@prisma/client";
 import { prisma }    from "@/lib/prisma";
-import { isInternalRole }    from "@/lib/auth/module-access";
 import { getEnabledModules } from "@/lib/tenant/modules";
 import { evaluateAllSignals } from "@/lib/copilot/signal-engine";
 import type { CopilotSignal, SignalEngineResult } from "@/lib/copilot/types";
@@ -213,7 +212,7 @@ export default async function RightOpsRail({
   platformRole,
 }: RightOpsRailProps) {
   // Platform authority takes precedence over membership role for internal access.
-  const isInternal = platformRole === "SUPER_ADMIN" || platformRole === "AGENTIK_ADMIN" || isInternalRole(role);
+  const isInternal = platformRole === "SUPER_ADMIN" || platformRole === "AGENTIK_ADMIN";
   // showInfra: show deep infrastructure rail sections only on console/admin surfaces.
   // On all operational and AI-workspace routes the rail stays clean (Header + Signals + Alerts + Tasks).
   const showInfra  = isInternal && isConsoleSurface(pathname);

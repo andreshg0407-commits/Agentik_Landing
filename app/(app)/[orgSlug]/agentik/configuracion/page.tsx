@@ -14,7 +14,7 @@
 import Link                 from "next/link";
 import { redirect }         from "next/navigation";
 import { requireOrgAccess } from "@/lib/auth/org-access";
-import { isInternalRole }   from "@/lib/auth/module-access";
+import { hasPlatformConsoleAccess } from "@/lib/auth/module-access";
 import { C, T, S, R, E }   from "@/lib/ui/tokens";
 import { OperationalWorkspaceHeader } from "@/components/workspace/operational-workspace-header";
 
@@ -48,11 +48,11 @@ export default async function ConfiguracionPage({
   params: Promise<{ orgSlug: string }>;
 }) {
   const { orgSlug }    = await params;
-  const { membership } = await requireOrgAccess(orgSlug);
+  const { membership, platformRole } = await requireOrgAccess(orgSlug);
 
-  if (!isInternalRole(membership.role)) redirect(`/${orgSlug}/dashboard`);
+  if (!hasPlatformConsoleAccess(platformRole)) redirect(`/${orgSlug}/dashboard`);
 
-  const isSuperAdmin = membership.role === "SUPER_ADMIN";
+  const isSuperAdmin = platformRole === "SUPER_ADMIN";
 
   return (
     <div style={{ fontFamily: T.mono, maxWidth: 1024, padding: `${S[6]}px` }}>

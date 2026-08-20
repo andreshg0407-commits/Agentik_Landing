@@ -10,7 +10,7 @@
 
 import { NextRequest, NextResponse }      from "next/server";
 import { requireOrgAccess }               from "@/lib/auth/org-access";
-import { isInternalRole }                 from "@/lib/auth/module-access";
+import { hasPlatformConsoleAccess }       from "@/lib/auth/module-access";
 import { dispatchOperatorRequest }        from "@/lib/marketing-studio/operators/operator-dispatcher";
 import { isChannelSupported }             from "@/lib/marketing-studio/operators/operator-registry";
 import type { OperatorChannel, OperatorAction } from "@/lib/marketing-studio/operators/operator-types";
@@ -33,9 +33,9 @@ export async function POST(
 ) {
   try {
     const { orgSlug }                        = context.params;
-    const { user, membership, organization } = await requireOrgAccess(orgSlug);
+    const { user, membership, organization, platformRole } = await requireOrgAccess(orgSlug);
 
-    if (!isInternalRole(membership.role)) {
+    if (!hasPlatformConsoleAccess(platformRole)) {
       return NextResponse.json({ error: "Forbidden — platform-admin only" }, { status: 403 });
     }
 

@@ -11,7 +11,7 @@
 
 import { redirect } from "next/navigation";
 import { requireOrgAccess } from "@/lib/auth/org-access";
-import { isInternalRole } from "@/lib/auth/module-access";
+import { hasPlatformConsoleAccess } from "@/lib/auth/module-access";
 import { listOrgMembers } from "@/lib/auth/member-admin";
 import { UsersAdminClient } from "./users-admin-client";
 
@@ -21,9 +21,9 @@ export default async function UsersAdminPage({
   params: Promise<{ orgSlug: string }>;
 }) {
   const { orgSlug } = await params;
-  const { organization, membership } = await requireOrgAccess(orgSlug);
+  const { organization, membership, platformRole } = await requireOrgAccess(orgSlug);
 
-  if (!isInternalRole(membership.role)) {
+  if (!hasPlatformConsoleAccess(platformRole)) {
     redirect(`/${orgSlug}`);
   }
 

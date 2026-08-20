@@ -167,8 +167,24 @@ export function filterModulesByRole(
  * HARDENED: ORG_ADMIN is explicitly excluded — internal console is for
  * Agentik staff only.
  */
+/**
+ * @deprecated Use platformRole from requireOrgAccess() or requireTenant() instead.
+ * Membership role must NOT be used to determine platform authority.
+ * Kept only for test compatibility — will be removed after full migration.
+ */
 export function isInternalRole(role: Role): boolean {
   return role === "SUPER_ADMIN" || role === "AGENTIK_ADMIN";
+}
+
+/**
+ * True when the user holds a platform role that grants access to internal
+ * console surfaces (Agentik, Ejecuciones, Eventos, Integraciones, etc.).
+ *
+ * Source of truth: User.platformRole (global).
+ * NEVER derived from Membership.role.
+ */
+export function hasPlatformConsoleAccess(platformRole: string | null | undefined): boolean {
+  return platformRole === "SUPER_ADMIN" || platformRole === "AGENTIK_ADMIN";
 }
 
 /**

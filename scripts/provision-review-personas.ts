@@ -42,6 +42,24 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL! });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter } as ConstructorParameters<typeof PrismaClient>[0]);
 
+// ── P2022 detector (mirrors lib/tenant.ts isPrismaColumnNotFound) ────────────
+
+function isPlatformRoleColumnMissing(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const errObj = err as Record<string, unknown>;
+  if (errObj.code === "P2022") {
+    const meta = errObj.meta as Record<string, unknown> | undefined;
+    if (meta) {
+      const col = String(meta.column ?? meta.target ?? "");
+      if (col.includes("platformRole")) return true;
+    }
+    return false;
+  }
+  const msg = typeof errObj.message === "string" ? errObj.message : "";
+  if (msg.includes("platformRole") && msg.includes("does not exist")) return true;
+  return false;
+}
+
 // ── Mode parsing ─────────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
@@ -142,13 +160,7 @@ async function main() {
         select: { id: true, email: true, name: true, platformRole: true },
       });
     } catch (err: unknown) {
-      // Only suppress P2022 (column not found) — rethrow all other errors
-      const isP2022 =
-        (typeof err === "object" && err !== null && "code" in err && (err as { code: string }).code === "P2022") ||
-        (typeof err === "object" && err !== null && "message" in err &&
-          String((err as { message: string }).message).includes("platformRole") &&
-          String((err as { message: string }).message).includes("does not exist"));
-      if (!isP2022) throw err;
+      if (!isPlatformRoleColumnMissing(err)) throw err;
     }
 
     // Fallback if platformRole column doesn't exist yet

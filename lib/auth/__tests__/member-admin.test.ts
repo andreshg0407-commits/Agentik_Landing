@@ -217,8 +217,8 @@ describe("J — Role escalation prevention", () => {
     expect(src).toContain('INTERNAL_ROLES.has(targetRole) && callerRole !== "SUPER_ADMIN"');
   });
 
-  test("API route enforces isInternalRole gate", () => {
+  test("API route enforces platform authority gate", () => {
     const src = readFile("app/api/orgs/[orgSlug]/members/route.ts");
-    expect(src).toContain("isInternalRole(membership.role)");
+    expect(src).toContain("hasPlatformConsoleAccess(platformRole)");
   });
 });

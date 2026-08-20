@@ -17,7 +17,7 @@ import Link                 from "next/link";
 import Image                from "next/image";
 import { redirect }         from "next/navigation";
 import { requireOrgAccess } from "@/lib/auth/org-access";
-import { isInternalRole }   from "@/lib/auth/module-access";
+import { hasPlatformConsoleAccess } from "@/lib/auth/module-access";
 import { C, T, S, R, E }   from "@/lib/ui/tokens";
 import { AGENTS, getAgentStateCounts } from "@/lib/copilot/agents";
 
@@ -29,10 +29,10 @@ export default async function AgentikOSHomePage({
   params: Promise<{ orgSlug: string }>;
 }) {
   const { orgSlug }          = await params;
-  const { membership }       = await requireOrgAccess(orgSlug);
+  const { membership, platformRole } = await requireOrgAccess(orgSlug);
 
   // ── Access guard — internal roles only ──────────────────────────────────────
-  if (!isInternalRole(membership.role)) redirect(`/${orgSlug}/dashboard`);
+  if (!hasPlatformConsoleAccess(platformRole)) redirect(`/${orgSlug}/dashboard`);
 
   const counts        = getAgentStateCounts();
   const totalActive   = counts.active + counts.learning;

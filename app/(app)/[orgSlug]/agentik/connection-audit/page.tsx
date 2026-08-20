@@ -13,7 +13,7 @@
 
 import { notFound }                               from "next/navigation";
 import { requireOrgAccess }                       from "@/lib/auth/org-access";
-import { isInternalRole }                         from "@/lib/auth/module-access";
+import { hasPlatformConsoleAccess }               from "@/lib/auth/module-access";
 import { OperationalWorkspaceHeader }             from "@/components/workspace/operational-workspace-header";
 import { generateOperationalConnectionAudit }     from "@/lib/operational-map/audit/generate-operational-connection-audit";
 import { getAllCertifications }                    from "@/lib/operational-map/certification/operational-kpi-certification-service";
@@ -33,8 +33,8 @@ export default async function ConnectionAuditPage({ params, searchParams }: Page
 
   // ── Phase 14: Hard security gate ────────────────────────────────────────────
   // MANDATORY: notFound() for any non-internal role.
-  const { organization, membership } = await requireOrgAccess(orgSlug);
-  if (!isInternalRole(membership.role)) {
+  const { organization, membership, platformRole } = await requireOrgAccess(orgSlug);
+  if (!hasPlatformConsoleAccess(platformRole)) {
     notFound();
   }
 

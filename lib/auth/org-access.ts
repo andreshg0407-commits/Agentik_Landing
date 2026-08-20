@@ -4,6 +4,8 @@ import { prisma } from "@/lib/prisma";
 import type { ModuleKey } from "@/lib/tenant/modules";
 import { getEnabledModules } from "@/lib/tenant/modules";
 import { getModulesForRole } from "@/lib/auth/module-access";
+import { isPrismaColumnNotFound } from "@/lib/tenant";
+import type { PlatformRoleValue } from "@/lib/tenant";
 
 // ── Seller confinement at API level ─────────────────────────────────────────
 // Provisioned sellers (OPERATOR/VIEWER with sellerSlug in permissionsJson) are
@@ -60,7 +62,21 @@ export async function requireOrgAccess(orgSlug: string, opts?: OrgAccessOptions)
     }
   }
 
-  return { user, organization, membership };
+  // Read platform authority from User.platformRole (global, independent of membership).
+  // P2022-only fallback: column missing → null (no platform authority).
+  let platformRole: PlatformRoleValue | null = null;
+  try {
+    const u = await (prisma as any).user.findUnique({
+      where: { id: user.id },
+      select: { platformRole: true },
+    });
+    const pr = u?.platformRole as string | null | undefined;
+    if (pr === "SUPER_ADMIN" || pr === "AGENTIK_ADMIN") platformRole = pr;
+  } catch (err: unknown) {
+    if (!isPrismaColumnNotFound(err)) throw err;
+  }
+
+  return { user, organization, membership, platformRole };
 }
 
 // ── Module entitlement guard ──────────────────────────────────────────────────
@@ -101,15 +117,15 @@ export async function requireTenantModuleAccess(
   const { moduleKey } = opts;
   const role = ctx.membership.role;
 
-  // Step 1: Role permission check — does this role have access to this module?
+  // Step 1: Platform SUPER_ADMIN bypass — can inspect any module without tenant mutation.
+  if (ctx.platformRole === "SUPER_ADMIN") {
+    return ctx;
+  }
+
+  // Step 2: Role permission check — does this role have access to this module?
   const roleModules = getModulesForRole(role);
   if (!roleModules.has(moduleKey)) {
     throw new Error("MODULE_ACCESS_DENIED");
-  }
-
-  // Step 2: SUPER_ADMIN bypass — can inspect any module without tenant mutation.
-  if (role === "SUPER_ADMIN") {
-    return ctx;
   }
 
   // Step 3: Tenant entitlement check — is this module enabled for the org?

@@ -31,9 +31,9 @@ describe("A — SUPER_ADMIN can open users admin", () => {
     expect(src).toContain("requireOrgAccess");
   });
 
-  test("page gates on isInternalRole", () => {
+  test("page gates on hasPlatformConsoleAccess", () => {
     const src = readFile("app/(app)/[orgSlug]/agentik/users/page.tsx");
-    expect(src).toContain("isInternalRole");
+    expect(src).toContain("hasPlatformConsoleAccess");
   });
 
   test("SUPER_ADMIN passes internal role check", () => {
@@ -119,11 +119,11 @@ describe("F — Role escalation denied", () => {
     expect(src).toContain("CANNOT_GRANT_HIGHER_ROLE");
   });
 
-  test("API routes enforce isInternalRole gate", () => {
+  test("API routes enforce platform authority gate", () => {
     const routeSrc = readFile("app/api/orgs/[orgSlug]/members/route.ts");
-    expect(routeSrc).toContain("isInternalRole(membership.role)");
+    expect(routeSrc).toContain("hasPlatformConsoleAccess(platformRole)");
     const patchSrc = readFile("app/api/orgs/[orgSlug]/members/[memberId]/route.ts");
-    expect(patchSrc).toContain("isInternalRole(membership.role)");
+    expect(patchSrc).toContain("hasPlatformConsoleAccess(platformRole)");
   });
 
   test("client UI only shows client-facing roles in selector", () => {

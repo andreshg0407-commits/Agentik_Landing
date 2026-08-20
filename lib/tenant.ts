@@ -59,16 +59,38 @@ async function readPlatformRole(userId: string): Promise<PlatformRoleValue | nul
 }
 
 /**
- * Detects Prisma P2022 "column does not exist" errors.
- * Used exclusively by readPlatformRole for backward-compatible column reads.
+ * Detects Prisma P2022 "column does not exist" for the platformRole column ONLY.
+ *
+ * Accepts ONLY when:
+ *   1. code === "P2022" AND meta identifies platformRole specifically, OR
+ *   2. Adapter/raw message mentions "platformRole" + "does not exist".
+ *
+ * Rejects:
+ *   - P2022 for any OTHER column (e.g., P2022 on "email" must throw).
+ *   - Connection errors, permission errors, timeouts, corruption.
+ *   - Any error without specific platformRole identification.
  */
-function isPrismaColumnNotFound(err: unknown): boolean {
+export function isPrismaColumnNotFound(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
-  // Prisma Client known error with code P2022
-  if ("code" in err && (err as { code: string }).code === "P2022") return true;
-  // Prisma adapter / raw query: column "platformRole" does not exist
-  const msg = "message" in err ? String((err as { message: string }).message) : "";
-  if (msg.includes("column") && msg.includes("platformRole") && msg.includes("does not exist")) return true;
+
+  const errObj = err as Record<string, unknown>;
+
+  // Path 1: Prisma Client known error with code P2022
+  if (errObj.code === "P2022") {
+    // meta.column or meta.target must reference platformRole
+    const meta = errObj.meta as Record<string, unknown> | undefined;
+    if (meta) {
+      const col = String(meta.column ?? meta.target ?? "");
+      if (col.includes("platformRole")) return true;
+    }
+    // P2022 without meta identifying platformRole — do NOT suppress
+    return false;
+  }
+
+  // Path 2: Prisma adapter / raw PostgreSQL error
+  const msg = typeof errObj.message === "string" ? errObj.message : "";
+  if (msg.includes("platformRole") && msg.includes("does not exist")) return true;
+
   return false;
 }
 

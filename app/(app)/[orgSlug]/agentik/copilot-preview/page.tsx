@@ -14,7 +14,7 @@
 
 import { redirect }              from "next/navigation";
 import { requireOrgAccess }      from "@/lib/auth/org-access";
-import { isInternalRole }        from "@/lib/auth/module-access";
+import { hasPlatformConsoleAccess } from "@/lib/auth/module-access";
 import { CopilotPreviewClient }  from "./preview-client";
 
 // ── Page ──────────────────────────────────────────────────────────────────────
@@ -25,10 +25,10 @@ export default async function CopilotPreviewPage({
   params: Promise<{ orgSlug: string }>;
 }) {
   const { orgSlug }    = await params;
-  const { membership } = await requireOrgAccess(orgSlug);
+  const { platformRole } = await requireOrgAccess(orgSlug);
 
   // ── Access guard — internal roles only ──────────────────────────────────────
-  if (!isInternalRole(membership.role)) redirect(`/${orgSlug}/dashboard`);
+  if (!hasPlatformConsoleAccess(platformRole)) redirect(`/${orgSlug}/dashboard`);
 
   return <CopilotPreviewClient />;
 }

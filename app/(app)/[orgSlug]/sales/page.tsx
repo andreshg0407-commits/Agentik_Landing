@@ -1,5 +1,5 @@
 import { requireOrgAccess } from "@/lib/auth/org-access";
-import { isInternalRole }   from "@/lib/auth/module-access";
+import { hasPlatformConsoleAccess } from "@/lib/auth/module-access";
 import {
   getLatestPeriod,
   getComparativoAnoMes,
@@ -48,9 +48,9 @@ export default async function SalesPage({
   params: Promise<{ orgSlug: string }>;
 }) {
   const { orgSlug }                       = await params;
-  const { organization, membership }      = await requireOrgAccess(orgSlug);
+  const { organization, membership, platformRole } = await requireOrgAccess(orgSlug);
   const orgId                             = organization.id;
-  const isInternal                        = isInternalRole(membership.role);
+  const isInternal                        = hasPlatformConsoleAccess(platformRole);
 
   // ── Dynamic executive period ──────────────────────────────────────────────
   const latestPeriod = await getLatestPeriod(orgId);

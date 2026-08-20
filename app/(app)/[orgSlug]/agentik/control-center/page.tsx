@@ -14,7 +14,7 @@
 
 import { redirect }         from "next/navigation";
 import { requireOrgAccess } from "@/lib/auth/org-access";
-import { isInternalRole }   from "@/lib/auth/module-access";
+import { hasPlatformConsoleAccess } from "@/lib/auth/module-access";
 import { C, T, S, R }       from "@/lib/ui/tokens";
 
 import { buildTenantVaultSnapshot, vaultAllowsDispatch } from "@/lib/security/vault/vault-core";
@@ -48,11 +48,11 @@ export default async function AgentikControlCenterPage({
   params: Promise<{ orgSlug: string }>;
 }) {
   const { orgSlug }                        = await params;
-  const { user, organization, membership } = await requireOrgAccess(orgSlug);
-  const orgId                              = organization.id;
+  const { user, organization, membership, platformRole } = await requireOrgAccess(orgSlug);
+  const orgId                                            = organization.id;
 
   // Gate: internal roles only
-  if (!isInternalRole(membership.role)) {
+  if (!hasPlatformConsoleAccess(platformRole)) {
     redirect(`/${orgSlug}/dashboard`);
   }
 

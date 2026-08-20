@@ -17,10 +17,29 @@ import {
   resolveTenantAuthority,
   resolveEffectiveAccess,
 } from "../platform-authority";
-import { getModulesForRole, filterModulesByRole } from "../module-access";
+import { getModulesForRole, filterModulesByRole, hasPlatformConsoleAccess } from "../module-access";
 import type { ModuleKey } from "@/lib/tenant/modules";
 import * as fs from "fs";
 import * as path from "path";
+
+// ── Inline isPrismaColumnNotFound for direct unit testing ──────────────────────
+// Mirrors the exported function from lib/tenant.ts exactly.
+// Cannot import lib/tenant.ts in vitest (Prisma/Next.js deps).
+function isPrismaColumnNotFound(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const errObj = err as Record<string, unknown>;
+  if (errObj.code === "P2022") {
+    const meta = errObj.meta as Record<string, unknown> | undefined;
+    if (meta) {
+      const col = String(meta.column ?? meta.target ?? "");
+      if (col.includes("platformRole")) return true;
+    }
+    return false;
+  }
+  const msg = typeof errObj.message === "string" ? errObj.message : "";
+  if (msg.includes("platformRole") && msg.includes("does not exist")) return true;
+  return false;
+}
 
 function entitled(...keys: ModuleKey[]): Set<ModuleKey> {
   return new Set(keys);
@@ -506,5 +525,157 @@ describe("SUPER_ADMIN without membership — access path", () => {
     expect(pageSrc).toContain("ctx.role !== null && SELLER_ROLES.has(ctx.role)");
     expect(pageSrc).toContain("ctx.role !== null && MANAGER_MOBILE_ROLES.has(ctx.role)");
     expect(pageSrc).toContain("ctx.role ?? \"VIEWER\"");
+  });
+});
+
+// ==============================================================================
+// P2022 specificity — only platformRole column, not any P2022
+// ==============================================================================
+
+describe("isPrismaColumnNotFound — P2022 specificity", () => {
+  test("source code matches inline test copy", () => {
+    const tenantSrc = fs.readFileSync(
+      path.resolve(__dirname, "../../tenant.ts"),
+      "utf-8",
+    );
+    // Verify the function checks P2022 + platformRole specifically
+    expect(tenantSrc).toContain('errObj.code === "P2022"');
+    expect(tenantSrc).toContain('col.includes("platformRole")');
+    // Verify P2022 without platformRole meta returns false
+    expect(tenantSrc).toContain("return false");
+  });
+
+  test("P2022 with meta.column=platformRole -> true", () => {
+    // Uses inline isPrismaColumnNotFound defined at top of file
+    const err = { code: "P2022", meta: { column: "platformRole" } };
+    expect(isPrismaColumnNotFound(err)).toBe(true);
+  });
+
+  test("P2022 with meta.target=User.platformRole -> true", () => {
+    // Uses inline isPrismaColumnNotFound defined at top of file
+    const err = { code: "P2022", meta: { target: "User.platformRole" } };
+    expect(isPrismaColumnNotFound(err)).toBe(true);
+  });
+
+  test("P2022 for OTHER column (e.g., email) -> false (must throw)", () => {
+    // Uses inline isPrismaColumnNotFound defined at top of file
+    const err = { code: "P2022", meta: { column: "email" } };
+    expect(isPrismaColumnNotFound(err)).toBe(false);
+  });
+
+  test("P2022 without meta -> false (must throw)", () => {
+    // Uses inline isPrismaColumnNotFound defined at top of file
+    const err = { code: "P2022" };
+    expect(isPrismaColumnNotFound(err)).toBe(false);
+  });
+
+  test("adapter message with platformRole does not exist -> true", () => {
+    // Uses inline isPrismaColumnNotFound defined at top of file
+    const err = { message: 'column "platformRole" of relation "User" does not exist' };
+    expect(isPrismaColumnNotFound(err)).toBe(true);
+  });
+
+  test("connection error -> false (must throw)", () => {
+    // Uses inline isPrismaColumnNotFound defined at top of file
+    const err = { code: "P1001", message: "Can't reach database server" };
+    expect(isPrismaColumnNotFound(err)).toBe(false);
+  });
+
+  test("permission error -> false (must throw)", () => {
+    // Uses inline isPrismaColumnNotFound defined at top of file
+    const err = { code: "P1010", message: "User denied access" };
+    expect(isPrismaColumnNotFound(err)).toBe(false);
+  });
+
+  test("timeout error -> false (must throw)", () => {
+    // Uses inline isPrismaColumnNotFound defined at top of file
+    const err = new Error("Query timed out");
+    expect(isPrismaColumnNotFound(err)).toBe(false);
+  });
+
+  test("null/undefined -> false", () => {
+    // Uses inline isPrismaColumnNotFound defined at top of file
+    expect(isPrismaColumnNotFound(null)).toBe(false);
+    expect(isPrismaColumnNotFound(undefined)).toBe(false);
+    expect(isPrismaColumnNotFound("string error")).toBe(false);
+  });
+});
+
+// ==============================================================================
+// DIRECT ACCESS — bypass layout, test gates independently
+// ==============================================================================
+
+describe("direct access tests — no layout dependency", () => {
+  test("internal page (agentik) uses hasPlatformConsoleAccess, not isInternalRole", () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, "../../../app/(app)/[orgSlug]/agentik/page.tsx"),
+      "utf-8",
+    );
+    expect(src).toContain("hasPlatformConsoleAccess(platformRole)");
+    expect(src).not.toContain("isInternalRole(membership.role)");
+    expect(src).not.toContain("isInternalRole(ctx.role)");
+  });
+
+  test("internal API (members) uses hasPlatformConsoleAccess, not isInternalRole", () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, "../../../app/api/orgs/[orgSlug]/members/route.ts"),
+      "utf-8",
+    );
+    expect(src).toContain("hasPlatformConsoleAccess(platformRole)");
+    expect(src).not.toContain("isInternalRole(membership.role)");
+  });
+
+  test("requireOrgAccess returns platformRole from User table", () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, "../org-access.ts"),
+      "utf-8",
+    );
+    expect(src).toContain("select: { platformRole: true }");
+    expect(src).toContain("isPrismaColumnNotFound");
+    expect(src).toContain("return { user, organization, membership, platformRole }");
+  });
+
+  test("zero isInternalRole(membership.role) in key production files", () => {
+    const keyFiles = [
+      "../../../app/(app)/[orgSlug]/layout.tsx",
+      "../../../app/(app)/[orgSlug]/page.tsx",
+      "../../../app/(app)/[orgSlug]/agentik/page.tsx",
+      "../../../app/(app)/[orgSlug]/dashboard/page.tsx",
+      "../../../app/(app)/[orgSlug]/sales/page.tsx",
+      "../../../app/api/orgs/[orgSlug]/members/route.ts",
+      "../../../app/api/orgs/[orgSlug]/modules/route.ts",
+      "../org-access.ts",
+      "../../tenant.ts",
+      "../../../components/layout/right-ops-rail.tsx",
+    ];
+    for (const file of keyFiles) {
+      const content = fs.readFileSync(path.resolve(__dirname, file), "utf-8");
+      if (content.includes("isInternalRole(membership.role)") || content.includes("isInternalRole(ctx.role)")) {
+        throw new Error(`Found isInternalRole in: ${file}`);
+      }
+    }
+  });
+
+  test("ORG_ADMIN tenant user cannot access agentik pages (structural proof)", () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, "../../../app/(app)/[orgSlug]/agentik/page.tsx"),
+      "utf-8",
+    );
+    // hasPlatformConsoleAccess(null) = false, redirect happens
+    expect(src).toContain("hasPlatformConsoleAccess(platformRole)");
+    expect(src).toContain("redirect");
+    // Prove that platformRole=null (ORG_ADMIN has no platformRole) would fail
+    expect(hasPlatformConsoleAccess(null)).toBe(false);
+    expect(hasPlatformConsoleAccess("SUPER_ADMIN")).toBe(true);
+    expect(hasPlatformConsoleAccess("AGENTIK_ADMIN")).toBe(true);
+  });
+
+  test("data always delimited by organizationId in requireOrgAccess", () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, "../org-access.ts"),
+      "utf-8",
+    );
+    expect(src).toContain("organizationId: organization.id");
+    expect(src).toContain("userId: user.id");
   });
 });

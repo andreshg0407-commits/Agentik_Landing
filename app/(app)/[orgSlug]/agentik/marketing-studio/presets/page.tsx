@@ -9,7 +9,7 @@
 
 import Link                       from "next/link";
 import { requireOrgAccess }       from "@/lib/auth/org-access";
-import { isInternalRole }         from "@/lib/auth/module-access";
+import { hasPlatformConsoleAccess } from "@/lib/auth/module-access";
 import { redirect }               from "next/navigation";
 import { C, T, S, R }            from "@/lib/ui/tokens";
 import { Badge, Panel, PanelHeader } from "@/components/shell/primitives";
@@ -27,9 +27,9 @@ export default async function PresetRegistryPage({
   params: Promise<{ orgSlug: string }>;
 }) {
   const { orgSlug }    = await params;
-  const { membership } = await requireOrgAccess(orgSlug);
+  const { platformRole } = await requireOrgAccess(orgSlug);
 
-  if (!isInternalRole(membership.role)) redirect(`/${orgSlug}/agentik/marketing-studio`);
+  if (!hasPlatformConsoleAccess(platformRole)) redirect(`/${orgSlug}/agentik/marketing-studio`);
 
   // Compute which tenants use each preset
   const presetTenantMap = buildPresetTenantMap();

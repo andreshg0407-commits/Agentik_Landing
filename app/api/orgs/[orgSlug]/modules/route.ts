@@ -17,6 +17,7 @@ import { buildPreviewFromEntitlements } from "@/lib/tenant/billing-preview";
 import { getAgreementForMonth } from "@/lib/tenant/commercial-agreement-service";
 import type { ModuleKey } from "@/lib/tenant/modules";
 import { MODULE_KEYS } from "@/lib/tenant/modules";
+import { isPrismaColumnNotFound } from "@/lib/tenant";
 
 type RouteParams = { params: Promise<{ orgSlug: string }> };
 
@@ -47,12 +48,7 @@ async function resolveOrg(orgSlug: string) {
     const pr = u?.platformRole as string | null | undefined;
     if (pr === "SUPER_ADMIN" || pr === "AGENTIK_ADMIN") platformRole = pr;
   } catch (err: unknown) {
-    const isColumnMissing =
-      (typeof err === "object" && err !== null && "code" in err && (err as { code: string }).code === "P2022") ||
-      (typeof err === "object" && err !== null && "message" in err &&
-        String((err as { message: string }).message).includes("platformRole") &&
-        String((err as { message: string }).message).includes("does not exist"));
-    if (!isColumnMissing) throw err;
+    if (!isPrismaColumnNotFound(err)) throw err;
   }
 
   return { userId: user.id, orgId: org.id, role: membership.role, platformRole };

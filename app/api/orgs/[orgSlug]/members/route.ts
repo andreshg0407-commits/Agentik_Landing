@@ -12,7 +12,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireOrgAccess } from "@/lib/auth/org-access";
-import { isInternalRole } from "@/lib/auth/module-access";
+import { hasPlatformConsoleAccess } from "@/lib/auth/module-access";
 import { listOrgMembers, createOrgMember } from "@/lib/auth/member-admin";
 import type { CreateMemberInput } from "@/lib/auth/member-admin";
 import type { Role } from "@prisma/client";
@@ -25,9 +25,9 @@ export async function GET(
 ) {
   try {
     const { orgSlug } = await params;
-    const { organization, membership } = await requireOrgAccess(orgSlug);
+    const { organization, membership, platformRole } = await requireOrgAccess(orgSlug);
 
-    if (!isInternalRole(membership.role)) {
+    if (!hasPlatformConsoleAccess(platformRole)) {
       return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 403 });
     }
 
@@ -54,9 +54,9 @@ export async function POST(
 ) {
   try {
     const { orgSlug } = await params;
-    const { organization, membership } = await requireOrgAccess(orgSlug);
+    const { organization, membership, platformRole } = await requireOrgAccess(orgSlug);
 
-    if (!isInternalRole(membership.role)) {
+    if (!hasPlatformConsoleAccess(platformRole)) {
       return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 403 });
     }
 
