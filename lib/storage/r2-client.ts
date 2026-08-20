@@ -211,23 +211,37 @@ export interface R2DeleteInput {
  *
  * SECURITY:
  *   - Only accepts exact objectKey — no prefix/wildcard deletion.
- *   - Verifies the key contains the claimed organizationId.
+ *   - Validates key structure via canonical segment parsing:
+ *     {environment}/organizations/{exactOrgId}/{namespace}/...
+ *     {environment}/canary/{exactOrgId}/...
+ *   - org_123 can NEVER delete org_1234's objects (segment-bounded).
  *   - Logs the deletion for audit trail.
  *   - Returns false if the object doesn't exist (idempotent).
  */
 export async function r2Delete(input: R2DeleteInput): Promise<boolean> {
-  // Safety: verify the key belongs to the claimed org
-  const expectedOrgSegment = `/organizations/${input.organizationId}/`;
-  const expectedCanarySegment = `/canary/${input.organizationId}/`;
-  if (
-    !input.objectKey.includes(expectedOrgSegment) &&
-    !input.objectKey.includes(expectedCanarySegment)
-  ) {
+  // Parse key into segments and validate canonical structure
+  const segments = input.objectKey.split("/");
+  // Expected: [environment, "organizations"|"canary", orgId, namespace, ...]
+  if (segments.length < 4) {
+    console.error("[r2-client] DELETE BLOCKED: key has fewer than 4 segments", {
+      objectKey: input.objectKey,
+    });
+    return false;
+  }
+
+  const keyKind = segments[1]; // "organizations" or "canary"
+  const keyOrgId = segments[2]; // exact orgId segment
+
+  const isOrgKey = keyKind === "organizations" && keyOrgId === input.organizationId;
+  const isCanaryKey = keyKind === "canary" && keyOrgId === input.organizationId;
+
+  if (!isOrgKey && !isCanaryKey) {
     console.error(
-      "[r2-client] DELETE BLOCKED: objectKey does not contain organizationId",
+      "[r2-client] DELETE BLOCKED: key orgId segment does not match",
       {
         objectKey: input.objectKey,
-        organizationId: input.organizationId,
+        keyOrgId,
+        claimedOrgId: input.organizationId,
       },
     );
     return false;

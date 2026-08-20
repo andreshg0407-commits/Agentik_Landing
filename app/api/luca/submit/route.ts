@@ -60,49 +60,27 @@ function sanitizeFilename(name: string) {
   return clean || "file"
 }
 
-async function uploadToR2(args: {
+/**
+ * R2 upload for Luca is DISABLED until a certified organizationId mapping
+ * exists for the TikTok/Luca integration.
+ *
+ * SECURITY (03B-D6): client_id from FormData MUST NOT be used as tenant
+ * authority for R2 key construction. Until a server-side mapping from
+ * TikTok identity → organizationId is implemented, all R2 uploads are
+ * blocked and the route operates in metadata-only mode.
+ *
+ * To re-enable: implement a LucaIntegration table that maps
+ * TikTok open_id → organizationId, and resolve the org server-side.
+ */
+async function uploadToR2(_args: {
   file: File
   clientId: string
   requestId: string
 }): Promise<{ url: string; name: string; mime: string; key: string; bytes: number }> {
-  const { file, clientId, requestId } = args
-
-  if (!ENABLE_R2_UPLOAD) throw new Error("R2 upload disabled (ENABLE_R2_UPLOAD=false)")
-  if (!R2_BUCKET || !R2_PUBLIC_BASE_URL) throw new Error("Missing R2_BUCKET or R2_PUBLIC_BASE_URL")
-  const s3 = getR2Client()
-  if (!s3) throw new Error("Missing R2 credentials/env")
-
-  const bytes = file.size
-  const maxBytes = MAX_FILE_MB * 1024 * 1024
-  if (bytes > maxBytes) throw new Error(`File too large. Max ${MAX_FILE_MB}MB`)
-
-  const mime = file.type || "application/octet-stream"
-
-  const orig = sanitizeFilename(file.name || "file")
-  const ext = safeExtFromMime(mime) || (orig.includes(".") ? orig.split(".").pop() || "" : "")
-  const base = orig.replace(/\.[^/.]+$/, "")
-
-  const ts = new Date().toISOString().replace(/[:.]/g, "-")
-  const rand = crypto.randomBytes(6).toString("hex")
-
-  // Key final dentro del bucket (multi-cliente)
-  const key = `${R2_PREFIX}/luca/${sanitizeFilename(clientId)}/${ts}_${requestId}_${rand}_${base}${ext ? "." + ext : ""}`
-
-  const body = Buffer.from(await file.arrayBuffer())
-
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: R2_BUCKET,
-      Key: key,
-      Body: body,
-      ContentType: mime,
-      CacheControl: "public, max-age=31536000, immutable",
-    })
+  throw new Error(
+    "R2 upload disabled for Luca: no certified organizationId mapping. " +
+    "See MARKETING-ASSET-STORAGE-R2-HARDENING-03B-D6."
   )
-
-  const url = `${R2_PUBLIC_BASE_URL}/${key}`
-
-  return { url, name: `${base}${ext ? "." + ext : ""}`, mime, key, bytes }
 }
 
 // helpers para reglas duras

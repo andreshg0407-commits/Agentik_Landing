@@ -4,27 +4,30 @@
  * MARKETING-ASSET-STORAGE-R2-HARDENING-03B — Canary Test Route
  *
  * POST — Executes a complete R2 canary test:
- *   1. Upload a fixture image to a canary prefix.
+ *   1. Upload a fixture PNG to a canary prefix.
  *   2. Verify with HeadObject.
  *   3. Verify checksum and metadata.
- *   4. Attempt cross-tenant read (must fail).
- *   5. Delete the canary object.
- *   6. Verify deletion (Head → not found).
+ *   4. Attempt cross-tenant delete (must be blocked).
+ *   5. Verify URL accessibility.
+ *   6. Delete the canary object.
+ *   7. Verify deletion (Head → not found).
  *
  * SECURITY:
- *   - requireOrgAccess + canAccessMarketingStudio enforced.
- *   - Canary prefix: {env}/canary/{organizationId}/{uuid}
+ *   - SUPER_ADMIN or AGENTIK_ADMIN only (via hasMinRole).
+ *   - Disabled by default — requires ?enable=canary query param.
+ *   - Blocked in production (VERCEL_ENV=production).
+ *   - PNG, UUID, and key built entirely server-side — no client input.
  *   - Only the canary object created by THIS request is deleted.
- *   - No production objects are touched.
- *   - No secrets are logged or returned.
+ *   - No secrets, bucket names, or credentials in the response.
  */
 
 import { type NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { requireOrgAccess } from "@/lib/auth/org-access";
-import { canAccessMarketingStudio } from "@/lib/auth/module-access";
+import { hasMinRole } from "@/lib/auth/module-access";
 import {
   requireR2Config,
+  resolveStorageEnvironment,
   r2Put,
   r2Head,
   r2Delete,
@@ -48,13 +51,35 @@ export async function POST(
 ): Promise<NextResponse> {
   const { orgSlug } = await params;
 
-  // ── Auth ──────────────────────────────────────────────────────────────────
+  // ── Gate 0: Reject in production ──────────────────────────────────────────
+  const env = resolveStorageEnvironment();
+  if (env === "production") {
+    return NextResponse.json(
+      { canary: "BLOCKED", reason: "Canary route is disabled in production" },
+      { status: 403 },
+    );
+  }
+
+  // ── Gate 1: Require explicit enable flag ──────────────────────────────────
+  const enableFlag = req.nextUrl.searchParams.get("enable");
+  if (enableFlag !== "canary") {
+    return NextResponse.json(
+      { canary: "BLOCKED", reason: "Requires ?enable=canary query parameter" },
+      { status: 400 },
+    );
+  }
+
+  // ── Gate 2: Auth — SUPER_ADMIN or AGENTIK_ADMIN only ──────────────────────
   let organizationId: string;
   try {
     const { membership, organization } = await requireOrgAccess(orgSlug);
     organizationId = organization.id;
-    if (!canAccessMarketingStudio(membership.role)) {
-      return NextResponse.json({ error: "Marketing Studio access required" }, { status: 403 });
+
+    if (!hasMinRole(membership.role, "AGENTIK_ADMIN")) {
+      return NextResponse.json(
+        { error: "SUPER_ADMIN or AGENTIK_ADMIN required for canary test" },
+        { status: 403 },
+      );
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : "AUTH_FAILED";
@@ -70,22 +95,22 @@ export async function POST(
     return NextResponse.json({
       canary: "BLOCKED",
       reason: "R2 not configured",
-      environment: null,
     });
   }
 
+  const canaryId = randomUUID().replace(/-/g, "");
+  const timestamp = new Date().toISOString();
+
   const results: Record<string, unknown> = {
-    environment: config.environment,
-    organizationId,
-    timestamp: new Date().toISOString(),
+    canaryId,
+    timestamp,
   };
 
-  const uuid = randomUUID().replace(/-/g, "");
+  const uuid = canaryId;
   const objectKey = buildCanaryKey(
     { environment: config.environment, organizationId },
     uuid,
   );
-  results.objectKey = objectKey;
 
   // ── Step 1: Upload canary ─────────────────────────────────────────────────
   let putChecksum: string;
