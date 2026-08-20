@@ -30,10 +30,22 @@
 
 import { NextRequest, NextResponse }       from "next/server";
 import { requireOrgAccess }               from "@/lib/auth/org-access";
+import { canAccessMarketingStudio }      from "@/lib/auth/module-access";
 import { prisma }                         from "@/lib/prisma";
 import { uploadManualAsset }              from "@/lib/marketing-studio/r2-upload";
 import { addProductAssetLink }            from "@/lib/marketing-studio/products/product-repository";
 import { AssetGenerationStatus }          from "@prisma/client";
+import {
+  loadR2Config,
+  getMaxUploadBytes,
+  r2Put,
+  r2Delete,
+  buildManualUploadKey,
+  buildStorageIdentity,
+  validateFileBuffer,
+  sanitizeFilename,
+  MIME_TO_EXT,
+} from "@/lib/storage/server";
 
 export const runtime = "nodejs";
 
@@ -74,8 +86,13 @@ export async function POST(
   const { orgSlug, productId } = await params;
 
   try {
-    const { organization } = await requireOrgAccess(orgSlug);
+    const { membership, organization } = await requireOrgAccess(orgSlug);
     const organizationId   = organization.id;
+
+    // Verify Marketing Studio access
+    if (!canAccessMarketingStudio(membership.role)) {
+      return NextResponse.json({ error: "Marketing Studio access required" }, { status: 403 });
+    }
 
     // Parse FormData
     const formData = await req.formData();
@@ -125,13 +142,16 @@ export async function POST(
 
     const errors: { fileName: string; error: string }[] = [];
 
+    // Resolve R2 config (shared module)
+    const r2Config = loadR2Config();
+
     for (const file of files) {
-      // Validate MIME type
-      const mime = file.type || "application/octet-stream";
-      if (!ALLOWED_MIMES.has(mime)) {
+      // Validate MIME type (client claim)
+      const claimedMime = file.type || "application/octet-stream";
+      if (!ALLOWED_MIMES.has(claimedMime)) {
         errors.push({
           fileName: file.name,
-          error:    `Tipo no soportado: ${MIME_LABELS[mime] ?? mime}. ` +
+          error:    `Tipo no soportado: ${MIME_LABELS[claimedMime] ?? claimedMime}. ` +
                     `Acepta: jpg, png, webp, mp4, mov, pdf`,
         });
         continue;
@@ -141,24 +161,64 @@ export async function POST(
       const arrayBuffer = await file.arrayBuffer();
       const buffer      = Buffer.from(arrayBuffer);
 
+      // Server-side magic bytes validation (03B)
+      const validation = validateFileBuffer(buffer, claimedMime);
+      if (!validation.valid) {
+        errors.push({
+          fileName: file.name,
+          error:    validation.error ?? "File type validation failed",
+        });
+        continue;
+      }
+
+      const mime = validation.detectedMime ?? claimedMime;
+
       let assetUrl: string;
       let r2Key:    string;
+      let checksum: string | undefined;
 
-      // Upload to R2
-      try {
-        const result = await uploadManualAsset({
-          buffer,
-          mimeType:  mime,
-          tenantId:  orgSlug,
-          productId,
-          fileName:  file.name,
-        });
-        assetUrl = result.url;
-        r2Key    = result.key;
-      } catch (uploadErr) {
-        const msg = uploadErr instanceof Error ? uploadErr.message : "Upload failed";
-        errors.push({ fileName: file.name, error: msg });
-        continue;
+      // Upload to R2 — prefer shared module, fallback to legacy
+      if (r2Config) {
+        try {
+          const uuid = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+          const ext = validation.detectedExt ?? MIME_TO_EXT[mime] ?? "bin";
+          const objectKey = buildManualUploadKey(
+            { environment: r2Config.environment, organizationId },
+            productId,
+            uuid,
+            ext,
+          );
+          const putResult = await r2Put({
+            config: r2Config,
+            objectKey,
+            body: buffer,
+            contentType: mime,
+          });
+          assetUrl = putResult.publicUrl;
+          r2Key = putResult.objectKey;
+          checksum = putResult.checksum;
+        } catch (uploadErr) {
+          const msg = uploadErr instanceof Error ? uploadErr.message : "Upload failed";
+          errors.push({ fileName: file.name, error: msg });
+          continue;
+        }
+      } else {
+        // Legacy fallback when R2 not configured
+        try {
+          const result = await uploadManualAsset({
+            buffer,
+            mimeType:  mime,
+            tenantId:  orgSlug,
+            productId,
+            fileName:  file.name,
+          });
+          assetUrl = result.url;
+          r2Key    = result.key;
+        } catch (uploadErr) {
+          const msg = uploadErr instanceof Error ? uploadErr.message : "Upload failed";
+          errors.push({ fileName: file.name, error: msg });
+          continue;
+        }
       }
 
       // Create GeneratedAsset — already READY (no generation step)
@@ -172,20 +232,36 @@ export async function POST(
             assetUrl,
             reviewStatus:     "approved",
             providerMeta:     {
+              provider:      "cloudflare_r2",
+              environment:   r2Config?.environment ?? "unknown",
               sourceType:    "manual_upload",
-              originalName:  file.name,
-              r2Key,
+              originalName:  sanitizeFilename(file.name),
+              objectKey:     r2Key,
+              checksum:      checksum ?? null,
+              mimeType:      mime,
+              size:          buffer.byteLength,
             },
           },
           select: { id: true, createdAt: true },
         });
       } catch (dbErr) {
+        // R2 object uploaded but DB failed — mark as orphan candidate
+        // Do NOT delete legacy objects. Only delete objects we just created.
+        if (r2Config && r2Key) {
+          await r2Delete({
+            config: r2Config,
+            objectKey: r2Key,
+            reason: "DB_ROLLBACK: GeneratedAsset creation failed",
+            requestedBy: "system:asset-upload-route",
+            organizationId,
+          }).catch(() => {});
+        }
         const msg = dbErr instanceof Error ? dbErr.message : "DB error";
         errors.push({ fileName: file.name, error: `Asset creation failed: ${msg}` });
         continue;
       }
 
-      // Link asset to product — if this fails, clean up the GeneratedAsset
+      // Link asset to product — if this fails, clean up
       try {
         await addProductAssetLink({
           organizationId,
@@ -196,8 +272,17 @@ export async function POST(
           sourceProvider: "biblioteca",
         });
       } catch (linkErr) {
-        // Rollback: delete the orphaned GeneratedAsset
+        // Rollback: delete the orphaned GeneratedAsset and R2 object
         await prisma.generatedAsset.delete({ where: { id: generatedAsset.id } }).catch(() => {});
+        if (r2Config && r2Key) {
+          await r2Delete({
+            config: r2Config,
+            objectKey: r2Key,
+            reason: "DB_ROLLBACK: ProductAssetLink creation failed",
+            requestedBy: "system:asset-upload-route",
+            organizationId,
+          }).catch(() => {});
+        }
         const msg = linkErr instanceof Error ? linkErr.message : "Link failed";
         errors.push({ fileName: file.name, error: `Asset link failed: ${msg}` });
         continue;

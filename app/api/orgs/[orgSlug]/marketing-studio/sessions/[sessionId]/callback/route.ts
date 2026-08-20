@@ -38,6 +38,7 @@ import {
   updateDbSessionFailed,
 }                                            from "@/lib/marketing-studio/session-service";
 import { uploadGeneratedAssetImage }         from "@/lib/marketing-studio/r2-upload";
+import { loadR2Config, buildGeneratedAssetKey, r2Put, buildStorageIdentity } from "@/lib/storage/server";
 
 type RouteContext = { params: Promise<{ orgSlug: string; sessionId: string }> };
 
@@ -47,11 +48,22 @@ type RouteContext = { params: Promise<{ orgSlug: string; sessionId: string }> };
  * Accepts auth via:
  *   1. Authorization: Bearer <secret>  header (legacy / guided-workflow path)
  *   2. ?token=<secret>                 query param (n8n callback path — avoids credential mgmt)
- * When STUDIO_N8N_WEBHOOK_SECRET is unset, all requests are allowed (dev mode).
+ *
+ * SECURITY (03B): Secret is REQUIRED outside local development.
+ * Preview and production fail closed if STUDIO_N8N_WEBHOOK_SECRET is unset.
  */
 function isAuthorized(req: NextRequest): boolean {
   const secret = process.env.STUDIO_N8N_WEBHOOK_SECRET;
-  if (!secret) return true; // dev / no-auth mode
+  const vercelEnv = process.env.VERCEL_ENV;
+
+  // Fail closed: secret required in preview and production
+  if (!secret) {
+    if (vercelEnv === "production" || vercelEnv === "preview") {
+      console.error("[callback] STUDIO_N8N_WEBHOOK_SECRET is not set in", vercelEnv);
+      return false;
+    }
+    return true; // local dev only
+  }
 
   const auth  = req.headers.get("authorization") ?? "";
   const token = req.nextUrl.searchParams.get("token") ?? "";

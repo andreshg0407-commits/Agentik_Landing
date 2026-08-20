@@ -32,8 +32,8 @@ export const maxDuration = 120;  // large video upload may take time
 import { type NextRequest, NextResponse } from "next/server";
 import { requireOrgAccess }              from "@/lib/auth/org-access";
 import { canAccessMarketingStudio }      from "@/lib/auth/module-access";
-import { S3Client, PutObjectCommand }    from "@aws-sdk/client-s3";
 import { randomUUID }                    from "crypto";
+import { loadR2Config, r2Put, buildTempVideoKey } from "@/lib/storage/server";
 
 type RouteContext = { params: Promise<{ orgSlug: string }> };
 
@@ -48,22 +48,6 @@ const VIDEO_EXT: Record<string, string> = {
   "video/mpeg":      "mpeg",
 };
 
-function getR2Env() {
-  return {
-    accountId:       process.env.R2_ACCOUNT_ID        ?? "",
-    accessKeyId:     process.env.R2_ACCESS_KEY_ID     ?? "",
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY ?? "",
-    bucket:          process.env.R2_BUCKET            ?? "",
-    publicBaseUrl:  (process.env.R2_PUBLIC_BASE_URL   ?? "").replace(/\/+$/, ""),
-  };
-}
-
-function isR2Ready(env: ReturnType<typeof getR2Env>): boolean {
-  return !!(
-    env.accountId && env.accessKeyId &&
-    env.secretAccessKey && env.bucket && env.publicBaseUrl
-  );
-}
 
 export async function POST(
   req:    NextRequest,
@@ -111,41 +95,32 @@ export async function POST(
     }
 
     // Check R2 availability — return { url: null } gracefully in dev mode
-    const env = getR2Env();
-    if (!isR2Ready(env)) {
+    const r2Config = loadR2Config();
+    if (!r2Config) {
       return NextResponse.json({ url: null });
     }
 
-    // Build R2 key
-    const now      = new Date();
-    const yyyy     = String(now.getUTCFullYear());
-    const mm       = String(now.getUTCMonth() + 1).padStart(2, "0");
-    const safeTid  = organization.id.replace(/[^a-zA-Z0-9_-]/g, "_");
     const ext      = VIDEO_EXT[mimeType.toLowerCase()] ?? "mp4";
     const uuid     = randomUUID().replace(/-/g, "");
-    const key      = `video-temp/${safeTid}/${yyyy}/${mm}/${uuid}.${ext}`;
+    const buffer   = Buffer.from(await file.arrayBuffer());
 
-    const buffer = Buffer.from(await file.arrayBuffer());
+    // Build key with certified organizationId (03B)
+    const objectKey = buildTempVideoKey(
+      { environment: r2Config.environment, organizationId: organization.id },
+      uuid,
+      ext,
+    );
 
-    // Upload to R2
-    const client = new S3Client({
-      region:   "auto",
-      endpoint: `https://${env.accountId}.r2.cloudflarestorage.com`,
-      credentials: {
-        accessKeyId:     env.accessKeyId,
-        secretAccessKey: env.secretAccessKey,
-      },
+    // Upload via shared R2 module
+    const putResult = await r2Put({
+      config: r2Config,
+      objectKey,
+      body: buffer,
+      contentType: mimeType,
+      cacheControl: "private, max-age=3600",  // short TTL — temp file
     });
 
-    await client.send(new PutObjectCommand({
-      Bucket:       env.bucket,
-      Key:          key,
-      Body:         buffer,
-      ContentType:  mimeType,
-      CacheControl: "private, max-age=3600",  // short TTL — temp file
-    }));
-
-    const url = `${env.publicBaseUrl}/${key}`;
+    const url = putResult.publicUrl;
 
     console.log(`[temp-upload] org=${organization.id} → ${url} (${buffer.byteLength} bytes)`);
 
