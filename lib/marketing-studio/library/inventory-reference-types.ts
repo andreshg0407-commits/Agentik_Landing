@@ -1,13 +1,29 @@
 /**
  * lib/marketing-studio/library/inventory-reference-types.ts
  *
- * MARKETING-LIBRARY-INVENTORY-TRUTH-02A — Inventory Reference Types
+ * MARKETING-LIBRARY-INVENTORY-TRUTH-02A-R1 — Inventory Reference Types
  *
  * Display model for Biblioteca inventory references.
  * Client-safe (no Prisma, no server-only imports).
  */
 
 import type { WorldCode } from "./world-classification";
+
+// ── Truth state ─────────────────────────────────────────────────────────────────
+
+/**
+ * Describes the freshness/validity of the inventory data.
+ *
+ *   FRESH           — loaded from the latest snapshot, no errors
+ *   STALE           — last load failed, showing previous valid snapshot
+ *   DATA_UNVERIFIED — no snapshot has ever been loaded for this org
+ *   PARTIAL         — one source (CCS or PIL) failed, other survived
+ */
+export type InventoryTruthState =
+  | "FRESH"
+  | "STALE"
+  | "DATA_UNVERIFIED"
+  | "PARTIAL";
 
 // ── Visual state ────────────────────────────────────────────────────────────────
 
@@ -17,6 +33,19 @@ export type InventoryRefVisualState =
   | "no_assets"        // No visual resources at all
   | "sin_clasificar"   // World unresolved
   | "inactive";        // No inventory available (stock=0, kept for assets)
+
+/**
+ * Counts per visual state — must satisfy:
+ *   with_hero + with_assets + no_assets + sin_clasificar + inactive = total
+ */
+export interface VisualStateCounts {
+  with_hero:       number;
+  with_assets:     number;
+  no_assets:       number;
+  sin_clasificar:  number;
+  inactive:        number;
+  total:           number;
+}
 
 // ── Inventory Reference ─────────────────────────────────────────────────────────
 
@@ -62,6 +91,13 @@ export interface ReconciliationReport {
   sinClasificar:              number;   // unclassifiable references
 }
 
+// ── Source health ────────────────────────────────────────────────────────────────
+
+export interface SourceHealth {
+  ccs:  { ok: boolean; error?: string };
+  pil:  { ok: boolean; error?: string };
+}
+
 // ── Inventory load result ───────────────────────────────────────────────────────
 
 export interface InventoryLoadResult {
@@ -69,5 +105,8 @@ export interface InventoryLoadResult {
   reconciliation:     ReconciliationReport;
   snapshotAt:         string | null;
   hasSnapshot:        boolean;
+  truthState:         InventoryTruthState;
+  sourceHealth:       SourceHealth;
+  visualStateCounts:  VisualStateCounts;
   worldCounts:        import("./world-classification").WorldCounts;
 }

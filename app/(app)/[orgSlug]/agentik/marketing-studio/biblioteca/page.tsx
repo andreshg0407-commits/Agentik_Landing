@@ -1,7 +1,7 @@
 /**
  * /[orgSlug]/agentik/marketing-studio/biblioteca
  *
- * MS-04A / MARKETING-LIBRARY-INVENTORY-TRUTH-02A — Biblioteca / Asset Hub
+ * MS-04A / MARKETING-LIBRARY-INVENTORY-TRUTH-02A-R1 — Biblioteca / Asset Hub
  *
  * Server Component — owns auth, data fetching.
  * Interactive grid + drawer delegated to BibliotecaClient (client boundary).
@@ -45,6 +45,7 @@ export default async function BibliotecaPage({
   // ── Load inventory references (Tres Mundos) ──
   const inventoryResult = await loadInventoryReferences(organization.id);
   const inventoryMode   = inventoryResult.hasSnapshot;
+  const truthState      = inventoryResult.truthState;
 
   // ── Fallback: load legacy data if no inventory snapshot ──
   const [products, legacyAssets] = inventoryMode
@@ -65,6 +66,7 @@ export default async function BibliotecaPage({
   const totalRefs      = inventoryResult.worldCounts.total;
   const available      = inventoryResult.references.filter(r => r.isAvailable).length;
   const sinClasificar  = inventoryResult.worldCounts.sin_clasificar;
+  const vs             = inventoryResult.visualStateCounts;
 
   // Pre-compute display model for legacy assets (backward compat)
   const displayAssets: BibliotecaAssetDisplay[] = legacyAssets.map((asset) => ({
@@ -115,18 +117,31 @@ export default async function BibliotecaPage({
           ? `Registro visual canónico · ${totalRefs} referencias · ${available} disponibles`
           : "Sistema nervioso visual de marketing — assets, catálogos, destinos, inteligencia."
         }
-        status={sinClasificar > 0 ? "warning" : totalRefs > 0 ? "ok" : "neutral"}
+        status={
+          truthState === "DATA_UNVERIFIED" ? "warning"
+            : truthState === "STALE" ? "warning"
+            : truthState === "PARTIAL" ? "warning"
+            : sinClasificar > 0 ? "warning"
+            : totalRefs > 0 ? "ok"
+            : "neutral"
+        }
         statusLabel={
-          inventoryMode
-            ? sinClasificar > 0
-              ? `${sinClasificar} sin clasificar`
-              : `${totalRefs} referencias clasificadas`
-            : `${displayAssets.length} assets aprobados`
+          truthState === "DATA_UNVERIFIED"
+            ? "DATA_UNVERIFIED — sin snapshot SAG"
+            : truthState === "STALE"
+            ? "STALE — mostrando último snapshot válido"
+            : truthState === "PARTIAL"
+            ? `PARTIAL — ${!inventoryResult.sourceHealth.ccs.ok ? "CCS" : "PIL"} no disponible`
+            : inventoryMode
+              ? sinClasificar > 0
+                ? `${sinClasificar} sin clasificar`
+                : `${totalRefs} referencias clasificadas`
+              : `${displayAssets.length} assets aprobados`
         }
       />
 
-      {/* ── No snapshot banner ── */}
-      {!inventoryMode && (
+      {/* ── Truth state banners ── */}
+      {truthState === "DATA_UNVERIFIED" && (
         <div style={{
           padding:      `${S[3]}px ${S[4]}px`,
           background:   C.amberLight,
@@ -143,6 +158,49 @@ export default async function BibliotecaPage({
         </div>
       )}
 
+      {truthState === "STALE" && (
+        <div style={{
+          padding:      `${S[3]}px ${S[4]}px`,
+          background:   C.amberLight,
+          border:       `1px solid ${C.amberBorder}`,
+          borderRadius: 6,
+          marginBottom: S[4],
+          fontFamily:   T.mono,
+          fontSize:     T.sz.xs,
+          color:        C.amber,
+          fontWeight:   600,
+        }}>
+          STALE — La fuente CCS falló. Mostrando último snapshot válido
+          {inventoryResult.snapshotAt
+            ? ` del ${new Date(inventoryResult.snapshotAt).toLocaleDateString("es-CO", {
+                day: "2-digit", month: "short", year: "numeric",
+              })}`
+            : ""
+          }.
+          Los datos pueden no reflejar el inventario actual.
+        </div>
+      )}
+
+      {truthState === "PARTIAL" && (
+        <div style={{
+          padding:      `${S[3]}px ${S[4]}px`,
+          background:   C.amberLight,
+          border:       `1px solid ${C.amberBorder}`,
+          borderRadius: 6,
+          marginBottom: S[4],
+          fontFamily:   T.mono,
+          fontSize:     T.sz.xs,
+          color:        C.amber,
+          fontWeight:   600,
+        }}>
+          PARTIAL — {!inventoryResult.sourceHealth.ccs.ok
+            ? "CCS (Castillitos + Latin Kids) no disponible. Importación visible."
+            : "PIL (Importación) no disponible. Castillitos y Latin Kids visibles."
+          }
+          {" "}La sección afectada no muestra datos — no significa stock cero.
+        </div>
+      )}
+
       {/* ── 2. Client workspace ── */}
       <BibliotecaClient
         assets={displayAssets}
@@ -155,6 +213,24 @@ export default async function BibliotecaPage({
         organizationId={organization.id}
         presets={featuredPresets}
       />
+
+      {/* ── Visual state summary (inventory mode) ── */}
+      {inventoryMode && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: S[4],
+          marginTop: S[4], padding: `${S[2]}px ${S[3]}px`,
+          background: C.surface, borderRadius: 6,
+          fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid,
+        }}>
+          <span>Estados visuales:</span>
+          <span style={{ color: C.green }}>Con hero: {vs.with_hero}</span>
+          <span style={{ color: C.amber }}>Con assets: {vs.with_assets}</span>
+          <span style={{ color: C.inkFaint }}>Sin recursos: {vs.no_assets}</span>
+          <span style={{ color: C.red }}>Inactivas: {vs.inactive}</span>
+          <span style={{ color: C.amber }}>Sin clasificar: {vs.sin_clasificar}</span>
+          <span style={{ fontWeight: 700, color: C.ink }}>Total: {vs.total}</span>
+        </div>
+      )}
 
       {/* ── Status legend ── */}
       <div style={{
@@ -169,7 +245,7 @@ export default async function BibliotecaPage({
           </div>
         ))}
         <div style={{ marginLeft: "auto", fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost }}>
-          MARKETING-LIBRARY-INVENTORY-TRUTH-02A
+          MARKETING-LIBRARY-INVENTORY-TRUTH-02A-R1
         </div>
       </div>
 
