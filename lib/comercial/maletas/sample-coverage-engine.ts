@@ -389,7 +389,26 @@ function buildMissingPosition(
 
   const allCandidates: CoverageCandidate[] = [];
 
-  if (isImport) {
+  // MALETAS-DERROTERO-08B2R5A: ambiguous positions fail closed.
+  // When a position's sagSubgrupo maps to 2+ groups and no grupo constraint
+  // can disambiguate, B01/OP candidates cannot be safely assigned.
+  const isAmbiguousNoGrupo = entry.isAmbiguousPosition && group.sagGrupo == null;
+
+  if (isAmbiguousNoGrupo) {
+    for (let slot = 0; slot < missing; slot++) {
+      allCandidates.push({
+        reference: "",
+        description: entry.subgroupName,
+        status: "DATA_UNVERIFIED",
+        source: "BODEGA",
+        availableQty: null,
+        pendingQty: null,
+        opNumber: null,
+        threshold,
+        explanation: `Subgrupo "${entry.subgroupName}" corresponde a mas de una posicion canonica (${group.groupCode}). No es posible asignar candidatos sin clasificacion certificada de grupo.`,
+      });
+    }
+  } else if (isImport) {
     resolveImportSlots(entry, missing, sortedCentralRefs, sortedOps, vendorRefs, usedReferences, threshold, allCandidates, dataAvailability);
   } else if (requiredLine) {
     resolveTextileSlots(entry, missing, group, requiredLine, sortedCentralRefs, sortedOps, vendorRefs, usedReferences, threshold, allCandidates, dataAvailability);

@@ -67,6 +67,12 @@ export interface AssortmentEntryEval {
   excess: boolean;
   /** Distinct matched references (deduped by normalized reference code). */
   matchedReferences: string[];
+  /**
+   * MALETAS-DERROTERO-08B2R5A: true when the entry's sagSubgrupo maps to
+   * 2+ groups in the catalog. Ambiguous entries cannot be resolved by
+   * B01/OP candidates without certified group identity.
+   */
+  isAmbiguousPosition: boolean;
 }
 
 export interface CatalogEvaluation {
@@ -89,7 +95,8 @@ export type UnresolvedReason =
   | "SIZECLASS_MISSING_IN_SAG"
   | "SIZECLASS_UNMAPPED"
   | "HISTORICAL_REFERENCE"
-  | "NOT_IMPORT_PRODUCT";
+  | "NOT_IMPORT_PRODUCT"
+  | "AMBIGUOUS_DERROTERO_GROUP";
 
 export interface UnresolvedRef {
   reference: string;
@@ -105,6 +112,7 @@ export interface UnresolvedSummary {
   productoNoResuelto: number;
   valorNoHomologado: number;
   noEsImportacion: number;
+  ambiguousDerroteroGroup: number;
 }
 
 export interface VendorAssortmentResult {
@@ -188,18 +196,84 @@ export function evaluateVendorAssortment(
     // Textil refs without group are not unresolved for derrotero — they still match by subgrupoSag
   }
 
+  // MALETAS-DERROTERO-08B2R5A: detect ambiguous textil refs.
+  // A ref is ambiguous when its sagSubgrupo matches entries in 2+ groups
+  // of the same catalog and it has no certified derroteroGroupCode.
+  const allCatalogs = [csCatalog, ltCatalog, importCatalog];
+  const trackedAmbiguous = new Set<string>();
+  for (const cat of allCatalogs) {
+    const ambiguous = getAmbiguousSagSubgrupos(cat);
+    if (ambiguous.size === 0) continue;
+    const catRefs = cat === csCatalog ? csRefs : cat === ltCatalog ? ltRefs : importRefs;
+    for (const ref of catRefs) {
+      if (!ref.subgrupoSag) continue;
+      const norm = ref.subgrupoSag.trim().toUpperCase();
+      if (!ambiguous.has(norm)) continue;
+      const certified = (ref as VendorSampleRefWithGroupCert).derroteroGroupCode;
+      if (certified) continue; // certified → not ambiguous
+      const key = `${ref.reference}|${norm}`;
+      if (trackedAmbiguous.has(key)) continue;
+      trackedAmbiguous.add(key);
+      unresolvedRefs.push({
+        reference: ref.reference,
+        description: ref.description,
+        line: ref.line,
+        reason: "AMBIGUOUS_DERROTERO_GROUP",
+        reasonLabel: `Subgrupo "${ref.subgrupoSag}" corresponde a mas de una posicion canonica del derrotero. Requiere clasificacion de grupo (${[...buildAmbiguityIndex(cat).get(norm)!].join(", ")}).`,
+      });
+    }
+  }
+
   const unresolvedSummary: UnresolvedSummary = {
     total: unresolvedRefs.length,
     sinSizeClassEnSag: unresolvedRefs.filter((r) => r.reason === "SIZECLASS_MISSING_IN_SAG").length,
     productoNoResuelto: unresolvedRefs.filter((r) => r.reason === "PRODUCT_NOT_RESOLVED").length,
     valorNoHomologado: unresolvedRefs.filter((r) => r.reason === "SIZECLASS_UNMAPPED").length,
     noEsImportacion: unresolvedRefs.filter((r) => r.reason === "NOT_IMPORT_PRODUCT").length,
+    ambiguousDerroteroGroup: unresolvedRefs.filter((r) => r.reason === "AMBIGUOUS_DERROTERO_GROUP").length,
   };
 
   return { vendorId: vendor.vendorId, catalogs, unresolvedRefs, unresolvedSummary };
 }
 
 /** Exported for semantic certification tests (AGENTIK-DERROTERO-MEASUREMENT-SEMANTICS-01). */
+/**
+ * MALETAS-DERROTERO-08B2R5A: Build an ambiguity index for a catalog.
+ * Maps each normalized sagSubgrupo to the set of groupCodes that contain it.
+ * A sagSubgrupo is "ambiguous" when it maps to 2+ groups.
+ */
+export function buildAmbiguityIndex(catalog: MalletAssortmentCatalog): Map<string, Set<string>> {
+  const index = new Map<string, Set<string>>();
+  for (const group of catalog.groups) {
+    for (const entry of group.entries) {
+      if (!entry.active) continue;
+      if (entry.sagSubgrupo == null) continue;
+      const values = Array.isArray(entry.sagSubgrupo)
+        ? entry.sagSubgrupo
+        : [entry.sagSubgrupo];
+      for (const v of values) {
+        const key = v.trim().toUpperCase();
+        if (!index.has(key)) index.set(key, new Set());
+        index.get(key)!.add(group.groupCode);
+      }
+    }
+  }
+  return index;
+}
+
+/**
+ * Returns the set of normalized sagSubgrupos that are ambiguous
+ * (appear in 2+ groups within the same catalog).
+ */
+export function getAmbiguousSagSubgrupos(catalog: MalletAssortmentCatalog): Set<string> {
+  const index = buildAmbiguityIndex(catalog);
+  const result = new Set<string>();
+  for (const [key, groups] of index) {
+    if (groups.size > 1) result.add(key);
+  }
+  return result;
+}
+
 export function evaluateCatalog(
   catalog: MalletAssortmentCatalog,
   refs: VendorSampleRef[],
@@ -212,13 +286,16 @@ export function evaluateCatalog(
   let totalExcess = 0;
   let totalEntries = 0;
 
+  // MALETAS-DERROTERO-08B2R5A: pre-compute ambiguous sagSubgrupos
+  const ambiguous = getAmbiguousSagSubgrupos(catalog);
+
   for (const group of catalog.groups) {
     const entryResults: AssortmentEntryEval[] = [];
     let gc = 0, gm = 0, ge = 0;
 
     for (const entry of group.entries) {
       if (!entry.active) continue;
-      const matched = matchRefs(refs, group, entry, world);
+      const matched = matchRefs(refs, group, entry, world, ambiguous);
 
       // AGENTIK-DERROTERO-MEASUREMENT-SEMANTICS-01:
       // MALETAS are measured in DISTINCT REFERENCES. Explicit dedupe by
@@ -255,6 +332,11 @@ export function evaluateCatalog(
         complete,
         excess,
         matchedReferences: matchedDistinct,
+        isAmbiguousPosition: entry.sagSubgrupo != null && (
+          Array.isArray(entry.sagSubgrupo)
+            ? entry.sagSubgrupo.some((v) => ambiguous.has(v.trim().toUpperCase()))
+            : ambiguous.has(entry.sagSubgrupo.trim().toUpperCase())
+        ),
       });
 
       if (complete) gc++;
@@ -305,6 +387,7 @@ function matchRefs(
   group: MalletAssortmentGroup,
   entry: { subgroupCode: string | null; sagSubgrupo: string | string[] | null },
   world: string,
+  ambiguousSagSubgrupos?: Set<string>,
 ): VendorSampleRef[] {
   if (world === "IMPORTACION") {
     // Import: match by sizeClass (handlingUnit). Unchanged.
@@ -330,10 +413,36 @@ function matchRefs(
     );
   }
 
-  // Latin Kids: match by subgrupo SAG only (no grupo constraint)
-  return refs.filter(
-    (r) => sagValues.includes(r.subgrupoSag),
-  );
+  // MALETAS-DERROTERO-08B2R5A: Latin Kids compound matcher.
+  // When a sagSubgrupo maps to 2+ groups in the catalog, a plain text match
+  // is insufficient — the ref needs a certified derroteroGroupCode to
+  // disambiguate which group it belongs to. Without it, the ref is ambiguous
+  // and must NOT match any position (fail closed → DATA_UNVERIFIED).
+  return refs.filter((r) => {
+    if (!sagValues.includes(r.subgrupoSag)) return false;
+
+    // If this entry's sagSubgrupo is NOT ambiguous, text match is sufficient
+    if (!ambiguousSagSubgrupos) return true;
+    const isAmbiguous = sagValues.some(
+      (v) => ambiguousSagSubgrupos.has(v.trim().toUpperCase()),
+    );
+    if (!isAmbiguous) return true;
+
+    // Ambiguous sagSubgrupo — require certified derroteroGroupCode
+    const certified = (r as VendorSampleRefWithGroupCert).derroteroGroupCode;
+    if (!certified) return false; // ambiguous + uncertified → excluded
+    return certified === group.groupCode;
+  });
+}
+
+/**
+ * Extension of VendorSampleRef with optional certified derrotero group.
+ * When SAG cannot disambiguate which group a ref belongs to,
+ * this field is null/undefined → ref is ambiguous.
+ * MALETAS-DERROTERO-08B2R5A
+ */
+interface VendorSampleRefWithGroupCert extends VendorSampleRef {
+  derroteroGroupCode?: string | null;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

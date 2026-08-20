@@ -4138,6 +4138,7 @@ function UnresolvedRefsPanel({
     SIZECLASS_UNMAPPED: "Valor no homologado",
     NOT_IMPORT_PRODUCT: "No corresponde a Importacion",
     HISTORICAL_REFERENCE: "Referencia historica",
+    AMBIGUOUS_DERROTERO_GROUP: "Grupo ambiguo en derrotero",
   };
 
   return (
@@ -4178,6 +4179,9 @@ function UnresolvedRefsPanel({
         )}
         {summary.noEsImportacion > 0 && (
           <span>No es Importacion: <strong>{summary.noEsImportacion}</strong></span>
+        )}
+        {summary.ambiguousDerroteroGroup > 0 && (
+          <span>Grupo ambiguo: <strong>{summary.ambiguousDerroteroGroup}</strong></span>
         )}
       </div>
 

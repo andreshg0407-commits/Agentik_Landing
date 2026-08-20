@@ -511,6 +511,7 @@ function makeEntry(overrides: Partial<AssortmentEntryEval> = {}): AssortmentEntr
     complete: false,
     excess: false,
     matchedReferences: [],
+    isAmbiguousPosition: false,
     ...overrides,
   };
 }
@@ -552,7 +553,7 @@ function makeVendorEval(catalogs?: CatalogEvaluation[]): VendorAssortmentResult 
     vendorId: "vendor-nestor",
     catalogs: catalogs ?? [makeCatalog()],
     unresolvedRefs: [],
-    unresolvedSummary: { total: 0, sinSizeClassEnSag: 0, productoNoResuelto: 0, valorNoHomologado: 0, noEsImportacion: 0 },
+    unresolvedSummary: { total: 0, sinSizeClassEnSag: 0, productoNoResuelto: 0, valorNoHomologado: 0, noEsImportacion: 0, ambiguousDerroteroGroup: 0 },
   };
 }
 
