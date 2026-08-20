@@ -3,6 +3,7 @@ import { redirect }  from "next/navigation";
 import { requireTenant }                          from "@/lib/tenant";
 import { getEnabledModules, resolveModuleForPath } from "@/lib/tenant/modules";
 import { filterModulesByRole, isInternalRole, getModulesForRole } from "@/lib/auth/module-access";
+import { resolvePlatformAuthority }                              from "@/lib/auth/platform-authority";
 import RightOpsRail                               from "@/components/layout/right-ops-rail";
 import { TenantSwitcher }                         from "@/components/layout/tenant-switcher";
 import { C }                                      from "@/lib/ui/tokens";
@@ -64,24 +65,33 @@ export default async function OrgLayout({
 
   const orgMods = await getEnabledModules(ctx.orgId);
 
+  // ── Platform authority resolution ─────────────────────────────────────────────
+  // Source of truth: Membership.role for this org (lib/tenant.ts:55).
+  // There is NO separate globalRole field on User. Platform authority is expressed
+  // by having SUPER_ADMIN or AGENTIK_ADMIN as the membership role.
+  const platformAuth = resolvePlatformAuthority(ctx.role);
+
   // SUPER_ADMIN BYPASS: sees all role-permitted modules regardless of tenant
   // entitlements. This is a read-only visibility override — no TenantModule rows,
   // commercial terms, or billing periods are created. Tenant truth is unchanged.
   // ORG_ADMIN/MANAGER: only see the intersection of org-entitled + role-permitted.
-  const mods = ctx.role === "SUPER_ADMIN"
+  const mods = platformAuth.bypassEntitlementCensorship
     ? getModulesForRole(ctx.role)
     : filterModulesByRole(orgMods, ctx.role);
 
   // Capability flags
-  const showInternal    = isInternalRole(ctx.role);
-  const showMarketing   = mods.has("marketing_studio");
-  const showPlatformAdmin = ctx.role === "SUPER_ADMIN";
+  const showInternal      = platformAuth.canAccessInternalConsole;
+  const showMarketing     = mods.has("marketing_studio");
+  const showPlatformAdmin = platformAuth.bypassEntitlementCensorship;
 
   // ── Route guard ──────────────────────────────────────────────────────────────
   const routeModule = resolveModuleForPath(ctx.orgSlug, pathname);
   const isBlocked   = routeModule !== null && !mods.has(routeModule);
   // ────────────────────────────────────────────────────────────────────────────
 
+  // Platform bypass: omit orgEntitledModules so buildNavDomains never shows
+  // "Próximamente" stubs. The role bypass in `mods` already grants full visibility;
+  // passing tenant entitlements would re-gate the nav rendering.
   const domains = buildNavDomains({
     orgSlug:           ctx.orgSlug,
     hasDashboard:      mods.has("dashboard"),
@@ -100,7 +110,7 @@ export default async function OrgLayout({
     hasSettings:       mods.has("settings"),
     showInternal,
     showPlatformAdmin,
-    orgEntitledModules: orgMods,
+    orgEntitledModules: platformAuth.bypassEntitlementCensorship ? undefined : orgMods,
   });
 
   // ── Seller App shell bypass ─────────────────────────────────────────────────
