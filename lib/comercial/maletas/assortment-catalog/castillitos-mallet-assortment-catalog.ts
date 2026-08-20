@@ -74,7 +74,7 @@ const CS_NINA_BEBE: MalletAssortmentGroup = {
     entry("BLUSAS", "Blusas", 2, 5, CS_EVIDENCE, "BLUSAS"),
     entry("VESTIDO", "Vestido", 3, 6, CS_EVIDENCE, "VESTIDO"),
     entry("CAMISETA", "Camiseta", 1, 7, CS_EVIDENCE, "CAMISETA"),
-    entry("MAMELUCO", "Mameluco", 1, 8, CS_EVIDENCE, "MAMELUCO"),
+    entry("MAMELUCO", "Mameluco", 1, 8, CS_EVIDENCE, ["MAMELUCO", "MAMELUCO LARGO"]),
     entry("BUZO_CAMIBUSO", "Buzo / Camibuso", 1, 9, CS_EVIDENCE, ["BUZO", "CAMIBUSO"]),
   ],
 };
@@ -89,7 +89,7 @@ const CS_NINO_BEBE: MalletAssortmentGroup = {
     entry("CONJUNTO_CC", "Conjunto Niño BB CC", 2, 3, CS_EVIDENCE, "CONJUNTO NIÑO BB CC"),
     entry("CONJUNTO_CL", "Conjunto Niño BB CL", 3, 4, CS_EVIDENCE, "CONJUNTO NIÑO BB CL"),
     entry("CAMISETA", "Camiseta", 2, 5, CS_EVIDENCE, "CAMISETA"),
-    entry("MAMELUCO", "Mameluco", 1, 6, CS_EVIDENCE, "MAMELUCO"),
+    entry("MAMELUCO", "Mameluco", 1, 6, CS_EVIDENCE, ["MAMELUCO", "MAMELUCO LARGO"]),
     entry("BUZO_CAMIBUSO", "Buzo / Camibuso", 1, 7, CS_EVIDENCE, ["BUZO", "CAMIBUSO"]),
     entry("POLO", "Polo", 1, 8, CS_EVIDENCE, "POLO"),
   ],

@@ -789,6 +789,8 @@ export async function loadVendorSampleData(
     vendorRefSets.set(v.vendorId, new Set(v.refs.map((r) => r.reference.trim().toUpperCase())));
   }
   // ACTIVATION-01: scope-filtered central refs for coverage opportunities
+  // MALETAS-08B2R1: canonical.refs have grupoSag/subgrupoSag=null (SAG query lacks these columns).
+  // Enrich from canonicalMap (classifyMaletaReferencesBatch → ProductEntity) which resolves them.
   const allCentralRefs: Array<{
     reference: string;
     description: string;
@@ -799,15 +801,18 @@ export async function loadVendorSampleData(
     disponible: number;
   }> = canonical.refs
     .filter((cr) => runtimeEligibleSet.has(cr.reference))
-    .map((cr) => ({
-      reference: cr.reference,
-      description: cr.description,
-      line: cr.line,
-      grupoSag: cr.grupoSag,
-      subgrupoSag: cr.subgrupoSag,
-      sizeClass: productEnrichmentMap.get(cr.reference)?.sizeClass ?? null,
-      disponible: cr.available,
-    }));
+    .map((cr) => {
+      const classified = canonicalMap.get(cr.reference);
+      return {
+        reference: cr.reference,
+        description: cr.description,
+        line: cr.line,
+        grupoSag: classified?.grupoSag ?? cr.grupoSag,
+        subgrupoSag: classified?.subgrupoSag ?? cr.subgrupoSag,
+        sizeClass: productEnrichmentMap.get(cr.reference)?.sizeClass ?? null,
+        disponible: cr.available,
+      };
+    });
 
   // IMPORT-COVERAGE-B24-01: CCS only covers textile warehouses (B01). 04A3: B04 excluded.
   // Import products live in B24. Load B24 inventory and append import refs
