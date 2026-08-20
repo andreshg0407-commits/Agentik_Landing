@@ -2296,6 +2296,7 @@ function AssetCard({ asset, onApprove, onReject, orgSlug, sourceImageUrl }: Asse
   const isPending  = !isReady && !isFailed;
   const isApproved = asset?.reviewStatus === "approved";
   const isRejected = asset?.reviewStatus === "rejected";
+  const isSaving   = asset?.reviewStatus === "saving";
 
   return (
     <div style={{
@@ -2366,15 +2367,17 @@ function AssetCard({ asset, onApprove, onReject, orgSlug, sourceImageUrl }: Asse
       {isReady && asset && !isApproved && !isRejected && (
         <div style={{ display: "flex", gap: S[2], padding: `${S[2]}px ${S[3]}px`,
           borderTop: `1px solid ${C.lineSubtle}`, background: C.surfaceAlt, flexWrap: "wrap" }}>
-          <button onClick={() => onApprove(asset.id)} style={{
+          <button onClick={() => onApprove(asset.id)} disabled={isSaving} style={{
             padding: `4px ${S[2]}px`, background: C.greenLight, color: C.green,
             border: `1px solid ${C.greenBorder}`, borderRadius: R.sm, fontSize: T.sz.xs,
-            fontWeight: T.wt.bold, cursor: "pointer", fontFamily: T.mono,
-          }}>✓ Aprobar</button>
-          <button onClick={() => onReject(asset.id)} style={{
+            fontWeight: T.wt.bold, cursor: isSaving ? "wait" : "pointer", fontFamily: T.mono,
+            opacity: isSaving ? 0.6 : 1,
+          }}>{isSaving ? "Guardando…" : "✓ Aprobar"}</button>
+          <button onClick={() => onReject(asset.id)} disabled={isSaving} style={{
             padding: `4px ${S[2]}px`, background: "#fff0f0", color: C.red,
             border: `1px solid ${C.redBorder}`, borderRadius: R.sm, fontSize: T.sz.xs,
-            fontWeight: T.wt.bold, cursor: "pointer", fontFamily: T.mono,
+            fontWeight: T.wt.bold, cursor: isSaving ? "wait" : "pointer", fontFamily: T.mono,
+            opacity: isSaving ? 0.6 : 1,
           }}>✗ Rechazar</button>
           {downloadHref && (
             <a href={downloadHref} download
@@ -2616,6 +2619,7 @@ function CreativeReviewWorkspace({
   const activeVersions = activeAsset ? (versionMap[activeAsset.id] ?? [activeAsset.assetUrl ?? ""]) : [];
   const activeUrl      = activeVersions[Math.min(activeVerIdx, Math.max(0, activeVersions.length - 1))] ?? activeAsset?.assetUrl ?? "";
   const isApproved     = activeAsset?.reviewStatus === "approved";
+  const isSaving       = activeAsset?.reviewStatus === "saving";
   const sourceUrl      = activeAsset?.assetType === "back_clean" ? (backUrl || frontUrl) : frontUrl;
 
   useEffect(() => {
@@ -2835,10 +2839,15 @@ function CreativeReviewWorkspace({
             }}>
             {refinementOpen ? "✕ Cancelar" : "Corregir / mejorar"}
           </button>
-          {!isApproved && (
+          {!isApproved && !isSaving && (
             <button onClick={() => setApprovalOpen(true)} style={{ ...btnPrimary, fontSize: T.sz.sm }}>
               Aprobar y guardar →
             </button>
+          )}
+          {isSaving && (
+            <span style={{ fontFamily: T.mono, fontSize: T.sz.sm, color: C.inkMid }}>
+              Guardando…
+            </span>
           )}
           {isApproved && (
             <Link href={`/${orgSlug}/agentik/marketing-studio/biblioteca`}
@@ -2857,7 +2866,7 @@ function CreativeReviewWorkspace({
 function GenerationStep({
   assets, isGenerating, generateError, onGenerate,
   onApprove, onReject, onReset, orgSlug,
-  frontUrl, backUrl, isReady, onRefine,
+  frontUrl, backUrl, isReady, onRefine, reviewError,
 }: {
   assets:        AssetState[];
   isGenerating:  boolean;
@@ -2871,6 +2880,7 @@ function GenerationStep({
   backUrl?:      string;
   isReady?:      boolean;
   onRefine:      (chip: string, freeText: string) => void;
+  reviewError?:  string | null;
 }) {
   const hasReadyAsset = assets.some(a => a.generationStatus === "READY");
 
@@ -2930,16 +2940,25 @@ function GenerationStep({
 
   // ── Creative review workspace ─────────────────────────────────────────────
   return (
-    <CreativeReviewWorkspace
-      assets={assets}
-      orgSlug={orgSlug}
-      frontUrl={frontUrl}
-      backUrl={backUrl}
-      onApprove={onApprove}
-      onReject={onReject}
-      onReset={onReset}
-      onRefine={onRefine}
-    />
+    <>
+      {reviewError && (
+        <div style={{ padding: `${S[2]}px ${S[3]}px`, marginBottom: S[3],
+          background: "#fff0f0", border: `1px solid ${C.redBorder}`, borderRadius: R.md,
+          color: C.red, fontSize: T.sz.sm, fontFamily: T.mono }}>
+          {reviewError}
+        </div>
+      )}
+      <CreativeReviewWorkspace
+        assets={assets}
+        orgSlug={orgSlug}
+        frontUrl={frontUrl}
+        backUrl={backUrl}
+        onApprove={onApprove}
+        onReject={onReject}
+        onReset={onReset}
+        onRefine={onRefine}
+      />
+    </>
   );
 }
 
@@ -3212,33 +3231,66 @@ export function FotoEstudioWizard({
     }
   }
 
+  // ── Review error state ─────────────────────────────────────────────────
+  const [reviewError, setReviewError] = useState<string | null>(null);
+
   // ── Approve (with metadata from ApprovalModal) ───────────────────────────
   async function handleApprove(assetId: string, meta: ApprovalMeta) {
-    setAssets(prev => prev.map(a => a.id === assetId ? { ...a, reviewStatus: "approved" } : a));
+    setReviewError(null);
     // PLACEHOLDER — wire meta to asset enrichment API (Sprint AGENTIK-FOTOESTUDIO-ENRICH-01)
-    console.log("[foto-estudio] approve meta:", meta);
-    await fetch(`/api/orgs/${orgSlug}/marketing-studio/sessions/${sessionId}`, {
-      method:  "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ action: "approve_items", itemIds: [assetId] }),
-    }).catch(err => console.warn("[wizard] approve failed:", err));
+    const prev = assets.find(a => a.id === assetId)?.reviewStatus ?? "pending";
+    setAssets(p => p.map(a => a.id === assetId ? { ...a, reviewStatus: "saving" } : a));
+    try {
+      const res = await fetch(`/api/orgs/${orgSlug}/marketing-studio/sessions/${sessionId}`, {
+        method:  "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ action: "approve_items", itemIds: [assetId] }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setAssets(p => p.map(a => a.id === assetId ? { ...a, reviewStatus: "approved" } : a));
+    } catch {
+      setAssets(p => p.map(a => a.id === assetId ? { ...a, reviewStatus: prev } : a));
+      setReviewError("No se pudo guardar en Biblioteca. Intenta de nuevo.");
+    }
   }
 
   // ── Reject ───────────────────────────────────────────────────────────────
-  function handleReject(assetId: string) {
-    setAssets(prev => prev.map(a => a.id === assetId ? { ...a, reviewStatus: "rejected" } : a));
+  async function handleReject(assetId: string) {
+    setReviewError(null);
+    const prev = assets.find(a => a.id === assetId)?.reviewStatus ?? "pending";
+    setAssets(p => p.map(a => a.id === assetId ? { ...a, reviewStatus: "rejected" } : a));
+    try {
+      const res = await fetch(`/api/orgs/${orgSlug}/marketing-studio/sessions/${sessionId}`, {
+        method:  "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ action: "reject_items", itemIds: [assetId] }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch {
+      setAssets(p => p.map(a => a.id === assetId ? { ...a, reviewStatus: prev } : a));
+      setReviewError("No se pudo rechazar el activo. Intenta de nuevo.");
+    }
   }
 
   // ── Save all approved ────────────────────────────────────────────────────
   async function handleSaveAll() {
+    setReviewError(null);
     const readyIds = assets.filter(a => a.generationStatus === "READY" && a.reviewStatus !== "rejected").map(a => a.id);
     if (readyIds.length === 0) return;
-    setAssets(prev => prev.map(a => readyIds.includes(a.id) ? { ...a, reviewStatus: "approved" } : a));
-    await fetch(`/api/orgs/${orgSlug}/marketing-studio/sessions/${sessionId}`, {
-      method:  "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ action: "approve_items", itemIds: readyIds }),
-    }).catch(err => console.warn("[wizard] save all failed:", err));
+    const prevStates = new Map(assets.map(a => [a.id, a.reviewStatus]));
+    setAssets(p => p.map(a => readyIds.includes(a.id) ? { ...a, reviewStatus: "saving" } : a));
+    try {
+      const res = await fetch(`/api/orgs/${orgSlug}/marketing-studio/sessions/${sessionId}`, {
+        method:  "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ action: "approve_items", itemIds: readyIds }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setAssets(p => p.map(a => readyIds.includes(a.id) ? { ...a, reviewStatus: "approved" } : a));
+    } catch {
+      setAssets(p => p.map(a => readyIds.includes(a.id) ? { ...a, reviewStatus: prevStates.get(a.id) ?? "pending" } : a));
+      setReviewError("No se pudieron guardar los activos. Intenta de nuevo.");
+    }
   }
 
   // ── Refine (wires chip+text to generation pipeline) ─────────────────────
@@ -3383,6 +3435,7 @@ export function FotoEstudioWizard({
           frontUrl={frontUrl || undefined}
           backUrl={backUrl   || undefined}
           isReady={isReady}
+          reviewError={reviewError}
         />
       )}
     </div>

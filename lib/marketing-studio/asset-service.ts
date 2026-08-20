@@ -127,6 +127,51 @@ export async function updateAssetReviewStatus(
   });
 }
 
+/**
+ * Tenant-validated batch approval/rejection.
+ *
+ * Verifies every assetId belongs to the given sessionId AND that the session
+ * belongs to the given organizationId. Fails closed if any asset is foreign.
+ *
+ * Idempotent: calling twice with the same assetId produces the same result.
+ */
+export async function updateAssetsReviewStatusForSession(
+  sessionId:      string,
+  organizationId: string,
+  assetIds:       string[],
+  reviewStatus:   "approved" | "rejected",
+): Promise<{ updated: number }> {
+  if (assetIds.length === 0) return { updated: 0 };
+
+  // Verify session belongs to org
+  const session = await prisma.studioSession.findUnique({
+    where: { id: sessionId },
+    select: { organizationId: true },
+  });
+  if (!session || session.organizationId !== organizationId) {
+    throw new Error("SESSION_NOT_FOUND");
+  }
+
+  // Verify all assets belong to this session
+  const ownedAssets = await prisma.generatedAsset.findMany({
+    where: { id: { in: assetIds }, sessionId },
+    select: { id: true },
+  });
+  const ownedIds = new Set(ownedAssets.map(a => a.id));
+  const foreignIds = assetIds.filter(id => !ownedIds.has(id));
+  if (foreignIds.length > 0) {
+    throw new Error("ASSET_NOT_OWNED");
+  }
+
+  // Batch update — idempotent (updateMany is a no-op for already-set values)
+  const result = await prisma.generatedAsset.updateMany({
+    where: { id: { in: assetIds }, sessionId },
+    data: { reviewStatus },
+  });
+
+  return { updated: result.count };
+}
+
 export async function updateAssetPublished(
   assetId:     string,
   externalRef: string,

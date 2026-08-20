@@ -24,7 +24,7 @@ import {
   updateDbSessionReviewItems,
   updateDbSessionState,
 } from "@/lib/marketing-studio/session-service";
-import { updateAssetReviewStatus }            from "@/lib/marketing-studio/asset-service";
+import { updateAssetsReviewStatusForSession }  from "@/lib/marketing-studio/asset-service";
 import type { MinimumInputFields, ReviewItem } from "@/lib/marketing-studio/guided-flow";
 
 type RouteContext = { params: Promise<{ orgSlug: string; sessionId: string }> };
@@ -106,11 +106,24 @@ export async function PATCH(
 
       case "approve_items": {
         const itemIds = body.itemIds as string[];
-        // Update asset review status in DB for each approved item
-        await Promise.all(
-          itemIds.map((id) => updateAssetReviewStatus(id, "approved")),
+        if (!Array.isArray(itemIds) || itemIds.length === 0) {
+          return NextResponse.json({ error: "itemIds required" }, { status: 400 });
+        }
+        const result = await updateAssetsReviewStatusForSession(
+          sessionId, organization.id, itemIds, "approved",
         );
-        return NextResponse.json({ ok: true });
+        return NextResponse.json({ ok: true, updated: result.updated });
+      }
+
+      case "reject_items": {
+        const itemIds = body.itemIds as string[];
+        if (!Array.isArray(itemIds) || itemIds.length === 0) {
+          return NextResponse.json({ error: "itemIds required" }, { status: 400 });
+        }
+        const result = await updateAssetsReviewStatusForSession(
+          sessionId, organization.id, itemIds, "rejected",
+        );
+        return NextResponse.json({ ok: true, updated: result.updated });
       }
 
       case "start_publishing": {
