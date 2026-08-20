@@ -98,6 +98,7 @@ const EDAD_TOKENS: Record<string, SegmentoEdad> = {
   "BB": "BEBE",
   "BEBE": "BEBE",
   "BEBÉ": "BEBE",
+  "BABY": "BEBE",
   "MESES": "MESES",
   "KIDS": "KIDS",
 };
@@ -436,4 +437,47 @@ function buildMatchKey(
   consInf: ConstruccionInferior,
 ): string {
   return `${familia}|${genero}|${edad}|${consSup}|${consInf}`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Display labels — Section D: presentation-safe names
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Replacement map for display: internal abbreviations → human-readable Spanish. */
+const DISPLAY_REPLACEMENTS: Array<[RegExp, string]> = [
+  [/\bBB\b/g, "Bebé"],
+  [/\bBEBE\b/g, "Bebé"],
+  [/\bNINA\b/g, "Niña"],
+  [/\bNINO\b/g, "Niño"],
+  [/\bCC\b/g, "CC"],
+  [/\bCL\b/g, "CL"],
+  [/\bLL\b/g, "LL"],
+];
+
+/**
+ * Convert an internal subgroup/group name to display-safe label.
+ * Never shows "BB" — always "Bebé". Never shows "NINA" — always "Niña".
+ * Input can be any case; output uses title case with proper diacritics.
+ *
+ * MALETAS-P0-PRODUCTION-SAFETY-08B2R6 Section D
+ */
+export function toDisplayLabel(raw: string): string {
+  // Title-case the input first
+  let result = raw
+    .toLowerCase()
+    .split(/[\s_]+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+
+  // Apply display replacements (whole-word only)
+  for (const [pattern, replacement] of DISPLAY_REPLACEMENTS) {
+    result = result.replace(pattern, replacement);
+  }
+
+  // Fix "Bebe" (from title-case) that wasn't caught by \bBEBE\b
+  result = result.replace(/\bBebe\b/g, "Bebé");
+  result = result.replace(/\bNina\b/g, "Niña");
+  result = result.replace(/\bNino\b/g, "Niño");
+
+  return result;
 }

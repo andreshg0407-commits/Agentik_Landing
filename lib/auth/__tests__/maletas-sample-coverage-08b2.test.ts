@@ -66,7 +66,8 @@ describe("B — Cascade: B01 → OP → PRODUCTION_REQUIRED", () => {
   test("T07: STATUS_PRIORITY gives B01_AVAILABLE highest priority", () => {
     expect(src).toContain("B01_AVAILABLE: 1,");
     expect(src).toContain("OP_INCOMING: 2,");
-    expect(src).toContain("PRODUCTION_REQUIRED: 3,");
+    expect(src).toContain("STOCK_AVAILABLE_BELOW_THRESHOLD: 3,");
+    expect(src).toContain("PRODUCTION_REQUIRED: 4,");
   });
 });
 
@@ -258,8 +259,8 @@ describe("J — UI uses 'Cobertura de mostrario' terminology", () => {
     expect(uiSrc).toContain('"Disponibles en Bodega Principal"');
   });
 
-  test("T31: Section title 'Requieren produccion'", () => {
-    expect(uiSrc).toContain('"Requieren produccion"');
+  test("T31: Section title 'Produccion certificada'", () => {
+    expect(uiSrc).toContain('"Produccion certificada"');
   });
 
   test("T32: Muestras para retirar removed from Cobertura tab (08B2R4 — lives in Retiro)", () => {
@@ -461,9 +462,9 @@ describe("O — OP cascade: B01 → OP → PRODUCTION_REQUIRED", () => {
   test("T61: PRODUCTION_REQUIRED only emitted after B01 AND OP miss (STEP 3)", () => {
     const step3Idx = engineSrc.indexOf("// STEP 3: PRODUCTION_REQUIRED");
     expect(step3Idx).toBeGreaterThan(0);
-    const after = engineSrc.slice(step3Idx, step3Idx + 400);
+    const after = engineSrc.slice(step3Idx, step3Idx + 500);
     expect(after).toContain('"PRODUCTION_REQUIRED"');
-    expect(after).toContain("Sin referencia mayorista disponible en B01 ni en OP activa");
+    expect(after).toContain("Stock certificado = 0 en B01 y sin OP activa. Produccion requerida.");
   });
 
   test("T62: A single B01 ref cannot fill two positions (usedReferences dedup)", () => {
@@ -643,7 +644,7 @@ describe("P — Behavioral: buildSampleCoverageResult with fixtures", () => {
     );
     const pos = result.vendorCoverages[0].positions[0];
     expect(pos.status).toBe("PRODUCTION_REQUIRED");
-    expect(pos.candidates[0].explanation).toContain("Sin referencia mayorista disponible en B01 ni en OP activa");
+    expect(pos.candidates[0].explanation).toContain("Produccion requerida");
   });
 
   test("T67: Sources unavailable → DATA_UNVERIFIED (never PRODUCTION_REQUIRED)", () => {

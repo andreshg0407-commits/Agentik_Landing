@@ -56,6 +56,7 @@ import type {
   CoveragePosition,
   CoverageStatus,
 } from "@/lib/comercial/maletas/sample-coverage-engine";
+import { toDisplayLabel } from "@/lib/comercial/maletas/textile-reference-normalizer";
 
 // ── Props ────────────────────────────────────────────────────────────────────
 
@@ -735,6 +736,7 @@ export function MaletasClient({
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: S[3], marginBottom: S[4] }}>
             {[
               { label: "Produccion inmediata", value: prodImmediate.length, color: prodImmediate.length > 0 ? C.red : C.green },
+              { label: "Revision humana", value: sampleCoverage.coverageSummary.stockBelowThreshold, color: sampleCoverage.coverageSummary.stockBelowThreshold > 0 ? C.amber : C.green },
               { label: "Proximos al limite", value: prodRisk.length, color: prodRisk.length > 0 ? C.amber : C.green },
               { label: "Con OP activa (B04)", value: sampleCoverage.coverageSummary.opIncoming, color: sampleCoverage.coverageSummary.opIncoming > 0 ? C.blueDark : C.inkFaint },
             ].map((kpi) => (
@@ -981,10 +983,10 @@ export function MaletasClient({
                       {/* Col 3: Classification — stacked */}
                       <div>
                         <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkMid }}>
-                          {cand.grupoSag ?? "\u2014"} / {cand.subgrupoSag ?? "\u2014"}
+                          {cand.grupoSag ? toDisplayLabel(cand.grupoSag) : "\u2014"} / {cand.subgrupoSag ? toDisplayLabel(cand.subgrupoSag) : "\u2014"}
                         </div>
                         <div style={{ fontFamily: T.mono, fontSize: 8, color: C.inkFaint, marginTop: 1 }}>
-                          {cand.normalized.familiaProducto} · {cand.normalized.genero} · {cand.normalized.segmentoEdad}{constr ? ` · ${constr}` : ""}
+                          {toDisplayLabel(cand.normalized.familiaProducto)} · {toDisplayLabel(cand.normalized.genero)} · {toDisplayLabel(cand.normalized.segmentoEdad)}{constr ? ` · ${toDisplayLabel(constr)}` : ""}
                         </div>
                       </div>
                       {/* Col 4: Disponible + threshold */}
@@ -1003,12 +1005,22 @@ export function MaletasClient({
                           </div>
                         )}
                       </div>
-                      {/* Col 6: Status badge */}
+                      {/* Col 6: Status badge — MALETAS-P0-PRODUCTION-SAFETY-08B2R6 Section K */}
                       <div>
-                        <span style={{
-                          fontFamily: T.mono, fontSize: 8, fontWeight: 700, color: C.green,
-                          padding: "2px 6px", borderRadius: R.sm, background: C.green + "12",
-                        }}>Certificada</span>
+                        {(() => {
+                          const hasSub = cand.subgrupoSag != null && cand.subgrupoSag !== "";
+                          const hasMatch = !cand.derroteroMatch.startsWith("Sin ");
+                          const badgeColor = hasSub && hasMatch ? C.green : C.amber;
+                          const badgeLabel = !hasSub ? "Sin clasificar"
+                            : !hasMatch ? "Sin posicion"
+                            : "Certificada";
+                          return (
+                            <span style={{
+                              fontFamily: T.mono, fontSize: 8, fontWeight: 700, color: badgeColor,
+                              padding: "2px 6px", borderRadius: R.sm, background: badgeColor + "12",
+                            }}>{badgeLabel}</span>
+                          );
+                        })()}
                       </div>
                     </div>
                   );
@@ -1694,6 +1706,7 @@ export function MaletasClient({
               // MALETAS-COBERTURA-MOSTRARIO-08B2: Section-grouped positions
               const b01Positions = vendorCov.positions.filter((p) => p.status === "B01_AVAILABLE");
               const opPositions = vendorCov.positions.filter((p) => p.status === "OP_INCOMING");
+              const belowThresholdPositions = vendorCov.positions.filter((p) => p.status === "STOCK_AVAILABLE_BELOW_THRESHOLD");
               const prodPositions = vendorCov.positions.filter((p) => p.status === "PRODUCTION_REQUIRED");
               const importPositions = vendorCov.positions.filter((p) => p.status === "IMPORT_UNAVAILABLE");
               const unverifiedPositions = vendorCov.positions.filter((p) => p.status === "DATA_UNVERIFIED");
@@ -1709,7 +1722,8 @@ export function MaletasClient({
                       { label: "Posiciones faltantes", value: vendorCov.missingEntries, color: vendorCov.missingEntries > 0 ? C.red : C.green },
                       { label: "Disponibles en B01", value: vendorCov.b01Available, color: C.green },
                       { label: "En camino por OP", value: vendorCov.opIncoming, color: C.amber },
-                      { label: "Requieren produccion", value: vendorCov.productionRequired, color: C.red },
+                      { label: "Revision humana", value: vendorCov.stockBelowThreshold, color: C.amber },
+                      { label: "Produccion certificada", value: vendorCov.productionRequired, color: C.red },
                       { label: "Import sin disponib.", value: vendorCov.importUnavailable, color: C.inkFaint },
                       { label: "Datos sin verificar", value: vendorCov.dataUnverified, color: C.amber },
                     ].filter((kpi) => kpi.value > 0 || kpi.label === "Posiciones faltantes" || kpi.label === "Disponibles en B01").map((kpi) => (
@@ -1756,14 +1770,26 @@ export function MaletasClient({
                     emptyMessage="Sin posiciones con OP activa"
                   />
 
-                  {/* ── SECTION: REQUIEREN PRODUCCION ── */}
+                  {/* ── SECTION: REVISION HUMANA — stock below threshold ── */}
+                  {belowThresholdPositions.length > 0 && (
+                    <CoverageSection
+                      title="Revision humana — stock bajo umbral"
+                      count={belowThresholdPositions.length}
+                      color={C.amber}
+                      defaultOpen={true}
+                      positions={belowThresholdPositions}
+                      emptyMessage=""
+                    />
+                  )}
+
+                  {/* ── SECTION: PRODUCCION CERTIFICADA ── */}
                   <CoverageSection
-                    title="Requieren produccion"
+                    title="Produccion certificada"
                     count={prodPositions.length}
                     color={C.red}
                     defaultOpen={prodPositions.length > 0}
                     positions={prodPositions}
-                    emptyMessage="Todas las posiciones tienen cobertura"
+                    emptyMessage="Todas las posiciones tienen cobertura o revision"
                   />
 
                   {/* ── SECTION: IMPORTACION SIN DISPONIBILIDAD ── */}
@@ -2919,7 +2945,7 @@ function IntelligencePanel({ vendor, commercialRefs, retiroRefs, coverageByLine,
       if (!byLine.has(lineKey)) byLine.set(lineKey, { positions: [], sinCobertura: 0 });
       const entry = byLine.get(lineKey)!;
       entry.positions.push(pos.subgroupName);
-      if (pos.status === "PRODUCTION_REQUIRED" || pos.status === "IMPORT_UNAVAILABLE") {
+      if (pos.status === "PRODUCTION_REQUIRED" || pos.status === "IMPORT_UNAVAILABLE" || pos.status === "STOCK_AVAILABLE_BELOW_THRESHOLD") {
         entry.sinCobertura++;
       }
     }
@@ -3943,7 +3969,7 @@ function DerroteroIdealPanel({
                 color: C.ink, marginBottom: S[1],
                 display: "flex", alignItems: "center", gap: S[2],
               }}>
-                {group.groupName}
+                {toDisplayLabel(group.groupName)}
                 <span style={{
                   fontFamily: T.mono, fontSize: 8, fontWeight: 600,
                   color: group.groupCompletion >= 80 ? C.green : group.groupCompletion >= 50 ? C.amber : C.red,
@@ -3982,7 +4008,7 @@ function DerroteroIdealPanel({
                       alignItems: "center",
                     }}>
                       <span style={{ fontWeight: 600, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
-                        {entry.subgroupName}
+                        {toDisplayLabel(entry.subgroupName)}
                       </span>
                       {/* IDEAL column — editable */}
                       <span style={{ textAlign: "center" as const, display: "flex", alignItems: "center", justifyContent: "center", gap: 2 }}>
@@ -4227,6 +4253,7 @@ function UnresolvedRefsPanel({
 const COVERAGE_STATUS_LABEL: Record<CoverageStatus, string> = {
   B01_AVAILABLE: "B01",
   OP_INCOMING: "OP activa",
+  STOCK_AVAILABLE_BELOW_THRESHOLD: "Revision",
   PRODUCTION_REQUIRED: "Producir",
   IMPORT_UNAVAILABLE: "Sin stock",
   DATA_UNVERIFIED: "Sin verificar",
@@ -4235,6 +4262,7 @@ const COVERAGE_STATUS_LABEL: Record<CoverageStatus, string> = {
 const COVERAGE_STATUS_COLOR: Record<CoverageStatus, string> = {
   B01_AVAILABLE: C.green,
   OP_INCOMING: C.amber,
+  STOCK_AVAILABLE_BELOW_THRESHOLD: C.amber,
   PRODUCTION_REQUIRED: C.red,
   IMPORT_UNAVAILABLE: C.inkFaint,
   DATA_UNVERIFIED: C.amber,
@@ -4260,7 +4288,7 @@ function B04InventorySection({ b04Inventory, sampleCoverage }: {
           if (cand.status !== "OP_INCOMING" || !cand.reference) continue;
           const key = cand.reference.trim().toUpperCase();
           const existing = map.get(key);
-          const posLabel = `${pos.groupName} > ${pos.subgroupName}`;
+          const posLabel = `${toDisplayLabel(pos.groupName)} > ${toDisplayLabel(pos.subgroupName)}`;
           if (existing) {
             if (!existing.positions.includes(posLabel)) existing.positions.push(posLabel);
             if (!existing.vendors.includes(vc.vendorName)) existing.vendors.push(vc.vendorName);
@@ -4495,12 +4523,13 @@ function VendorReconciliationTable({ vendorCov }: { vendorCov: VendorSampleCover
   const counts = {
     B01_AVAILABLE: faltantes.filter(p => p.status === "B01_AVAILABLE").length,
     OP_INCOMING: faltantes.filter(p => p.status === "OP_INCOMING").length,
+    STOCK_AVAILABLE_BELOW_THRESHOLD: faltantes.filter(p => p.status === "STOCK_AVAILABLE_BELOW_THRESHOLD").length,
     PRODUCTION_REQUIRED: faltantes.filter(p => p.status === "PRODUCTION_REQUIRED").length,
     IMPORT_UNAVAILABLE: faltantes.filter(p => p.status === "IMPORT_UNAVAILABLE").length,
     DATA_UNVERIFIED: faltantes.filter(p => p.status === "DATA_UNVERIFIED").length,
   };
-  const sum = counts.B01_AVAILABLE + counts.OP_INCOMING + counts.PRODUCTION_REQUIRED
-    + counts.IMPORT_UNAVAILABLE + counts.DATA_UNVERIFIED;
+  const sum = counts.B01_AVAILABLE + counts.OP_INCOMING + counts.STOCK_AVAILABLE_BELOW_THRESHOLD
+    + counts.PRODUCTION_REQUIRED + counts.IMPORT_UNAVAILABLE + counts.DATA_UNVERIFIED;
   const invariantPass = sum === faltantes.length;
 
   return (
@@ -4551,10 +4580,10 @@ function VendorReconciliationTable({ vendorCov }: { vendorCov: VendorSampleCover
                   {/* Row 1: Position + status */}
                   <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
                     <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.titleDeep }}>
-                      {pos.subgroupName}
+                      {toDisplayLabel(pos.subgroupName)}
                     </span>
                     <span style={{ fontFamily: T.mono, fontSize: 8, color: C.inkFaint }}>
-                      {pos.groupName}
+                      {toDisplayLabel(pos.groupName)}
                     </span>
                     <span style={{
                       fontFamily: T.mono, fontSize: 8, fontWeight: 700, color: statusColor,
@@ -4600,8 +4629,8 @@ function VendorReconciliationTable({ vendorCov }: { vendorCov: VendorSampleCover
 }
 
 const RECON_STATUS_COLOR: Record<string, string> = {
-  B01_AVAILABLE: C.green, OP_INCOMING: C.amber, PRODUCTION_REQUIRED: C.red,
-  IMPORT_UNAVAILABLE: C.inkFaint, DATA_UNVERIFIED: C.amber,
+  B01_AVAILABLE: C.green, OP_INCOMING: C.amber, STOCK_AVAILABLE_BELOW_THRESHOLD: C.amber,
+  PRODUCTION_REQUIRED: C.red, IMPORT_UNAVAILABLE: C.inkFaint, DATA_UNVERIFIED: C.amber,
 };
 
 /** Collapsible section with position table */
@@ -4677,12 +4706,12 @@ function CoveragePositionRow({ pos }: { pos: CoveragePosition }) {
   const statusColor = COVERAGE_STATUS_COLOR[pos.status];
   const statusLabel = COVERAGE_STATUS_LABEL[pos.status];
 
-  const primaryLabel = pos.subgroupName;
+  const primaryLabel = toDisplayLabel(pos.subgroupName);
   const secondaryLabel = pos.commercialWorld === "IMPORTACION"
     ? "Importacion"
     : pos.brand && pos.brand !== pos.groupName
-      ? `${pos.brand} · ${pos.groupName}`
-      : pos.groupName;
+      ? `${pos.brand} · ${toDisplayLabel(pos.groupName)}`
+      : toDisplayLabel(pos.groupName);
 
   const firstCandidate = pos.candidates[0];
 

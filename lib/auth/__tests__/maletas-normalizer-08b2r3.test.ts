@@ -376,8 +376,8 @@ describe("I — Coverage engine must use B04 truth", () => {
   test("T42: PRODUCTION_REQUIRED only after B01 AND OP miss", () => {
     const step3Idx = engineSrc.indexOf("// STEP 3: PRODUCTION_REQUIRED");
     expect(step3Idx).toBeGreaterThan(0);
-    const after = engineSrc.slice(step3Idx, step3Idx + 400);
-    expect(after).toContain("Sin referencia mayorista disponible en B01 ni en OP activa");
+    const after = engineSrc.slice(step3Idx, step3Idx + 500);
+    expect(after).toContain("Stock certificado = 0 en B01 y sin OP activa. Produccion requerida.");
   });
 });
 

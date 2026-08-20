@@ -14,14 +14,15 @@
  * only a sample, not the threshold quantity.
  *
  * Coverage cascade per slot:
- *   1. B01_AVAILABLE        — B01 has eligible wholesale ref
- *   2. OP_INCOMING          — active OP has eligible ref in production
- *   3. PRODUCTION_REQUIRED  — textile: no ref exists, needs new production
- *   4. IMPORT_UNAVAILABLE   — import: no ref available
- *   5. DATA_UNVERIFIED      — source data not certified
+ *   1. B01_AVAILABLE                — B01 has eligible wholesale ref
+ *   2. OP_INCOMING                  — active OP has eligible ref in production
+ *   3. STOCK_AVAILABLE_BELOW_THRESHOLD — B01 has stock but below wholesale threshold
+ *   4. PRODUCTION_REQUIRED          — textile: no ref exists, needs new production
+ *   5. IMPORT_UNAVAILABLE           — import: no ref available
+ *   6. DATA_UNVERIFIED              — source data not certified
  *
  * Invariants:
- *   - B01 + OP + PRODUCTION + IMPORT_UNAVAILABLE + DATA_UNVERIFIED = total faltantes
+ *   - B01 + OP + BELOW_THRESHOLD + PRODUCTION + IMPORT_UNAVAILABLE + DATA_UNVERIFIED = total faltantes
  *   - Each reference assigned at most once per vendor evaluation
  *   - No reference already in the bag can be suggested
  *   - PRODUCTION_REQUIRED only after certified absence in B01 AND OP
@@ -50,7 +51,8 @@ export type CoverageStatus =
   | "OP_INCOMING"
   | "PRODUCTION_REQUIRED"
   | "IMPORT_UNAVAILABLE"
-  | "DATA_UNVERIFIED";
+  | "DATA_UNVERIFIED"
+  | "STOCK_AVAILABLE_BELOW_THRESHOLD";
 
 /**
  * A single candidate that can fill a missing derrotero position slot.
@@ -145,6 +147,7 @@ export interface VendorSampleCoverage {
   productionRequired: number;
   importUnavailable: number;
   dataUnverified: number;
+  stockBelowThreshold: number;
 }
 
 /**
@@ -163,6 +166,7 @@ export interface SampleCoverageResult {
     productionRequired: number;
     importUnavailable: number;
     dataUnverified: number;
+    stockBelowThreshold: number;
   };
 }
 
@@ -260,6 +264,7 @@ export function buildSampleCoverageResult(
       productionRequired: vendorCoverages.reduce((s, p) => s + p.productionRequired, 0),
       importUnavailable: vendorCoverages.reduce((s, p) => s + p.importUnavailable, 0),
       dataUnverified: vendorCoverages.reduce((s, p) => s + p.dataUnverified, 0),
+      stockBelowThreshold: vendorCoverages.reduce((s, p) => s + p.stockBelowThreshold, 0),
     },
   };
 }
@@ -329,6 +334,7 @@ function buildVendorCoverage(
   let productionRequired = 0;
   let importUnavailable = 0;
   let dataUnverified = 0;
+  let stockBelowThreshold = 0;
 
   for (const p of positions) {
     switch (p.status) {
@@ -337,6 +343,7 @@ function buildVendorCoverage(
       case "PRODUCTION_REQUIRED": productionRequired++; break;
       case "IMPORT_UNAVAILABLE": importUnavailable++; break;
       case "DATA_UNVERIFIED": dataUnverified++; break;
+      case "STOCK_AVAILABLE_BELOW_THRESHOLD": stockBelowThreshold++; break;
     }
   }
 
@@ -355,6 +362,7 @@ function buildVendorCoverage(
     productionRequired,
     importUnavailable,
     dataUnverified,
+    stockBelowThreshold,
   };
 }
 
@@ -487,7 +495,7 @@ function resolveTextileSlots(
       continue;
     }
 
-    // STEP 1: Bodega Principal
+    // STEP 1: Bodega Principal — above threshold
     const bodegaMatch = sortedCentralRefs.find((r) => {
       if (vendorRefs.has(r.reference.trim().toUpperCase())) return false;
       if (usedReferences.has(r.reference.trim().toUpperCase())) return false;
@@ -513,6 +521,37 @@ function resolveTextileSlots(
         explanation: `Disponible en Bodega Principal: ${bodegaMatch.disponible} · Umbral mayorista ${requiredLine}: >${threshold}`,
       });
       usedReferences.add(bodegaMatch.reference.trim().toUpperCase());
+      continue;
+    }
+
+    // STEP 1b: Bodega Principal — below threshold but stock > 0
+    // MALETAS-P0-PRODUCTION-SAFETY-08B2R6: stock exists but below wholesale threshold.
+    // This BLOCKS PRODUCTION_REQUIRED — requires human review instead.
+    const bodegaBelowThreshold = sortedCentralRefs.find((r) => {
+      if (vendorRefs.has(r.reference.trim().toUpperCase())) return false;
+      if (usedReferences.has(r.reference.trim().toUpperCase())) return false;
+      if (r.disponible <= 0) return false;
+      if (r.disponible > threshold) return false; // already handled above
+      if (!matchesTextilEntry(
+        r.line, r.subgrupoSag, r.grupoSag,
+        requiredLine, sagGrupos, entry.sagSubgrupos,
+      )) return false;
+      return true;
+    });
+
+    if (bodegaBelowThreshold) {
+      candidates.push({
+        reference: bodegaBelowThreshold.reference,
+        description: bodegaBelowThreshold.description,
+        status: "STOCK_AVAILABLE_BELOW_THRESHOLD",
+        source: "BODEGA",
+        availableQty: bodegaBelowThreshold.disponible,
+        pendingQty: null,
+        opNumber: null,
+        threshold,
+        explanation: `Stock en B01: ${bodegaBelowThreshold.disponible} (umbral mayorista ${requiredLine}: >${threshold}). Requiere revision humana — no producir automaticamente.`,
+      });
+      // Do NOT add to usedReferences — below-threshold refs may still be reviewed
       continue;
     }
 
@@ -560,6 +599,7 @@ function resolveTextileSlots(
     }
 
     // STEP 3: PRODUCTION_REQUIRED — certified absence in B01 AND OP
+    // MALETAS-P0-PRODUCTION-SAFETY-08B2R6: only when stock = 0 in ALL sources
     candidates.push({
       reference: "",
       description: entry.subgroupName,
@@ -569,7 +609,7 @@ function resolveTextileSlots(
       pendingQty: null,
       opNumber: null,
       threshold,
-      explanation: "Sin referencia mayorista disponible en B01 ni en OP activa",
+      explanation: "Stock certificado = 0 en B01 y sin OP activa. Produccion requerida.",
     });
   }
 }
@@ -706,9 +746,10 @@ function matchesTextilEntry(
 const STATUS_PRIORITY: Record<CoverageStatus, number> = {
   B01_AVAILABLE: 1,
   OP_INCOMING: 2,
-  PRODUCTION_REQUIRED: 3,
-  IMPORT_UNAVAILABLE: 4,
-  DATA_UNVERIFIED: 5,
+  STOCK_AVAILABLE_BELOW_THRESHOLD: 3,
+  PRODUCTION_REQUIRED: 4,
+  IMPORT_UNAVAILABLE: 5,
+  DATA_UNVERIFIED: 6,
 };
 
 function buildExcessPosition(

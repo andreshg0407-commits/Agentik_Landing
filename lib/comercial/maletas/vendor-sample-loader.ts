@@ -342,7 +342,7 @@ export async function loadVendorSampleData(
       coverageResult: { textileCoverage: [], importCoverage: [], urgentProductionNeeds: [] },
       canonicalDiffReport: null,
       commercialScopeAudit: null,
-      sampleCoverage: { vendorCoverages: [], totalMissingPositions: 0, totalExcessPositions: 0, globalCompletionPct: 0, coverageSummary: { b01Available: 0, opIncoming: 0, productionRequired: 0, importUnavailable: 0, dataUnverified: 0 } },
+      sampleCoverage: { vendorCoverages: [], totalMissingPositions: 0, totalExcessPositions: 0, globalCompletionPct: 0, coverageSummary: { b01Available: 0, opIncoming: 0, productionRequired: 0, importUnavailable: 0, dataUnverified: 0, stockBelowThreshold: 0 } },
       opportunityCandidates: { candidates: [], totalCS: 0, totalLT: 0 },
       b04Inventory: { refs: [], byReference: new Map(), totalRefs: 0, totalPositiveRefs: 0, totalExistencia: 0, availability: "UNAVAILABLE" as const, queriedAt: new Date() },
     };
@@ -378,7 +378,7 @@ export async function loadVendorSampleData(
       coverageResult: { textileCoverage: [], importCoverage: [], urgentProductionNeeds: [] },
       canonicalDiffReport: null,
       commercialScopeAudit: null,
-      sampleCoverage: { vendorCoverages: [], totalMissingPositions: 0, totalExcessPositions: 0, globalCompletionPct: 0, coverageSummary: { b01Available: 0, opIncoming: 0, productionRequired: 0, importUnavailable: 0, dataUnverified: 0 } },
+      sampleCoverage: { vendorCoverages: [], totalMissingPositions: 0, totalExcessPositions: 0, globalCompletionPct: 0, coverageSummary: { b01Available: 0, opIncoming: 0, productionRequired: 0, importUnavailable: 0, dataUnverified: 0, stockBelowThreshold: 0 } },
       opportunityCandidates: { candidates: [], totalCS: 0, totalLT: 0 },
       b04Inventory: { refs: [], byReference: new Map(), totalRefs: 0, totalPositiveRefs: 0, totalExistencia: 0, availability: "UNAVAILABLE" as const, queriedAt: new Date() },
     };
