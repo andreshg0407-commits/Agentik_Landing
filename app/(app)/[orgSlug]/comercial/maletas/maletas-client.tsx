@@ -936,71 +936,83 @@ export function MaletasClient({
               <div style={{
                 background: C.white, borderRadius: R.lg,
                 border: `1px solid ${C.line}`, boxShadow: `0 1px 3px ${C.ink}06`,
-                overflow: "hidden", overflowX: "auto", minWidth: 0,
+                overflow: "hidden", minWidth: 0,
               }}>
+                {/* 6-column stacked header */}
                 <div style={{
                   display: "grid",
-                  gridTemplateColumns: "minmax(65px,0.7fr) minmax(80px,0.9fr) 40px 55px 60px 50px 40px 40px 40px 60px 45px minmax(85px,0.9fr) minmax(75px,0.7fr) minmax(75px,0.7fr)",
+                  gridTemplateColumns: "minmax(100px,1.2fr) minmax(120px,1.5fr) minmax(100px,1.2fr) 80px minmax(120px,1.4fr) 80px",
                   padding: `10px 16px`, background: C.surfaceAlt,
-                  borderBottom: `1px solid ${C.line}`, gap: S[1], alignItems: "center",
+                  borderBottom: `1px solid ${C.line}`, gap: S[2], alignItems: "center",
                 }}>
-                  {["Referencia", "Descripcion", "Linea", "Grupo SAG", "Subgrupo SAG", "Familia", "Genero", "Edad", "Constr.", "Disp. B01", "Umbral", "Posicion / Descarte", "Necesidad actual", "Estado"].map((h) => (
+                  {["Referencia", "Descripcion", "Clasificacion", "Disp. B01", "Posicion compatible", "Estado"].map((h) => (
                     <div key={h} style={{
                       ...listHeaderCell,
-                      textAlign: (h === "Disponible B01" || h === "Umbral") ? "right" as const : undefined,
+                      textAlign: h === "Disp. B01" ? "right" as const : undefined,
                     }}>{h}</div>
                   ))}
                 </div>
-                {opportunityCandidates.candidates.slice(0, showAllGaps ? undefined : 20).map((cand, i) => (
-                  <div key={cand.reference} style={{
-                    display: "grid",
-                    gridTemplateColumns: "minmax(65px,0.7fr) minmax(80px,0.9fr) 40px 55px 60px 50px 40px 40px 40px 60px 45px minmax(85px,0.9fr) minmax(75px,0.7fr) minmax(75px,0.7fr)",
-                    padding: ROW_PAD,
-                    borderBottom: `1px solid ${C.lineSubtle}`,
-                    gap: S[1], alignItems: "center",
-                  }}>
-                    <div style={{ ...listCell, fontWeight: 700, color: C.titleDeep }}>{cand.reference}</div>
-                    <div style={{ ...listCell, color: C.inkMid, fontSize: 10 }}>{cand.description}</div>
-                    <div style={{ ...listCell }}>
-                      <span style={{
-                        fontFamily: T.mono, fontSize: 9, fontWeight: 700,
-                        color: cand.line === "CS" ? C.blueDark : C.green,
-                        padding: "2px 6px", borderRadius: R.sm,
-                        background: (cand.line === "CS" ? C.blueDark : C.green) + "12",
-                      }}>{cand.line}</span>
+                {opportunityCandidates.candidates.slice(0, showAllGaps ? undefined : 20).map((cand) => {
+                  const constr = cand.normalized.construccionSuperior && cand.normalized.construccionInferior
+                    && cand.normalized.construccionSuperior !== "NA" && cand.normalized.construccionInferior !== "NA"
+                    ? `${cand.normalized.construccionSuperior[0]}${cand.normalized.construccionInferior[0]}`
+                    : null;
+                  return (
+                    <div key={cand.reference} style={{
+                      display: "grid",
+                      gridTemplateColumns: "minmax(100px,1.2fr) minmax(120px,1.5fr) minmax(100px,1.2fr) 80px minmax(120px,1.4fr) 80px",
+                      padding: `6px 16px`,
+                      borderBottom: `1px solid ${C.lineSubtle}`,
+                      gap: S[2], alignItems: "start",
+                    }}>
+                      {/* Col 1: Reference + line badge */}
+                      <div>
+                        <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: C.titleDeep }}>{cand.reference}</div>
+                        <span style={{
+                          fontFamily: T.mono, fontSize: 8, fontWeight: 700,
+                          color: cand.line === "CS" ? C.blueDark : C.green,
+                          padding: "1px 5px", borderRadius: R.sm,
+                          background: (cand.line === "CS" ? C.blueDark : C.green) + "12",
+                        }}>{cand.line}</span>
+                      </div>
+                      {/* Col 2: Description (truncated) */}
+                      <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}
+                        title={cand.description}>{cand.description}</div>
+                      {/* Col 3: Classification — stacked */}
+                      <div>
+                        <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkMid }}>
+                          {cand.grupoSag ?? "\u2014"} / {cand.subgrupoSag ?? "\u2014"}
+                        </div>
+                        <div style={{ fontFamily: T.mono, fontSize: 8, color: C.inkFaint, marginTop: 1 }}>
+                          {cand.normalized.familiaProducto} · {cand.normalized.genero} · {cand.normalized.segmentoEdad}{constr ? ` · ${constr}` : ""}
+                        </div>
+                      </div>
+                      {/* Col 4: Disponible + threshold */}
+                      <div style={{ textAlign: "right" as const }}>
+                        <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, color: C.green }}>{cand.disponibleB01}</div>
+                        <div style={{ fontFamily: T.mono, fontSize: 8, color: C.inkFaint }}>umbral {cand.threshold}</div>
+                      </div>
+                      {/* Col 5: Derrotero position or discard reason */}
+                      <div>
+                        <div style={{ fontFamily: T.mono, fontSize: 9, color: cand.coverageMatchCount > 0 ? C.blueDark : C.inkFaint }}>
+                          {cand.derroteroMatch}
+                        </div>
+                        {cand.coverageMatchCount > 0 && (
+                          <div style={{ fontFamily: T.mono, fontSize: 8, color: C.blueDark, marginTop: 1 }}>
+                            {cand.coverageMatchCount} maleta{cand.coverageMatchCount !== 1 ? "s" : ""}
+                          </div>
+                        )}
+                      </div>
+                      {/* Col 6: Status badge */}
+                      <div>
+                        <span style={{
+                          fontFamily: T.mono, fontSize: 8, fontWeight: 700, color: C.green,
+                          padding: "2px 6px", borderRadius: R.sm, background: C.green + "12",
+                        }}>Certificada</span>
+                      </div>
                     </div>
-                    <div style={{ ...listCell, color: C.inkMid, fontSize: 10 }}>{cand.grupoSag ?? "\u2014"}</div>
-                    <div style={{ ...listCell, color: C.inkMid, fontSize: 10 }}>{cand.subgrupoSag ?? "\u2014"}</div>
-                    <div style={{ ...listCell, color: C.inkMid, fontSize: 10 }}>{cand.normalized.familiaProducto ?? "\u2014"}</div>
-                    <div style={{ ...listCell, color: C.inkMid, fontSize: 10 }}>{cand.normalized.genero ?? "\u2014"}</div>
-                    <div style={{ ...listCell, color: C.inkMid, fontSize: 10 }}>{cand.normalized.segmentoEdad ?? "\u2014"}</div>
-                    <div style={{ ...listCell, color: C.inkMid, fontSize: 10 }}>
-                      {cand.normalized.construccionSuperior && cand.normalized.construccionInferior
-                        ? `${cand.normalized.construccionSuperior[0].toUpperCase()}${cand.normalized.construccionInferior[0].toUpperCase()}`
-                        : "\u2014"}
-                    </div>
-                    <div style={{ ...listCell, fontWeight: 600, color: C.green, textAlign: "right" as const }}>{cand.disponibleB01}</div>
-                    <div style={{ ...listCell, color: C.inkFaint, textAlign: "right" as const }}>{cand.threshold}</div>
-                    <div style={{ ...listCell, fontSize: 8, color: cand.coverageMatchCount > 0 ? C.blueDark : C.inkFaint }}>
-                      {cand.derroteroMatch}
-                    </div>
-                    <div style={{ ...listCell, fontSize: 10 }}>
-                      {cand.coverageMatchCount > 0 ? (
-                        <span style={{ color: C.blueDark, fontWeight: 600 }}>
-                          Requerida por {cand.coverageMatchCount} maleta{cand.coverageMatchCount !== 1 ? "s" : ""}
-                        </span>
-                      ) : (
-                        <span style={{ color: C.inkFaint }}>Sin necesidad actual</span>
-                      )}
-                    </div>
-                    <div style={{ ...listCell }}>
-                      <span style={{
-                        fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: C.green,
-                        padding: "2px 6px", borderRadius: R.sm, background: C.green + "12",
-                      }}>Oportunidad certificada</span>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
               {opportunityCandidates.candidates.length > 20 && !showAllGaps && (
                 <button onClick={() => setShowAllGaps(true)} style={showMoreBtnStyle}>
@@ -1030,9 +1042,6 @@ export function MaletasClient({
 
         {/* ── Inventario de OP Activas — Bodega 4 (MALETAS-08B2R3) ── */}
         <B04InventorySection b04Inventory={b04Inventory} sampleCoverage={sampleCoverage} />
-
-        {/* ── Reconciliacion Néstor (MALETAS-08B2R3 GATE 5) ── */}
-        <NestorReconciliationTable sampleCoverage={sampleCoverage} />
 
         {/* Source indicator */}
         <div style={{
@@ -1781,56 +1790,8 @@ export function MaletasClient({
                     />
                   )}
 
-                  {/* ── SECTION: POSICIONES CUBIERTAS — collapsed by default ── */}
-                  <CoverageCollapsedSection
-                    title="Posiciones cubiertas"
-                    count={vendorCov.completeEntries}
-                    color={C.green}
-                    defaultOpen={false}
-                  >
-                    <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint, padding: `${S[2]}px 0` }}>
-                      {vendorCov.completeEntries} posiciones del derrotero completamente cubiertas. Sin accion requerida.
-                    </div>
-                  </CoverageCollapsedSection>
-
-                  {/* ── SECTION: MUESTRAS PARA RETIRAR — secondary/collapsed ── */}
-                  {vendorCov.excessPositions.length > 0 && (
-                    <CoverageCollapsedSection
-                      title="Muestras para retirar"
-                      count={vendorCov.excessPositions.length}
-                      color={C.amber}
-                      defaultOpen={false}
-                    >
-                      <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint, padding: `${S[1]}px 0 ${S[2]}px` }}>
-                        {vendorCov.excessPositions.length} posiciones con exceso de referencias.
-                      </div>
-                      {vendorCov.excessPositions.slice(0, 5).map((ex, i) => (
-                        <div key={i} style={{
-                          display: "flex", justifyContent: "space-between", alignItems: "center",
-                          padding: `${S[1]}px 0`,
-                          borderBottom: i < Math.min(vendorCov.excessPositions.length, 5) - 1 ? `1px solid ${C.line}` : "none",
-                        }}>
-                          <div style={{ fontFamily: T.mono, fontSize: 10, color: C.ink }}>
-                            {ex.subgroupName}
-                            <span style={{ fontSize: 9, color: C.inkFaint, marginLeft: S[2] }}>{ex.brand ?? ex.commercialWorld}</span>
-                          </div>
-                          <div style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.amber }}>
-                            +{ex.excessReferences} exceso
-                          </div>
-                        </div>
-                      ))}
-                      <button
-                        onClick={() => setDrawerTab("retiro")}
-                        style={{
-                          fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.blueDark,
-                          background: "none", border: "none", cursor: "pointer",
-                          padding: `${S[2]}px 0`, textDecoration: "underline",
-                        }}
-                      >
-                        Ver en Retiro
-                      </button>
-                    </CoverageCollapsedSection>
-                  )}
+                  {/* ── RECONCILIACIÓN DE COBERTURA — per-vendor (08B2R4) ── */}
+                  <VendorReconciliationTable vendorCov={vendorCov} />
                 </div>
               );
             })()}
@@ -4343,8 +4304,8 @@ function B04InventorySection({ b04Inventory, sampleCoverage }: {
     );
   }
 
-  const B04_COLS = "minmax(65px,0.7fr) minmax(80px,1fr) 40px 55px 60px 50px 40px 40px 45px 65px 50px minmax(85px,0.9fr) minmax(70px,0.7fr)";
-  const B04_HEADERS = ["Referencia", "Descripcion", "Linea", "Grupo SAG", "Subgrupo SAG", "Familia", "Gen.", "Edad", "Constr.", "Cant. B04", "Estado", "Posicion Derrotero", "Maletas"];
+  const B04_COLS = "minmax(100px,1.2fr) minmax(120px,1.5fr) minmax(100px,1.2fr) 70px minmax(100px,1.2fr) minmax(80px,0.9fr) 65px";
+  const B04_HEADERS = ["Referencia", "Descripcion", "Clasificacion", "Cant. B04", "Posicion Derrotero", "Maletas", "Estado"];
 
   return (
     <div style={{ marginTop: S[3] }}>
@@ -4440,44 +4401,56 @@ function B04InventorySection({ b04Inventory, sampleCoverage }: {
               const constr = ref.normalized.construccionSuperior && ref.normalized.construccionInferior
                 && ref.normalized.construccionSuperior !== "NA" && ref.normalized.construccionInferior !== "NA"
                 ? `${ref.normalized.construccionSuperior[0]}${ref.normalized.construccionInferior[0]}`
-                : "\u2014";
+                : null;
               return (
                 <div key={ref.reference} style={{
                   display: "grid", gridTemplateColumns: B04_COLS,
-                  padding: `5px 16px`,
+                  padding: `6px 16px`,
                   borderBottom: `1px solid ${C.lineSubtle}`,
-                  gap: S[1], alignItems: "center",
+                  gap: S[2], alignItems: "start",
                 }}>
-                  <div style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.titleDeep }}>{ref.reference}</div>
-                  <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkMid }}>{ref.description}</div>
+                  {/* Col 1: Reference + line */}
                   <div>
+                    <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: C.titleDeep }}>{ref.reference}</div>
                     <span style={{
                       fontFamily: T.mono, fontSize: 8, fontWeight: 700,
                       color: ref.linea === "CS" ? C.blueDark : ref.linea === "LT" ? C.green : C.inkFaint,
-                      padding: "1px 4px", borderRadius: R.sm,
+                      padding: "1px 5px", borderRadius: R.sm,
                       background: (ref.linea === "CS" ? C.blueDark : ref.linea === "LT" ? C.green : C.inkFaint) + "12",
                     }}>{ref.linea}</span>
                   </div>
-                  <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkMid }}>{ref.grupoSag ?? "\u2014"}</div>
-                  <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkMid }}>{ref.subgrupoSag ?? "\u2014"}</div>
-                  <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkMid }}>{ref.normalized.familiaProducto}</div>
-                  <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkMid }}>{ref.normalized.genero}</div>
-                  <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkMid }}>{ref.normalized.segmentoEdad}</div>
-                  <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkMid }}>{constr}</div>
-                  <div style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 600, color: C.amber, textAlign: "right" as const }}>{ref.existencia}</div>
+                  {/* Col 2: Description (truncated) */}
+                  <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}
+                    title={ref.description}>{ref.description}</div>
+                  {/* Col 3: Classification stacked */}
+                  <div>
+                    <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkMid }}>
+                      {ref.grupoSag ?? "\u2014"} / {ref.subgrupoSag ?? "\u2014"}
+                    </div>
+                    <div style={{ fontFamily: T.mono, fontSize: 8, color: C.inkFaint, marginTop: 1 }}>
+                      {ref.normalized.familiaProducto} · {ref.normalized.genero} · {ref.normalized.segmentoEdad}{constr ? ` · ${constr}` : ""}
+                    </div>
+                  </div>
+                  {/* Col 4: Quantity */}
+                  <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, color: C.amber, textAlign: "right" as const }}>
+                    {ref.existencia}
+                  </div>
+                  {/* Col 5: Derrotero position */}
+                  <div style={{ fontFamily: T.mono, fontSize: 9, color: coverageInfo ? C.blueDark : C.inkFaint }}>
+                    {coverageInfo ? coverageInfo.positions.join(", ") : "Sin necesidad actual"}
+                  </div>
+                  {/* Col 6: Maletas */}
+                  <div style={{ fontFamily: T.mono, fontSize: 9, color: coverageInfo ? C.blueDark : C.inkFaint }}>
+                    {coverageInfo ? coverageInfo.vendors.join(", ") : "\u2014"}
+                  </div>
+                  {/* Col 7: Status */}
                   <div>
                     <span style={{
                       fontFamily: T.mono, fontSize: 8, fontWeight: 600,
                       color: coverageInfo ? C.blueDark : C.green,
-                      padding: "1px 4px", borderRadius: R.sm,
+                      padding: "1px 5px", borderRadius: R.sm,
                       background: (coverageInfo ? C.blueDark : C.green) + "12",
                     }}>{coverageInfo ? "OP_INCOMING" : "EN_PROCESO"}</span>
-                  </div>
-                  <div style={{ fontFamily: T.mono, fontSize: 8, color: coverageInfo ? C.blueDark : C.inkFaint }}>
-                    {coverageInfo ? coverageInfo.positions.join(", ") : "Sin necesidad actual"}
-                  </div>
-                  <div style={{ fontFamily: T.mono, fontSize: 8, color: coverageInfo ? C.blueDark : C.inkFaint }}>
-                    {coverageInfo ? coverageInfo.vendors.join(", ") : "\u2014"}
                   </div>
                 </div>
               );
@@ -4508,15 +4481,10 @@ function B04InventorySection({ b04Inventory, sampleCoverage }: {
   );
 }
 
-/** Néstor reconciliation table (MALETAS-08B2R3 GATE 5) */
-function NestorReconciliationTable({ sampleCoverage }: { sampleCoverage: SampleCoverageResult }) {
-  const [open, setOpen] = useState(false);
-  const nestorCov = sampleCoverage.vendorCoverages.find(v => v.vendorId === "NESTOR");
-  if (!nestorCov) return null;
-  const faltantes = nestorCov.positions;
-  if (faltantes.length === 0) return null;
+/** Per-vendor reconciliation table (MALETAS-08B2R4) */
+function VendorReconciliationTable({ vendorCov }: { vendorCov: VendorSampleCoverage }) {
+  const faltantes = vendorCov.positions;
 
-  // Invariant counts
   const counts = {
     B01_AVAILABLE: faltantes.filter(p => p.status === "B01_AVAILABLE").length,
     OP_INCOMING: faltantes.filter(p => p.status === "OP_INCOMING").length,
@@ -4528,117 +4496,106 @@ function NestorReconciliationTable({ sampleCoverage }: { sampleCoverage: SampleC
     + counts.IMPORT_UNAVAILABLE + counts.DATA_UNVERIFIED;
   const invariantPass = sum === faltantes.length;
 
-  const STATUS_COLOR: Record<string, string> = {
-    B01_AVAILABLE: C.green, OP_INCOMING: C.amber, PRODUCTION_REQUIRED: C.red,
-    IMPORT_UNAVAILABLE: C.inkFaint, DATA_UNVERIFIED: C.amber,
-  };
-
   return (
-    <div style={{ marginTop: S[3] }}>
-      <button
-        onClick={() => setOpen(!open)}
-        style={{
-          all: "unset", cursor: "pointer", width: "100%",
-          display: "flex", alignItems: "center", gap: S[2],
-          padding: `${S[3]}px ${S[4]}px`,
-          background: C.white, borderRadius: R.lg,
-          border: `1px solid ${C.line}`,
-        }}
-      >
-        <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: C.titleDeep }}>
-          Reconciliacion Nestor — {faltantes.length} posiciones faltantes
-        </span>
+    <div style={{ marginTop: S[3], padding: `0 ${S[3]}px` }}>
+      {/* Title + invariant */}
+      <div style={{
+        fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: C.titleDeep,
+        display: "flex", alignItems: "center", gap: S[2], marginBottom: S[2],
+      }}>
+        Reconciliacion de cobertura — {vendorCov.vendorName}
         <span style={{
-          fontFamily: T.mono, fontSize: 9, fontWeight: 600,
+          fontSize: 9, fontWeight: 600,
           color: invariantPass ? C.green : C.red,
-          padding: "2px 8px", borderRadius: R.sm,
+          padding: "2px 6px", borderRadius: R.sm,
           background: (invariantPass ? C.green : C.red) + "12",
         }}>
-          {invariantPass ? "INVARIANTE OK" : `INVARIANTE FAIL (${sum} != ${faltantes.length})`}
+          {invariantPass ? `${sum} = ${faltantes.length}` : `${sum} != ${faltantes.length}`}
         </span>
-        <span style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint, marginLeft: "auto" }}>
-          {open ? "▾" : "▸"}
-        </span>
-      </button>
+      </div>
 
-      {open && (
-        <div style={{ marginTop: S[2], padding: `0 ${S[2]}px` }}>
-          {/* Invariant summary */}
-          <div style={{
-            display: "flex", gap: S[3], flexWrap: "wrap",
-            padding: `${S[2]}px ${S[3]}px`, marginBottom: S[2],
-            background: C.surfaceAlt, borderRadius: R.sm,
-          }}>
-            {(Object.entries(counts) as [string, number][]).map(([k, v]) => (
-              <span key={k} style={{ fontFamily: T.mono, fontSize: 9, color: STATUS_COLOR[k] ?? C.inkMid }}>
-                {k}: {v}
-              </span>
-            ))}
-            <span style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: invariantPass ? C.green : C.red }}>
-              = {sum}
-            </span>
-          </div>
+      {/* Invariant strip */}
+      <div style={{
+        display: "flex", gap: S[2], flexWrap: "wrap",
+        padding: `${S[1]}px ${S[2]}px`, marginBottom: S[2],
+        background: C.surfaceAlt, borderRadius: R.sm, fontFamily: T.mono, fontSize: 9,
+      }}>
+        {(Object.entries(counts) as [string, number][]).map(([k, v]) => (
+          <span key={k} style={{ color: RECON_STATUS_COLOR[k] ?? C.inkMid }}>{k}: {v}</span>
+        ))}
+      </div>
 
-          {/* Position table */}
-          <div style={{
-            background: C.white, borderRadius: R.lg,
-            border: `1px solid ${C.line}`, overflow: "hidden", overflowX: "auto",
-          }}>
-            <div style={{
-              display: "grid",
-              gridTemplateColumns: "minmax(70px,0.8fr) minmax(60px,0.6fr) minmax(50px,0.5fr) 65px minmax(80px,0.9fr) minmax(100px,1fr) 70px",
-              padding: `10px 16px`, background: C.surfaceAlt,
-              borderBottom: `1px solid ${C.line}`, gap: S[1], alignItems: "center",
-            }}>
-              {["Posicion", "Grupo", "Subgrupo", "Estado", "Candidato", "Explicacion", "Ref elegida"].map((h) => (
-                <div key={h} style={{
-                  fontFamily: T.mono, fontSize: 8, fontWeight: 700,
-                  color: C.inkFaint, textTransform: "uppercase" as const,
-                  letterSpacing: "0.06em",
-                }}>{h}</div>
-              ))}
-            </div>
-            {faltantes.map((pos) => {
-              const bestCandidate = pos.candidates[0];
-              return (
-                <div key={pos.positionId} style={{
-                  display: "grid",
-                  gridTemplateColumns: "minmax(70px,0.8fr) minmax(60px,0.6fr) minmax(50px,0.5fr) 65px minmax(80px,0.9fr) minmax(100px,1fr) 70px",
-                  padding: `5px 16px`,
-                  borderBottom: `1px solid ${C.lineSubtle}`,
-                  gap: S[1], alignItems: "center",
-                }}>
-                  <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 600, color: C.titleDeep }}>
-                    {pos.subgroupName}
-                  </div>
-                  <div style={{ fontFamily: T.mono, fontSize: 8, color: C.inkMid }}>{pos.groupName}</div>
-                  <div style={{ fontFamily: T.mono, fontSize: 8, color: C.inkMid }}>{pos.sagSubgrupos.join(", ")}</div>
-                  <div>
+      {faltantes.length === 0 ? (
+        <div style={{ fontFamily: T.mono, fontSize: 10, color: C.green, padding: S[2] }}>
+          Todas las posiciones del derrotero estan cubiertas.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+          {faltantes.map((pos) => {
+            const best = pos.candidates[0];
+            const statusColor = RECON_STATUS_COLOR[pos.status] ?? C.inkFaint;
+            return (
+              <div key={pos.positionId} style={{
+                background: C.white, borderRadius: R.sm,
+                border: `1px solid ${C.line}`, padding: `${S[2]}px ${S[3]}px`,
+                display: "grid", gridTemplateColumns: "1fr auto", gap: S[2], alignItems: "start",
+              }}>
+                <div>
+                  {/* Row 1: Position + status */}
+                  <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
+                    <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: C.titleDeep }}>
+                      {pos.subgroupName}
+                    </span>
+                    <span style={{ fontFamily: T.mono, fontSize: 8, color: C.inkFaint }}>
+                      {pos.groupName}
+                    </span>
                     <span style={{
-                      fontFamily: T.mono, fontSize: 7, fontWeight: 700,
-                      color: STATUS_COLOR[pos.status] ?? C.inkFaint,
-                      padding: "1px 4px", borderRadius: R.sm,
-                      background: (STATUS_COLOR[pos.status] ?? C.inkFaint) + "12",
+                      fontFamily: T.mono, fontSize: 8, fontWeight: 700, color: statusColor,
+                      padding: "1px 5px", borderRadius: R.sm, background: statusColor + "12",
                     }}>{pos.status}</span>
                   </div>
-                  <div style={{ fontFamily: T.mono, fontSize: 8, color: C.inkMid }}>
-                    {bestCandidate?.reference ? `${bestCandidate.reference} (${bestCandidate.description})` : "\u2014"}
+                  {/* Row 2: SAG subgrupos + ideal/actual/faltante */}
+                  <div style={{ fontFamily: T.mono, fontSize: 8, color: C.inkFaint, marginTop: 2, display: "flex", gap: S[2] }}>
+                    <span>{pos.sagSubgrupos.join(", ")}</span>
+                    <span>Ideal: {pos.targetReferences} · Actual: {pos.currentReferences} · Faltante: {pos.missingReferences}</span>
                   </div>
-                  <div style={{ fontFamily: T.mono, fontSize: 8, color: C.inkFaint }}>
-                    {pos.statusExplanation}
-                  </div>
-                  <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 600, color: bestCandidate?.reference ? C.green : C.inkFaint }}>
-                    {bestCandidate?.reference || "\u2014"}
-                  </div>
+                  {/* Row 3: Candidate + explanation */}
+                  {best && (
+                    <div style={{ fontFamily: T.mono, fontSize: 9, marginTop: 3 }}>
+                      {best.reference ? (
+                        <span style={{ color: best.status === "B01_AVAILABLE" ? C.green : C.amber, fontWeight: 600 }}>
+                          {best.reference}
+                          <span style={{ fontWeight: 400, color: C.inkMid, marginLeft: 4 }}>{best.description}</span>
+                          {best.availableQty != null && <span style={{ color: C.inkFaint, marginLeft: 4 }}>({best.availableQty} disp.)</span>}
+                          {best.pendingQty != null && <span style={{ color: C.inkFaint, marginLeft: 4 }}>({best.pendingQty} pend.)</span>}
+                        </span>
+                      ) : (
+                        <span style={{ color: C.inkFaint }}>{pos.statusExplanation}</span>
+                      )}
+                    </div>
+                  )}
                 </div>
-              );
-            })}
-          </div>
+                {/* Right: ref badge */}
+                <div style={{
+                  fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+                  color: best?.reference ? statusColor : C.inkFaint,
+                  textAlign: "right" as const, minWidth: 60,
+                }}>
+                  {best?.reference || "\u2014"}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
   );
 }
+
+const RECON_STATUS_COLOR: Record<string, string> = {
+  B01_AVAILABLE: C.green, OP_INCOMING: C.amber, PRODUCTION_REQUIRED: C.red,
+  IMPORT_UNAVAILABLE: C.inkFaint, DATA_UNVERIFIED: C.amber,
+};
 
 /** Collapsible section with position table */
 function CoverageSection({ title, count, color, defaultOpen, positions, emptyMessage }: {
@@ -4707,36 +4664,6 @@ function CoverageSection({ title, count, color, defaultOpen, positions, emptyMes
 }
 
 /** Generic collapsible section for non-table content */
-function CoverageCollapsedSection({ title, count, color, defaultOpen, children }: {
-  title: string;
-  count: number;
-  color: string;
-  defaultOpen: boolean;
-  children: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div style={{ marginBottom: S[3], border: `1px solid ${C.line}`, borderRadius: R.sm, overflow: "hidden" }}>
-      <button
-        onClick={() => setOpen(!open)}
-        style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
-          padding: `${S[2]}px ${S[3]}px`, background: C.surfaceAlt,
-          border: "none", cursor: "pointer", borderBottom: open ? `1px solid ${C.line}` : "none",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
-          <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: color }} />
-          <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 800, color: C.titleDeep }}>{title}</span>
-          {count > 0 && <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color }}>{count}</span>}
-        </div>
-        <span style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint }}>{open ? "\u25B2" : "\u25BC"}</span>
-      </button>
-      {open && <div style={{ padding: `${S[1]}px ${S[3]}px ${S[2]}px` }}>{children}</div>}
-    </div>
-  );
-}
-
 /** MALETAS-COBERTURA-MOSTRARIO-08B2: Coverage position row showing need + suggestion together */
 function CoveragePositionRow({ pos }: { pos: CoveragePosition }) {
   const [expanded, setExpanded] = useState(false);

@@ -262,8 +262,12 @@ describe("J — UI uses 'Cobertura de mostrario' terminology", () => {
     expect(uiSrc).toContain('"Requieren produccion"');
   });
 
-  test("T32: Section title 'Muestras para retirar'", () => {
-    expect(uiSrc).toContain('"Muestras para retirar"');
+  test("T32: Muestras para retirar removed from Cobertura tab (08B2R4 — lives in Retiro)", () => {
+    // 08B2R4: "Muestras para retirar" section removed from Cobertura tab.
+    // Retiro tab is the sole source for excess/withdrawal info.
+    const cobIdx = uiSrc.indexOf('drawerTab === "cobertura"');
+    const afterCob = uiSrc.slice(cobIdx, cobIdx + 5000);
+    expect(afterCob).not.toContain('"Muestras para retirar"');
   });
 
   test("T33: COVERAGE_STATUS_LABEL uses B01_AVAILABLE/OP_INCOMING/etc.", () => {

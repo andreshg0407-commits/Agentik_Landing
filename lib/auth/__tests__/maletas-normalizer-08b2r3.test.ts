@@ -510,13 +510,14 @@ describe("M — B04 panel structure (GATE 3)", () => {
     expect(clientSrc).toContain("Inventario de OP Activas \u2014 Bodega 4");
   });
 
-  test("T58: B04 panel shows all required columns", () => {
-    expect(clientSrc).toContain("Grupo SAG");
-    expect(clientSrc).toContain("Subgrupo SAG");
-    expect(clientSrc).toContain("Familia");
+  test("T58: B04 panel shows all required columns (stacked layout)", () => {
+    expect(clientSrc).toContain("Clasificacion");
     expect(clientSrc).toContain("Cant. B04");
     expect(clientSrc).toContain("Posicion Derrotero");
     expect(clientSrc).toContain("Maletas");
+    // Classification data is stacked within cells
+    expect(clientSrc).toContain("ref.normalized.familiaProducto");
+    expect(clientSrc).toContain("ref.normalized.genero");
   });
 
   test("T59: B04 panel has search and line filter", () => {
@@ -560,16 +561,15 @@ describe("N — Unified OP counters (GATE 6)", () => {
 describe("O — Oportunidades auditable (GATE 4)", () => {
   const clientSrc = readSrc("app/(app)/[orgSlug]/comercial/maletas/maletas-client.tsx");
 
-  test("T64: Oportunidades table has normalizer columns", () => {
-    // Columns in header array
-    expect(clientSrc).toContain('"Familia"');
-    expect(clientSrc).toContain('"Genero"');
-    expect(clientSrc).toContain('"Edad"');
-    expect(clientSrc).toContain('"Constr."');
+  test("T64: Oportunidades table has normalizer data in stacked classification", () => {
+    expect(clientSrc).toContain('"Clasificacion"');
+    expect(clientSrc).toContain("cand.normalized.familiaProducto");
+    expect(clientSrc).toContain("cand.normalized.genero");
+    expect(clientSrc).toContain("cand.normalized.segmentoEdad");
   });
 
-  test("T65: Oportunidades table shows derrotero match or discard reason", () => {
-    expect(clientSrc).toContain('"Posicion / Descarte"');
+  test("T65: Oportunidades table shows derrotero position", () => {
+    expect(clientSrc).toContain('"Posicion compatible"');
     expect(clientSrc).toContain("cand.derroteroMatch");
   });
 
@@ -577,5 +577,96 @@ describe("O — Oportunidades auditable (GATE 4)", () => {
     const loaderSrc = readSrc("lib/comercial/maletas/vendor-sample-loader.ts");
     expect(loaderSrc).toContain("normalized: normalizeTextileReference(");
     expect(loaderSrc).toContain("derroteroMatch:");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// P — 08B2R4: Per-vendor reconciliation + UX cleanup
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("P — Per-vendor reconciliation (08B2R4)", () => {
+  const clientSrc = readSrc("app/(app)/[orgSlug]/comercial/maletas/maletas-client.tsx");
+
+  test("T67: Main panel does NOT contain vendor-specific reconciliation", () => {
+    expect(clientSrc).not.toContain("NestorReconciliationTable");
+    expect(clientSrc).not.toContain('Reconciliacion Nestor');
+  });
+
+  test("T68: No hardcoded vendor names in reconciliation", () => {
+    // VendorReconciliationTable uses vendorCov.vendorName dynamically
+    expect(clientSrc).toContain("vendorCov.vendorName");
+    // Should NOT contain hardcoded vendor references in reconciliation
+    const reconSection = clientSrc.slice(clientSrc.indexOf("VendorReconciliationTable"));
+    expect(reconSection).not.toContain('"NESTOR"');
+    expect(reconSection).not.toContain('"ORLANDO"');
+  });
+
+  test("T69: VendorReconciliationTable exists and takes vendorCov prop", () => {
+    expect(clientSrc).toContain("function VendorReconciliationTable");
+    expect(clientSrc).toContain("vendorCov: VendorSampleCoverage");
+  });
+
+  test("T70: Reconciliation placed inside cobertura tab (drawer)", () => {
+    const cobIdx = clientSrc.indexOf('drawerTab === "cobertura"');
+    expect(cobIdx).toBeGreaterThan(0);
+    const afterCob = clientSrc.slice(cobIdx, cobIdx + 8000);
+    expect(afterCob).toContain("VendorReconciliationTable");
+  });
+
+  test("T71: Reconciliation shows invariant check", () => {
+    expect(clientSrc).toContain("B01_AVAILABLE");
+    expect(clientSrc).toContain("OP_INCOMING");
+    expect(clientSrc).toContain("PRODUCTION_REQUIRED");
+    expect(clientSrc).toContain("IMPORT_UNAVAILABLE");
+    expect(clientSrc).toContain("DATA_UNVERIFIED");
+  });
+
+  test("T72: Cobertura tab does NOT contain 'Posiciones cubiertas' section", () => {
+    const cobIdx = clientSrc.indexOf('drawerTab === "cobertura"');
+    const afterCob = clientSrc.slice(cobIdx, cobIdx + 5000);
+    expect(afterCob).not.toContain('"Posiciones cubiertas"');
+  });
+
+  test("T73: Cobertura tab does NOT contain 'Muestras para retirar' section", () => {
+    const cobIdx = clientSrc.indexOf('drawerTab === "cobertura"');
+    const afterCob = clientSrc.slice(cobIdx, cobIdx + 5000);
+    expect(afterCob).not.toContain('"Muestras para retirar"');
+  });
+
+  test("T74: Retiro tab still exists with its counter", () => {
+    expect(clientSrc).toContain('drawerTab === "retiro"');
+    expect(clientSrc).toContain('"retiro"');
+  });
+
+  test("T75: Global tables use stacked layout (max 7 columns)", () => {
+    // Oportunidades: 6 columns
+    expect(clientSrc).toContain('"Posicion compatible"');
+    expect(clientSrc).toContain('"Clasificacion"');
+    // B04: 7 columns
+    expect(clientSrc).toContain('"Cant. B04"');
+  });
+
+  test("T76: Tables use truncation for long descriptions", () => {
+    expect(clientSrc).toContain("textOverflow");
+    expect(clientSrc).toContain("ellipsis");
+  });
+
+  test("T77: Any vendor gets reconciliation automatically (no hardcoded IDs)", () => {
+    // VendorReconciliationTable receives any VendorSampleCoverage — no vendor ID check
+    const reconFunc = clientSrc.slice(
+      clientSrc.indexOf("function VendorReconciliationTable"),
+      clientSrc.indexOf("function VendorReconciliationTable") + 500,
+    );
+    expect(reconFunc).not.toContain('"NESTOR"');
+    expect(reconFunc).not.toContain('"ORLANDO"');
+    expect(reconFunc).not.toContain("vendorId ===");
+  });
+
+  test("T78: Activation idempotent — no vendor-specific code in loader", () => {
+    const loaderSrc = readSrc("lib/comercial/maletas/vendor-sample-loader.ts");
+    // B04 loading uses no vendor-specific logic
+    const b04Section = loaderSrc.slice(loaderSrc.indexOf("B04 Production Inventory"));
+    expect(b04Section).not.toContain('"NESTOR"');
+    expect(b04Section).not.toContain('"ORLANDO"');
   });
 });
