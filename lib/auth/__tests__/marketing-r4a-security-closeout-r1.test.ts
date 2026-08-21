@@ -16,6 +16,7 @@
  *  12. No secrets in API responses
  */
 
+// @ts-expect-error — vitest lives in .vite/ not node_modules/; resolved at runtime by vitest
 import { describe, test, expect } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
