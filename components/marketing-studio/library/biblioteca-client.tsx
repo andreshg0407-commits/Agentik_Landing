@@ -37,6 +37,7 @@ import { CategoriaNav }               from "./categoria-nav";
 import { WorldTabBar }                from "./world-tab-bar";
 import { InventoryReferenceCard }     from "./inventory-reference-card";
 import { ReferenceFolderDrawer }     from "./reference-folder-drawer";
+import { BulkImportDrawer }          from "./bulk-import-drawer";
 import { BIBLIOTECA_EMPTY_STATES }     from "@/lib/marketing-studio/library/ui/asset-visual-tokens";
 import { MS_CARD, MS_CTA, MS_METRIC_CARD, MS_SHADOWS } from "@/lib/marketing-studio/ms-design-system";
 import type { InventoryReference, ReconciliationReport } from "@/lib/marketing-studio/library/inventory-reference-types";
@@ -504,6 +505,7 @@ export function BibliotecaClient({
   const [showCreateModal,  setShowCreateModal]  = useState(false);
   const [showImportWizard, setShowImportWizard] = useState(false);
   const [showDuplicateMode, setShowDuplicateMode] = useState(false);
+  const [showBulkImport,   setShowBulkImport]   = useState(false);
   const [updatingProducts, setUpdatingProducts] = useState<Set<string>>(new Set());
 
   // Auto-open a specific product when navigating from an external link (?product=productId).
@@ -708,6 +710,29 @@ export function BibliotecaClient({
           }}>
             Vistas inteligentes
           </div>
+          {inventoryMode && (
+            <div style={{ display: "flex", gap: S[2], alignItems: "center" }}>
+              <button
+                onClick={() => setShowBulkImport(true)}
+                style={{
+                  fontFamily:    T.mono,
+                  fontSize:      "11px",
+                  fontWeight:    T.wt.bold,
+                  color:         "#fff",
+                  background:    MS_CTA.primaryButtonBg,
+                  border:        "none",
+                  borderRadius:  6,
+                  padding:       "5px 12px",
+                  cursor:        "pointer",
+                  boxShadow:     MS_CTA.primaryBoxShadow,
+                  letterSpacing: "-0.01em",
+                  flexShrink:    0,
+                }}
+              >
+                Importar lote desde Drive
+              </button>
+            </div>
+          )}
           {productMode && (
             <div style={{ display: "flex", gap: S[2], alignItems: "center" }}>
               <button
@@ -1206,6 +1231,15 @@ export function BibliotecaClient({
             router.refresh();
           }}
           onClose={() => setShowImportWizard(false)}
+        />
+      )}
+
+      {/* ── Bulk Import Drawer (04A-B) — dry-run only ── */}
+      {showBulkImport && (
+        <BulkImportDrawer
+          orgSlug={orgSlug}
+          organizationId={organizationId}
+          onClose={() => setShowBulkImport(false)}
         />
       )}
     </>
