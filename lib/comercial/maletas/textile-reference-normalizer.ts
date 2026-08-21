@@ -445,14 +445,17 @@ function buildMatchKey(
 
 /** Replacement map for display: internal abbreviations → human-readable Spanish. */
 const DISPLAY_REPLACEMENTS: Array<[RegExp, string]> = [
-  [/\bBB\b/g, "Bebé"],
-  [/\bBEBE\b/g, "Bebé"],
-  [/\bNINA\b/g, "Niña"],
-  [/\bNINO\b/g, "Niño"],
+  [/\bBB\b/gi, "Bebé"],
+  [/\bBEBE\b/gi, "Bebé"],
+  [/\bNINA\b/gi, "Niña"],
+  [/\bNINO\b/gi, "Niño"],
   [/\bCC\b/g, "CC"],
   [/\bCL\b/g, "CL"],
   [/\bLL\b/g, "LL"],
 ];
+
+// P0-08B2R6F: line code prefixes to strip from display labels
+const LINE_PREFIX_STRIP = /^(Cs|Lt|Import)\s+/i;
 
 /**
  * Convert an internal subgroup/group name to display-safe label.
@@ -478,6 +481,9 @@ export function toDisplayLabel(raw: string): string {
   result = result.replace(/\bBebe\b/g, "Bebé");
   result = result.replace(/\bNina\b/g, "Niña");
   result = result.replace(/\bNino\b/g, "Niño");
+
+  // P0-08B2R6F: strip line code prefixes (CS/LT/IMPORT) from visual labels
+  result = result.replace(LINE_PREFIX_STRIP, "");
 
   return result;
 }

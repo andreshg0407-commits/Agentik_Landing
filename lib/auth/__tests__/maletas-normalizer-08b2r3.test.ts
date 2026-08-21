@@ -507,21 +507,19 @@ describe("M — B04 panel structure (GATE 3)", () => {
   const clientSrc = readSrc("app/(app)/[orgSlug]/comercial/maletas/maletas-client.tsx");
 
   test("T57: B04 panel exists with correct title", () => {
-    expect(clientSrc).toContain("Inventario de OP Activas \u2014 Bodega 4");
+    expect(clientSrc).toContain("Producto en proceso \u2014 Bodega 4");
   });
 
-  test("T58: B04 panel shows all required columns (stacked layout)", () => {
-    expect(clientSrc).toContain("Clasificacion");
+  test("T58: B04 panel shows reconciled columns", () => {
+    expect(clientSrc).toContain("Grupo / Subgrupo");
     expect(clientSrc).toContain("Cant. B04");
-    expect(clientSrc).toContain("Posicion Derrotero");
-    expect(clientSrc).toContain("Maletas");
-    // Classification data is stacked within cells
-    expect(clientSrc).toContain("ref.normalized.familiaProducto");
-    expect(clientSrc).toContain("ref.normalized.genero");
+    expect(clientSrc).toContain("Posicion derrotero");
+    expect(clientSrc).toContain("Razon");
+    expect(clientSrc).toContain("Estado");
   });
 
   test("T59: B04 panel has search and line filter", () => {
-    expect(clientSrc).toContain("Buscar referencia, descripcion, grupo, subgrupo, familia...");
+    expect(clientSrc).toContain("Buscar referencia, descripcion, grupo, subgrupo...");
     expect(clientSrc).toContain("setLineFilter");
   });
 

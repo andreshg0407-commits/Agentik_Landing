@@ -71,6 +71,89 @@ const effectiveAvail = (ref: { isAccessory?: boolean; availableB24?: number | nu
   ref.isAccessory ? (ref.availableB24 ?? null) : ref.centralAvailable;
 /** Presentation label for vendor line codes — see DERROTERO_LINE_LABEL at bottom of file */
 
+// P0-OP-ACTIVE-RUNTIME-RECONCILIATION-08B2R6F: B04 exclusion classification
+type B04ExclusionReason =
+  | "MATCHED"                    // Covers a derrotero position
+  | "ZERO_REMAINING_QTY"        // existencia <= 0 (filtered at load time)
+  | "SUBGROUP_MISSING"          // subgrupoSag null → cannot match
+  | "LINE_MISMATCH"             // line not CS/LT/IMPORT or doesn't match any derrotero
+  | "SUBGROUP_MISMATCH"         // subgrupo doesn't match any derrotero position
+  | "GROUP_MISMATCH"            // grupo doesn't match when derrotero specifies grupo constraint
+  | "DUPLICATE_REFERENCE"       // ref already used by another position
+  | "REF_IN_VENDOR_BAG"         // ref already present in a vendor's mallet
+  | "NO_DERROTERO_POSITION"     // line matches but no derrotero position defined for this subgrupo
+  | "SOURCE_DATA_INCOMPLETE";   // missing enrichment data
+
+type B04OpMatchTruthState = "CERTIFIED" | "DATA_UNVERIFIED";
+
+interface B04ReconciliationEntry {
+  reference: string;
+  description: string;
+  linea: string;
+  existencia: number;
+  grupoSag: string | null;
+  subgrupoSag: string | null;
+  exclusionReason: B04ExclusionReason;
+  matchTruthState: B04OpMatchTruthState;
+  matchedPosition: string | null;
+  matchedVendors: string[];
+}
+
+function classifyB04Ref(
+  ref: import("@/lib/comercial/maletas/b04-production-inventory").B04InventoryRef,
+  coverageInfo: { positions: string[]; vendors: string[] } | undefined,
+): B04ReconciliationEntry {
+  const base = {
+    reference: ref.reference,
+    description: ref.description,
+    linea: ref.linea,
+    existencia: ref.existencia,
+    grupoSag: ref.grupoSag,
+    subgrupoSag: ref.subgrupoSag,
+  };
+
+  // If the coverage engine already matched this ref
+  if (coverageInfo) {
+    return {
+      ...base,
+      exclusionReason: "MATCHED",
+      matchTruthState: "CERTIFIED",
+      matchedPosition: coverageInfo.positions.join(", "),
+      matchedVendors: coverageInfo.vendors,
+    };
+  }
+
+  // Classify why it wasn't matched
+  if (!ref.subgrupoSag) {
+    return {
+      ...base,
+      exclusionReason: "SUBGROUP_MISSING",
+      matchTruthState: "DATA_UNVERIFIED",
+      matchedPosition: null,
+      matchedVendors: [],
+    };
+  }
+
+  if (ref.linea === "OTRO" || ref.linea === "PD" || ref.linea === "PW") {
+    return {
+      ...base,
+      exclusionReason: "LINE_MISMATCH",
+      matchTruthState: "CERTIFIED",
+      matchedPosition: null,
+      matchedVendors: [],
+    };
+  }
+
+  // Line is CS/LT/IMPORT but no coverage match → subgroup or position mismatch
+  return {
+    ...base,
+    exclusionReason: "NO_DERROTERO_POSITION",
+    matchTruthState: "CERTIFIED",
+    matchedPosition: null,
+    matchedVendors: [],
+  };
+}
+
 // ── Props ────────────────────────────────────────────────────────────────────
 
 interface MaletasClientProps {
@@ -986,7 +1069,7 @@ export function MaletasClient({
                           color: cand.line === "CS" ? C.blueDark : C.green,
                           padding: "1px 5px", borderRadius: R.sm,
                           background: (cand.line === "CS" ? C.blueDark : C.green) + "12",
-                        }}>{cand.line}</span>
+                        }}>{DERROTERO_LINE_LABEL[cand.line] ?? cand.line}</span>
                       </div>
                       {/* Col 2: Description (truncated) */}
                       <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}
@@ -4303,7 +4386,7 @@ const COVERAGE_STATUS_COLOR: Record<CoverageStatus, string> = {
   DATA_UNVERIFIED: C.amber,
 };
 
-/** B04 Production Inventory panel (MALETAS-08B2R3) */
+/** B04 Production Inventory panel (MALETAS-08B2R3, reconciled MALETAS-08B2R6F) */
 function B04InventorySection({ b04Inventory, sampleCoverage }: {
   b04Inventory: MaletasClientProps["b04Inventory"];
   sampleCoverage: SampleCoverageResult;
@@ -4312,6 +4395,7 @@ function B04InventorySection({ b04Inventory, sampleCoverage }: {
   const [search, setSearch] = useState("");
   const [showAll, setShowAll] = useState(false);
   const [lineFilter, setLineFilter] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"matched" | "unmatched" | "unverified">("matched");
 
   // Build lookup: ref → { positions that need it, vendor names }
   const b04CoverageMap = useMemo(() => {
@@ -4336,8 +4420,30 @@ function B04InventorySection({ b04Inventory, sampleCoverage }: {
     return map;
   }, [sampleCoverage]);
 
+  // P0-OP-ACTIVE-RUNTIME-RECONCILIATION-08B2R6F: classify each B04 ref
+  const reconciled = useMemo(() => {
+    return b04Inventory.refs.map((ref) => {
+      const coverageInfo = b04CoverageMap.get(ref.reference.trim().toUpperCase());
+      return classifyB04Ref(ref, coverageInfo);
+    });
+  }, [b04Inventory.refs, b04CoverageMap]);
+
+  const matched = useMemo(() => reconciled.filter(r => r.exclusionReason === "MATCHED"), [reconciled]);
+  const unmatched = useMemo(() => reconciled.filter(r => r.exclusionReason !== "MATCHED" && r.matchTruthState === "CERTIFIED"), [reconciled]);
+  const unverified = useMemo(() => reconciled.filter(r => r.matchTruthState === "DATA_UNVERIFIED"), [reconciled]);
+
+  // Exclusion reason counts for display
+  const exclusionCounts = useMemo(() => {
+    const counts = new Map<B04ExclusionReason, number>();
+    for (const r of reconciled) {
+      counts.set(r.exclusionReason, (counts.get(r.exclusionReason) ?? 0) + 1);
+    }
+    return counts;
+  }, [reconciled]);
+
   const filtered = useMemo(() => {
-    let result = b04Inventory.refs;
+    const source = activeTab === "matched" ? matched : activeTab === "unmatched" ? unmatched : unverified;
+    let result = source;
     if (lineFilter) result = result.filter(r => r.linea === lineFilter);
     if (!search.trim()) return result;
     const q = search.trim().toUpperCase();
@@ -4346,10 +4452,9 @@ function B04InventorySection({ b04Inventory, sampleCoverage }: {
       r.description.toUpperCase().includes(q) ||
       (r.grupoSag?.toUpperCase().includes(q)) ||
       (r.subgrupoSag?.toUpperCase().includes(q)) ||
-      r.linea.toUpperCase().includes(q) ||
-      r.normalized.familiaProducto.toUpperCase().includes(q)
+      r.linea.toUpperCase().includes(q)
     );
-  }, [b04Inventory.refs, search, lineFilter]);
+  }, [activeTab, matched, unmatched, unverified, lineFilter, search]);
 
   const visible = showAll ? filtered : filtered.slice(0, 30);
   const uniqueLines = useMemo(() => [...new Set(b04Inventory.refs.map(r => r.linea))].sort(), [b04Inventory.refs]);
@@ -4361,7 +4466,7 @@ function B04InventorySection({ b04Inventory, sampleCoverage }: {
           fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: C.titleDeep,
           display: "flex", alignItems: "center", gap: S[2],
         }}>
-          Inventario de OP Activas — Bodega 4
+          Producto en proceso — Bodega 4
           <span style={{ fontFamily: T.mono, fontSize: 9, color: C.amber, fontWeight: 600,
             padding: "2px 8px", borderRadius: R.sm, background: C.amber + "12" }}>
             No disponible
@@ -4374,8 +4479,27 @@ function B04InventorySection({ b04Inventory, sampleCoverage }: {
     );
   }
 
-  const B04_COLS = "minmax(100px,1.2fr) minmax(120px,1.5fr) minmax(100px,1.2fr) 70px minmax(100px,1.2fr) minmax(80px,0.9fr) 65px";
-  const B04_HEADERS = ["Referencia", "Descripcion", "Clasificacion", "Cant. B04", "Posicion Derrotero", "Maletas", "Estado"];
+  const EXCLUSION_LABEL: Record<B04ExclusionReason, string> = {
+    MATCHED: "Cubre posicion",
+    ZERO_REMAINING_QTY: "Sin cantidad",
+    SUBGROUP_MISSING: "Sin subgrupo SAG",
+    LINE_MISMATCH: "Linea incompatible",
+    SUBGROUP_MISMATCH: "Subgrupo no coincide",
+    GROUP_MISMATCH: "Grupo no coincide",
+    DUPLICATE_REFERENCE: "Duplicado",
+    REF_IN_VENDOR_BAG: "Ya en maleta",
+    NO_DERROTERO_POSITION: "Sin posicion en derrotero",
+    SOURCE_DATA_INCOMPLETE: "Datos incompletos",
+  };
+
+  const B04_COLS = "minmax(100px,1.2fr) minmax(120px,1.5fr) minmax(100px,1.2fr) 70px minmax(100px,1.2fr) 100px";
+  const tabStyle = (active: boolean) => ({
+    fontFamily: T.mono, fontSize: 9, fontWeight: 600 as const,
+    padding: "4px 10px", borderRadius: R.sm, cursor: "pointer" as const,
+    border: `1px solid ${active ? C.blueDark : C.line}`,
+    background: active ? C.blueDark : C.white,
+    color: active ? C.white : C.inkMid,
+  });
 
   return (
     <div style={{ marginTop: S[3] }}>
@@ -4390,7 +4514,7 @@ function B04InventorySection({ b04Inventory, sampleCoverage }: {
         }}
       >
         <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: C.titleDeep }}>
-          Inventario de OP Activas — Bodega 4
+          Producto en proceso — Bodega 4
         </span>
         <span style={{
           fontFamily: T.mono, fontSize: 9, fontWeight: 600,
@@ -4400,6 +4524,15 @@ function B04InventorySection({ b04Inventory, sampleCoverage }: {
         }}>
           {b04Inventory.totalRefs} ref{b04Inventory.totalRefs !== 1 ? "s" : ""} · {Math.round(b04Inventory.totalExistencia)} unidades
         </span>
+        {matched.length > 0 && (
+          <span style={{
+            fontFamily: T.mono, fontSize: 9, fontWeight: 600,
+            color: C.blueDark, padding: "2px 8px", borderRadius: R.sm,
+            background: C.blueDark + "12",
+          }}>
+            {matched.length} cubren posicion
+          </span>
+        )}
         <span style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint, marginLeft: "auto" }}>
           {open ? "▾" : "▸"}
         </span>
@@ -4407,44 +4540,100 @@ function B04InventorySection({ b04Inventory, sampleCoverage }: {
 
       {open && (
         <div style={{ marginTop: S[2], padding: `0 ${S[2]}px` }}>
-          {/* Search + line filter */}
-          <div style={{ display: "flex", gap: S[2], marginBottom: S[2] }}>
+          {/* Reconciliation summary */}
+          <div style={{
+            display: "grid", gridTemplateColumns: "1fr 1fr 1fr",
+            gap: S[2], marginBottom: S[3],
+          }}>
+            <div style={{
+              padding: S[3], background: C.blueLight, borderRadius: R.md,
+              border: `1px solid ${C.blueBorder}`,
+            }}>
+              <div style={{ fontFamily: T.mono, fontSize: 8, color: C.blueDark, fontWeight: 700, textTransform: "uppercase" as const }}>
+                Cubren posicion
+              </div>
+              <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: 800, color: C.blueDark }}>
+                {matched.length}
+              </div>
+              <div style={{ fontFamily: T.mono, fontSize: 8, color: C.inkFaint }}>
+                {matched.reduce((s, r) => s + r.existencia, 0)} unidades
+              </div>
+            </div>
+            <div style={{
+              padding: S[3], background: C.surfaceAlt, borderRadius: R.md,
+              border: `1px solid ${C.line}`,
+            }}>
+              <div style={{ fontFamily: T.mono, fontSize: 8, color: C.inkMid, fontWeight: 700, textTransform: "uppercase" as const }}>
+                Sin posicion compatible
+              </div>
+              <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: 800, color: C.inkMid }}>
+                {unmatched.length}
+              </div>
+              <div style={{ fontFamily: T.mono, fontSize: 8, color: C.inkFaint }}>
+                {unmatched.reduce((s, r) => s + r.existencia, 0)} unidades
+              </div>
+            </div>
+            <div style={{
+              padding: S[3], background: C.amberLight, borderRadius: R.md,
+              border: `1px solid ${C.amberBorder}`,
+            }}>
+              <div style={{ fontFamily: T.mono, fontSize: 8, color: C.amber, fontWeight: 700, textTransform: "uppercase" as const }}>
+                Sin verificar
+              </div>
+              <div style={{ fontFamily: T.mono, fontSize: T.sz.lg, fontWeight: 800, color: C.amber }}>
+                {unverified.length}
+              </div>
+              <div style={{ fontFamily: T.mono, fontSize: 8, color: C.inkFaint }}>
+                {unverified.reduce((s, r) => s + r.existencia, 0)} unidades
+              </div>
+            </div>
+          </div>
+
+          {/* Invariant */}
+          <div style={{
+            fontFamily: T.mono, fontSize: 8, color: C.inkFaint,
+            marginBottom: S[2], padding: `${S[1]}px ${S[2]}px`,
+            background: C.surfaceAlt, borderRadius: R.sm,
+          }}>
+            {`${matched.length} + ${unmatched.length} + ${unverified.length} = ${reconciled.length} (total B04)`}
+          </div>
+
+          {/* Tab selector */}
+          <div style={{ display: "flex", gap: S[2], marginBottom: S[2], flexWrap: "wrap" }}>
+            <button onClick={() => setActiveTab("matched")} style={tabStyle(activeTab === "matched")}>
+              En camino por OP ({matched.length})
+            </button>
+            <button onClick={() => setActiveTab("unmatched")} style={tabStyle(activeTab === "unmatched")}>
+              Sin posicion compatible ({unmatched.length})
+            </button>
+            <button onClick={() => setActiveTab("unverified")} style={tabStyle(activeTab === "unverified")}>
+              Datos sin verificar ({unverified.length})
+            </button>
+
+            {/* Line filter + search */}
+            <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
+              <button onClick={() => setLineFilter(null)} style={tabStyle(lineFilter === null)}>Todas</button>
+              {uniqueLines.map(l => (
+                <button key={l} onClick={() => setLineFilter(lineFilter === l ? null : l)} style={tabStyle(lineFilter === l)}>
+                  {DERROTERO_LINE_LABEL[l] ?? l}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ marginBottom: S[2] }}>
             <input
               type="text"
-              placeholder="Buscar referencia, descripcion, grupo, subgrupo, familia..."
+              placeholder="Buscar referencia, descripcion, grupo, subgrupo..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               style={{
-                fontFamily: T.mono, fontSize: 11, flex: 1,
+                fontFamily: T.mono, fontSize: 11, width: "100%",
                 padding: `${S[2]}px ${S[3]}px`,
                 border: `1px solid ${C.line}`, borderRadius: R.sm, outline: "none",
+                boxSizing: "border-box" as const,
               }}
             />
-            <div style={{ display: "flex", gap: 4 }}>
-              <button
-                onClick={() => setLineFilter(null)}
-                style={{
-                  fontFamily: T.mono, fontSize: 9, fontWeight: 600,
-                  padding: "4px 8px", borderRadius: R.sm, cursor: "pointer",
-                  border: `1px solid ${C.line}`,
-                  background: lineFilter === null ? C.blueDark : C.white,
-                  color: lineFilter === null ? C.white : C.inkMid,
-                }}
-              >Todas</button>
-              {uniqueLines.map(l => (
-                <button
-                  key={l}
-                  onClick={() => setLineFilter(lineFilter === l ? null : l)}
-                  style={{
-                    fontFamily: T.mono, fontSize: 9, fontWeight: 600,
-                    padding: "4px 8px", borderRadius: R.sm, cursor: "pointer",
-                    border: `1px solid ${C.line}`,
-                    background: lineFilter === l ? C.blueDark : C.white,
-                    color: lineFilter === l ? C.white : C.inkMid,
-                  }}
-                >{l}</button>
-              ))}
-            </div>
           </div>
 
           {/* Table */}
@@ -4457,7 +4646,10 @@ function B04InventorySection({ b04Inventory, sampleCoverage }: {
               padding: `10px 16px`, background: C.surfaceAlt,
               borderBottom: `1px solid ${C.line}`, gap: S[1], alignItems: "center",
             }}>
-              {B04_HEADERS.map((h) => (
+              {["Referencia", "Descripcion", "Grupo / Subgrupo", "Cant. B04",
+                activeTab === "matched" ? "Posicion derrotero" : "Razon",
+                "Estado",
+              ].map((h) => (
                 <div key={h} style={{
                   fontFamily: T.mono, fontSize: 8, fontWeight: 700,
                   color: C.inkFaint, textTransform: "uppercase" as const,
@@ -4466,66 +4658,93 @@ function B04InventorySection({ b04Inventory, sampleCoverage }: {
                 }}>{h}</div>
               ))}
             </div>
-            {visible.map((ref) => {
-              const coverageInfo = b04CoverageMap.get(ref.reference.trim().toUpperCase());
-              const constr = ref.normalized.construccionSuperior && ref.normalized.construccionInferior
-                && ref.normalized.construccionSuperior !== "NA" && ref.normalized.construccionInferior !== "NA"
-                ? `${ref.normalized.construccionSuperior[0]}${ref.normalized.construccionInferior[0]}`
-                : null;
-              return (
-                <div key={ref.reference} style={{
-                  display: "grid", gridTemplateColumns: B04_COLS,
-                  padding: `6px 16px`,
-                  borderBottom: `1px solid ${C.lineSubtle}`,
-                  gap: S[2], alignItems: "start",
-                }}>
-                  {/* Col 1: Reference + line */}
-                  <div>
-                    <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: C.titleDeep }}>{ref.reference}</div>
-                    <span style={{
-                      fontFamily: T.mono, fontSize: 8, fontWeight: 700,
-                      color: ref.linea === "CS" ? C.blueDark : ref.linea === "LT" ? C.green : C.inkFaint,
-                      padding: "1px 5px", borderRadius: R.sm,
-                      background: (ref.linea === "CS" ? C.blueDark : ref.linea === "LT" ? C.green : C.inkFaint) + "12",
-                    }}>{ref.linea}</span>
-                  </div>
-                  {/* Col 2: Description (truncated) */}
-                  <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}
-                    title={ref.description}>{ref.description}</div>
-                  {/* Col 3: Classification stacked */}
-                  <div>
-                    <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkMid }}>
-                      {ref.grupoSag ?? "\u2014"} / {ref.subgrupoSag ?? "\u2014"}
-                    </div>
-                    <div style={{ fontFamily: T.mono, fontSize: 8, color: C.inkFaint, marginTop: 1 }}>
-                      {ref.normalized.familiaProducto} · {ref.normalized.genero} · {ref.normalized.segmentoEdad}{constr ? ` · ${constr}` : ""}
-                    </div>
-                  </div>
-                  {/* Col 4: Quantity */}
-                  <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, color: C.amber, textAlign: "right" as const }}>
-                    {ref.existencia}
-                  </div>
-                  {/* Col 5: Derrotero position */}
-                  <div style={{ fontFamily: T.mono, fontSize: 9, color: coverageInfo ? C.blueDark : C.inkFaint }}>
-                    {coverageInfo ? coverageInfo.positions.join(", ") : "Sin necesidad actual"}
-                  </div>
-                  {/* Col 6: Maletas */}
-                  <div style={{ fontFamily: T.mono, fontSize: 9, color: coverageInfo ? C.blueDark : C.inkFaint }}>
-                    {coverageInfo ? coverageInfo.vendors.join(", ") : "\u2014"}
-                  </div>
-                  {/* Col 7: Status */}
-                  <div>
-                    <span style={{
-                      fontFamily: T.mono, fontSize: 8, fontWeight: 600,
-                      color: coverageInfo ? C.blueDark : C.green,
-                      padding: "1px 5px", borderRadius: R.sm,
-                      background: (coverageInfo ? C.blueDark : C.green) + "12",
-                    }}>{coverageInfo ? "OP_INCOMING" : "EN_PROCESO"}</span>
-                  </div>
+            {visible.length === 0 ? (
+              <div style={{
+                padding: S[4], textAlign: "center",
+                fontFamily: T.mono, fontSize: T.sz.xs, color: C.inkFaint,
+              }}>
+                {activeTab === "matched" ? "Ninguna referencia B04 cubre posiciones del derrotero"
+                  : activeTab === "unmatched" ? "Todas las referencias B04 cubren posiciones o estan sin verificar"
+                  : "No hay referencias con datos incompletos"}
+              </div>
+            ) : visible.map((entry) => (
+              <div key={entry.reference} style={{
+                display: "grid", gridTemplateColumns: B04_COLS,
+                padding: `6px 16px`,
+                borderBottom: `1px solid ${C.lineSubtle}`,
+                gap: S[2], alignItems: "start",
+              }}>
+                {/* Col 1: Reference + line label */}
+                <div>
+                  <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: C.titleDeep }}>{entry.reference}</div>
+                  <span style={{
+                    fontFamily: T.mono, fontSize: 8, fontWeight: 700,
+                    color: entry.linea === "CS" ? C.blueDark : entry.linea === "LT" ? C.green : C.inkFaint,
+                    padding: "1px 5px", borderRadius: R.sm,
+                    background: (entry.linea === "CS" ? C.blueDark : entry.linea === "LT" ? C.green : C.inkFaint) + "12",
+                  }}>{DERROTERO_LINE_LABEL[entry.linea] ?? entry.linea}</span>
                 </div>
-              );
-            })}
+                {/* Col 2: Description */}
+                <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}
+                  title={entry.description}>{entry.description}</div>
+                {/* Col 3: Grupo / Subgrupo */}
+                <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkMid }}>
+                  {entry.grupoSag ?? "\u2014"} / {entry.subgrupoSag ?? "\u2014"}
+                </div>
+                {/* Col 4: Quantity */}
+                <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, color: C.amber, textAlign: "right" as const }}>
+                  {entry.existencia}
+                </div>
+                {/* Col 5: Position or Reason */}
+                <div style={{ fontFamily: T.mono, fontSize: 9, color: entry.matchedPosition ? C.blueDark : C.inkFaint }}>
+                  {entry.matchedPosition
+                    ? entry.matchedPosition
+                    : EXCLUSION_LABEL[entry.exclusionReason]}
+                </div>
+                {/* Col 6: Truth state */}
+                <div>
+                  <span style={{
+                    fontFamily: T.mono, fontSize: 8, fontWeight: 600,
+                    color: entry.matchTruthState === "CERTIFIED"
+                      ? (entry.exclusionReason === "MATCHED" ? C.blueDark : C.green)
+                      : C.amber,
+                    padding: "1px 5px", borderRadius: R.sm,
+                    background: (entry.matchTruthState === "CERTIFIED"
+                      ? (entry.exclusionReason === "MATCHED" ? C.blueDark : C.green)
+                      : C.amber) + "12",
+                  }}>
+                    {entry.exclusionReason === "MATCHED" ? "OP_INCOMING"
+                      : entry.matchTruthState === "DATA_UNVERIFIED" ? "SIN VERIFICAR"
+                      : "EN PROCESO"}
+                  </span>
+                </div>
+              </div>
+            ))}
           </div>
+
+          {/* Exclusion breakdown (unmatched + unverified tabs) */}
+          {activeTab !== "matched" && (
+            <div style={{
+              marginTop: S[2], padding: S[3],
+              background: C.surfaceAlt, borderRadius: R.md,
+              border: `1px solid ${C.line}`,
+            }}>
+              <div style={{ fontFamily: T.mono, fontSize: 8, fontWeight: 700, color: C.inkMid, textTransform: "uppercase" as const, marginBottom: S[1] }}>
+                Clasificacion de exclusiones
+              </div>
+              <div style={{ display: "flex", gap: S[3], flexWrap: "wrap" }}>
+                {[...exclusionCounts.entries()]
+                  .filter(([k]) => k !== "MATCHED")
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([reason, count]) => (
+                    <div key={reason} style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint }}>
+                      <span style={{ fontWeight: 700, color: C.inkMid }}>{count}</span>{" "}
+                      {EXCLUSION_LABEL[reason]}
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
 
           {filtered.length > 30 && !showAll && (
             <button onClick={() => setShowAll(true)} style={{
