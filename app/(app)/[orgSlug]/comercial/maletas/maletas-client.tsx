@@ -3571,6 +3571,11 @@ function DepletedVault({ refs }: { refs: VendorSampleRef[] }) {
                   <div style={{ fontSize: 8, color: C.inkFaint, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {ref.description} · {ref.subgrupoSag}
                   </div>
+                  {ref.retiroDecision === "DATA_UNVERIFIED_HOLD" && (
+                    <div style={{ fontSize: 7, color: C.amber, marginTop: 1 }}>
+                      Sin decisión de retiro: disponibilidad central no verificada
+                    </div>
+                  )}
                 </div>
                 <span style={{ fontSize: 9, color: C.inkFaint }}>{ref.line}</span>
                 <span style={{ textAlign: "center", fontWeight: 700, color: C.red }}>
