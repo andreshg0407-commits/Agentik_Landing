@@ -34,6 +34,8 @@ const duplicateAuditSrc      = readSrc("app/api/orgs/[orgSlug]/marketing-studio/
 const storageStatusSrc       = readSrc("app/api/orgs/[orgSlug]/marketing-studio/storage-status/route.ts");
 const driveRouteSrc          = readSrc("app/api/orgs/[orgSlug]/marketing-studio/drive/route.ts");
 const drawerSrc              = readSrc("components/marketing-studio/library/reference-folder-drawer.tsx");
+const assetUploadSrc         = readSrc("app/api/orgs/[orgSlug]/marketing-studio/products/[productId]/assets/route.ts");
+const ingestionGateSrc       = readSrc("lib/storage/asset-ingestion-gate.ts");
 
 // ══════════════════════════════════════════════════════════════════════════════
 // 1. Storage: 3-state model
@@ -410,5 +412,46 @@ describe("Bonus — Ensure-product gate ordering", () => {
     const orgIdAssign = ensureProductSrc.indexOf("const orgId = organization.id");
     const bodyParse = ensureProductSrc.indexOf("req.json()");
     expect(orgIdAssign).toBeLessThan(bodyParse);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 13. Conjunctive Asset Ingestion Gate
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("13 — Conjunctive asset ingestion gate (server-side)", () => {
+  test("T51: ingestion gate requires BOTH storageCanaryVerified AND productIdentityUniquenessCertified", () => {
+    expect(ingestionGateSrc).toContain("storageCanaryVerified && productIdentityUniquenessCertified");
+  });
+
+  test("T52: ingestion gate is server-only", () => {
+    expect(ingestionGateSrc).toContain('"server-only"');
+  });
+
+  test("T53: ingestion gate checks PRODUCT_IDENTITY_UNIQUENESS_CERTIFIED env var", () => {
+    expect(ingestionGateSrc).toContain('PRODUCT_IDENTITY_UNIQUENESS_CERTIFIED');
+    expect(ingestionGateSrc).toContain('=== "true"');
+  });
+
+  test("T54: asset upload route imports and checks evaluateAssetIngestionGate", () => {
+    expect(assetUploadSrc).toContain("evaluateAssetIngestionGate");
+    expect(assetUploadSrc).toContain("ASSET_INGESTION_BLOCKED");
+  });
+
+  test("T55: asset upload returns 503 when ingestion blocked", () => {
+    const blockIdx = assetUploadSrc.indexOf("ASSET_INGESTION_BLOCKED");
+    const blockContext = assetUploadSrc.slice(blockIdx, blockIdx + 500);
+    expect(blockContext).toContain("503");
+  });
+
+  test("T56: asset upload gate runs BEFORE FormData parsing", () => {
+    const gateIdx = assetUploadSrc.indexOf("evaluateAssetIngestionGate");
+    const formDataIdx = assetUploadSrc.indexOf("req.formData()");
+    expect(gateIdx).toBeLessThan(formDataIdx);
+  });
+
+  test("T57: asset upload response includes both gate statuses", () => {
+    expect(assetUploadSrc).toContain("storageCanaryVerified");
+    expect(assetUploadSrc).toContain("productIdentityUniquenessCertified");
   });
 });

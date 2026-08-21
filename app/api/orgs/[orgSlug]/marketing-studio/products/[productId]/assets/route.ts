@@ -31,6 +31,7 @@
 import { NextRequest, NextResponse }       from "next/server";
 import { requireOrgAccess }               from "@/lib/auth/org-access";
 import { canAccessMarketingStudio }      from "@/lib/auth/module-access";
+import { evaluateAssetIngestionGate }    from "@/lib/storage/asset-ingestion-gate";
 import { prisma }                         from "@/lib/prisma";
 import { uploadManualAsset }              from "@/lib/marketing-studio/r2-upload";
 import { addProductAssetLink }            from "@/lib/marketing-studio/products/product-repository";
@@ -92,6 +93,26 @@ export async function POST(
     // Verify Marketing Studio access
     if (!canAccessMarketingStudio(membership.role)) {
       return NextResponse.json({ error: "Marketing Studio access required" }, { status: 403 });
+    }
+
+    // ── CONJUNCTIVE INGESTION GATE (R1) ──
+    // Asset ingestion requires BOTH:
+    //   1. storageCanaryVerified (R2 canary passed)
+    //   2. productIdentityUniquenessCertified (@@unique migration applied)
+    // Disabling UI buttons is NOT sufficient — this is the real server-side gate.
+    const ingestionGate = evaluateAssetIngestionGate();
+    if (!ingestionGate.assetIngestionAllowed) {
+      return NextResponse.json(
+        {
+          error:   "ASSET_INGESTION_BLOCKED",
+          message: ingestionGate.reason,
+          gates: {
+            storageCanaryVerified:              ingestionGate.storageCanaryVerified,
+            productIdentityUniquenessCertified: ingestionGate.productIdentityUniquenessCertified,
+          },
+        },
+        { status: 503 },
+      );
     }
 
     // Parse FormData
