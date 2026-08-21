@@ -35,8 +35,8 @@ export type {
   ScopeResolutionResult,
 } from "./copilot-core-types";
 
-// Constants & authority functions
-export { CERTIFIED_SELLER_SOURCES, isCertifiedSellerSource } from "./copilot-core-types";
+// Authority functions
+export { isCertifiedSellerSource } from "./copilot-core-types";
 
 // Envelope
 export { validateEnvelope, isValidEnvelope } from "./copilot-core-envelope";

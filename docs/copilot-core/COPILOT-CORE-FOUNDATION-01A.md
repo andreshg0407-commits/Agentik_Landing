@@ -47,8 +47,11 @@ Values: `membership_seller_slug | email_crm_match | name_match | unmapped | ambi
 - `name_match` NEVER grants seller access.
 - `unmapped` and `ambiguous` always fail closed.
 - Confidence value alone CANNOT make an uncertified source certified.
-- The authority function `isCertifiedSellerSource()` is the single check point.
-- `CERTIFIED_SELLER_SOURCES` is an immutable `as const` array — no runtime mutation.
+- The authority function `isCertifiedSellerSource()` is the SINGLE public authority.
+- No array, Set, or collection of certified sources is exported publicly.
+- No `add`, `push`, `delete`, `splice`, or any runtime mutation API exists.
+- Adding a new certified source requires a code change to `isCertifiedSellerSource()`
+  and a security review — it cannot be done at runtime by any consumer.
 - `sellerSlug` continues as IDENTITY_UNSTABLE (see `manager-commercial-types.ts:392`).
 
 ### CopilotCapability

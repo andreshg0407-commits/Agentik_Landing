@@ -23,9 +23,10 @@ import {
   authorizeCopilotCapability,
   resolveTruthState,
   validateAnswer,
-  CERTIFIED_SELLER_SOURCES,
   isCertifiedSellerSource,
 } from "../index";
+
+import * as CopilotCoreBarrel from "../index";
 
 import type {
   CopilotEnvelope,
@@ -728,9 +729,9 @@ describe("TruthState resolution", () => {
   });
 });
 
-// ── H. Certified Seller Sources (Immutable) ──────────────────────────────────
+// ── H. Seller Source Authority — Runtime Immutable ───────────────────────────
 
-describe("Certified seller sources — immutable authority", () => {
+describe("Seller source authority — runtime immutable", () => {
   test("B1-10 — membership_seller_slug is certified", () => {
     expect(isCertifiedSellerSource("membership_seller_slug")).toBe(true);
   });
@@ -751,14 +752,20 @@ describe("Certified seller sources — immutable authority", () => {
     expect(isCertifiedSellerSource("ambiguous")).toBe(false);
   });
 
-  test("B1-15 — CERTIFIED_SELLER_SOURCES is a frozen array, no mutable API", () => {
-    // as const produces a readonly tuple — no push, pop, splice, etc.
-    expect(Array.isArray(CERTIFIED_SELLER_SOURCES)).toBe(true);
-    expect(CERTIFIED_SELLER_SOURCES.length).toBe(1);
-    expect(CERTIFIED_SELLER_SOURCES[0]).toBe("membership_seller_slug");
-    // Verify no Set-like add/delete methods exist
-    expect("add" in CERTIFIED_SELLER_SOURCES).toBe(false);
-    expect("delete" in CERTIFIED_SELLER_SOURCES).toBe(false);
+  test("B1-15 — CERTIFIED_SELLER_SOURCES is NOT exported from public barrel", () => {
+    expect("CERTIFIED_SELLER_SOURCES" in CopilotCoreBarrel).toBe(false);
+  });
+
+  test("B1-15b — isCertifiedSellerSource IS exported from public barrel", () => {
+    expect("isCertifiedSellerSource" in CopilotCoreBarrel).toBe(true);
+    expect(typeof CopilotCoreBarrel.isCertifiedSellerSource).toBe("function");
+  });
+
+  test("B1-15c — barrel has no add, push, delete, splice for certified sources", () => {
+    const barrelKeys = Object.keys(CopilotCoreBarrel);
+    expect(barrelKeys.some((k) => k.includes("addCertified"))).toBe(false);
+    expect(barrelKeys.some((k) => k.includes("removeCertified"))).toBe(false);
+    expect(barrelKeys.some((k) => k.includes("setCertified"))).toBe(false);
   });
 
   test("B1-16 — high confidence does not make uncertified source certified", () => {
@@ -766,6 +773,16 @@ describe("Certified seller sources — immutable authority", () => {
     expect(isCertifiedSellerSource("email_crm_match")).toBe(false);
     // name_match with 1.0 confidence is still not certified
     expect(isCertifiedSellerSource("name_match")).toBe(false);
+  });
+
+  test("B1-16b — no cast or mutation of consumer can change isCertifiedSellerSource result", () => {
+    // Attempt to call with arbitrary strings — always false
+    expect(isCertifiedSellerSource("email_crm_match" as any)).toBe(false);
+    expect(isCertifiedSellerSource("MEMBERSHIP_SELLER_SLUG" as any)).toBe(false);
+    expect(isCertifiedSellerSource("" as any)).toBe(false);
+    expect(isCertifiedSellerSource("admin_override" as any)).toBe(false);
+    // Only the exact canonical value returns true
+    expect(isCertifiedSellerSource("membership_seller_slug")).toBe(true);
   });
 
   test("B1-17 — seller binding requires source+confidence+orgId+sellerId simultaneously", () => {

@@ -93,17 +93,15 @@ export type SellerBindingSource =
   | "ambiguous";               // multiple matches, cannot determine
 
 /**
- * The ONLY certified seller sources — immutable, no runtime mutation.
- * Only these sources can produce actorScope="seller".
- */
-export const CERTIFIED_SELLER_SOURCES = [
-  "membership_seller_slug",
-] as const;
-
-/**
  * Authoritative check: is a seller binding source certified?
- * This function is the single authority used by envelope validation
+ *
+ * This function is the SINGLE AUTHORITY used by envelope validation
  * and scope resolver. No other path should check certification.
+ * No collection of sources is exported — the function IS the contract.
+ *
+ * Only "membership_seller_slug" returns true. This is a compile-time
+ * decision, not a runtime-configurable list. No consumer can add,
+ * remove, or modify certified sources.
  */
 export function isCertifiedSellerSource(
   source: SellerBindingSource,
