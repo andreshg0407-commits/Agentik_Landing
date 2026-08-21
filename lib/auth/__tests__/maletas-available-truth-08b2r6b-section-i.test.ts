@@ -159,9 +159,9 @@ describe("I-07: unit totals handle null centralAvailable", () => {
 // I-08: import path uses separate authority
 // ══════════════════════════════════════════════════════════════════════════
 
-describe("I-08: import path uses lookupRec (separate domain)", () => {
-  test("availableB24 derives from lookupRec.compatibleCommercialStock", () => {
-    expect(loaderSrc).toContain("availableB24 = lookupRec.compatibleCommercialStock");
+describe("I-08: import path uses B24 SAG CURRENT (P0-08B2R6D-R1)", () => {
+  test("availableB24 derives from B24 SAG CURRENT via b24Canonical", () => {
+    expect(loaderSrc).toContain("b24Canonical.byReference.get(item.reference)");
   });
 
   test("import scarcity uses availableB24, not centralAvailable", () => {
@@ -327,9 +327,9 @@ describe("R2-C: Import path quarantine", () => {
     expect(importBlock).toContain("IMPORT_UNAVAILABLE");
   });
 
-  test("import availableB24 uses CCS/PIL — not SAG CURRENT B01", () => {
-    expect(loaderSrc).toContain("availableB24 = lookupRec.compatibleCommercialStock");
-    // This is physical stock from B24/B36/B37 — separate domain from B01 textile
+  test("import availableB24 uses B24 SAG CURRENT (P0-08B2R6D-R1)", () => {
+    expect(loaderSrc).toContain("b24Canonical.byReference.get(item.reference)");
+    // B24 (IMPORTACIÓN) is the sole central import warehouse
   });
 
   test("UI shows em dash for null availableB24, not zero", () => {

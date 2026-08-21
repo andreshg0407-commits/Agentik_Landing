@@ -116,9 +116,9 @@ describe("C. CCS/PIL not used for textile centralAvailable", () => {
     expect(canonicalLookupSrc).toContain("snapshotAt");
   });
 
-  test("T11: IMPORT accessories still use lookupRec.compatibleCommercialStock (different domain)", () => {
-    // The IMPORT path correctly uses canonical lookup for B24/B36/B37
-    expect(loaderSrc).toContain("availableB24 = lookupRec.compatibleCommercialStock");
+  test("T11: IMPORT accessories use B24 SAG CURRENT (P0-08B2R6D-R1)", () => {
+    // The IMPORT path uses B24 SAG CURRENT via getCanonicalImportWarehouseAvailability
+    expect(loaderSrc).toContain("b24Canonical.byReference.get(item.reference)");
   });
 });
 

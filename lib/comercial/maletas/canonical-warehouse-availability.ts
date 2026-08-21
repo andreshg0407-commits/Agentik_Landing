@@ -314,6 +314,71 @@ export function buildStockBySubgrupoFromCanonical(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// B24 — Import warehouse (P0-08B2R6D-R1)
+// ══════════════════════════════════════════════════════════════════════════════
+
+const SAG_B24_QUERY = [
+  "SELECT",
+  "  CODIGO_PRODUCTO, LINEA,",
+  "  EXISTENCIA, RESERVADO, DISPONIBLE",
+  "FROM vw_agentik_inventario",
+  "WHERE BODEGA LIKE '24 -%'",
+].join(" ");
+
+export interface B24RefAvailability {
+  reference: string;
+  linea: string;
+  existencia: number;
+  reservado: number;
+  disponible: number;
+}
+
+export interface B24AvailabilityResult {
+  byReference: Map<string, B24RefAvailability>;
+  totalRefs: number;
+  sourceDown: boolean;
+}
+
+/**
+ * Load B24 (IMPORTACIÓN) warehouse availability from SAG CURRENT.
+ * Authority for import/accessory retiro decisions.
+ * B36/B37 are vendor bodegas and do NOT participate.
+ */
+export async function getCanonicalImportWarehouseAvailability(): Promise<B24AvailabilityResult> {
+  let config;
+  try {
+    config = getSagConnection("CURRENT");
+  } catch {
+    return { byReference: new Map(), totalRefs: 0, sourceDown: true };
+  }
+
+  try {
+    const rows = await consultaSagJson(config, SAG_B24_QUERY) as Record<string, unknown>[];
+    if (!Array.isArray(rows)) {
+      return { byReference: new Map(), totalRefs: 0, sourceDown: true };
+    }
+
+    const map = new Map<string, B24RefAvailability>();
+    for (const row of rows) {
+      const ref = String(row.CODIGO_PRODUCTO ?? "").trim();
+      if (!ref) continue;
+      map.set(ref, {
+        reference: ref,
+        linea: String(row.LINEA ?? "").trim(),
+        existencia: Number(row.EXISTENCIA ?? 0),
+        reservado: Number(row.RESERVADO ?? 0),
+        disponible: Number(row.DISPONIBLE ?? 0),
+      });
+    }
+
+    console.log(`[MALETAS] B24 SAG CURRENT: ${map.size} refs loaded`);
+    return { byReference: map, totalRefs: map.size, sourceDown: false };
+  } catch {
+    return { byReference: new Map(), totalRefs: 0, sourceDown: true };
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Internal helpers
 // ══════════════════════════════════════════════════════════════════════════════
 

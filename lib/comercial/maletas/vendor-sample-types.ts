@@ -107,13 +107,18 @@ export function getMinimumForLine(line: string): number {
 }
 
 // ── RETIRO classification (COMERCIAL-MALETAS-DERROTERO-EXCLUDE-RETIRO-01) ──────
+// P0-08B2R6D-R1: Non-destructive retiro with 3-state partition.
 //
-// Canonical removal classification for maleta references.
-// Single source of truth: thresholds by business domain, no duplicates.
-// A reference is candidate for RETIRO when:
-//   - compatibleCommercialStock <= domain threshold, OR
-//   - stockDataState is not certified (no reading), OR
-//   - domain is unknown/external
+// Retiro is a DESTRUCTIVE recommendation: it removes a sample from the vendor's
+// drawer. Fail-closed for a destructive action means DO NOT recommend retiro
+// until stock data is certified.
+//
+// Three states:
+//   VIGENTE             — certified stock > threshold, sample stays
+//   RETIRO              — certified stock <= threshold, recommend removal
+//   DATA_UNVERIFIED_HOLD — no certified data, sample stays (fail-closed)
+//
+// total = vigentes + retiro + datos_sin_verificar (no overlap)
 
 /** Business domain as resolved by the canonical inventory system. */
 export type RemovalBusinessDomain =
@@ -121,6 +126,9 @@ export type RemovalBusinessDomain =
   | "LATIN_KIDS_TEXTILE"
   | "CASTILLITOS_IMPORT"
   | "UNKNOWN";
+
+/** Retiro decision — 3-state partition, no overlap. */
+export type RetiroDecision = "VIGENTE" | "RETIRO" | "DATA_UNVERIFIED_HOLD";
 
 /** Thresholds by business domain. Change here to adjust policy. */
 export const RETIRO_THRESHOLDS: Record<RemovalBusinessDomain, number> = {
@@ -141,37 +149,43 @@ export interface RemovalInput {
   businessDomain?: RemovalBusinessDomain;
   /** Drawer line — used as fallback when businessDomain is not available */
   line?: string;
-  compatibleCommercialStock: number | null; // null = DATA_UNVERIFIED → retiro for audit
+  compatibleCommercialStock: number | null; // null = DATA_UNVERIFIED
   stockDataState: StockDataState;
 }
 
 /**
- * Pure classification: is this reference a candidate for RETIRO?
+ * Pure classification: 3-state retiro decision.
  *
- * Consumes exclusively:
- *   - businessDomain (or line as fallback)
- *   - compatibleCommercialStock (from canonical resolver)
- *   - stockDataState (certified or absent)
- *   - RETIRO_THRESHOLDS (configurable per domain)
- *
- * Does NOT depend on: badges, UI state, centralAvailable, colors.
+ * P0-08B2R6D-R1: Fail-closed means DO NOT retire when data is missing.
+ * Missing data → DATA_UNVERIFIED_HOLD (sample stays in drawer).
+ * Only retire when stock is certified AND below threshold.
  */
-export function isCandidateForRemoval(input: RemovalInput): boolean {
-  // No certified reading → retiro for audit
-  if (input.stockDataState !== "CERTIFIED") return true;
-
-  // Resolve domain
+export function classifyRetiroDecision(input: RemovalInput): RetiroDecision {
+  // Resolve domain first
   const domain: RemovalBusinessDomain = input.businessDomain
     ?? LINE_TO_DOMAIN[input.line ?? ""]
     ?? "UNKNOWN";
 
-  // Unknown/external domain → retiro
-  if (domain === "UNKNOWN") return true;
+  // No certified reading → HOLD (fail-closed: don't retire without evidence)
+  if (input.stockDataState !== "CERTIFIED") return "DATA_UNVERIFIED_HOLD";
 
-  // null = DATA_UNVERIFIED → retiro for audit (fail-closed)
-  if (input.compatibleCommercialStock === null) return true;
+  // Unknown domain with certified data → HOLD (can't determine threshold)
+  if (domain === "UNKNOWN") return "DATA_UNVERIFIED_HOLD";
+
+  // null stock with certified data state — contradictory, hold
+  if (input.compatibleCommercialStock === null) return "DATA_UNVERIFIED_HOLD";
+
+  // Certified data, known domain → compare against threshold
   const threshold = RETIRO_THRESHOLDS[domain];
-  return input.compatibleCommercialStock <= threshold;
+  return input.compatibleCommercialStock <= threshold ? "RETIRO" : "VIGENTE";
+}
+
+/**
+ * @deprecated Use classifyRetiroDecision() for 3-state partition.
+ * Kept for backward compatibility during migration.
+ */
+export function isCandidateForRemoval(input: RemovalInput): boolean {
+  return classifyRetiroDecision(input) === "RETIRO";
 }
 
 // ── Replacement option ─────────────────────────────────────────────────────
@@ -269,6 +283,8 @@ export interface VendorSampleRef {
   availableB24: number | null;                         // sum of import source warehouses (B36+B37)
   accessoryScarcityState: AccessoryScarcityState | null; // "saludable" | "escasez"
   accessorySuggestedAction: "DEJAR_DE_VENDER" | null;
+  // P0-08B2R6D-R1: server-computed retiro decision (3-state)
+  retiroDecision: RetiroDecision;
 }
 
 // ── Per-vendor snapshot ─────────────────────────────────────────────────────

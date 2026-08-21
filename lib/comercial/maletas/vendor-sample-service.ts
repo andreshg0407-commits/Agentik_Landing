@@ -225,6 +225,7 @@ export function buildVendorSnapshots(
         availableB24: null,
         accessoryScarcityState: null,
         accessorySuggestedAction: null,
+        retiroDecision: "DATA_UNVERIFIED_HOLD" as const,
       };
     });
 

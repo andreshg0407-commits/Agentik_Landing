@@ -34,7 +34,7 @@ import type {
   VendorOpReplacementOption,
   AccessorySummary,
 } from "@/lib/comercial/maletas/vendor-sample-types";
-import { isCandidateForRemoval, type RemovalInput } from "@/lib/comercial/maletas/vendor-sample-types";
+import type { RetiroDecision } from "@/lib/comercial/maletas/vendor-sample-types";
 import type {
   MaletasCommercialIntelligenceResult,
   VendorCommercialIntelligence,
@@ -143,14 +143,7 @@ const URGENCY_COLOR: Record<string, string> = {
 
 const PAGE_SIZE = 50;
 
-/** Build RemovalInput from VendorSampleRef (COMERCIAL-MALETAS-DERROTERO-EXCLUDE-RETIRO-01) */
-function refToRemovalInput(ref: VendorSampleRef): RemovalInput {
-  return {
-    line: ref.line,
-    compatibleCommercialStock: ref.centralAvailable,
-    stockDataState: ref.stockDataState,
-  };
-}
+// P0-08B2R6D-R1: retiro decision is server-computed on VendorSampleRef.retiroDecision
 
 // ── Drawer filter type ───────────────────────────────────────────────────────
 
@@ -278,12 +271,12 @@ export function MaletasClient({
   // COMERCIAL-MALETAS-DERROTERO-EXCLUDE-RETIRO-01: RETIRO vs commercial split
   const retiroRefs = useMemo(() => {
     if (!selectedVendor) return [];
-    return selectedVendor.refs.filter((r) => isCandidateForRemoval(refToRemovalInput(r)));
+    return selectedVendor.refs.filter((r) => r.retiroDecision === "RETIRO");
   }, [selectedVendor]);
 
   const commercialRefs = useMemo(() => {
     if (!selectedVendor) return [];
-    return selectedVendor.refs.filter((r) => !isCandidateForRemoval(refToRemovalInput(r)));
+    return selectedVendor.refs.filter((r) => r.retiroDecision !== "RETIRO");
   }, [selectedVendor]);
 
   // Coverage per catalog from assortmentEvaluations (MALETAS-DERROTERO-METRICS-CONSISTENCY-01)
@@ -338,7 +331,7 @@ export function MaletasClient({
     const map = new Map<string, VendorSampleRef[]>();
     for (const ref of searchedPresenceRefs) {
       if (ref.line === "OTRO") continue;
-      if (isCandidateForRemoval(refToRemovalInput(ref))) continue;
+      if (ref.retiroDecision === "RETIRO") continue;
       const arr = map.get(ref.line) ?? [];
       arr.push(ref);
       map.set(ref.line, arr);
@@ -349,7 +342,7 @@ export function MaletasClient({
   const retiroLineGroups = useMemo(() => {
     const map = new Map<string, VendorSampleRef[]>();
     for (const ref of searchedPresenceRefs) {
-      if (!isCandidateForRemoval(refToRemovalInput(ref))) continue;
+      if (ref.retiroDecision !== "RETIRO") continue;
       const line = ref.line || "OTRO";
       const arr = map.get(line) ?? [];
       arr.push(ref);

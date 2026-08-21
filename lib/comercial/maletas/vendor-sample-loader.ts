@@ -48,6 +48,7 @@ import type {
 import {
   isEligibleForProductionSuggestion,
   getMinimumForLine,
+  classifyRetiroDecision,
   isCandidateForRemoval,
   IMPORT_SCARCITY_MINIMUM,
   DEFAULT_SUBGROUP_MINIMUM_REFS,
@@ -67,6 +68,7 @@ import {
 } from "./maletas-functional-evaluation";
 import {
   getCanonicalMainWarehouseAvailability,
+  getCanonicalImportWarehouseAvailability,
   buildStockBySubgrupoFromCanonical,
 } from "./canonical-warehouse-availability";
 import {
@@ -405,6 +407,11 @@ export async function loadVendorSampleData(
   }));
   const coverageMap = new Map(coverageRows.map((r) => [r.refCode, r]));
 
+  // ── 2a-bis. B24 SAG CURRENT for import retiro decisions (P0-08B2R6D-R1) ──
+  // B24 (ss_codigo=24, "IMPORTACIÓN") is the SOLE central import warehouse.
+  // B36/B37 are vendor bodegas, NOT import staging.
+  const b24Canonical = await getCanonicalImportWarehouseAvailability();
+
   // ── 2b. Load open OP data for OP linking ────────────────────────────
   const opOptionsBySubgrupoId = await loadOpBySubgrupo(db, organizationId);
 
@@ -568,12 +575,20 @@ export async function loadVendorSampleData(
       let accessoryScarcityState: AccessoryScarcityState | null = null;
       let accessorySuggestedAction: "DEJAR_DE_VENDER" | null = null;
       if (isAccessory) {
-        // CANONICAL-INVENTORY-REFERENCE-LOOKUP-01: Scarcity from canonical lookup.
-        if (lookupRec && lookupRec.stockDataState === "CERTIFIED") {
-          availableB24 = lookupRec.compatibleCommercialStock;
+        // P0-08B2R6D-R1: B24 SAG CURRENT is the authority for import availability.
+        // B24 (ss_codigo=24, "IMPORTACIÓN") is the sole central import warehouse.
+        const b24Ref = b24Canonical.byReference.get(item.reference);
+        if (!b24Canonical.sourceDown && b24Ref) {
+          availableB24 = b24Ref.disponible;
           accessoryScarcityState = availableB24 > IMPORT_SCARCITY_MINIMUM ? "saludable" : "escasez";
           accessorySuggestedAction = accessoryScarcityState === "escasez" ? "DEJAR_DE_VENDER" : null;
+        } else if (!b24Canonical.sourceDown) {
+          // SAG loaded but ref not in B24 — certified absence
+          availableB24 = 0;
+          accessoryScarcityState = "escasez";
+          accessorySuggestedAction = "DEJAR_DE_VENDER";
         } else {
+          // SAG source down — unverified
           availableB24 = null;
           accessoryScarcityState = null;
           accessorySuggestedAction = null;
@@ -616,6 +631,15 @@ export async function loadVendorSampleData(
         availableB24,
         accessoryScarcityState,
         accessorySuggestedAction,
+        // P0-08B2R6D-R1: server-computed retiro decision (3-state)
+        retiroDecision: classifyRetiroDecision({
+          line,
+          businessDomain: isAccessory ? "CASTILLITOS_IMPORT" : undefined,
+          compatibleCommercialStock: isAccessory ? availableB24 : centralAvailable,
+          stockDataState: isAccessory
+            ? (b24Canonical.sourceDown ? "ABSENT" : "CERTIFIED")
+            : stockDataState,
+        }),
       };
     });
 
@@ -781,12 +805,10 @@ export async function loadVendorSampleData(
 
   // 9b. Assortment evaluations per vendor (COMERCIAL-MALETAS-DERROTERO-EXCLUDE-RETIRO-01)
   // RETIRO candidates are excluded: they don't count as coverage, completion, or faltantes.
+  // DATA_UNVERIFIED_HOLD refs are included (they stay in the drawer).
+  // P0-08B2R6D-R1: Uses server-computed retiroDecision (3-state).
   const derroteroFilter = (ref: VendorSampleRef) =>
-    !isCandidateForRemoval({
-      line: ref.line,
-      compatibleCommercialStock: ref.centralAvailable,
-      stockDataState: ref.stockDataState,
-    });
+    ref.retiroDecision !== "RETIRO";
   const assortmentEvaluations: VendorAssortmentResult[] = vendors
     .filter((v) => v.isActive)
     .map((v) => evaluateVendorAssortment(v, idealOverrides, derroteroFilter));
