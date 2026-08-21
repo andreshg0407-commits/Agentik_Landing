@@ -65,6 +65,12 @@ const avail = (v: number | null): number => v ?? 0;
 const availSort = (a: number | null, b: number | null): number =>
   a === null && b === null ? 0 : a === null ? 1 : b === null ? -1 : a - b;
 
+// P0-COVERAGE-OP-IMPORT-TRUTH-08B2R6E: effective availability per ref type
+/** Import/accessory refs use B24 warehouse; textile refs use B01 central */
+const effectiveAvail = (ref: { isAccessory?: boolean; availableB24?: number | null; centralAvailable: number | null }): number | null =>
+  ref.isAccessory ? (ref.availableB24 ?? null) : ref.centralAvailable;
+/** Presentation label for vendor line codes — see DERROTERO_LINE_LABEL at bottom of file */
+
 // ── Props ────────────────────────────────────────────────────────────────────
 
 interface MaletasClientProps {
@@ -276,7 +282,12 @@ export function MaletasClient({
 
   const commercialRefs = useMemo(() => {
     if (!selectedVendor) return [];
-    return selectedVendor.refs.filter((r) => r.retiroDecision !== "RETIRO");
+    return selectedVendor.refs.filter((r) => r.retiroDecision === "VIGENTE");
+  }, [selectedVendor]);
+
+  const holdRefs = useMemo(() => {
+    if (!selectedVendor) return [];
+    return selectedVendor.refs.filter((r) => r.retiroDecision === "DATA_UNVERIFIED_HOLD");
   }, [selectedVendor]);
 
   // Coverage per catalog from assortmentEvaluations (MALETAS-DERROTERO-METRICS-CONSISTENCY-01)
@@ -1098,10 +1109,10 @@ export function MaletasClient({
               {/* Row 1: Operational KPIs (COMERCIAL-MALETAS-DRAWER-OPERATIONAL-UX-02) */}
               <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
                 <DrawerKpiCard
-                  label="Muestras en maleta"
+                  label="Total en maleta"
                   value={allPresenceRefs.length}
-                  sub={`${commercialRefs.length} vigentes · ${retiroRefs.length} para retirar`}
-                  tooltip={`${allPresenceRefs.length} muestras presentes en maleta (F34). ${commercialRefs.length} vigentes. ${retiroRefs.length} para retirar.`}
+                  sub={`${commercialRefs.length} + ${retiroRefs.length} + ${holdRefs.length} = ${allPresenceRefs.length}`}
+                  tooltip={`${allPresenceRefs.length} muestras presentes. ${commercialRefs.length} vigentes. ${retiroRefs.length} retiro. ${holdRefs.length} sin verificar.`}
                 />
                 <DrawerKpiCard
                   label="Vigentes"
@@ -1115,6 +1126,14 @@ export function MaletasClient({
                   sub="cierre anual"
                   color={retiroRefs.length > 0 ? C.red : C.inkFaint}
                 />
+                {holdRefs.length > 0 && (
+                  <DrawerKpiCard
+                    label="Sin verificar"
+                    value={holdRefs.length}
+                    sub="pendiente fuente"
+                    color={C.amber}
+                  />
+                )}
               </div>
 
               {/* Row 2: Tab switcher (COMERCIAL-MALETAS-DRAWER-OPERATIONAL-UX-02 — Phase 5) */}
@@ -1221,7 +1240,7 @@ export function MaletasClient({
 
                     // Sort
                     const sorted = [...filtered].sort(
-                      (a, b) => availSort(a.centralAvailable, b.centralAvailable),
+                      (a, b) => availSort(effectiveAvail(a), effectiveAvail(b)),
                     );
                     const visible = sorted.slice(0, localVisibleCount);
                     const hasMoreLine = localVisibleCount < sorted.length;
@@ -1250,7 +1269,7 @@ export function MaletasClient({
                             fontFamily: T.mono, fontSize: 11, fontWeight: 700,
                             color: C.titleDeep, flex: 1, textAlign: "left",
                           }}>
-                            {lineName} ({lineRefs.length})
+                            {DERROTERO_LINE_LABEL[lineName] ?? lineName} ({lineRefs.length})
                           </span>
                           {/* Inline summary chips (COMERCIAL-MALETAS-DRAWER-OPERATIONAL-UX-02 — Phase 8) */}
                           <span style={{ display: "flex", gap: S[2], flexWrap: "wrap", justifyContent: "flex-end" }}>
@@ -1424,17 +1443,26 @@ export function MaletasClient({
                                         </div>
                                       )}
 
-                                      {/* Disponible */}
-                                      <div style={{
-                                        fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 600,
-                                        textAlign: "right" as const,
-                                        color: ref.stockDataState === "ABSENT" || ref.centralAvailable === null ? C.inkFaint
-                                          : ref.centralAvailable <= 0 ? C.red
-                                          : ref.centralAvailable <= ref.minimumRequired ? C.amber
-                                          : C.ink,
-                                      }}>
-                                        {ref.stockDataState === "ABSENT" ? "\u2014" : ref.centralAvailable}
-                                      </div>
+                                      {/* Disponible — B01 for textile, B24 for import */}
+                                      {(() => {
+                                        const effectiveAvail = ref.isAccessory ? ref.availableB24 : ref.centralAvailable;
+                                        const effectiveSource = ref.isAccessory ? "B24" : "B01";
+                                        return (
+                                          <div style={{
+                                            fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 600,
+                                            textAlign: "right" as const,
+                                            color: effectiveAvail === null ? C.inkFaint
+                                              : effectiveAvail <= 0 ? C.red
+                                              : effectiveAvail <= ref.minimumRequired ? C.amber
+                                              : C.ink,
+                                          }}>
+                                            {effectiveAvail === null ? "\u2014" : effectiveAvail}
+                                            {effectiveAvail !== null && ref.isAccessory && (
+                                              <span style={{ fontSize: 7, color: C.inkFaint, marginLeft: 2 }}>{effectiveSource}</span>
+                                            )}
+                                          </div>
+                                        );
+                                      })()}
 
                                       {/* Commercial health badge + affordance */}
                                       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, flexWrap: "wrap" }}>
@@ -1503,7 +1531,7 @@ export function MaletasClient({
                   {retiroLineGroups.map(([lineName, lineRefs]) => {
                     const isExpanded_ = lineExpanded[`RETIRO_${lineName}`] === true;
                     const localVisibleCount = lineVisibleCounts[`RETIRO_${lineName}`] ?? PAGE_SIZE;
-                    const sorted = [...lineRefs].sort((a, b) => availSort(a.centralAvailable, b.centralAvailable));
+                    const sorted = [...lineRefs].sort((a, b) => availSort(effectiveAvail(a), effectiveAvail(b)));
                     const visible = sorted.slice(0, localVisibleCount);
                     const hasMoreLine = localVisibleCount < sorted.length;
 
@@ -1613,9 +1641,9 @@ export function MaletasClient({
                                       <div style={{
                                         fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 600,
                                         textAlign: "right" as const,
-                                        color: ref.stockDataState === "ABSENT" || ref.centralAvailable === null ? C.inkFaint : ref.centralAvailable <= 0 ? C.red : C.amber,
+                                        color: ref.stockDataState === "ABSENT" || effectiveAvail(ref) === null ? C.inkFaint : effectiveAvail(ref)! <= 0 ? C.red : C.amber,
                                       }}>
-                                        {ref.stockDataState === "ABSENT" ? "\u2014" : ref.centralAvailable}
+                                        {ref.stockDataState === "ABSENT" || effectiveAvail(ref) === null ? "\u2014" : effectiveAvail(ref)}
                                       </div>
                                       <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
                                         <CommercialHealthBadge health={ref.commercialHealth} />
@@ -2257,7 +2285,7 @@ function AccessoryScarcityPanel({ ref_ }: { ref_: VendorSampleRef }) {
           <div style={{ fontFamily: T.mono, fontSize: T.sz.xs, color: C.ink }}>{ref_.subgrupoSag}</div>
         </div>
         <div>
-          <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint, textTransform: "uppercase" as const, letterSpacing: "0.05em" }}>Disponible B36+B37</div>
+          <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint, textTransform: "uppercase" as const, letterSpacing: "0.05em" }}>Disponible B24</div>
           <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: 700, color: accentColor }}>{ref_.availableB24 ?? "\u2014"}</div>
         </div>
         <div>
@@ -2973,9 +3001,9 @@ function IntelligencePanel({ vendor, commercialRefs, retiroRefs, coverageByLine,
       const count = commercialRefs.filter((r) =>
         r.line === lineKey &&
         r.stockDataState === "CERTIFIED" &&
-        r.centralAvailable !== null &&
-        r.centralAvailable >= range.min &&
-        r.centralAvailable <= range.max,
+        effectiveAvail(r) !== null &&
+        effectiveAvail(r)! >= range.min &&
+        effectiveAvail(r)! <= range.max,
       ).length;
       if (count > 0) {
         result.push({
@@ -2992,12 +3020,12 @@ function IntelligencePanel({ vendor, commercialRefs, retiroRefs, coverageByLine,
   // ── D. Calidad del muestrario (analytical only) ─────────────────────
   const quality = useMemo(() => {
     const retiroUrgente = retiroRefs.filter((r) =>
-      r.stockDataState === "CERTIFIED" && r.centralAvailable !== null && r.centralAvailable <= 0,
+      r.stockDataState === "CERTIFIED" && effectiveAvail(r) !== null && effectiveAvail(r)! <= 0,
     ).length;
     const nearRetiro = commercialRefs.filter((r) => {
       if (r.stockDataState !== "CERTIFIED") return false;
       const range = RISK_MARGIN[r.line];
-      return range != null && r.centralAvailable !== null && r.centralAvailable >= range.min && r.centralAvailable <= range.max;
+      return range != null && effectiveAvail(r) !== null && effectiveAvail(r)! >= range.min && effectiveAvail(r)! <= range.max;
     }).length;
     const sinClasificar = vendor.refs.filter((r) =>
       r.line === "OTRO" || r.subgrupoSag === "OTRO" || r.subgrupoSag === "SIN_SUBGRUPO" ||
@@ -3467,16 +3495,17 @@ function DepletedVault({ refs }: { refs: VendorSampleRef[] }) {
     for (const ref of refs) {
       byLine.set(ref.line, (byLine.get(ref.line) ?? 0) + 1);
     }
-    const zeroStock = refs.filter((r) => r.centralAvailable === null || r.centralAvailable <= 0).length;
-    const lowStock = refs.filter((r) => r.centralAvailable !== null && r.centralAvailable > 0).length;
+    const zeroStock = refs.filter((r) => effectiveAvail(r) === null || effectiveAvail(r)! <= 0).length;
+    const lowStock = refs.filter((r) => effectiveAvail(r) !== null && effectiveAvail(r)! > 0).length;
     return { byLine, zeroStock, lowStock, total: refs.length };
   }, [refs]);
 
   // Simple rotation rating based on available data
   const rotationRating = (ref: VendorSampleRef): { stars: number; label: string } => {
-    if (ref.centralAvailable === null || ref.centralAvailable <= 0) return { stars: 1, label: "Sin inventario" };
-    if (ref.centralAvailable <= ref.minimumRequired * 0.5) return { stars: 2, label: "Baja rotacion" };
-    if (ref.centralAvailable <= ref.minimumRequired) return { stars: 3, label: "Rotacion media" };
+    const ea = effectiveAvail(ref);
+    if (ea === null || ea <= 0) return { stars: 1, label: "Sin inventario" };
+    if (ea <= ref.minimumRequired * 0.5) return { stars: 2, label: "Baja rotacion" };
+    if (ea <= ref.minimumRequired) return { stars: 3, label: "Rotacion media" };
     return { stars: 4, label: "Alta rotacion" };
   };
 
@@ -3579,7 +3608,7 @@ function DepletedVault({ refs }: { refs: VendorSampleRef[] }) {
                 </div>
                 <span style={{ fontSize: 9, color: C.inkFaint }}>{ref.line}</span>
                 <span style={{ textAlign: "center", fontWeight: 700, color: C.red }}>
-                  {ref.centralAvailable === null ? "Sin verificar" : ref.centralAvailable <= 0 ? "\u2014" : ref.centralAvailable}
+                  {effectiveAvail(ref) === null ? "Sin verificar" : effectiveAvail(ref)! <= 0 ? "\u2014" : effectiveAvail(ref)}
                 </span>
                 <span style={{ textAlign: "center", color: C.inkFaint }}>
                   {ref.minimumRequired}
