@@ -62,6 +62,22 @@ export function generateReport(
   };
 }
 
+// ── CSV Safety ──────────────────────────────────────────────────────────────
+
+/**
+ * Neutralize CSV injection. Values starting with =, +, -, or @ are
+ * prefixed with a single quote so spreadsheet apps treat them as text.
+ * Numbers, dates, and fixed labels pass through unchanged in practice,
+ * but this is a defense-in-depth measure.
+ */
+function safeCsvValue(value: unknown): string {
+  const s = String(value ?? "—");
+  if (/^[=+\-@]/.test(s)) {
+    return `'${s}`;
+  }
+  return s;
+}
+
 // ── CSV Formatters ───────────────────────────────────────────────────────────
 
 function formatCsv(reportType: ReportType, data: unknown): string {
@@ -81,10 +97,10 @@ function formatCustomerSummaryCsv(data: unknown): string {
   const d = data as Record<string, unknown>;
   const rows = [
     "Metric,Value",
-    `Total Customers,${d.totalCustomers ?? "—"}`,
-    `Active Customers,${d.activeCustomers ?? "—"}`,
-    `Inactive Customers,${d.inactiveCustomers ?? "—"}`,
-    `As Of,${d.asOf ?? "—"}`,
+    `Total Customers,${safeCsvValue(d.totalCustomers)}`,
+    `Active Customers,${safeCsvValue(d.activeCustomers)}`,
+    `Inactive Customers,${safeCsvValue(d.inactiveCustomers)}`,
+    `As Of,${safeCsvValue(d.asOf)}`,
   ];
   return rows.join("\n") + "\n";
 }
@@ -93,11 +109,11 @@ function formatOrdersSummaryCsv(data: unknown): string {
   const d = data as Record<string, unknown>;
   const rows = [
     "Metric,Value",
-    `Total Orders Today,${d.totalOrdersToday ?? "—"}`,
-    `Synced,${d.synced ?? "—"}`,
-    `Pending SAG,${d.pendingSag ?? "—"}`,
-    `Conflicts,${d.conflicts ?? "—"}`,
-    `As Of,${d.asOf ?? "—"}`,
+    `Total Orders Today,${safeCsvValue(d.totalOrdersToday)}`,
+    `Synced,${safeCsvValue(d.synced)}`,
+    `Pending SAG,${safeCsvValue(d.pendingSag)}`,
+    `Conflicts,${safeCsvValue(d.conflicts)}`,
+    `As Of,${safeCsvValue(d.asOf)}`,
   ];
   return rows.join("\n") + "\n";
 }
@@ -106,12 +122,12 @@ function formatSalesPerformanceCsv(data: unknown): string {
   const d = data as Record<string, unknown>;
   const rows = [
     "Metric,Value",
-    `Total Orders,${d.totalOrders ?? "—"}`,
-    `Total Value,${d.totalValue ?? "—"}`,
-    `Average Ticket,${d.avgTicket ?? "—"}`,
-    `Total Sellers,${d.totalSellers ?? "—"}`,
-    `Total Customers,${d.totalCustomers ?? "—"}`,
-    `As Of,${d.asOf ?? "—"}`,
+    `Total Orders,${safeCsvValue(d.totalOrders)}`,
+    `Total Value,${safeCsvValue(d.totalValue)}`,
+    `Average Ticket,${safeCsvValue(d.avgTicket)}`,
+    `Total Sellers,${safeCsvValue(d.totalSellers)}`,
+    `Total Customers,${safeCsvValue(d.totalCustomers)}`,
+    `As Of,${safeCsvValue(d.asOf)}`,
   ];
   return rows.join("\n") + "\n";
 }

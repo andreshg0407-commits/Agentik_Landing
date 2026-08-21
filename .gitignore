@@ -76,3 +76,4 @@ scripts/_*
 
 # Generated export artifacts
 exports/
+.vercel

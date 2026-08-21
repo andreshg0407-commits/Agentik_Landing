@@ -4,7 +4,7 @@
  * Copilot Core — Security Tests
  * Sprint: COPILOT-CONVERSATIONAL-RUNTIME-01C
  *
- * 52 security tests covering:
+ * 55 security tests covering:
  * - Envelope & Authority (1-10)
  * - Scope & Seller (11-18)
  * - Gateway (19-28)
@@ -597,5 +597,58 @@ describe("R2 Delta", () => {
       expect(content).not.toContain("sales-rep-alerts");
       expect(content).not.toContain("production-alert-engine");
     }
+  });
+
+  test("SEC-53: CSV injection neutralized — values starting with =, +, -, @ are prefixed", () => {
+    // Generate a report with a negative number (starts with '-')
+    const data = {
+      totalCustomers: 100,
+      activeCustomers: 110,
+      inactiveCustomers: -10, // intentionally negative
+      asOf: "2026-08-21T00:00:00.000Z",
+    };
+    const report = generateReport("customer_summary", data, "csv", "org-test");
+    const lines = report.content.split("\n");
+
+    // Find the line with negative value
+    const negativeLine = lines.find((l: string) => l.includes("Inactive"));
+    expect(negativeLine).toBeDefined();
+    // The negative value should be prefixed with single quote: '-10
+    expect(negativeLine).toContain("'-10");
+
+    // Verify safe values are NOT prefixed
+    const totalLine = lines.find((l: string) => l.includes("Total Customers"));
+    expect(totalLine).toBeDefined();
+    expect(totalLine).toContain(",100");
+    expect(totalLine).not.toContain(",'100");
+  });
+
+  test("SEC-54: CSV injection — formula prefixes =, +, @ are neutralized", () => {
+    // Simulate data where values could start with dangerous prefixes
+    const data = {
+      totalCustomers: "=cmd|'/C calc'!A0",
+      activeCustomers: "+1+1",
+      inactiveCustomers: "@SUM(A1:A10)",
+      asOf: "2026-08-21T00:00:00.000Z",
+    };
+    const report = generateReport("customer_summary", data as unknown, "csv", "org-test");
+
+    // All dangerous prefixes must be neutralized with single quote
+    expect(report.content).toContain("'=cmd|'/C calc'!A0");
+    expect(report.content).toContain("'+1+1");
+    expect(report.content).toContain("'@SUM(A1:A10)");
+  });
+
+  test("SEC-55: zero user-controlled input reaches CSV cells", () => {
+    // Report generator source must not reference userMessage or any client input
+    const reportSrc = readFileContent(
+      path.resolve(__dirname, "../copilot-core-report-generator.ts"),
+    );
+    expect(reportSrc).not.toContain("userMessage");
+    expect(reportSrc).not.toContain("request.body");
+    expect(reportSrc).not.toContain("req.body");
+
+    // Verify safeCsvValue function exists
+    expect(reportSrc).toContain("safeCsvValue");
   });
 });
