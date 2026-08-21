@@ -118,8 +118,10 @@ export function ReferenceFolderDrawer({
   const [resolvedProductId,  setResolvedProductId]  = useState<string | null>(reference.productId);
   const [ensuring, setEnsuring] = useState(false);
   const [driveStatus, setDriveStatus] = useState<"unknown" | "connected" | "disconnected">("unknown");
-  // R4A Section E: Storage verification — block all writes until R2 is confirmed
-  const [storageStatus, setStorageStatus] = useState<"unknown" | "verified" | "unverified">("unknown");
+  // R1: 3-state storage verification — block until CANARY_VERIFIED
+  const [storageState, setStorageState] = useState<
+    "unknown" | "NOT_CONFIGURED" | "CONFIGURED_NOT_VERIFIED" | "CANARY_VERIFIED"
+  >("unknown");
 
   const worldColor = WORLD_ACCENT[reference.world] ?? C.inkLight;
 
@@ -162,29 +164,22 @@ export function ReferenceFolderDrawer({
       .catch(() => setDriveStatus("disconnected"));
   }, [orgSlug]);
 
-  // R4A Section E: Check R2 storage configuration on mount
-  // If R2 is not configured, block all upload actions.
-  // Full canary test requires SUPER_ADMIN — here we only check if R2 env vars exist.
+  // R1: Fetch 3-state storage status from dedicated endpoint
   useEffect(() => {
-    fetch(`/api/orgs/${orgSlug}/marketing-studio/storage-canary?enable=check`)
-      .then(r => {
-        // 400 = canary route exists but wrong param (R2 configured)
-        // 403 = production or auth blocked (R2 configured)
-        // 404 = route doesn't exist (shouldn't happen)
-        if (r.status === 400 || r.status === 403) {
-          setStorageStatus("verified");
+    fetch(`/api/orgs/${orgSlug}/marketing-studio/storage-status`)
+      .then(r => r.ok ? r.json() : null)
+      .then((data: { state: string; uploadsAllowed: boolean } | null) => {
+        if (data) {
+          setStorageState(data.state as typeof storageState);
         } else {
-          return r.json().then(data => {
-            setStorageStatus(data?.canary === "BLOCKED" && data?.reason?.includes("not configured")
-              ? "unverified" : "verified");
-          });
+          setStorageState("NOT_CONFIGURED");
         }
       })
-      .catch(() => setStorageStatus("unverified"));
+      .catch(() => setStorageState("NOT_CONFIGURED"));
   }, [orgSlug]);
 
-  // R4A Section E: Upload blocked if storage unverified
-  const uploadsBlocked = storageStatus === "unverified";
+  // Uploads blocked unless CANARY_VERIFIED
+  const uploadsBlocked = storageState !== "CANARY_VERIFIED";
 
   // Upload click: if productId exists, open modal directly.
   // If not, show confirmation — NO write until user confirms.
@@ -198,7 +193,7 @@ export function ReferenceFolderDrawer({
     }
   }, [resolvedProductId, uploadsBlocked]);
 
-  // User confirmed — NOW create ProductEntity, then open modal.
+  // User confirmed — resolve ProductEntity (find-only, never create).
   const handleUploadConfirm = useCallback(async () => {
     setEnsuring(true);
     try {
@@ -213,7 +208,20 @@ export function ReferenceFolderDrawer({
         setShowUploadConfirm(false);
         setShowUploadModal(true);
       } else {
-        setError("No se pudo preparar la referencia para carga.");
+        // Surface server-side gate errors to user
+        const errorMsg =
+          data.error === "STORAGE_NOT_CONFIGURED"
+            ? "Almacenamiento no configurado."
+          : data.error === "STORAGE_CONFIGURED_NOT_VERIFIED"
+            ? "Almacenamiento no verificado — canary pendiente."
+          : data.error === "PRODUCT_IDENTITY_UNIQUENESS_REQUIRED"
+            ? "Registro de producto no disponible — migración pendiente."
+          : data.error === "REF_NOT_ACTIVE_IN_INVENTORY"
+            ? "Referencia sin stock activo — carga no permitida."
+          : data.error === "REF_NOT_IN_INVENTORY"
+            ? "Referencia no existe en el inventario."
+          : "No se pudo preparar la referencia para carga.";
+        setError(errorMsg);
         setShowUploadConfirm(false);
       }
     } catch {
@@ -389,7 +397,7 @@ export function ReferenceFolderDrawer({
                 onUploadClick={handleUploadClick}
                 ensuring={ensuring}
                 driveStatus={driveStatus}
-                storageStatus={storageStatus}
+                storageState={storageState}
                 orgSlug={orgSlug}
                 refCode={reference.refCode}
               />
@@ -447,7 +455,7 @@ export function ReferenceFolderDrawer({
                 onUploadClick={handleUploadClick}
                 ensuring={ensuring}
                 driveStatus={driveStatus}
-                storageStatus={storageStatus}
+                storageState={storageState}
                 orgSlug={orgSlug}
                 refCode={reference.refCode}
               />
@@ -529,16 +537,16 @@ export function ReferenceFolderDrawer({
 // -- UploadActionTray --
 
 function UploadActionTray({
-  onUploadClick, ensuring, driveStatus, storageStatus, orgSlug, refCode,
+  onUploadClick, ensuring, driveStatus, storageState, orgSlug, refCode,
 }: {
   onUploadClick:  () => void;
   ensuring:       boolean;
   driveStatus:    "unknown" | "connected" | "disconnected";
-  storageStatus:  "unknown" | "verified" | "unverified";
+  storageState:   "unknown" | "NOT_CONFIGURED" | "CONFIGURED_NOT_VERIFIED" | "CANARY_VERIFIED";
   orgSlug:        string;
   refCode:        string;
 }) {
-  const storageBlocked = storageStatus === "unverified";
+  const storageBlocked = storageState !== "CANARY_VERIFIED";
   const btnBase: React.CSSProperties = {
     display:      "flex",
     alignItems:   "center",
@@ -557,7 +565,7 @@ function UploadActionTray({
 
   return (
     <div style={{ display: "flex", flexDirection: "column" as const, gap: S[2], width: "100%", maxWidth: 280 }}>
-      {/* Storage verification warning */}
+      {/* Storage verification warning — 3-state */}
       {storageBlocked && (
         <div style={{
           fontFamily:   T.mono,
@@ -568,7 +576,11 @@ function UploadActionTray({
           borderRadius: R.sm,
           border:       `1px solid ${C.amberBorder}`,
         }}>
-          STORAGE_VERIFICATION_REQUIRED — R2 no configurado. Carga bloqueada.
+          {storageState === "NOT_CONFIGURED"
+            ? "STORAGE_NOT_CONFIGURED — R2 no configurado. Carga bloqueada."
+            : storageState === "CONFIGURED_NOT_VERIFIED"
+            ? "STORAGE_CONFIGURED_NOT_VERIFIED — R2 presente pero canary no ejecutado. Carga bloqueada."
+            : "Verificando almacenamiento..."}
         </div>
       )}
 

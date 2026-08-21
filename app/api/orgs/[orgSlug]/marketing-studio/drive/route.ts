@@ -23,6 +23,16 @@
  * - Tokens are fetched server-side — NEVER returned to the client.
  * - No Drive account info (email, ID) is returned for status check.
  * - Tenant-isolated: organizationId from server session scopes all queries.
+ *
+ * TENANT ROOT ENFORCEMENT (R1 — Section D):
+ *   Drive isolation is OAuth-based by design. No persistent root folder
+ *   is stored per tenant. The tenant boundary is the OAuth token itself:
+ *   - getDriveConnection(organizationId) returns ONLY this org's connection.
+ *   - organizationId comes from requireOrgAccess (server session), never client.
+ *   - The OAuth token can only access folders the org's Google account has access to.
+ *   - Cross-tenant folder access is impossible: org A's token cannot reach org B's folders.
+ *   - If folderId is inaccessible, Drive API returns DRIVE_PERMISSION_DENIED / DRIVE_FOLDER_NOT_FOUND.
+ *   - No IntegrationConnection.rootFolderId field exists — this is intentional (stateless design).
  */
 
 import { NextRequest, NextResponse }      from "next/server";
