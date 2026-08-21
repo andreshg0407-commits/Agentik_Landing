@@ -29,12 +29,15 @@ const setRootRouteSrc     = readSrc("app/api/orgs/[orgSlug]/marketing-studio/dri
 // ── T01: Multiple pages accumulate ────────────────────────────────────────
 
 describe("04A-C-B: Paginated scan", () => {
-  test("T01: Client accumulates files across multiple pages via scan-page", () => {
+  test("T01: Client accumulates server-analyzed files across multiple pages via scan-page", () => {
     // Client BFS loop uses scan-page action
     expect(bulkImportDrawerSrc).toContain('"scan-page"');
-    // Accumulates files
+    // 04A-D: accumulates server-analyzed DryRunFileDetail[] (not raw DriveScannedFile[])
     expect(bulkImportDrawerSrc).toContain("accumulatedFiles");
+    expect(bulkImportDrawerSrc).toContain("DryRunFileDetail[]");
     expect(bulkImportDrawerSrc).toContain("seenFileIds");
+    // 04A-D: reads page.analyzedFiles (server-issued, not raw scannedFiles)
+    expect(bulkImportDrawerSrc).toContain("page.analyzedFiles");
     // Processes nextPageToken to continue within folder
     expect(bulkImportDrawerSrc).toContain("page.nextPageToken");
     // Enqueues child folders
@@ -76,10 +79,10 @@ describe("04A-C-B: Recursive scanning", () => {
 
 describe("04A-C-E: Idempotency across pages", () => {
   test("T04: Deduplication by driveFileId prevents double-counting", () => {
-    // Client-side dedup
+    // Client-side dedup by driveFileId (04A-D: DryRunFileDetail uses driveFileId)
     expect(bulkImportDrawerSrc).toContain("seenFileIds");
-    expect(bulkImportDrawerSrc).toContain("seenFileIds.has(f.id)");
-    // Server-side dedup in analyze
+    expect(bulkImportDrawerSrc).toContain("seenFileIds.has(f.driveFileId)");
+    // Server-side dedup in legacy POST analyze (04A-D: kept for backward compat)
     expect(driveRouteSrc).toContain("seenIds");
     expect(driveRouteSrc).toContain("dedupedFiles");
   });
@@ -219,8 +222,8 @@ describe("04A-C-I: Prior tests preserved", () => {
 
 describe("04A-C-F: Set-root security audit", () => {
   test("T14: set-root route enforces admin role, server-side orgId, validates folder", () => {
-    // Admin only
-    expect(setRootRouteSrc).toContain("hasMinRole");
+    // 04A-D-R1: three-condition gate (platformRole + membership.role)
+    expect(setRootRouteSrc).toContain("isSetRootAuthorized");
     expect(setRootRouteSrc).toContain("AGENTIK_ADMIN");
     expect(setRootRouteSrc).toContain("Admin access required");
     // organizationId from server session

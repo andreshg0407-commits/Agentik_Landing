@@ -21,6 +21,11 @@
  *   HIDDEN_FILE              — .DS_Store, Thumbs.db, etc.
  *   OUTSIDE_TENANT_ROOT      — file's folder is not a descendant of tenant root
  *   PERMISSION_DENIED        — Drive API returned 403 for this file's folder
+ *   STALE_DRIVE_FILE         — CONTRACT_READY_IMPORT_TIME_DETECTION_PENDING
+ *                              File may have changed (renamed/moved/deleted) between scan and apply.
+ *                              Detection implemented at import time via server re-fetch immediately
+ *                              before R2 write. Future apply phase MUST re-scan/re-validate Drive
+ *                              and catalog server-side — never trust browser-accumulated rows.
  */
 
 export type DryRunStatus =
@@ -37,7 +42,8 @@ export type DryRunStatus =
   | "GOOGLE_NATIVE_SKIP"
   | "HIDDEN_FILE"
   | "OUTSIDE_TENANT_ROOT"
-  | "PERMISSION_DENIED";
+  | "PERMISSION_DENIED"
+  | "STALE_DRIVE_FILE";
 
 /** Asset type classification from MIME */
 export type AssetTypeClassification =
@@ -135,11 +141,11 @@ export interface DryRunResult {
   organizationId: string;
 }
 
-// ── Scan page result (04A-C — paginated scan) ──────────────────────────────
+// ── Scan page result (04A-D — server-analyzed per page) ─────────────────────
 
 export interface ScanPageResult {
-  /** Files found in this page */
-  scannedFiles:     import("@/lib/marketing-studio/drive/drive-api-client").DriveScannedFile[];
+  /** Server-analyzed files — each file pre-classified with status, ref, role (04A-D) */
+  analyzedFiles:    DryRunFileDetail[];
   /** Total folders processed so far by the server in this page request */
   scannedFolders:   number;
   /** The folder being scanned */

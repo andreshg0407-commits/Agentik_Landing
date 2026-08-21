@@ -169,10 +169,12 @@ describe("04A-B-F: Import CTA disabled", () => {
 // ── T12: Zero write routes ────────────────────────────────────────────────
 
 describe("04A-B-F: Zero write enforcement", () => {
-  test("T12: Drawer uses only GET for scanning and POST analyze (zero-write analysis)", () => {
-    // POST is used ONLY for analyze action (server-side dry-run, zero writes)
-    expect(bulkImportDrawerSrc).toContain('"analyze"');
-    // No PUT/PATCH/DELETE
+  test("T12: Drawer uses GET-only for scanning — no POST/PUT/PATCH/DELETE (04A-D)", () => {
+    // 04A-D: server-side analysis per page — drawer no longer POSTs raw files
+    // All scanning is via GET ?action=scan-page — zero writes
+    expect(bulkImportDrawerSrc).toContain("scan-page");
+    // No POST/PUT/PATCH/DELETE methods
+    expect(bulkImportDrawerSrc).not.toContain('method: "POST"');
     expect(bulkImportDrawerSrc).not.toContain("method: \"PUT\"");
     expect(bulkImportDrawerSrc).not.toContain("method: \"PATCH\"");
     expect(bulkImportDrawerSrc).not.toContain("method: \"DELETE\"");

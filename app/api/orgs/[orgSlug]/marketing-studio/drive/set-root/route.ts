@@ -13,15 +13,17 @@
  *   Returns the current tenant root configuration.
  *
  * SECURITY:
- * - Admin-only (hasMinRole AGENTIK_ADMIN)
- * - organizationId from server session (never from client)
+ * - Admin gate: platformRole SUPER_ADMIN/AGENTIK_ADMIN OR membership.role ORG_ADMIN
+ * - Explicitly denied: MANAGER, OPERATOR, VIEWER, BILLING, null, unknown
+ * - organizationId from requireOrgAccess() server session (never from client)
+ * - No role, platformRole, organizationId, or orgSlug accepted from body/query
  * - folderId validated via Drive API before storage
  * - connectionId resolved server-side from org's Drive connection
  */
 
 import { NextRequest, NextResponse }      from "next/server";
 import { requireOrgAccess }               from "@/lib/auth/org-access";
-import { canAccessMarketingStudio, hasMinRole } from "@/lib/auth/module-access";
+import { canAccessMarketingStudio }              from "@/lib/auth/module-access";
 import {
   getDriveConnection,
   getDriveAccessToken,
@@ -75,17 +77,28 @@ export async function POST(
   const { orgSlug } = await params;
 
   try {
-    const { membership, organization } = await requireOrgAccess(orgSlug);
+    const { membership, organization, platformRole } = await requireOrgAccess(orgSlug);
     const organizationId = organization.id;
 
     if (!canAccessMarketingStudio(membership.role)) {
       return NextResponse.json({ error: "ACCESS_DENIED" }, { status: 403 });
     }
 
-    // Admin-only gate
-    if (!hasMinRole(membership.role, "AGENTIK_ADMIN")) {
+    // ── Admin gate (04A-D-R1) ─────────────────────────────────────────────
+    // Authorize ONLY when:
+    //   platformRole === "SUPER_ADMIN"
+    //   OR platformRole === "AGENTIK_ADMIN"
+    //   OR membership.role === "ORG_ADMIN"
+    // Explicitly denied: MANAGER, OPERATOR, VIEWER, BILLING, null, unknown.
+    // organizationId comes from requireOrgAccess() — never from body/query.
+    const isSetRootAuthorized =
+      platformRole === "SUPER_ADMIN" ||
+      platformRole === "AGENTIK_ADMIN" ||
+      membership.role === "ORG_ADMIN";
+
+    if (!isSetRootAuthorized) {
       return NextResponse.json(
-        { error: "Admin access required to set Drive root folder" },
+        { error: "SET_ROOT_DENIED", message: "Admin access required to set Drive root folder" },
         { status: 403 },
       );
     }

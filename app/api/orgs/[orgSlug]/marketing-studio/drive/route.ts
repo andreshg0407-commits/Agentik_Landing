@@ -1,7 +1,7 @@
 /**
  * app/api/orgs/[orgSlug]/marketing-studio/drive/route.ts
  *
- * MARKETING-DRIVE-BULK-ASSET-INGESTION-04A/04A-C — Drive proxy
+ * MARKETING-DRIVE-BULK-ASSET-INGESTION-04A/04A-D — Drive proxy
  *
  * GET ?action=status
  *   Returns { connected, tenantRootConfigured, tenantRootFolderName }
@@ -13,13 +13,16 @@
  *   ZERO WRITES. Full recursive scan + analysis in one call (legacy).
  *
  * GET ?action=scan-page&folderId=FOLDER_ID&pageToken=TOKEN&folderPath=PATH
- *   04A-C: Single-page scan of ONE folder. Returns files, childFolderIds,
- *   nextPageToken. Client manages BFS queue. Server validates ancestry
- *   on EVERY call. Returns ScanPageResult with completeness fields.
+ *   04A-D: Single-page scan of ONE folder. Server normalizes, analyzes,
+ *   and classifies files against the product catalog PER PAGE.
+ *   Returns DryRunFileDetail[] (not raw DriveScannedFile[]).
+ *   Client accumulates server-issued analyzed rows only.
+ *   Server validates ancestry on EVERY call.
  *
  * POST { action: "analyze", files: DriveScannedFile[], completeness: {...} }
- *   04A-C: Runs dry-run analysis on pre-scanned files. Server builds
- *   product maps and runs the engine. ZERO WRITES.
+ *   04A-C LEGACY: Runs dry-run analysis on pre-scanned files.
+ *   04A-D: DEPRECATED — analysis now happens server-side per scan-page.
+ *   Kept for backward compatibility. ZERO WRITES.
  *
  * SECURITY:
  * - requireOrgAccess: verifies auth + org membership.
@@ -56,6 +59,9 @@ import { mimeFromExtension }              from "@/lib/marketing-studio/bulk-impo
 export const runtime = "nodejs";
 
 type RouteContext = { params: Promise<{ orgSlug: string }> };
+
+/** Cache-Control for all Drive proxy responses — prevent stale tenant data */
+const NO_CACHE_HEADERS = { "Cache-Control": "private, no-store" };
 
 // ── Shared gate: resolve connection + tenant root + access token ────────────
 
@@ -104,7 +110,7 @@ export async function GET(
         connected:             conn !== null,
         tenantRootConfigured:  root !== null,
         tenantRootFolderName:  root?.folderName ?? null,
-      });
+      }, { headers: NO_CACHE_HEADERS });
     }
 
     // ── Scan-page (04A-C) ───────────────────────────────────────────────────
@@ -140,7 +146,7 @@ export async function GET(
         const msg = err instanceof Error ? err.message : "Error";
         errors.push(`${folderPath || "(root)"}: ${msg}`);
         const result: ScanPageResult = {
-          scannedFiles:    [],
+          analyzedFiles:   [],
           scannedFolders:  0,
           currentFolderId: folderId,
           nextPageToken:   null,
@@ -150,10 +156,10 @@ export async function GET(
           errors,
           pageSize:        0,
         };
-        return NextResponse.json(result);
+        return NextResponse.json(result, { headers: NO_CACHE_HEADERS });
       }
 
-      // Convert DriveFile[] to DriveScannedFile[]
+      // Convert DriveFile[] to DriveScannedFile[] for engine input
       const scannedFiles: DriveScannedFile[] = [];
       for (const item of pageResult.files) {
         scannedFiles.push({
@@ -167,6 +173,22 @@ export async function GET(
         });
       }
 
+      // 04A-D: Server-side analysis per page — client receives pre-analyzed rows
+      const productMaps = await buildProductMapsForDryRun(organizationId);
+      const importedDriveIds = await getImportedDriveFileIds(organizationId);
+      const activeProductIds = new Set(productMaps.skuToProduct.values());
+
+      const pageAnalysis = runDryRun(scannedFiles, 1, errors, {
+        organizationId,
+        tenantRootId:     tenantRoot.folderId,
+        tenantRootName:   tenantRoot.folderName,
+        skuToProduct:     productMaps.skuToProduct,
+        skuCounts:        productMaps.skuCounts,
+        productsWithHero: productMaps.productsWithHero,
+        importedDriveIds,
+        activeProductIds,
+      });
+
       // Child folders with paths
       const childFolderIds = pageResult.childFolders.map(cf => ({
         id:   cf.id,
@@ -179,7 +201,7 @@ export async function GET(
       const folderExhausted = pageResult.nextPageToken === null;
 
       const result: ScanPageResult = {
-        scannedFiles,
+        analyzedFiles:   pageAnalysis.files,
         scannedFolders:  1,
         currentFolderId: folderId,
         nextPageToken:   pageResult.nextPageToken,
@@ -190,7 +212,7 @@ export async function GET(
         pageSize:        pageResult.pageSize,
       };
 
-      return NextResponse.json(result);
+      return NextResponse.json(result, { headers: NO_CACHE_HEADERS });
     }
 
     // ── Common gate for structure/dry-run ────────────────────────────────────

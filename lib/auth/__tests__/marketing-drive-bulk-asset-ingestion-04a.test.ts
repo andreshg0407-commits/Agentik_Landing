@@ -93,8 +93,9 @@ describe("04A-C: Tenant Root Storage", () => {
     expect(tenantRootSrc).toContain("upsert");
   });
 
-  test("T04: set-root route requires admin role", () => {
-    expect(setRootRouteSrc).toContain("hasMinRole");
+  test("T04: set-root route requires admin role (04A-D-R1: platformRole + membership.role)", () => {
+    // 04A-D-R1: three-condition gate replaces hasMinRole
+    expect(setRootRouteSrc).toContain("isSetRootAuthorized");
     expect(setRootRouteSrc).toContain("AGENTIK_ADMIN");
     expect(setRootRouteSrc).toContain("Admin access required");
   });

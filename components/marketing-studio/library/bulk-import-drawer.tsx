@@ -1,19 +1,23 @@
 /**
  * components/marketing-studio/library/bulk-import-drawer.tsx
  *
- * MARKETING-DRIVE-BULK-ASSET-INGESTION-04A-B/04A-C — Bulk Import Drawer (Dry-Run Only)
+ * MARKETING-DRIVE-BULK-ASSET-INGESTION-04A-D — Bulk Import Drawer (Dry-Run Only)
  *
- * Full-screen drawer with paginated BFS scanning:
+ * Full-screen drawer with paginated BFS scanning + server-side analysis:
  *   1. Verify Drive connection + root
  *   2. Input folder URL
- *   3. Paginated scan (client BFS queue, server validates ancestry per page)
- *   4. Analyze (server runs dry-run engine on accumulated files)
+ *   3. Paginated scan — each page returns server-analyzed DryRunFileDetail[]
+ *   4. Client accumulates server-issued analyzed rows (no POST analyze)
  *   5. Results: KPIs + filterable table + CSV/JSON download
+ *
+ * 04A-D: Server is sole authority for file analysis. Client NEVER sends raw
+ * file metadata for analysis. Each scan-page response includes pre-classified
+ * DryRunFileDetail[] with status, ref extraction, role, and match results.
  *
  * ZERO WRITES. Import CTA permanently disabled.
  * assetIngestionAllowed=false throughout.
  *
- * 04A-C completeness contract:
+ * 04A-C completeness contract (preserved):
  *   complete=true ONLY when all pages consumed AND all child folders
  *   processed AND folder queue empty AND no errors.
  *   Truncated scans are NEVER shown as success.
@@ -26,13 +30,13 @@ import { C, T, S, R, E }   from "@/lib/ui/tokens";
 import { MS_CTA }           from "@/lib/marketing-studio/ms-design-system";
 import type {
   DryRunResult,
+  DryRunSummary,
   DryRunFileDetail,
   DryRunStatus,
   AssetTypeClassification,
   ScanPageResult,
   DryRunCompleteness,
 } from "@/lib/marketing-studio/bulk-import/drive-dry-run-types";
-import type { DriveScannedFile } from "@/lib/marketing-studio/drive/drive-api-client";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -82,6 +86,7 @@ const STATUS_LABELS: Record<DryRunStatus, { label: string; color: string }> = {
   HIDDEN_FILE:        { label: "Archivo oculto",      color: C.inkFaint },
   OUTSIDE_TENANT_ROOT:{ label: "Fuera del root",      color: C.red   },
   PERMISSION_DENIED:  { label: "Sin permisos",        color: C.red   },
+  STALE_DRIVE_FILE:   { label: "Pendiente revalidar",  color: C.amber },
 };
 
 const ASSET_TYPE_LABELS: Record<AssetTypeClassification, string> = {
@@ -150,7 +155,7 @@ export function BulkImportDrawer({
   // Auto-check on mount
   useState(() => { checkDriveStatus(); });
 
-  // ── Paginated BFS scan (04A-C) ──
+  // ── Paginated BFS scan with server-side analysis (04A-D) ──
   const runPaginatedScan = useCallback(async () => {
     if (!folderUrl.trim()) return;
     cancelledRef.current = false;
@@ -162,7 +167,8 @@ export function BulkImportDrawer({
     setScanCurrentFolder("(root)");
     setScanErrors([]);
 
-    const accumulatedFiles: DriveScannedFile[] = [];
+    // 04A-D: accumulate server-analyzed DryRunFileDetail[] — client never sends raw metadata
+    const accumulatedFiles: DryRunFileDetail[] = [];
     const seenFileIds = new Set<string>();
     const allErrors: string[] = [];
     let totalFoldersProcessed = 0;
@@ -184,7 +190,7 @@ export function BulkImportDrawer({
         const current = queue[0];
         setScanCurrentFolder(current.path || current.name);
 
-        // Fetch one page
+        // Fetch one page — server analyzes files and returns DryRunFileDetail[]
         const params = new URLSearchParams({
           action:     "scan-page",
           folderId:   current.id,
@@ -217,10 +223,10 @@ export function BulkImportDrawer({
         const page: ScanPageResult = await res.json();
         setScanPagesDone(prev => prev + 1);
 
-        // Accumulate files with deduplication
-        for (const f of page.scannedFiles) {
-          if (!seenFileIds.has(f.id)) {
-            seenFileIds.add(f.id);
+        // 04A-D: accumulate server-analyzed files with deduplication by driveFileId
+        for (const f of page.analyzedFiles) {
+          if (!seenFileIds.has(f.driveFileId)) {
+            seenFileIds.add(f.driveFileId);
             accumulatedFiles.push(f);
           }
         }
@@ -263,49 +269,37 @@ export function BulkImportDrawer({
 
     const complete = !truncated && queue.length === 0 && allErrors.length === 0;
 
-    // ── Step 4: Analyze accumulated files ──
+    // 04A-D: Build result directly from server-issued analyzed rows — no POST analyze
     if (accumulatedFiles.length === 0 && complete) {
       setErrorMsg("No se encontraron archivos en la carpeta seleccionada.");
       setStep("error");
       return;
     }
 
-    setStep("analyzing");
+    const completeness: DryRunCompleteness = {
+      complete,
+      truncated,
+      scannedFiles:   accumulatedFiles.length,
+      scannedFolders: totalFoldersProcessed,
+      errors:         allErrors,
+    };
 
-    try {
-      const completeness: DryRunCompleteness = {
-        complete,
-        truncated,
-        scannedFiles:   accumulatedFiles.length,
-        scannedFolders: totalFoldersProcessed,
-        errors:         allErrors,
-      };
+    const summary = buildClientSummary(accumulatedFiles, totalFoldersProcessed, allErrors);
 
-      const analyzeRes = await fetch(`/api/orgs/${orgSlug}/marketing-studio/drive`, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({
-          action: "analyze",
-          files:  accumulatedFiles,
-          completeness,
-        }),
-      });
+    const dryRunResultLocal: DryRunResult & { completeness?: DryRunCompleteness } = {
+      zeroWrites:     true,
+      tenantRootId:   "server-scoped",
+      tenantRootName: driveStatus?.tenantRootFolderName ?? "—",
+      summary,
+      files:          accumulatedFiles,
+      analyzedAt:     new Date().toISOString(),
+      organizationId,
+      completeness,
+    };
 
-      if (!analyzeRes.ok) {
-        const body = await analyzeRes.json().catch(() => ({ error: "Error" }));
-        setErrorMsg(body.error ?? `Error ${analyzeRes.status}`);
-        setStep("error");
-        return;
-      }
-
-      const result = await analyzeRes.json();
-      setDryRunResult(result);
-      setStep("results");
-    } catch {
-      setErrorMsg("Error al analizar archivos escaneados");
-      setStep("error");
-    }
-  }, [orgSlug, folderUrl]);
+    setDryRunResult(dryRunResultLocal);
+    setStep("results");
+  }, [orgSlug, folderUrl, organizationId, driveStatus]);
 
   // ── Cancel scan ──
   const cancelScan = useCallback(() => {
@@ -408,7 +402,7 @@ export function BulkImportDrawer({
             <div style={{
               fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginTop: 2,
             }}>
-              04A-C · Paginated scan · Dry-run only · Zero writes
+              04A-D · Server-analyzed per page · Dry-run only · Zero writes
             </div>
           </div>
           <button
@@ -492,8 +486,8 @@ export function BulkImportDrawer({
                 <div style={{
                   fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint, marginTop: S[2],
                 }}>
-                  Escaneo paginado recursivo. Sin límite fijo — recorre todas las páginas y subcarpetas.
-                  Cada página valida ascendencia del folder contra el tenant root. Zero writes.
+                  Escaneo paginado recursivo con análisis server-side por página. Cada página valida
+                  ascendencia, normaliza archivos, y clasifica contra el catálogo. Zero writes.
                 </div>
               </div>
             </div>
@@ -551,10 +545,10 @@ export function BulkImportDrawer({
             </div>
           )}
 
-          {/* ── Step: Analyzing ── */}
+          {/* ── Step: Analyzing (04A-D: kept for transition display only) ── */}
           {step === "analyzing" && (
-            <StepMessage icon="⟳" title="Analizando archivos escaneados..."
-              detail={`${scanFilesDone} archivos de ${scanFoldersDone} carpetas. Matching contra catálogo de productos.`} />
+            <StepMessage icon="⟳" title="Consolidando resultados..."
+              detail={`${scanFilesDone} archivos analizados de ${scanFoldersDone} carpetas. Análisis server-side completo.`} />
           )}
 
           {/* ── Step: Results ── */}
@@ -867,6 +861,48 @@ function KpiBox({ label, value, color }: { label: string; value: number; color: 
       <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkFaint, fontWeight: 600 }}>{label}</div>
     </div>
   );
+}
+
+// ── Client-side summary builder (04A-D) ─────────────────────────────────────
+
+/** Builds DryRunSummary from server-issued DryRunFileDetail[]. Pure counting. */
+function buildClientSummary(
+  files:        DryRunFileDetail[],
+  totalFolders: number,
+  errors:       string[],
+): DryRunSummary {
+  const statusBreakdown = {} as Record<DryRunStatus, number>;
+  const assetTypeBreakdown = {} as Record<AssetTypeClassification, number>;
+  const matchedRefs = new Set<string>();
+  const unmatchedRefs = new Set<string>();
+  let readyToImport = 0, skipped = 0, rejected = 0;
+
+  for (const f of files) {
+    statusBreakdown[f.status] = (statusBreakdown[f.status] ?? 0) + 1;
+    assetTypeBreakdown[f.assetType] = (assetTypeBreakdown[f.assetType] ?? 0) + 1;
+    switch (f.action) {
+      case "IMPORT": readyToImport++; break;
+      case "SKIP":   skipped++;       break;
+      case "REJECT": rejected++;      break;
+    }
+    if (f.extractedRef) {
+      if (f.matchedProductId) matchedRefs.add(f.extractedRef);
+      else unmatchedRefs.add(f.extractedRef);
+    }
+  }
+
+  return {
+    totalScanned:       files.length,
+    readyToImport,
+    skipped,
+    rejected,
+    statusBreakdown,
+    assetTypeBreakdown,
+    uniqueRefsMatched:   matchedRefs.size,
+    uniqueRefsUnmatched: unmatchedRefs.size,
+    totalFolders,
+    permissionErrors:    errors,
+  };
 }
 
 // ── Shared styles ────────────────────────────────────────────────────────────
