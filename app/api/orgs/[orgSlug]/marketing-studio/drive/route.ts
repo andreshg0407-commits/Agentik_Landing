@@ -1,50 +1,47 @@
 /**
  * app/api/orgs/[orgSlug]/marketing-studio/drive/route.ts
  *
- * MARKETING-STUDIO-DRIVE-IMPORT-01 / R4A — Drive proxy: status + structure + dry-run
+ * MARKETING-DRIVE-BULK-ASSET-INGESTION-04A — Drive proxy: status + structure + dry-run
  *
  * GET ?action=status
- *   Returns { connected: boolean }
- *   Does NOT expose any token or account info.
+ *   Returns { connected: boolean, tenantRootConfigured: boolean }
  *
  * GET ?action=structure&folderId=FOLDER_ID_OR_URL
  *   Reads the Drive folder structure recursively.
+ *   Requires tenant root. Validates folder is descendant of root.
  *   Returns { structure, folderName, ignoredCount, permissionErrors }
  *
  * GET ?action=dry-run&folderId=FOLDER_ID_OR_URL
- *   ZERO WRITES. Reads Drive folder, matches files against tenant inventory.
- *   Returns per-file status: MATCH | NO_INVENTORY_REF | AMBIGUOUS_REF |
- *   DUPLICATE | INVALID_MIME | PERMISSION_ERROR | UNKNOWN
- *   Includes zeroWrites:true assertion in response.
+ *   ZERO WRITES. Scans Drive folder, matches files against tenant catalog.
+ *   Returns full DryRunResult with 14 status codes per file.
+ *   Requires tenant root. Validates folder ancestry.
  *
  * SECURITY:
  * - requireOrgAccess: verifies auth + org membership.
  * - canAccessMarketingStudio: verifies module access.
  * - Tokens are fetched server-side — NEVER returned to the client.
- * - No Drive account info (email, ID) is returned for status check.
  * - Tenant-isolated: organizationId from server session scopes all queries.
- *
- * TENANT ROOT ENFORCEMENT (R1 — Section D):
- *   Drive isolation is OAuth-based by design. No persistent root folder
- *   is stored per tenant. The tenant boundary is the OAuth token itself:
- *   - getDriveConnection(organizationId) returns ONLY this org's connection.
- *   - organizationId comes from requireOrgAccess (server session), never client.
- *   - The OAuth token can only access folders the org's Google account has access to.
- *   - Cross-tenant folder access is impossible: org A's token cannot reach org B's folders.
- *   - If folderId is inaccessible, Drive API returns DRIVE_PERMISSION_DENIED / DRIVE_FOLDER_NOT_FOUND.
- *   - No IntegrationConnection.rootFolderId field exists — this is intentional (stateless design).
+ * - Tenant root: folderId must be descendant of configured root (ancestry walk).
+ * - Fail closed: if ancestry cannot be verified, request is rejected.
  */
 
 import { NextRequest, NextResponse }      from "next/server";
 import { requireOrgAccess }               from "@/lib/auth/org-access";
 import { canAccessMarketingStudio }       from "@/lib/auth/module-access";
-import { prisma }                         from "@/lib/prisma";
 import {
   getDriveConnection,
   getDriveAccessToken,
   buildDriveStructure,
   parseDriveFolderUrl,
+  isDescendantOfRoot,
+  scanDriveFolder,
 }                                         from "@/lib/marketing-studio/drive/drive-api-client";
+import { getTenantDriveRoot }             from "@/lib/marketing-studio/drive/drive-tenant-root";
+import { runDryRun }                      from "@/lib/marketing-studio/bulk-import/drive-dry-run-engine";
+import {
+  buildProductMapsForDryRun,
+  getImportedDriveFileIds,
+}                                         from "@/lib/marketing-studio/products/product-asset-map-service";
 
 export const runtime = "nodejs";
 
@@ -69,77 +66,16 @@ export async function GET(
     // ── Status ────────────────────────────────────────────────────────────────
     if (action === "status") {
       const conn = await getDriveConnection(organizationId);
-      return NextResponse.json({ connected: conn !== null });
-    }
-
-    // ── GATE: Tenant root not certified ────────────────────────────────────
-    // DRIVE_TENANT_ROOT_NOT_CERTIFIED — No tenantRootFolderId exists in
-    // schema, vault, or IntegrationConnection. OAuth token provides
-    // account-level isolation but NOT folder-level root enforcement.
-    // Until a tenantRootFolderId is stored and validated:
-    //   - structure and dry-run are blocked
-    //   - status check remains available (connection awareness)
-    // Requirements for certification (Section D):
-    //   1. Store tenantRootFolderId per org (vault or schema)
-    //   2. Validate folderId as descendant of root
-    //   3. Reject folders outside root
-    //   4. Fail closed if ancestry cannot be verified
-    if (action === "structure" || action === "dry-run") {
-      return NextResponse.json(
-        {
-          error:   "DRIVE_TENANT_ROOT_NOT_CERTIFIED",
-          message: "Drive import blocked — tenant root folder not registered. " +
-                   "OAuth token isolation alone does not enforce folder-level boundaries.",
-        },
-        { status: 503 },
-      );
-    }
-
-    // ── Structure (blocked above — kept for future enablement) ──────────
-    if (action === "structure") {
-      const rawInput = req.nextUrl.searchParams.get("folderId") ?? "";
-      const folderId = parseDriveFolderUrl(rawInput) ?? rawInput;
-
-      if (!folderId || folderId.length < 10) {
-        return NextResponse.json(
-          { error: "URL de carpeta de Google Drive inválida" },
-          { status: 400 },
-        );
-      }
-
-      const conn = await getDriveConnection(organizationId);
-      if (!conn) {
-        return NextResponse.json({ error: "DRIVE_NOT_CONNECTED" }, { status: 403 });
-      }
-
-      let accessToken: string;
-      try {
-        accessToken = await getDriveAccessToken(conn);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "";
-        if (msg.includes("DRIVE_TOKEN_EXPIRED")) {
-          return NextResponse.json({ error: "DRIVE_TOKEN_EXPIRED" }, { status: 401 });
-        }
-        throw err;
-      }
-
-      const result = await buildDriveStructure(folderId, accessToken);
-
+      const root = await getTenantDriveRoot(organizationId);
       return NextResponse.json({
-        structure:        result.structure,
-        folderName:       result.folderName,
-        ignoredCount:     result.ignoredCount,
-        permissionErrors: result.permissionErrors,
+        connected:             conn !== null,
+        tenantRootConfigured:  root !== null,
+        tenantRootFolderName:  root?.folderName ?? null,
       });
     }
 
-    // ── Dry-run (R4A Section F) ────────────────────────────────────────────
-    // ZERO WRITES. Read-only: reads Drive folder, matches references
-    // against this tenant's inventory, returns per-file status.
-    // Tenant isolation: organizationId from requireOrgAccess (server session),
-    // getDriveConnection scoped by organizationId, prisma queries scoped.
-    // No ProductEntity, ProductAssetLink, GeneratedAsset, or R2 writes.
-    if (action === "dry-run") {
+    // ── Common gate: resolve connection and tenant root ───────────────────
+    if (action === "structure" || action === "dry-run") {
       const rawInput = req.nextUrl.searchParams.get("folderId") ?? "";
       const folderId = parseDriveFolderUrl(rawInput) ?? rawInput;
 
@@ -150,11 +86,26 @@ export async function GET(
         );
       }
 
+      // Resolve Drive connection
       const conn = await getDriveConnection(organizationId);
       if (!conn) {
         return NextResponse.json({ error: "DRIVE_NOT_CONNECTED" }, { status: 403 });
       }
 
+      // Resolve tenant root — REQUIRED
+      const tenantRoot = await getTenantDriveRoot(organizationId);
+      if (!tenantRoot) {
+        return NextResponse.json(
+          {
+            error:   "DRIVE_TENANT_ROOT_NOT_CONFIGURED",
+            message: "Drive import blocked — tenant root folder not registered. " +
+                     "An admin must select the root folder before scanning.",
+          },
+          { status: 503 },
+        );
+      }
+
+      // Acquire access token
       let accessToken: string;
       try {
         accessToken = await getDriveAccessToken(conn);
@@ -166,143 +117,62 @@ export async function GET(
         throw err;
       }
 
-      const result = await buildDriveStructure(folderId, accessToken);
-
-      // Load inventory refCodes for matching
-      const ccsRefs = await prisma.commercialCoverageSnapshot.findMany({
-        where: { organizationId },
-        select: { refCode: true },
-        distinct: ["refCode"],
-      });
-      const pilRefs = await prisma.productEntity.findMany({
-        where: { organizationId, productLine: "5" },
-        select: { sku: true },
-      });
-
-      // Build inventory refCode set for matching (tenant-scoped)
-      const inventoryRefCodes = new Set<string>();
-      for (const r of ccsRefs) inventoryRefCodes.add(r.refCode.trim().toUpperCase());
-      for (const r of pilRefs) {
-        if (r.sku) inventoryRefCodes.add(r.sku.trim().toUpperCase());
+      // Validate folder is descendant of tenant root (fail closed)
+      const isDescendant = await isDescendantOfRoot(folderId, tenantRoot.folderId, accessToken);
+      if (!isDescendant) {
+        return NextResponse.json(
+          {
+            error:   "OUTSIDE_TENANT_ROOT",
+            message: "La carpeta seleccionada no pertenece al root configurado del tenant.",
+          },
+          { status: 403 },
+        );
       }
 
-      // Detect ambiguous refCodes (same normalized code from multiple sources)
-      const refCodeOccurrences = new Map<string, number>();
-      for (const r of ccsRefs) {
-        const k = r.refCode.trim().toUpperCase();
-        refCodeOccurrences.set(k, (refCodeOccurrences.get(k) ?? 0) + 1);
-      }
-      for (const r of pilRefs) {
-        if (r.sku) {
-          const k = r.sku.trim().toUpperCase();
-          refCodeOccurrences.set(k, (refCodeOccurrences.get(k) ?? 0) + 1);
-        }
-      }
-      const ambiguousRefs = new Set<string>();
-      for (const [k, count] of refCodeOccurrences) {
-        if (count > 1) ambiguousRefs.add(k);
-      }
+      // ── Structure ──────────────────────────────────────────────────────────
+      if (action === "structure") {
+        const result = await buildDriveStructure(folderId, accessToken);
 
-      // Load existing asset file names for duplicate detection (tenant-scoped)
-      const existingAssets = await prisma.generatedAsset.findMany({
-        where: { session: { organizationId } },
-        select: { assetUrl: true },
-      });
-      const existingNames = new Set<string>();
-      for (const a of existingAssets) {
-        if (a.assetUrl) {
-          // Extract filename from URL for comparison
-          const parts = a.assetUrl.split("/");
-          existingNames.add(parts[parts.length - 1].toLowerCase());
-        }
-      }
-
-      // Allowed MIME types for import
-      const ALLOWED_MIMES = new Set([
-        "image/jpeg", "image/png", "image/webp", "image/gif", "image/svg+xml",
-        "video/mp4", "video/webm", "video/quicktime",
-        "application/pdf",
-      ]);
-
-      // Status codes (7):
-      // MATCH              — refCode found in inventory, file importable
-      // NO_INVENTORY_REF   — refCode not found in CCS/PIL for this tenant
-      // AMBIGUOUS_REF      — refCode matches multiple inventory entries
-      // DUPLICATE          — file name already exists in org assets
-      // INVALID_MIME       — file type not supported for import
-      // PERMISSION_ERROR   — Drive permissions prevent reading
-      // UNKNOWN            — unexpected condition
-
-      type DryRunFileStatus = "MATCH" | "NO_INVENTORY_REF" | "AMBIGUOUS_REF" | "DUPLICATE" | "INVALID_MIME" | "PERMISSION_ERROR" | "UNKNOWN";
-
-      interface DryRunFile {
-        path:     string;
-        name:     string;
-        refCode:  string;
-        status:   DryRunFileStatus;
-        mimeType: string;
-      }
-
-      const files: DryRunFile[] = [];
-      const summary = { match: 0, no_ref: 0, ambiguous: 0, duplicate: 0, invalid_mime: 0, permission: 0, unknown: 0 };
-
-      for (const cat of result.structure.categories) {
-        for (const ref of cat.references) {
-          const normalizedRef = (ref.sku ?? ref.name).trim().toUpperCase().replace(/\s{2,}/g, " ");
-          const refInInventory = inventoryRefCodes.has(normalizedRef);
-          const refIsAmbiguous = ambiguousRefs.has(normalizedRef);
-
-          for (const file of ref.files) {
-            let status: DryRunFileStatus;
-
-            if (!ALLOWED_MIMES.has(file.mimeType)) {
-              status = "INVALID_MIME";
-              summary.invalid_mime++;
-            } else if (!refInInventory) {
-              status = "NO_INVENTORY_REF";
-              summary.no_ref++;
-            } else if (refIsAmbiguous) {
-              status = "AMBIGUOUS_REF";
-              summary.ambiguous++;
-            } else if (existingNames.has(file.name.toLowerCase())) {
-              status = "DUPLICATE";
-              summary.duplicate++;
-            } else {
-              status = "MATCH";
-              summary.match++;
-            }
-
-            files.push({
-              path:     file.path,
-              name:     file.name,
-              refCode:  normalizedRef,
-              status,
-              mimeType: file.mimeType,
-            });
-          }
-        }
-      }
-
-      // Permission errors from structure scan
-      for (const pe of result.permissionErrors) {
-        files.push({
-          path: pe, name: pe, refCode: "", status: "PERMISSION_ERROR", mimeType: "",
+        return NextResponse.json({
+          structure:        result.structure,
+          folderName:       result.folderName,
+          ignoredCount:     result.ignoredCount,
+          permissionErrors: result.permissionErrors,
         });
-        summary.permission++;
       }
 
-      return NextResponse.json({
-        ok:                true,
-        zeroWrites:        true,  // assertion: this action performed zero DB/R2 writes
-        tenantId:          organizationId,
-        folderName:        result.folderName,
-        totalFiles:        result.structure.totalFiles,
-        ignoredCount:      result.ignoredCount,
-        files,
-        summary,
-        inventoryRefCount: inventoryRefCodes.size,
-        ambiguousRefCount: ambiguousRefs.size,
-      });
+      // ── Dry-run (04A Section F) ────────────────────────────────────────────
+      // ZERO WRITES. Read-only scan + analysis.
+      if (action === "dry-run") {
+        // 1. Scan Drive folder recursively
+        const scanResult = await scanDriveFolder(folderId, accessToken);
+
+        // 2. Build product maps for matching
+        const productMaps = await buildProductMapsForDryRun(organizationId);
+        const importedDriveIds = await getImportedDriveFileIds(organizationId);
+
+        // 3. Build active product IDs set (products with SKU that exist)
+        const activeProductIds = new Set(productMaps.skuToProduct.values());
+
+        // 4. Run dry-run analysis
+        const dryRunResult = runDryRun(
+          scanResult.files,
+          scanResult.totalFolders,
+          scanResult.permissionErrors,
+          {
+            organizationId,
+            tenantRootId:     tenantRoot.folderId,
+            tenantRootName:   tenantRoot.folderName,
+            skuToProduct:     productMaps.skuToProduct,
+            skuCounts:        productMaps.skuCounts,
+            productsWithHero: productMaps.productsWithHero,
+            importedDriveIds,
+            activeProductIds,
+          },
+        );
+
+        return NextResponse.json(dryRunResult);
+      }
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });

@@ -248,9 +248,9 @@ export default async function BibliotecaPage({
           color:        C.amber,
           fontWeight:   600,
         }}>
-          IMPORTACION ({pilActive} ref{pilActive !== 1 ? "s" : ""}) — Stock fisico, no disponible real.
-          Las reservas de importacion no estan integradas (reservedQty=0).
-          Las cantidades mostradas son inventario fisico, no disponibilidad neta.
+          IMPORTACION ({pilActive} ref{pilActive !== 1 ? "s" : ""}) — Stock fisico en bodega, no disponible real.
+          Las reservas de importacion no estan integradas en SAG (reservedQty=0).
+          Las cantidades mostradas son inventario fisico en bodega. Confirmar disponibilidad con operaciones antes de comprometer stock.
         </div>
       )}
 

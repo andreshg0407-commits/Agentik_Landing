@@ -285,27 +285,23 @@ describe("10 — Drive tenant isolation via OAuth", () => {
     expect(driveRouteSrc).toContain("canAccessMarketingStudio");
   });
 
-  test("T37: TENANT ROOT ENFORCEMENT documented", () => {
-    expect(driveRouteSrc).toContain("TENANT ROOT ENFORCEMENT");
-    expect(driveRouteSrc).toContain("Cross-tenant folder access is impossible");
+  test("T37: TENANT ROOT ENFORCEMENT via ancestry validation", () => {
+    expect(driveRouteSrc).toContain("getTenantDriveRoot");
+    expect(driveRouteSrc).toContain("isDescendantOfRoot");
   });
 
-  test("T37b: DRIVE_TENANT_ROOT_NOT_CERTIFIED blocks structure and dry-run", () => {
-    expect(driveRouteSrc).toContain("DRIVE_TENANT_ROOT_NOT_CERTIFIED");
-    // The if-condition guards both structure and dry-run before the error return
-    expect(driveRouteSrc).toContain('action === "structure" || action === "dry-run"');
-    // Returns 503
-    const gateReturnIdx = driveRouteSrc.indexOf('"DRIVE_TENANT_ROOT_NOT_CERTIFIED"');
+  test("T37b: DRIVE_TENANT_ROOT_NOT_CONFIGURED blocks structure and dry-run", () => {
+    expect(driveRouteSrc).toContain("DRIVE_TENANT_ROOT_NOT_CONFIGURED");
+    // Returns 503 when no root configured
+    const gateReturnIdx = driveRouteSrc.indexOf('"DRIVE_TENANT_ROOT_NOT_CONFIGURED"');
     const returnBlock = driveRouteSrc.slice(gateReturnIdx, gateReturnIdx + 400);
     expect(returnBlock).toContain("503");
   });
 
-  test("T37c: Drive import button disabled in drawer", () => {
-    expect(drawerSrc).toContain("DRIVE_TENANT_ROOT_NOT_CERTIFIED");
-    // Button is unconditionally disabled
-    const driveButtonIdx = drawerSrc.indexOf("DRIVE_TENANT_ROOT_NOT_CERTIFIED");
-    const buttonBlock = drawerSrc.slice(driveButtonIdx, driveButtonIdx + 400);
-    expect(buttonBlock).toContain("disabled");
+  test("T37c: OUTSIDE_TENANT_ROOT rejects folders outside root", () => {
+    expect(driveRouteSrc).toContain("OUTSIDE_TENANT_ROOT");
+    // Drawer uses driveRootConfigured state
+    expect(drawerSrc).toContain("driveRootConfigured");
   });
 });
 
@@ -314,8 +310,10 @@ describe("10 — Drive tenant isolation via OAuth", () => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 describe("11 — Drive dry-run performs zero writes", () => {
-  test("T38: zeroWrites assertion in dry-run response", () => {
-    expect(driveRouteSrc).toContain("zeroWrites:        true");
+  test("T38: zeroWrites assertion in dry-run engine", () => {
+    // The dry-run engine (not the route) asserts zeroWrites
+    expect(driveRouteSrc).toContain("runDryRun");
+    expect(driveRouteSrc).toContain("ZERO WRITES");
   });
 
   test("T39: dry-run section has ZERO WRITES comment", () => {
@@ -330,8 +328,9 @@ describe("11 — Drive dry-run performs zero writes", () => {
     expect(driveRouteSrc).not.toContain(".upsert(");
   });
 
-  test("T41: tenantId included in dry-run response", () => {
-    expect(driveRouteSrc).toContain("tenantId:");
+  test("T41: organizationId included in dry-run context", () => {
+    expect(driveRouteSrc).toContain("organizationId");
+    expect(driveRouteSrc).toContain("tenantRootId");
   });
 });
 

@@ -377,6 +377,142 @@ export async function downloadDriveFile(
   return res.arrayBuffer();
 }
 
+// ── Ancestry validation (04A — tenant root enforcement) ──────────────────────
+
+/** Max depth to walk when verifying folder ancestry (prevent infinite loops) */
+const ANCESTRY_MAX_DEPTH = 20;
+
+/**
+ * Verifies that `folderId` is the tenantRoot itself or a descendant of it.
+ * Walks up the parent chain server-side via Drive API.
+ *
+ * Returns true if ancestry is confirmed, false if folder is outside the root.
+ * Throws on API errors (fail closed).
+ *
+ * Handles:
+ * - Regular folders (parents[] contains parent folder ID)
+ * - Shared Drives (parent may be a drive ID — treated as top-level, rejected)
+ * - Shortcuts (resolved via shortcutDetails if present)
+ */
+export async function isDescendantOfRoot(
+  folderId:      string,
+  tenantRootId:  string,
+  accessToken:   string,
+): Promise<boolean> {
+  if (folderId === tenantRootId) return true;
+
+  let currentId = folderId;
+
+  for (let depth = 0; depth < ANCESTRY_MAX_DEPTH; depth++) {
+    const url = new URL(`${DRIVE_API_BASE}/files/${encodeURIComponent(currentId)}`);
+    url.searchParams.set("fields",            "id,parents,shortcutDetails");
+    url.searchParams.set("supportsAllDrives",  "true");
+
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (res.status === 404) return false; // folder doesn't exist or inaccessible
+    if (res.status === 403) return false; // no permission — fail closed
+    if (!res.ok) throw new Error(`Drive ancestry check failed: ${res.status}`);
+
+    const data = await res.json() as {
+      id:              string;
+      parents?:        string[];
+      shortcutDetails?: { targetId: string; targetMimeType: string };
+    };
+
+    // Handle shortcuts: resolve to target
+    if (data.shortcutDetails) {
+      currentId = data.shortcutDetails.targetId;
+      continue;
+    }
+
+    // No parents = Drive root or Shared Drive top — outside tenant root
+    if (!data.parents || data.parents.length === 0) return false;
+
+    const parentId = data.parents[0];
+    if (parentId === tenantRootId) return true;
+
+    currentId = parentId;
+  }
+
+  // Max depth exceeded — fail closed
+  return false;
+}
+
+// ── Flat recursive scanner (04A — bulk import) ───────────────────────────────
+
+export interface DriveScannedFile {
+  id:        string;
+  name:      string;
+  mimeType:  string;
+  size:      number;
+  path:      string;   // relative path from root
+  parentId:  string;
+  parentName: string;
+}
+
+/**
+ * Recursively scans all files under a folder (up to DRIVE_MAX_TOTAL_FILES).
+ * Returns a flat list of files with their paths. Read-only, zero writes.
+ */
+export async function scanDriveFolder(
+  rootFolderId: string,
+  accessToken:  string,
+): Promise<{ files: DriveScannedFile[]; totalFolders: number; permissionErrors: string[] }> {
+  const files: DriveScannedFile[] = [];
+  const permissionErrors: string[] = [];
+  let totalFolders = 0;
+
+  interface QueueItem { id: string; name: string; path: string }
+  const queue: QueueItem[] = [{ id: rootFolderId, name: "", path: "" }];
+
+  while (queue.length > 0 && files.length < DRIVE_MAX_TOTAL_FILES) {
+    const current = queue.shift()!;
+    totalFolders++;
+
+    let contents: DriveFile[];
+    try {
+      contents = await listFolderContents(current.id, accessToken);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      if (msg.includes("PERMISSION")) {
+        permissionErrors.push(current.path || "(root)");
+        continue;
+      }
+      throw err;
+    }
+
+    for (const item of contents) {
+      if (files.length >= DRIVE_MAX_TOTAL_FILES) break;
+
+      const itemPath = current.path ? `${current.path}/${item.name}` : item.name;
+
+      if (item.mimeType === "application/vnd.google-apps.folder") {
+        queue.push({ id: item.id, name: item.name, path: itemPath });
+        continue;
+      }
+
+      // Skip Google native types and hidden files
+      if (GOOGLE_NATIVE_MIME_SKIP.has(item.mimeType)) continue;
+      if (item.name.startsWith(".")) continue;
+
+      files.push({
+        id:         item.id,
+        name:       item.name,
+        mimeType:   item.mimeType || mimeFromExtension(item.name),
+        size:       parseInt(item.size ?? "0", 10),
+        path:       itemPath,
+        parentId:   current.id,
+        parentName: current.name,
+      });
+    }
+  }
+
+  return { files, totalFolders, permissionErrors };
+}
+
 // ── Folder URL parser ─────────────────────────────────────────────────────────
 
 /**

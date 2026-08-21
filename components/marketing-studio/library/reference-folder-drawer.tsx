@@ -118,6 +118,7 @@ export function ReferenceFolderDrawer({
   const [resolvedProductId,  setResolvedProductId]  = useState<string | null>(reference.productId);
   const [ensuring, setEnsuring] = useState(false);
   const [driveStatus, setDriveStatus] = useState<"unknown" | "connected" | "disconnected">("unknown");
+  const [driveRootConfigured, setDriveRootConfigured] = useState(false);
   // R1: 3-state storage verification — block until CANARY_VERIFIED
   const [storageState, setStorageState] = useState<
     "unknown" | "NOT_CONFIGURED" | "CONFIGURED_NOT_VERIFIED" | "CANARY_VERIFIED"
@@ -158,8 +159,9 @@ export function ReferenceFolderDrawer({
   useEffect(() => {
     fetch(`/api/orgs/${orgSlug}/marketing-studio/drive?action=status`)
       .then(r => r.ok ? r.json() : { connected: false })
-      .then((data: { connected: boolean }) => {
+      .then((data: { connected: boolean; tenantRootConfigured?: boolean }) => {
         setDriveStatus(data.connected ? "connected" : "disconnected");
+        setDriveRootConfigured(data.tenantRootConfigured === true);
       })
       .catch(() => setDriveStatus("disconnected"));
   }, [orgSlug]);
@@ -397,6 +399,7 @@ export function ReferenceFolderDrawer({
                 onUploadClick={handleUploadClick}
                 ensuring={ensuring}
                 driveStatus={driveStatus}
+                driveRootConfigured={driveRootConfigured}
                 storageState={storageState}
                 orgSlug={orgSlug}
                 refCode={reference.refCode}
@@ -455,6 +458,7 @@ export function ReferenceFolderDrawer({
                 onUploadClick={handleUploadClick}
                 ensuring={ensuring}
                 driveStatus={driveStatus}
+                driveRootConfigured={driveRootConfigured}
                 storageState={storageState}
                 orgSlug={orgSlug}
                 refCode={reference.refCode}
@@ -537,14 +541,15 @@ export function ReferenceFolderDrawer({
 // -- UploadActionTray --
 
 function UploadActionTray({
-  onUploadClick, ensuring, driveStatus, storageState, orgSlug, refCode,
+  onUploadClick, ensuring, driveStatus, driveRootConfigured, storageState, orgSlug, refCode,
 }: {
-  onUploadClick:  () => void;
-  ensuring:       boolean;
-  driveStatus:    "unknown" | "connected" | "disconnected";
-  storageState:   "unknown" | "NOT_CONFIGURED" | "CONFIGURED_NOT_VERIFIED" | "CANARY_VERIFIED";
-  orgSlug:        string;
-  refCode:        string;
+  onUploadClick:        () => void;
+  ensuring:             boolean;
+  driveStatus:          "unknown" | "connected" | "disconnected";
+  driveRootConfigured:  boolean;
+  storageState:         "unknown" | "NOT_CONFIGURED" | "CONFIGURED_NOT_VERIFIED" | "CANARY_VERIFIED";
+  orgSlug:              string;
+  refCode:              string;
 }) {
   const storageBlocked = storageState !== "CANARY_VERIFIED";
   const btnBase: React.CSSProperties = {
@@ -601,26 +606,31 @@ function UploadActionTray({
         {ensuring ? "Preparando..." : storageBlocked ? "Subir archivo (bloqueado)" : "Subir archivo"}
       </button>
 
-      {/* Drive import — BLOCKED until DRIVE_TENANT_ROOT_CERTIFIED
-        * No tenantRootFolderId exists in schema or vault.
-        * OAuth token isolation alone does not enforce folder-level root.
-        * DRIVE_TENANT_ROOT_NOT_CERTIFIED — disabled until root enforcement implemented.
-        */}
+      {/* Drive import — requires connection + tenant root configured */}
       <button
-        disabled
+        disabled={driveStatus !== "connected" || !driveRootConfigured || storageBlocked}
         style={{
           ...btnBase,
-          background: `${C.surface}88`,
-          color:      C.inkFaint,
+          background: driveStatus === "connected" && driveRootConfigured && !storageBlocked
+            ? C.surface : `${C.surface}88`,
+          color:      driveStatus === "connected" && driveRootConfigured && !storageBlocked
+            ? C.inkMid : C.inkFaint,
           border:     `1px solid ${C.line}`,
-          opacity:    0.6,
+          opacity:    driveStatus === "connected" && driveRootConfigured && !storageBlocked
+            ? 1 : 0.6,
         }}
-        title="Importar desde Drive — bloqueado hasta certificar tenant root"
+        title={
+          driveStatus !== "connected" ? "Google Drive no conectado" :
+          !driveRootConfigured ? "Root folder no configurado — un admin debe seleccionarlo" :
+          storageBlocked ? "Storage no verificado" :
+          "Importar desde Google Drive"
+        }
       >
         <HardDrive size={14} />
         {driveStatus === "unknown" ? "Drive..." :
          driveStatus === "disconnected" ? "Drive no conectado" :
-         "Drive (root no certificado)"}
+         !driveRootConfigured ? "Drive (sin root)" :
+         "Importar desde Drive"}
       </button>
 
       {/* Foto Estudio */}
