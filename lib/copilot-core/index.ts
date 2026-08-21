@@ -53,3 +53,22 @@ export { resolveCopilotActorScope } from "./copilot-core-scope-resolver";
 // Answer contract
 export { resolveTruthState, validateAnswer } from "./copilot-core-answer";
 export type { AnswerValidationResult } from "./copilot-core-answer";
+
+// Intent resolver (pure)
+export { resolveIntent } from "./copilot-core-intent-resolver";
+export type { IntentResult } from "./copilot-core-intent-resolver";
+
+// Mock responder (pure)
+export { buildMockCopilotResponse } from "./copilot-core-mock-responder";
+
+// Report generator (pure)
+export {
+  generateReport,
+  isValidReportType,
+  isValidReportFormat,
+  reportTypeToCapabilityId,
+} from "./copilot-core-report-generator";
+export type { ReportType, ReportFormat, ReportOutput } from "./copilot-core-report-generator";
+
+// Task contract (pure types only — zero integration)
+export type { CopilotTaskSuggestion } from "./copilot-core-task-contract";

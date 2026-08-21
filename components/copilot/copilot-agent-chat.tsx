@@ -4,21 +4,25 @@
  * components/copilot/copilot-agent-chat.tsx
  *
  * Agentik Copilot — Agent Chat V2
- * Sprint: AGENTIK-COPILOT-AGENT-OFFICE-01
+ * Sprint: AGENTIK-COPILOT-AGENT-OFFICE-01 + COPILOT-CONVERSATIONAL-RUNTIME-01C
  *
- * Visual-only chat surface. The agent initiates the conversation.
- * IMPORTANT: Does NOT send messages, call APIs, execute actions, or persist state.
- * Input is readOnly. Send button is disabled. Quick actions are disabled.
+ * Two modes:
+ *   1. Visual-only (default): static opening message, disabled input.
+ *   2. Runtime (when orgSlug + runtimeEnabled): ephemeral chat with
+ *      POST /api/orgs/[orgSlug]/copilot/chat. No persistence.
  *
  * Chat content derived from CopilotViewModel — no hardcoded data.
  * Domain chips derived from summary.activeDomains.
  */
 
+import { useState, useRef, useCallback } from "react";
 import { C, T, S, R }             from "@/lib/ui/tokens";
 import type { CopilotAgentCard }  from "@/lib/copilot/viewmodel";
 import type { CopilotSummary }    from "@/lib/copilot/viewmodel";
 import type { DomainId }          from "@/lib/copilot/knowledge/domain-registry";
 import { BASE_LANGUAGE }          from "@/lib/copilot/language";
+import { CopilotChatMessage }     from "./copilot-chat-message";
+import type { CopilotSessionMessage } from "./copilot-chat-message";
 
 // ── Domain labels ─────────────────────────────────────────────────────────────
 
@@ -73,14 +77,88 @@ function buildContextLine(summary: CopilotSummary): string {
 interface CopilotAgentChatProps {
   leadAgent: CopilotAgentCard;
   summary:   CopilotSummary;
+  /** Org slug for runtime API calls. When set with runtimeEnabled, chat is live. */
+  orgSlug?:        string;
+  /** Enable live runtime chat. Default: false (visual-only mode). */
+  runtimeEnabled?: boolean;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function CopilotAgentChat({ leadAgent, summary }: CopilotAgentChatProps) {
+export function CopilotAgentChat({
+  leadAgent,
+  summary,
+  orgSlug,
+  runtimeEnabled = false,
+}: CopilotAgentChatProps) {
   const agentFirstName   = leadAgent.agentName.split(" ")[0] ?? leadAgent.agentName;
   const inputPlaceholder = `Pídele algo a ${agentFirstName}…`;
   const contextLine      = buildContextLine(summary);
+
+  // ── Runtime state (ephemeral — page refresh = new session) ──────────────
+  const [messages, setMessages]   = useState<CopilotSessionMessage[]>([]);
+  const [inputValue, setInputValue] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const isLive = runtimeEnabled && !!orgSlug;
+
+  const handleSend = useCallback(async () => {
+    if (!isLive || !inputValue.trim() || isSending) return;
+
+    const userMsg: CopilotSessionMessage = {
+      id:        crypto.randomUUID(),
+      role:      "user",
+      text:      inputValue.trim(),
+      timestamp: new Date().toISOString(),
+    };
+
+    setMessages(prev => [...prev, userMsg]);
+    setInputValue("");
+    setIsSending(true);
+
+    try {
+      const res = await fetch(`/api/orgs/${orgSlug}/copilot/chat`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ message: userMsg.text }),
+      });
+
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({ error: "Error" }));
+        setMessages(prev => [...prev, {
+          id:        crypto.randomUUID(),
+          role:      "agent",
+          text:      res.status === 429
+            ? "Has enviado muchos mensajes. Intenta de nuevo en un momento."
+            : errBody.error ?? "Error al procesar tu solicitud.",
+          truthState: "DATA_UNVERIFIED",
+          timestamp: new Date().toISOString(),
+        }]);
+        return;
+      }
+
+      const data = await res.json();
+      setMessages(prev => [...prev, {
+        id:         data.answer?.answerId ?? crypto.randomUUID(),
+        role:       "agent",
+        text:       data.answer?.text ?? "Sin respuesta.",
+        truthState: data.answer?.truthState ?? "DATA_UNVERIFIED",
+        timestamp:  new Date().toISOString(),
+      }]);
+    } catch {
+      setMessages(prev => [...prev, {
+        id:        crypto.randomUUID(),
+        role:      "agent",
+        text:      "Error de conexión. Intenta de nuevo.",
+        truthState: "DATA_UNVERIFIED",
+        timestamp: new Date().toISOString(),
+      }]);
+    } finally {
+      setIsSending(false);
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [isLive, orgSlug, inputValue, isSending]);
 
   // Domain chips: derived from activeDomains + fallback "Otro tema"
   const domainChips: string[] = [
@@ -243,6 +321,28 @@ export function CopilotAgentChat({ leadAgent, summary }: CopilotAgentChatProps) 
         ))}
       </div>
 
+      {/* Runtime messages (ephemeral — not persisted) */}
+      {isLive && messages.length > 0 && (
+        <div style={{
+          padding:       `${S[3]}px ${S[5]}px`,
+          display:       "flex",
+          flexDirection: "column" as const,
+          gap:            S[3],
+          maxHeight:      320,
+          overflowY:     "auto" as const,
+          borderTop:     `1px solid ${C.lineSubtle}`,
+        }}>
+          {messages.map(msg => (
+            <CopilotChatMessage
+              key={msg.id}
+              message={msg}
+              agentInitial={leadAgent.agentName.slice(0, 1)}
+            />
+          ))}
+          <div ref={messagesEndRef} />
+        </div>
+      )}
+
       {/* Input bar */}
       <div style={{
         display:    "flex",
@@ -252,9 +352,12 @@ export function CopilotAgentChat({ leadAgent, summary }: CopilotAgentChatProps) 
         borderTop:  `1px solid ${C.lineSubtle}`,
       }}>
         <input
-          readOnly
-          value=""
+          readOnly={!isLive}
+          value={isLive ? inputValue : ""}
+          onChange={isLive ? (e) => setInputValue(e.target.value) : undefined}
+          onKeyDown={isLive ? (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } } : undefined}
           placeholder={inputPlaceholder}
+          maxLength={4000}
           style={{
             flex:         1,
             fontFamily:   T.mono,
@@ -265,28 +368,30 @@ export function CopilotAgentChat({ leadAgent, summary }: CopilotAgentChatProps) 
             borderRadius: R.md,
             padding:      `${S[2]}px ${S[3]}px`,
             outline:      "none",
-            cursor:       "not-allowed" as const,
-            opacity:      0.55,
+            cursor:       isLive ? "text" : "not-allowed" as const,
+            opacity:      isLive ? 1 : 0.55,
           }}
         />
         <button
-          disabled
+          disabled={!isLive || isSending || !inputValue.trim()}
           type="button"
+          onClick={isLive ? handleSend : undefined}
           style={{
             fontFamily:   T.mono,
             fontSize:     T.sz.xs,
             fontWeight:   T.wt.semibold,
             color:        C.white,
-            background:   C.inkGhost,
+            background:   isLive && inputValue.trim() ? C.blueDark : C.inkGhost,
             border:       "none",
             borderRadius: R.md,
             padding:      `${S[2]}px ${S[3]}px`,
-            cursor:       "not-allowed" as const,
+            cursor:       isLive && inputValue.trim() ? "pointer" : "not-allowed" as const,
             lineHeight:   1,
             flexShrink:   0,
+            transition:   "background 160ms ease",
           }}
         >
-          Enviar
+          {isSending ? "…" : "Enviar"}
         </button>
       </div>
 

@@ -59,6 +59,10 @@ interface CopilotPanelProps {
    * Default: console.log stub. Next sprint: connect router.push().
    */
   onNavigate?:  (target: CopilotNavigationTarget) => void;
+  /** Org slug for live copilot runtime. When set, enables chat API calls. */
+  orgSlug?:           string;
+  /** Enable live copilot runtime chat. Requires orgSlug. Default: false. */
+  runtimeEnabled?:    boolean;
 }
 
 // ── Card config ───────────────────────────────────────────────────────────────
@@ -207,11 +211,13 @@ function buildCards(
 
 export function CopilotPanel({
   viewModel,
-  variant    = "app",
-  isPreview  = false,
-  compact    = false,
+  variant         = "app",
+  isPreview       = false,
+  compact         = false,
   className,
   onNavigate,
+  orgSlug,
+  runtimeEnabled  = false,
 }: CopilotPanelProps) {
   const [activeDrawer, setActiveDrawer] = useState<DrawerCategory | null>(null);
 
@@ -251,10 +257,45 @@ export function CopilotPanel({
         isPreview={isPreview}
       />
 
+      {/* ── Preview badge (01C runtime) ────────────────────────────────── */}
+      {runtimeEnabled && (
+        <div style={{
+          display:     "flex",
+          alignItems:  "center",
+          gap:          S[2],
+          padding:     `${S[1] + 1}px ${S[5]}px`,
+          background:  C.amberLight,
+          borderBottom: `1px solid ${C.amberBorder}`,
+        }}>
+          <span style={{
+            fontFamily:   T.mono,
+            fontSize:     T.sz["2xs"],
+            fontWeight:   T.wt.semibold,
+            color:        C.amberDark,
+            background:   C.white,
+            border:       `1px solid ${C.amberBorder}`,
+            borderRadius: R.pill,
+            padding:      "1px 6px",
+            letterSpacing: "0.04em",
+          }}>
+            PREVIEW
+          </span>
+          <span style={{
+            fontFamily: T.mono,
+            fontSize:   T.sz["2xs"],
+            color:      C.amberDark,
+          }}>
+            Copilot comercial en modo preview — datos agregados, sin persistencia
+          </span>
+        </div>
+      )}
+
       {/* ── 2. Agent Chat ───────────────────────────────────────────────── */}
       <CopilotAgentChat
         leadAgent={viewModel.leadAgent}
         summary={viewModel.summary}
+        orgSlug={orgSlug}
+        runtimeEnabled={runtimeEnabled}
       />
 
       {/* ── 3. Office Status Block ──────────────────────────────────────── */}
