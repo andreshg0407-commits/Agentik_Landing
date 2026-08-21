@@ -382,16 +382,27 @@ describe("D-14: B24 sole import authority, B36/B37 are vendor bodegas", () => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// D-15: Certified absence → stock=0 → RETIRO
+// D-15: Ref not found in B24 → DATA_UNVERIFIED_HOLD (R3 Section F)
+// Only a ref FOUND with certified quantity can generate RETIRO.
 // ══════════════════════════════════════════════════════════════════════════
 
-describe("D-15: certified absence (complete snapshot, ref not found)", () => {
-  test("SAG loaded, ref absent → availableB24=0 → RETIRO", () => {
-    // When B24 SAG is loaded but ref not found, loader sets availableB24=0
-    expect(loaderSrc).toContain("availableB24 = 0");
+describe("D-15: ref not found in B24 (SAG loaded, ref absent)", () => {
+  test("SAG loaded, ref absent → availableB24=null → DATA_UNVERIFIED_HOLD", () => {
+    // When B24 SAG is loaded but ref not found, loader sets availableB24=null (not 0)
+    expect(loaderSrc).toContain("// Only a ref FOUND with certified quantity can generate RETIRO");
+    expect(loaderSrc).not.toMatch(/else if \(!b24Canonical\.sourceDown\)[\s\S]*?availableB24 = 0/);
   });
 
-  test("stock=0 with CERTIFIED → RETIRO (certified empty, not hold)", () => {
+  test("stock=null with ABSENT → DATA_UNVERIFIED_HOLD (not RETIRO)", () => {
+    expect(classifyRetiroDecision({
+      businessDomain: "CASTILLITOS_IMPORT",
+      compatibleCommercialStock: null,
+      stockDataState: "ABSENT",
+    })).toBe("DATA_UNVERIFIED_HOLD");
+  });
+
+  test("stock=0 with CERTIFIED → RETIRO (ref FOUND with quantity 0)", () => {
+    // This case only applies when the ref IS in B24 with disponible=0
     expect(classifyRetiroDecision({
       businessDomain: "CASTILLITOS_IMPORT",
       compatibleCommercialStock: 0,

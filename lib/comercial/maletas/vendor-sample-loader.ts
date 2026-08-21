@@ -583,10 +583,9 @@ export async function loadVendorSampleData(
           accessoryScarcityState = availableB24 > IMPORT_SCARCITY_MINIMUM ? "saludable" : "escasez";
           accessorySuggestedAction = accessoryScarcityState === "escasez" ? "DEJAR_DE_VENDER" : null;
         } else if (!b24Canonical.sourceDown) {
-          // SAG loaded but ref not in B24 — certified absence
-          availableB24 = 0;
-          accessoryScarcityState = "escasez";
-          accessorySuggestedAction = "DEJAR_DE_VENDER";
+          // SAG loaded but ref not found in B24 — not catalogued in import warehouse.
+          // Only a ref FOUND with certified quantity can generate RETIRO (R3 Section F).
+          availableB24 = null;
         } else {
           // SAG source down — unverified
           availableB24 = null;
@@ -637,7 +636,7 @@ export async function loadVendorSampleData(
           businessDomain: isAccessory ? "CASTILLITOS_IMPORT" : undefined,
           compatibleCommercialStock: isAccessory ? availableB24 : centralAvailable,
           stockDataState: isAccessory
-            ? (b24Canonical.sourceDown ? "ABSENT" : "CERTIFIED")
+            ? (b24Canonical.sourceDown || availableB24 === null ? "ABSENT" : "CERTIFIED")
             : stockDataState,
         }),
       };
