@@ -139,10 +139,14 @@ export async function getDriveAccessToken(conn: DriveConnection): Promise<string
 // ── Drive API helpers ─────────────────────────────────────────────────────────
 
 interface DriveFile {
-  id:       string;
-  name:     string;
-  mimeType: string;
-  size?:    string;
+  id:           string;
+  name:         string;
+  mimeType:     string;
+  size?:        string;
+  /** ISO 8601 timestamp — captured for staleness detection at import time */
+  modifiedTime?: string;
+  /** Drive version number — monotonically increasing per file */
+  version?:      string;
 }
 
 interface DriveFileListResponse {
@@ -160,7 +164,7 @@ async function listFolderContents(
   do {
     const url = new URL(`${DRIVE_API_BASE}/files`);
     url.searchParams.set("q",          `'${folderId}' in parents and trashed = false`);
-    url.searchParams.set("fields",     "files(id,name,mimeType,size),nextPageToken");
+    url.searchParams.set("fields",     "files(id,name,mimeType,size,modifiedTime,version),nextPageToken");
     url.searchParams.set("pageSize",   String(DRIVE_MAX_FILES_PER_FOLDER));
     url.searchParams.set("supportsAllDrives",          "true");
     url.searchParams.set("includeItemsFromAllDrives",  "true");
@@ -462,7 +466,7 @@ export async function listFolderPage(
 ): Promise<FolderPageResult> {
   const url = new URL(`${DRIVE_API_BASE}/files`);
   url.searchParams.set("q",          `'${folderId}' in parents and trashed = false`);
-  url.searchParams.set("fields",     "files(id,name,mimeType,size),nextPageToken");
+  url.searchParams.set("fields",     "files(id,name,mimeType,size,modifiedTime,version),nextPageToken");
   url.searchParams.set("pageSize",   String(DRIVE_MAX_FILES_PER_FOLDER));
   url.searchParams.set("supportsAllDrives",          "true");
   url.searchParams.set("includeItemsFromAllDrives",  "true");
@@ -508,6 +512,10 @@ export interface DriveScannedFile {
   path:      string;   // relative path from root
   parentId:  string;
   parentName: string;
+  /** ISO 8601 modifiedTime from Drive — baseline for staleness detection */
+  modifiedTime?: string;
+  /** Drive version number — baseline for staleness detection */
+  version?:      string;
 }
 
 /**
@@ -556,13 +564,15 @@ export async function scanDriveFolder(
       if (item.name.startsWith(".")) continue;
 
       files.push({
-        id:         item.id,
-        name:       item.name,
-        mimeType:   item.mimeType || mimeFromExtension(item.name),
-        size:       parseInt(item.size ?? "0", 10),
-        path:       itemPath,
-        parentId:   current.id,
-        parentName: current.name,
+        id:           item.id,
+        name:         item.name,
+        mimeType:     item.mimeType || mimeFromExtension(item.name),
+        size:         parseInt(item.size ?? "0", 10),
+        path:         itemPath,
+        parentId:     current.id,
+        parentName:   current.name,
+        modifiedTime: item.modifiedTime,
+        version:      item.version,
       });
     }
   }

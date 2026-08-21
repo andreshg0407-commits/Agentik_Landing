@@ -23,9 +23,12 @@
  *   PERMISSION_DENIED        — Drive API returned 403 for this file's folder
  *   STALE_DRIVE_FILE         — CONTRACT_READY_IMPORT_TIME_DETECTION_PENDING
  *                              File may have changed (renamed/moved/deleted) between scan and apply.
- *                              Detection implemented at import time via server re-fetch immediately
- *                              before R2 write. Future apply phase MUST re-scan/re-validate Drive
- *                              and catalog server-side — never trust browser-accumulated rows.
+ *                              Scan captures driveModifiedTime + driveVersion as baseline.
+ *                              Detection at import time: server re-fetches file metadata and
+ *                              compares modifiedTime/version against scan baseline. Mismatch →
+ *                              STALE_DRIVE_FILE status, file skipped. Future apply phase MUST
+ *                              re-scan/re-validate Drive and catalog server-side — never trust
+ *                              browser-accumulated rows.
  */
 
 export type DryRunStatus =
@@ -96,6 +99,10 @@ export interface DryRunFileDetail {
   reason:             string | null;
   /** Parent folder name in Drive */
   parentFolderName:   string;
+  /** ISO 8601 modifiedTime from Drive at scan time — baseline for staleness detection */
+  driveModifiedTime?: string;
+  /** Drive version number at scan time — baseline for staleness detection */
+  driveVersion?:      string;
 }
 
 // ── Dry-run summary ─────────────────────────────────────────────────────────

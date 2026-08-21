@@ -129,6 +129,8 @@ function analyzeFile(
     mimeType:         sf.mimeType,
     sizeBytes:        sf.size,
     parentFolderName: sf.parentName,
+    driveModifiedTime: sf.modifiedTime,
+    driveVersion:      sf.version,
   };
 
   // 1. Hidden file check

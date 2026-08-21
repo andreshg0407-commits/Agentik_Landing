@@ -163,13 +163,15 @@ export async function GET(
       const scannedFiles: DriveScannedFile[] = [];
       for (const item of pageResult.files) {
         scannedFiles.push({
-          id:         item.id,
-          name:       item.name,
-          mimeType:   item.mimeType || mimeFromExtension(item.name),
-          size:       parseInt(item.size ?? "0", 10),
-          path:       folderPath ? `${folderPath}/${item.name}` : item.name,
-          parentId:   folderId,
-          parentName: folderName,
+          id:           item.id,
+          name:         item.name,
+          mimeType:     item.mimeType || mimeFromExtension(item.name),
+          size:         parseInt(item.size ?? "0", 10),
+          path:         folderPath ? `${folderPath}/${item.name}` : item.name,
+          parentId:     folderId,
+          parentName:   folderName,
+          modifiedTime: item.modifiedTime,
+          version:      item.version,
         });
       }
 

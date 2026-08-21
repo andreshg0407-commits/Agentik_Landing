@@ -356,11 +356,16 @@ describe("04A-D-R1-E: STALE_DRIVE_FILE — contract-ready", () => {
     expect(dryRunTypesSrc).toContain('"STALE_DRIVE_FILE"');
   });
 
-  test("T26: STALE_DRIVE_FILE documented as CONTRACT_READY_IMPORT_TIME_DETECTION_PENDING", () => {
+  test("T26: STALE_DRIVE_FILE documented as CONTRACT_READY_IMPORT_TIME_DETECTION_PENDING with baseline capture", () => {
     expect(dryRunTypesSrc).toContain("CONTRACT_READY_IMPORT_TIME_DETECTION_PENDING");
     expect(dryRunTypesSrc).toContain("re-fetch");
     expect(dryRunTypesSrc).toContain("re-scan");
-    expect(dryRunTypesSrc).toContain("never trust browser-accumulated rows");
+    expect(dryRunTypesSrc).toContain("never trust");
+    expect(dryRunTypesSrc).toContain("browser-accumulated rows");
+    // 04A-E: baseline capture documented
+    expect(dryRunTypesSrc).toContain("driveModifiedTime");
+    expect(dryRunTypesSrc).toContain("driveVersion");
+    expect(dryRunTypesSrc).toContain("compares modifiedTime/version against scan baseline");
   });
 
   test("T27: STALE_DRIVE_FILE has label in drawer", () => {
