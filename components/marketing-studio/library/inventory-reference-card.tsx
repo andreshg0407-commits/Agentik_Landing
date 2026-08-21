@@ -119,7 +119,7 @@ export function InventoryReferenceCard({ reference, onClick, isSelected }: Inven
           fontVariantNumeric: "tabular-nums",
         }}>
           {reference.isAvailable
-            ? `${reference.disponible} disp.`
+            ? `${reference.disponible} ${reference.source === "pil" ? "stock fis." : "disp."}`
             : "Sin stock"}
         </div>
       </div>

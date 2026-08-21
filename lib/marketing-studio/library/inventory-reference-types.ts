@@ -98,15 +98,36 @@ export interface SourceHealth {
   pil:  { ok: boolean; error?: string };
 }
 
+// ── Source qualification ─────────────────────────────────────────────────────────
+
+/**
+ * Per-source metadata for audit transparency.
+ * CCS disponible = post-reservation (SAG snapshot). Reliable.
+ * PIL disponible = physical stock only (reservedQty hardcoded to 0). UNVERIFIED.
+ */
+export interface SourceQualification {
+  source:                "ccs" | "pil";
+  worlds:                string[];          // worlds served by this source
+  totalRefs:             number;            // total refs from this source
+  activeRefs:            number;            // refs with disponible > 0
+  snapshotAt:            string | null;     // ISO timestamp of data
+  bodegas:               string;            // warehouse scope description
+  truthState:            InventoryTruthState;
+  freshness:             string;            // human-readable freshness
+  reservationReliable:   boolean;           // false for PIL (reserved=0 hardcoded)
+}
+
 // ── Inventory load result ───────────────────────────────────────────────────────
 
 export interface InventoryLoadResult {
-  references:         InventoryReference[];
-  reconciliation:     ReconciliationReport;
-  snapshotAt:         string | null;
-  hasSnapshot:        boolean;
-  truthState:         InventoryTruthState;
-  sourceHealth:       SourceHealth;
-  visualStateCounts:  VisualStateCounts;
-  worldCounts:        import("./world-classification").WorldCounts;
+  references:              InventoryReference[];
+  reconciliation:          ReconciliationReport;
+  snapshotAt:              string | null;
+  hasSnapshot:             boolean;
+  truthState:              InventoryTruthState;
+  sourceHealth:            SourceHealth;
+  visualStateCounts:       VisualStateCounts;
+  worldCounts:             import("./world-classification").WorldCounts;
+  sourceQualifications:    SourceQualification[];
+  pilReservationReliable:  boolean;   // false — PIL reservedQty hardcoded to 0
 }

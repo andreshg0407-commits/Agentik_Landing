@@ -1,7 +1,7 @@
 /**
  * app/api/orgs/[orgSlug]/marketing-studio/drive/route.ts
  *
- * MARKETING-STUDIO-DRIVE-IMPORT-01 — Drive proxy: status + structure
+ * MARKETING-STUDIO-DRIVE-IMPORT-01 / R4A — Drive proxy: status + structure + dry-run
  *
  * GET ?action=status
  *   Returns { connected: boolean }
@@ -9,19 +9,26 @@
  *
  * GET ?action=structure&folderId=FOLDER_ID_OR_URL
  *   Reads the Drive folder structure recursively.
- *   Returns { structure: ParsedImportStructure, folderName, ignoredCount, permissionErrors }
- *   ParsedFile.file is always null (Drive: lazy download at execution).
- *   ParsedFile.driveFileId is set for each file.
+ *   Returns { structure, folderName, ignoredCount, permissionErrors }
+ *
+ * GET ?action=dry-run&folderId=FOLDER_ID_OR_URL
+ *   ZERO WRITES. Reads Drive folder, matches files against tenant inventory.
+ *   Returns per-file status: MATCH | NO_INVENTORY_REF | AMBIGUOUS_REF |
+ *   DUPLICATE | INVALID_MIME | PERMISSION_ERROR | UNKNOWN
+ *   Includes zeroWrites:true assertion in response.
  *
  * SECURITY:
  * - requireOrgAccess: verifies auth + org membership.
+ * - canAccessMarketingStudio: verifies module access.
  * - Tokens are fetched server-side — NEVER returned to the client.
  * - No Drive account info (email, ID) is returned for status check.
- * - Tenant-isolated: organizationId scopes all vault + connection lookups.
+ * - Tenant-isolated: organizationId from server session scopes all queries.
  */
 
 import { NextRequest, NextResponse }      from "next/server";
 import { requireOrgAccess }               from "@/lib/auth/org-access";
+import { canAccessMarketingStudio }       from "@/lib/auth/module-access";
+import { prisma }                         from "@/lib/prisma";
 import {
   getDriveConnection,
   getDriveAccessToken,
@@ -40,9 +47,14 @@ export async function GET(
   const { orgSlug } = await params;
 
   try {
-    const { organization } = await requireOrgAccess(orgSlug);
+    const { membership, organization } = await requireOrgAccess(orgSlug);
     const organizationId   = organization.id;
-    const action           = req.nextUrl.searchParams.get("action") ?? "status";
+
+    if (!canAccessMarketingStudio(membership.role)) {
+      return NextResponse.json({ error: "ACCESS_DENIED" }, { status: 403 });
+    }
+
+    const action = req.nextUrl.searchParams.get("action") ?? "status";
 
     // ── Status ────────────────────────────────────────────────────────────────
     if (action === "status") {
@@ -85,6 +97,178 @@ export async function GET(
         folderName:       result.folderName,
         ignoredCount:     result.ignoredCount,
         permissionErrors: result.permissionErrors,
+      });
+    }
+
+    // ── Dry-run (R4A Section F) ────────────────────────────────────────────
+    // ZERO WRITES. Read-only: reads Drive folder, matches references
+    // against this tenant's inventory, returns per-file status.
+    // Tenant isolation: organizationId from requireOrgAccess (server session),
+    // getDriveConnection scoped by organizationId, prisma queries scoped.
+    // No ProductEntity, ProductAssetLink, GeneratedAsset, or R2 writes.
+    if (action === "dry-run") {
+      const rawInput = req.nextUrl.searchParams.get("folderId") ?? "";
+      const folderId = parseDriveFolderUrl(rawInput) ?? rawInput;
+
+      if (!folderId || folderId.length < 10) {
+        return NextResponse.json(
+          { error: "URL de carpeta de Google Drive invalida" },
+          { status: 400 },
+        );
+      }
+
+      const conn = await getDriveConnection(organizationId);
+      if (!conn) {
+        return NextResponse.json({ error: "DRIVE_NOT_CONNECTED" }, { status: 403 });
+      }
+
+      let accessToken: string;
+      try {
+        accessToken = await getDriveAccessToken(conn);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "";
+        if (msg.includes("DRIVE_TOKEN_EXPIRED")) {
+          return NextResponse.json({ error: "DRIVE_TOKEN_EXPIRED" }, { status: 401 });
+        }
+        throw err;
+      }
+
+      const result = await buildDriveStructure(folderId, accessToken);
+
+      // Load inventory refCodes for matching
+      const ccsRefs = await prisma.commercialCoverageSnapshot.findMany({
+        where: { organizationId },
+        select: { refCode: true },
+        distinct: ["refCode"],
+      });
+      const pilRefs = await prisma.productEntity.findMany({
+        where: { organizationId, productLine: "5" },
+        select: { sku: true },
+      });
+
+      // Build inventory refCode set for matching (tenant-scoped)
+      const inventoryRefCodes = new Set<string>();
+      for (const r of ccsRefs) inventoryRefCodes.add(r.refCode.trim().toUpperCase());
+      for (const r of pilRefs) {
+        if (r.sku) inventoryRefCodes.add(r.sku.trim().toUpperCase());
+      }
+
+      // Detect ambiguous refCodes (same normalized code from multiple sources)
+      const refCodeOccurrences = new Map<string, number>();
+      for (const r of ccsRefs) {
+        const k = r.refCode.trim().toUpperCase();
+        refCodeOccurrences.set(k, (refCodeOccurrences.get(k) ?? 0) + 1);
+      }
+      for (const r of pilRefs) {
+        if (r.sku) {
+          const k = r.sku.trim().toUpperCase();
+          refCodeOccurrences.set(k, (refCodeOccurrences.get(k) ?? 0) + 1);
+        }
+      }
+      const ambiguousRefs = new Set<string>();
+      for (const [k, count] of refCodeOccurrences) {
+        if (count > 1) ambiguousRefs.add(k);
+      }
+
+      // Load existing asset file names for duplicate detection (tenant-scoped)
+      const existingAssets = await prisma.generatedAsset.findMany({
+        where: { session: { organizationId } },
+        select: { assetUrl: true },
+      });
+      const existingNames = new Set<string>();
+      for (const a of existingAssets) {
+        if (a.assetUrl) {
+          // Extract filename from URL for comparison
+          const parts = a.assetUrl.split("/");
+          existingNames.add(parts[parts.length - 1].toLowerCase());
+        }
+      }
+
+      // Allowed MIME types for import
+      const ALLOWED_MIMES = new Set([
+        "image/jpeg", "image/png", "image/webp", "image/gif", "image/svg+xml",
+        "video/mp4", "video/webm", "video/quicktime",
+        "application/pdf",
+      ]);
+
+      // Status codes (7):
+      // MATCH              — refCode found in inventory, file importable
+      // NO_INVENTORY_REF   — refCode not found in CCS/PIL for this tenant
+      // AMBIGUOUS_REF      — refCode matches multiple inventory entries
+      // DUPLICATE          — file name already exists in org assets
+      // INVALID_MIME       — file type not supported for import
+      // PERMISSION_ERROR   — Drive permissions prevent reading
+      // UNKNOWN            — unexpected condition
+
+      type DryRunFileStatus = "MATCH" | "NO_INVENTORY_REF" | "AMBIGUOUS_REF" | "DUPLICATE" | "INVALID_MIME" | "PERMISSION_ERROR" | "UNKNOWN";
+
+      interface DryRunFile {
+        path:     string;
+        name:     string;
+        refCode:  string;
+        status:   DryRunFileStatus;
+        mimeType: string;
+      }
+
+      const files: DryRunFile[] = [];
+      const summary = { match: 0, no_ref: 0, ambiguous: 0, duplicate: 0, invalid_mime: 0, permission: 0, unknown: 0 };
+
+      for (const cat of result.structure.categories) {
+        for (const ref of cat.references) {
+          const normalizedRef = (ref.sku ?? ref.name).trim().toUpperCase().replace(/\s{2,}/g, " ");
+          const refInInventory = inventoryRefCodes.has(normalizedRef);
+          const refIsAmbiguous = ambiguousRefs.has(normalizedRef);
+
+          for (const file of ref.files) {
+            let status: DryRunFileStatus;
+
+            if (!ALLOWED_MIMES.has(file.mimeType)) {
+              status = "INVALID_MIME";
+              summary.invalid_mime++;
+            } else if (!refInInventory) {
+              status = "NO_INVENTORY_REF";
+              summary.no_ref++;
+            } else if (refIsAmbiguous) {
+              status = "AMBIGUOUS_REF";
+              summary.ambiguous++;
+            } else if (existingNames.has(file.name.toLowerCase())) {
+              status = "DUPLICATE";
+              summary.duplicate++;
+            } else {
+              status = "MATCH";
+              summary.match++;
+            }
+
+            files.push({
+              path:     file.path,
+              name:     file.name,
+              refCode:  normalizedRef,
+              status,
+              mimeType: file.mimeType,
+            });
+          }
+        }
+      }
+
+      // Permission errors from structure scan
+      for (const pe of result.permissionErrors) {
+        files.push({
+          path: pe, name: pe, refCode: "", status: "PERMISSION_ERROR", mimeType: "",
+        });
+        summary.permission++;
+      }
+
+      return NextResponse.json({
+        ok:                true,
+        zeroWrites:        true,  // assertion: this action performed zero DB/R2 writes
+        tenantId:          organizationId,
+        folderName:        result.folderName,
+        totalFiles:        result.structure.totalFiles,
+        ignoredCount:      result.ignoredCount,
+        files,
+        summary,
+        inventoryRefCount: inventoryRefCodes.size,
+        ambiguousRefCount: ambiguousRefs.size,
       });
     }
 

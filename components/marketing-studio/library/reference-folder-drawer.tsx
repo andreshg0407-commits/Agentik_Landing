@@ -1,7 +1,7 @@
 /**
  * components/marketing-studio/library/reference-folder-drawer.tsx
  *
- * MARKETING-LIBRARY-ACTIVE-ASSET-INGESTION-02A-R4 — Reference Folder Drawer
+ * MARKETING-LIBRARY-ACTIVE-ASSET-INGESTION-02A-R4A — Reference Folder Drawer
  *
  * Slide-over panel showing the full folder view for an inventory reference:
  *   - Header with reference identity (refCode, description, world, stock)
@@ -118,8 +118,13 @@ export function ReferenceFolderDrawer({
   const [resolvedProductId,  setResolvedProductId]  = useState<string | null>(reference.productId);
   const [ensuring, setEnsuring] = useState(false);
   const [driveStatus, setDriveStatus] = useState<"unknown" | "connected" | "disconnected">("unknown");
+  // R4A Section E: Storage verification — block all writes until R2 is confirmed
+  const [storageStatus, setStorageStatus] = useState<"unknown" | "verified" | "unverified">("unknown");
 
   const worldColor = WORLD_ACCENT[reference.world] ?? C.inkLight;
+
+  // PIL source qualification — qualify "Disponible" label
+  const isPilSource = reference.source === "pil";
 
   // Lazy-load assets on mount or when reference changes
   const loadAssets = useCallback(() => {
@@ -157,15 +162,41 @@ export function ReferenceFolderDrawer({
       .catch(() => setDriveStatus("disconnected"));
   }, [orgSlug]);
 
+  // R4A Section E: Check R2 storage configuration on mount
+  // If R2 is not configured, block all upload actions.
+  // Full canary test requires SUPER_ADMIN — here we only check if R2 env vars exist.
+  useEffect(() => {
+    fetch(`/api/orgs/${orgSlug}/marketing-studio/storage-canary?enable=check`)
+      .then(r => {
+        // 400 = canary route exists but wrong param (R2 configured)
+        // 403 = production or auth blocked (R2 configured)
+        // 404 = route doesn't exist (shouldn't happen)
+        if (r.status === 400 || r.status === 403) {
+          setStorageStatus("verified");
+        } else {
+          return r.json().then(data => {
+            setStorageStatus(data?.canary === "BLOCKED" && data?.reason?.includes("not configured")
+              ? "unverified" : "verified");
+          });
+        }
+      })
+      .catch(() => setStorageStatus("unverified"));
+  }, [orgSlug]);
+
+  // R4A Section E: Upload blocked if storage unverified
+  const uploadsBlocked = storageStatus === "unverified";
+
   // Upload click: if productId exists, open modal directly.
   // If not, show confirmation — NO write until user confirms.
+  // If storage unverified, block entirely.
   const handleUploadClick = useCallback(() => {
+    if (uploadsBlocked) return; // storage not verified — block silently
     if (resolvedProductId) {
       setShowUploadModal(true);
     } else {
       setShowUploadConfirm(true);
     }
-  }, [resolvedProductId]);
+  }, [resolvedProductId, uploadsBlocked]);
 
   // User confirmed — NOW create ProductEntity, then open modal.
   const handleUploadConfirm = useCallback(async () => {
@@ -257,7 +288,7 @@ export function ReferenceFolderDrawer({
         }}>
           <MetaItem label="Mundo" value={reference.worldLabel} />
           <MetaItem label="Linea SAG" value={reference.sagLine || "\u2014"} />
-          <MetaItem label="Disponible" value={reference.isAvailable ? String(reference.disponible) : "0"} />
+          <MetaItem label={isPilSource ? "Stock fisico" : "Disponible"} value={reference.isAvailable ? String(reference.disponible) : "0"} />
           <MetaItem label="Pedidos pend." value={reference.pendingOrdersQty > 0 ? String(reference.pendingOrdersQty) : "\u2014"} />
           <MetaItem label="Assets" value={String(reference.assetCount)} />
           <MetaItem label="Fuente" value={reference.source.toUpperCase()} />
@@ -358,6 +389,7 @@ export function ReferenceFolderDrawer({
                 onUploadClick={handleUploadClick}
                 ensuring={ensuring}
                 driveStatus={driveStatus}
+                storageStatus={storageStatus}
                 orgSlug={orgSlug}
                 refCode={reference.refCode}
               />
@@ -415,6 +447,7 @@ export function ReferenceFolderDrawer({
                 onUploadClick={handleUploadClick}
                 ensuring={ensuring}
                 driveStatus={driveStatus}
+                storageStatus={storageStatus}
                 orgSlug={orgSlug}
                 refCode={reference.refCode}
               />
@@ -496,14 +529,16 @@ export function ReferenceFolderDrawer({
 // -- UploadActionTray --
 
 function UploadActionTray({
-  onUploadClick, ensuring, driveStatus, orgSlug, refCode,
+  onUploadClick, ensuring, driveStatus, storageStatus, orgSlug, refCode,
 }: {
-  onUploadClick: () => void;
-  ensuring:      boolean;
-  driveStatus:   "unknown" | "connected" | "disconnected";
-  orgSlug:       string;
-  refCode:       string;
+  onUploadClick:  () => void;
+  ensuring:       boolean;
+  driveStatus:    "unknown" | "connected" | "disconnected";
+  storageStatus:  "unknown" | "verified" | "unverified";
+  orgSlug:        string;
+  refCode:        string;
 }) {
+  const storageBlocked = storageStatus === "unverified";
   const btnBase: React.CSSProperties = {
     display:      "flex",
     alignItems:   "center",
@@ -522,20 +557,36 @@ function UploadActionTray({
 
   return (
     <div style={{ display: "flex", flexDirection: "column" as const, gap: S[2], width: "100%", maxWidth: 280 }}>
+      {/* Storage verification warning */}
+      {storageBlocked && (
+        <div style={{
+          fontFamily:   T.mono,
+          fontSize:     T.sz["2xs"],
+          color:        C.amber,
+          background:   C.amberLight,
+          padding:      `${S[1]}px ${S[2]}px`,
+          borderRadius: R.sm,
+          border:       `1px solid ${C.amberBorder}`,
+        }}>
+          STORAGE_VERIFICATION_REQUIRED — R2 no configurado. Carga bloqueada.
+        </div>
+      )}
+
       {/* Manual upload */}
       <button
         onClick={onUploadClick}
-        disabled={ensuring}
+        disabled={ensuring || storageBlocked}
         style={{
           ...btnBase,
-          background: MS_CTA.primaryButtonBg,
-          color:      "#fff",
-          boxShadow:  MS_CTA.primaryBoxShadow,
-          opacity:    ensuring ? 0.7 : 1,
+          background: storageBlocked ? C.surface : MS_CTA.primaryButtonBg,
+          color:      storageBlocked ? C.inkFaint : "#fff",
+          boxShadow:  storageBlocked ? "none" : MS_CTA.primaryBoxShadow,
+          opacity:    ensuring || storageBlocked ? 0.6 : 1,
+          border:     storageBlocked ? `1px solid ${C.line}` : "none",
         }}
       >
         <Upload size={14} />
-        {ensuring ? "Preparando..." : "Subir archivo"}
+        {ensuring ? "Preparando..." : storageBlocked ? "Subir archivo (bloqueado)" : "Subir archivo"}
       </button>
 
       {/* Drive import */}

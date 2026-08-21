@@ -47,6 +47,7 @@ import type {
   ReconciliationReport,
   InventoryLoadResult,
   SourceHealth,
+  SourceQualification,
   VisualStateCounts,
 } from "./inventory-reference-types";
 import { SAG_LINE_FK_MAP } from "@/lib/comercial/line-map";
@@ -353,6 +354,50 @@ export async function loadInventoryReferences(
     truthState = "PARTIAL";
   }
 
+  // ── Step 7: Build source qualifications ───────────────────────────────────
+
+  const ccsRefs = references.filter(r => r.source === "ccs");
+  const pilRefs = references.filter(r => r.source === "pil");
+
+  const freshnessLabel = (at: string | null): string => {
+    if (!at) return "Sin snapshot";
+    const age = Date.now() - new Date(at).getTime();
+    const hours = Math.floor(age / 3_600_000);
+    if (hours < 1) return "< 1h";
+    if (hours < 24) return `${hours}h`;
+    return `${Math.floor(hours / 24)}d`;
+  };
+
+  const sourceQualifications: SourceQualification[] = [];
+
+  if (sourceHealth.ccs.ok) {
+    sourceQualifications.push({
+      source:               "ccs",
+      worlds:               ["castillitos", "latin_kids"],
+      totalRefs:            ccsRefs.length,
+      activeRefs:           ccsRefs.filter(r => r.isAvailable).length,
+      snapshotAt,
+      bodegas:              "B01 + B04 + B14 + B15",
+      truthState:           ccsRefs.length > 0 ? "FRESH" : "DATA_UNVERIFIED",
+      freshness:            freshnessLabel(snapshotAt),
+      reservationReliable:  true,
+    });
+  }
+
+  if (sourceHealth.pil.ok) {
+    sourceQualifications.push({
+      source:               "pil",
+      worlds:               ["importacion"],
+      totalRefs:            pilRefs.length,
+      activeRefs:           pilRefs.filter(r => r.isAvailable).length,
+      snapshotAt,
+      bodegas:              "B26 + B27 (Importacion)",
+      truthState:           "DATA_UNVERIFIED",  // PIL reserved=0 hardcoded
+      freshness:            freshnessLabel(snapshotAt),
+      reservationReliable:  false,  // sag-inventory-normalizer.ts line 93: reserved: 0
+    });
+  }
+
   return {
     references,
     reconciliation,
@@ -362,5 +407,7 @@ export async function loadInventoryReferences(
     sourceHealth,
     visualStateCounts: vsCounts,
     worldCounts,
+    sourceQualifications,
+    pilReservationReliable: false,  // hardcoded — sag-inventory-normalizer.ts line 93
   };
 }

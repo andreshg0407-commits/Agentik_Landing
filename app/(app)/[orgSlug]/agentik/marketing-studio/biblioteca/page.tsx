@@ -1,7 +1,7 @@
 /**
  * /[orgSlug]/agentik/marketing-studio/biblioteca
  *
- * MS-04A / MARKETING-LIBRARY-INVENTORY-TRUTH-02A-R1 — Biblioteca / Asset Hub
+ * MS-04A / MARKETING-LIBRARY-ACTIVE-ASSET-INGESTION-02A-R4A — Biblioteca / Asset Hub
  *
  * Server Component — owns auth, data fetching.
  * Interactive grid + drawer delegated to BibliotecaClient (client boundary).
@@ -86,10 +86,23 @@ export default async function BibliotecaPage({
 
   const productMode = !inventoryMode && products.length > 0;
 
-  // ── Status line (R4: active-only counts) ──
+  // ── Status line (R4A: source-qualified counts) ──
   const totalRefs      = activeRefs.length;
   const sinClasificar  = activeWorldCounts.sin_clasificar;
   const vs             = activeVs;
+
+  // Source-qualified counts for transparency
+  const ccsActive = activeRefs.filter(r => r.source === "ccs").length;
+  const pilActive = activeRefs.filter(r => r.source === "pil").length;
+  const pilUnverified = !inventoryResult.pilReservationReliable;
+
+  // Snapshot freshness label
+  const snapshotLabel = inventoryResult.snapshotAt
+    ? new Date(inventoryResult.snapshotAt).toLocaleDateString("es-CO", {
+        day: "2-digit", month: "short", year: "numeric",
+        hour: "2-digit", minute: "2-digit",
+      })
+    : null;
 
   // Pre-compute display model for legacy assets (backward compat)
   const displayAssets: BibliotecaAssetDisplay[] = legacyAssets.map((asset) => ({
@@ -135,7 +148,7 @@ export default async function BibliotecaPage({
         ]}
         title="Biblioteca / Asset Hub"
         subtitle={inventoryMode
-          ? `Registro visual canónico · ${totalRefs} referencias disponibles`
+          ? `${totalRefs} referencias disponibles · CCS: ${ccsActive}${pilActive > 0 ? ` · IM: ${pilActive}${pilUnverified ? " (stock fisico)" : ""}` : ""}${snapshotLabel ? ` · Corte: ${snapshotLabel}` : ""}`
           : "Sistema nervioso visual de marketing — assets, catálogos, destinos, inteligencia."
         }
         status={
@@ -222,6 +235,25 @@ export default async function BibliotecaPage({
         </div>
       )}
 
+      {/* ── PIL reservation reliability warning (R4A Section B) ── */}
+      {inventoryMode && pilUnverified && pilActive > 0 && (
+        <div style={{
+          padding:      `${S[3]}px ${S[4]}px`,
+          background:   C.amberLight,
+          border:       `1px solid ${C.amberBorder}`,
+          borderRadius: 6,
+          marginBottom: S[4],
+          fontFamily:   T.mono,
+          fontSize:     T.sz.xs,
+          color:        C.amber,
+          fontWeight:   600,
+        }}>
+          IMPORTACION ({pilActive} ref{pilActive !== 1 ? "s" : ""}) — Stock fisico, no disponible real.
+          Las reservas de importacion no estan integradas (reservedQty=0).
+          Las cantidades mostradas son inventario fisico, no disponibilidad neta.
+        </div>
+      )}
+
       {/* ── 2. Client workspace ── */}
       <BibliotecaClient
         assets={displayAssets}
@@ -235,20 +267,39 @@ export default async function BibliotecaPage({
         presets={featuredPresets}
       />
 
-      {/* ── Visual state summary (inventory mode) ── */}
+      {/* ── Visual state summary + source qualification (inventory mode) ── */}
       {inventoryMode && (
         <div style={{
-          display: "flex", alignItems: "center", gap: S[4],
-          marginTop: S[4], padding: `${S[2]}px ${S[3]}px`,
-          background: C.surface, borderRadius: 6,
-          fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid,
+          display: "flex", flexDirection: "column" as const, gap: S[2],
+          marginTop: S[4],
         }}>
-          <span>Estados visuales (disponibles):</span>
-          <span style={{ color: C.green }}>Con hero: {vs.with_hero}</span>
-          <span style={{ color: C.amber }}>Con assets: {vs.with_assets}</span>
-          <span style={{ color: C.inkFaint }}>Sin recursos: {vs.no_assets}</span>
-          <span style={{ color: C.amber }}>Sin clasificar: {vs.sin_clasificar}</span>
-          <span style={{ fontWeight: 700, color: C.ink }}>Total: {vs.total}</span>
+          {/* Source-qualified counts (R4A Section A) */}
+          <div style={{
+            display: "flex", alignItems: "center", gap: S[4],
+            padding: `${S[2]}px ${S[3]}px`,
+            background: C.surface, borderRadius: 6,
+            fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid,
+          }}>
+            <span style={{ fontWeight: 600 }}>Fuentes:</span>
+            <span>CCS (CS+LT+OT): {ccsActive} activas</span>
+            <span>{pilUnverified ? "·" : "·"} PIL (IM): {pilActive}{pilUnverified ? " (stock fisico)" : ""}</span>
+            <span>· Bodegas CCS: B01+B04+B14+B15</span>
+            {snapshotLabel && <span style={{ color: C.inkFaint }}>· Corte: {snapshotLabel}</span>}
+          </div>
+          {/* Visual states */}
+          <div style={{
+            display: "flex", alignItems: "center", gap: S[4],
+            padding: `${S[2]}px ${S[3]}px`,
+            background: C.surface, borderRadius: 6,
+            fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkMid,
+          }}>
+            <span>Estados visuales:</span>
+            <span style={{ color: C.green }}>Con hero: {vs.with_hero}</span>
+            <span style={{ color: C.amber }}>Con assets: {vs.with_assets}</span>
+            <span style={{ color: C.inkFaint }}>Sin recursos: {vs.no_assets}</span>
+            <span style={{ color: C.amber }}>Sin clasificar: {vs.sin_clasificar}</span>
+            <span style={{ fontWeight: 700, color: C.ink }}>Total: {vs.total}</span>
+          </div>
         </div>
       )}
 
@@ -265,7 +316,7 @@ export default async function BibliotecaPage({
           </div>
         ))}
         <div style={{ marginLeft: "auto", fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkGhost }}>
-          MARKETING-LIBRARY-ACTIVE-ASSET-INGESTION-02A-R4
+          MARKETING-LIBRARY-ACTIVE-ASSET-INGESTION-02A-R4A
         </div>
       </div>
 
