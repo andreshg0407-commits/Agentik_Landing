@@ -441,6 +441,63 @@ export async function isDescendantOfRoot(
   return false;
 }
 
+// ── Paginated folder listing (04A-C) ──────────────────────────────────────────
+
+export interface FolderPageResult {
+  files:            DriveFile[];
+  childFolders:     { id: string; name: string }[];
+  nextPageToken:    string | null;
+  pageSize:         number;
+}
+
+/**
+ * Lists ONE page of a Drive folder's contents.
+ * Returns files, child folders, and nextPageToken for continuation.
+ * Server-only — token never returned to client.
+ */
+export async function listFolderPage(
+  folderId:    string,
+  accessToken: string,
+  pageToken?:  string,
+): Promise<FolderPageResult> {
+  const url = new URL(`${DRIVE_API_BASE}/files`);
+  url.searchParams.set("q",          `'${folderId}' in parents and trashed = false`);
+  url.searchParams.set("fields",     "files(id,name,mimeType,size),nextPageToken");
+  url.searchParams.set("pageSize",   String(DRIVE_MAX_FILES_PER_FOLDER));
+  url.searchParams.set("supportsAllDrives",          "true");
+  url.searchParams.set("includeItemsFromAllDrives",  "true");
+  if (pageToken) url.searchParams.set("pageToken", pageToken);
+
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (res.status === 401 || res.status === 403) throw new Error("DRIVE_PERMISSION_DENIED");
+  if (res.status === 404)                       throw new Error("DRIVE_FOLDER_NOT_FOUND");
+  if (!res.ok)                                  throw new Error(`Drive API error: ${res.status}`);
+
+  const data = await res.json() as DriveFileListResponse;
+  const items = data.files ?? [];
+
+  const files: DriveFile[]        = [];
+  const childFolders: { id: string; name: string }[] = [];
+
+  for (const item of items) {
+    if (item.mimeType === "application/vnd.google-apps.folder") {
+      childFolders.push({ id: item.id, name: item.name });
+    } else {
+      files.push(item);
+    }
+  }
+
+  return {
+    files,
+    childFolders,
+    nextPageToken: data.nextPageToken ?? null,
+    pageSize:      items.length,
+  };
+}
+
 // ── Flat recursive scanner (04A — bulk import) ───────────────────────────────
 
 export interface DriveScannedFile {

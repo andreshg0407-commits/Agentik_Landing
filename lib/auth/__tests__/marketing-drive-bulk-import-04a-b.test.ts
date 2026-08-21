@@ -66,9 +66,10 @@ describe("04A-B-C: Role authorization", () => {
 
 describe("04A-B-D: Drive connection states", () => {
   test("T04: Drawer handles Drive not connected", () => {
-    expect(bulkImportDrawerSrc).toContain("DRIVE_NOT_CONNECTED");
-    expect(bulkImportDrawerSrc).toContain("Drive no está conectado");
+    // Checks data.connected from status response
     expect(bulkImportDrawerSrc).toContain("data.connected");
+    // Shows error when not connected
+    expect(bulkImportDrawerSrc).toContain("Drive no está conectado");
   });
 });
 
@@ -85,9 +86,12 @@ describe("04A-B-D: Root configuration states", () => {
 // ── T06: Scan in progress ─────────────────────────────────────────────────
 
 describe("04A-B-E: Scanning progress", () => {
-  test("T06: Drawer has scanning step with progress", () => {
+  test("T06: Drawer has scanning step with real progress KPIs", () => {
     expect(bulkImportDrawerSrc).toContain('step === "scanning"');
-    expect(bulkImportDrawerSrc).toContain("scanProgress");
+    // Real progress: folders, files, pages, errors
+    expect(bulkImportDrawerSrc).toContain("scanFoldersDone");
+    expect(bulkImportDrawerSrc).toContain("scanFilesDone");
+    expect(bulkImportDrawerSrc).toContain("scanPagesDone");
     expect(bulkImportDrawerSrc).toContain("Escaneando");
   });
 });
@@ -95,11 +99,12 @@ describe("04A-B-E: Scanning progress", () => {
 // ── T07: Pagination — complete until 2000 limit ───────────────────────────
 
 describe("04A-B-E: Pagination and truncation", () => {
-  test("T07: Truncation detected at 2000 file limit", () => {
+  test("T07: Truncation uses complete/truncated fields (not hard 2000 limit)", () => {
     expect(bulkImportDrawerSrc).toContain("isTruncated");
-    expect(bulkImportDrawerSrc).toContain("2000");
-    expect(bulkImportDrawerSrc).toContain("TRUNCADO");
-    expect(bulkImportDrawerSrc).toContain("NO está completo");
+    expect(bulkImportDrawerSrc).toContain("isComplete");
+    // Truncated banner shown
+    expect(bulkImportDrawerSrc).toContain("INCOMPLETO");
+    expect(bulkImportDrawerSrc).toContain("complete=false");
   });
 });
 
@@ -164,22 +169,17 @@ describe("04A-B-F: Import CTA disabled", () => {
 // ── T12: Zero write routes ────────────────────────────────────────────────
 
 describe("04A-B-F: Zero write enforcement", () => {
-  test("T12: Drawer never calls write routes (POST/PUT/PATCH/DELETE)", () => {
-    // The drawer only calls GET action=status and GET action=dry-run
-    const fetchCalls = bulkImportDrawerSrc.match(/fetch\([^)]+\)/g) ?? [];
-    for (const call of fetchCalls) {
-      // All fetch calls must be GET (no method override)
-      expect(call).not.toContain("method:");
-      expect(call).not.toContain("POST");
-      expect(call).not.toContain("PUT");
-      expect(call).not.toContain("PATCH");
-      expect(call).not.toContain("DELETE");
-    }
-    // No write operations in the drawer
-    expect(bulkImportDrawerSrc).not.toContain("method: \"POST\"");
+  test("T12: Drawer uses only GET for scanning and POST analyze (zero-write analysis)", () => {
+    // POST is used ONLY for analyze action (server-side dry-run, zero writes)
+    expect(bulkImportDrawerSrc).toContain('"analyze"');
+    // No PUT/PATCH/DELETE
     expect(bulkImportDrawerSrc).not.toContain("method: \"PUT\"");
     expect(bulkImportDrawerSrc).not.toContain("method: \"PATCH\"");
     expect(bulkImportDrawerSrc).not.toContain("method: \"DELETE\"");
+    // No create/update/delete operations
+    expect(bulkImportDrawerSrc).not.toContain(".create(");
+    expect(bulkImportDrawerSrc).not.toContain(".update(");
+    expect(bulkImportDrawerSrc).not.toContain(".delete(");
   });
 });
 

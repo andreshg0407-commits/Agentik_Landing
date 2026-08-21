@@ -135,6 +135,39 @@ export interface DryRunResult {
   organizationId: string;
 }
 
+// ── Scan page result (04A-C — paginated scan) ──────────────────────────────
+
+export interface ScanPageResult {
+  /** Files found in this page */
+  scannedFiles:     import("@/lib/marketing-studio/drive/drive-api-client").DriveScannedFile[];
+  /** Total folders processed so far by the server in this page request */
+  scannedFolders:   number;
+  /** The folder being scanned */
+  currentFolderId:  string;
+  /** Token for next page within the same folder (null = folder exhausted) */
+  nextPageToken:    string | null;
+  /** Child folder IDs discovered in this page — client must enqueue them */
+  childFolderIds:   { id: string; name: string; path: string }[];
+  /** True ONLY when all pages consumed AND all child folders processed AND no errors */
+  complete:         boolean;
+  /** True when scan was interrupted by error, limit, or cancellation */
+  truncated:        boolean;
+  /** Errors encountered during this page */
+  errors:           string[];
+  /** Number of items returned in this page */
+  pageSize:         number;
+}
+
+// ── Extended DryRunResult (04A-C — completeness fields) ─────────────────────
+
+export interface DryRunCompleteness {
+  complete:       boolean;
+  truncated:      boolean;
+  scannedFiles:   number;
+  scannedFolders: number;
+  errors:         string[];
+}
+
 // ── Idempotency contract (Section G) ────────────────────────────────────────
 
 export interface AssetIdempotencyKey {

@@ -292,10 +292,11 @@ describe("10 — Drive tenant isolation via OAuth", () => {
 
   test("T37b: DRIVE_TENANT_ROOT_NOT_CONFIGURED blocks structure and dry-run", () => {
     expect(driveRouteSrc).toContain("DRIVE_TENANT_ROOT_NOT_CONFIGURED");
-    // Returns 503 when no root configured
-    const gateReturnIdx = driveRouteSrc.indexOf('"DRIVE_TENANT_ROOT_NOT_CONFIGURED"');
-    const returnBlock = driveRouteSrc.slice(gateReturnIdx, gateReturnIdx + 400);
-    expect(returnBlock).toContain("503");
+    // Returns 503 when no root configured (in catch handler)
+    const catchIdx = driveRouteSrc.indexOf('=== "DRIVE_TENANT_ROOT_NOT_CONFIGURED"');
+    expect(catchIdx).toBeGreaterThan(-1);
+    const catchBlock = driveRouteSrc.slice(catchIdx, catchIdx + 300);
+    expect(catchBlock).toContain("503");
   });
 
   test("T37c: OUTSIDE_TENANT_ROOT rejects folders outside root", () => {
