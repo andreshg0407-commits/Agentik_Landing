@@ -286,6 +286,24 @@ describe("10 — Drive tenant isolation via OAuth", () => {
     expect(driveRouteSrc).toContain("TENANT ROOT ENFORCEMENT");
     expect(driveRouteSrc).toContain("Cross-tenant folder access is impossible");
   });
+
+  test("T37b: DRIVE_TENANT_ROOT_NOT_CERTIFIED blocks structure and dry-run", () => {
+    expect(driveRouteSrc).toContain("DRIVE_TENANT_ROOT_NOT_CERTIFIED");
+    // The if-condition guards both structure and dry-run before the error return
+    expect(driveRouteSrc).toContain('action === "structure" || action === "dry-run"');
+    // Returns 503
+    const gateReturnIdx = driveRouteSrc.indexOf('"DRIVE_TENANT_ROOT_NOT_CERTIFIED"');
+    const returnBlock = driveRouteSrc.slice(gateReturnIdx, gateReturnIdx + 400);
+    expect(returnBlock).toContain("503");
+  });
+
+  test("T37c: Drive import button disabled in drawer", () => {
+    expect(drawerSrc).toContain("DRIVE_TENANT_ROOT_NOT_CERTIFIED");
+    // Button is unconditionally disabled
+    const driveButtonIdx = drawerSrc.indexOf("DRIVE_TENANT_ROOT_NOT_CERTIFIED");
+    const buttonBlock = drawerSrc.slice(driveButtonIdx, driveButtonIdx + 400);
+    expect(buttonBlock).toContain("disabled");
+  });
 });
 
 // ══════════════════════════════════════════════════════════════════════════════

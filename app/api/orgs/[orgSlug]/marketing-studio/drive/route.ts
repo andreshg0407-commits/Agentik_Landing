@@ -72,7 +72,30 @@ export async function GET(
       return NextResponse.json({ connected: conn !== null });
     }
 
-    // ── Structure ─────────────────────────────────────────────────────────────
+    // ── GATE: Tenant root not certified ────────────────────────────────────
+    // DRIVE_TENANT_ROOT_NOT_CERTIFIED — No tenantRootFolderId exists in
+    // schema, vault, or IntegrationConnection. OAuth token provides
+    // account-level isolation but NOT folder-level root enforcement.
+    // Until a tenantRootFolderId is stored and validated:
+    //   - structure and dry-run are blocked
+    //   - status check remains available (connection awareness)
+    // Requirements for certification (Section D):
+    //   1. Store tenantRootFolderId per org (vault or schema)
+    //   2. Validate folderId as descendant of root
+    //   3. Reject folders outside root
+    //   4. Fail closed if ancestry cannot be verified
+    if (action === "structure" || action === "dry-run") {
+      return NextResponse.json(
+        {
+          error:   "DRIVE_TENANT_ROOT_NOT_CERTIFIED",
+          message: "Drive import blocked — tenant root folder not registered. " +
+                   "OAuth token isolation alone does not enforce folder-level boundaries.",
+        },
+        { status: 503 },
+      );
+    }
+
+    // ── Structure (blocked above — kept for future enablement) ──────────
     if (action === "structure") {
       const rawInput = req.nextUrl.searchParams.get("folderId") ?? "";
       const folderId = parseDriveFolderUrl(rawInput) ?? rawInput;

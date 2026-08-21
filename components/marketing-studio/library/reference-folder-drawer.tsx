@@ -601,26 +601,26 @@ function UploadActionTray({
         {ensuring ? "Preparando..." : storageBlocked ? "Subir archivo (bloqueado)" : "Subir archivo"}
       </button>
 
-      {/* Drive import */}
+      {/* Drive import — BLOCKED until DRIVE_TENANT_ROOT_CERTIFIED
+        * No tenantRootFolderId exists in schema or vault.
+        * OAuth token isolation alone does not enforce folder-level root.
+        * DRIVE_TENANT_ROOT_NOT_CERTIFIED — disabled until root enforcement implemented.
+        */}
       <button
-        disabled={driveStatus !== "connected"}
-        onClick={() => {
-          // Drive import — navigates to Drive picker (Phase 3)
-          // For now, show connection status
-        }}
+        disabled
         style={{
           ...btnBase,
-          background: driveStatus === "connected" ? C.surface : `${C.surface}88`,
-          color:      driveStatus === "connected" ? C.inkMid : C.inkFaint,
+          background: `${C.surface}88`,
+          color:      C.inkFaint,
           border:     `1px solid ${C.line}`,
-          opacity:    driveStatus === "connected" ? 1 : 0.6,
+          opacity:    0.6,
         }}
-        title={driveStatus !== "connected" ? "Google Drive no conectado" : "Importar desde Drive"}
+        title="Importar desde Drive — bloqueado hasta certificar tenant root"
       >
         <HardDrive size={14} />
         {driveStatus === "unknown" ? "Drive..." :
          driveStatus === "disconnected" ? "Drive no conectado" :
-         "Importar desde Drive"}
+         "Drive (root no certificado)"}
       </button>
 
       {/* Foto Estudio */}
