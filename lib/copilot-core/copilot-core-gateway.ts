@@ -81,6 +81,12 @@ export interface CopilotCapabilityResult {
   readonly durationMs: number;
 }
 
+// ── Adapter Imports (statically bound) ────────────────────────────────────────
+
+import { customersAdapter } from "./adapters/customers-adapter";
+import { ordersAdapter } from "./adapters/orders-adapter";
+import { salesAdapter } from "./adapters/sales-adapter";
+
 // ── Private Adapter Registry ─────────────────────────────────────────────────
 
 /**
@@ -93,15 +99,13 @@ export interface CopilotCapabilityResult {
  * seller-scoped, inappropriate for manager-only MVP).
  */
 function resolveCopilotAdapter(capabilityId: string): CopilotAdapter | null {
-  // Adapters will be imported and wired in Phase 3.
-  // For now, return null (fail closed) — the gateway is structurally complete.
   switch (capabilityId) {
     case "commercial.customers.summary.read":
-      return null; // Phase 3: customersAdapter
+      return customersAdapter;
     case "commercial.orders.summary.read":
-      return null; // Phase 3: ordersAdapter
+      return ordersAdapter;
     case "commercial.sales.performance.read":
-      return null; // Phase 3: salesAdapter
+      return salesAdapter;
     default:
       return null; // fail closed
   }
