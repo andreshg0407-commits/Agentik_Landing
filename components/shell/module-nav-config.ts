@@ -361,7 +361,7 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
       shortIcon: "Ag",
       iconKey:   "agentik",
       accent:    "#4f46e5",
-      pathKeys:  ["agentik/agentes", "agentik/configuracion", "agentik", "copilot/approval-center", "agentik/runtime-admin"],
+      pathKeys:  ["agentik/agentes", "agentik/configuracion", "agentik/copilot", "agentik", "copilot/approval-center", "agentik/runtime-admin"],
       items: [
         { label: "Hub",              href: `/${s}/agentik`,                          badge: "↗", accent: "#4f46e5" },
         { label: "Sistema",          href: "#", isSectionHeader: true },
@@ -374,6 +374,8 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
         { label: "Runtime",          href: "#", isSectionHeader: true, visibility: "platform" },
         { label: "Approval Center",  href: `/${s}/copilot/approval-center`,     indent: 1, accent: "#004AAD", badge: "⚡", visibility: "platform", pathMatches: ["copilot/approval-center"] },
         { label: "Runtime Admin",    href: `/${s}/agentik/runtime-admin`,        indent: 1, accent: "#004AAD", badge: "⚙",  visibility: "platform", pathMatches: ["agentik/runtime-admin"] },
+        { label: "Preview",         href: "#", isSectionHeader: true },
+        { label: "Copilot Preview", href: `/${s}/agentik/copilot`,             indent: 1, accent: "#004AAD", badge: "Preview", pathMatches: ["agentik/copilot"] },
       ],
     });
   }
