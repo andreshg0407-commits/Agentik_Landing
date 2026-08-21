@@ -81,10 +81,22 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       clientSecret:  creds.clientSecret,   // ⚠ server-only
     });
 
-    // 3. Consume session (prevent replay)
+    // 3. Verify granted scopes include drive.readonly
+    const grantedScopes = tokens.scope ? tokens.scope.split(" ").filter(Boolean) : [];
+    const hasDriveReadonly = grantedScopes.some(
+      (s: string) => s === "https://www.googleapis.com/auth/drive.readonly",
+    );
+    if (!hasDriveReadonly) {
+      await consumeOAuthSessionByState(state);
+      return NextResponse.redirect(
+        `${appUrl}${returnTo}?drive_error=DRIVE_SCOPE_MISSING`,
+      );
+    }
+
+    // 4. Consume session (prevent replay)
     await consumeOAuthSessionByState(state);
 
-    // 4. Extract user email from id_token (optional — display only)
+    // 5. Extract user email from id_token (optional — display only)
     let externalEmail: string | null = null;
     if (tokens.id_token) {
       try {
@@ -96,7 +108,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       } catch { /* ignore JWT decode errors */ }
     }
 
-    // 5. Upsert IntegrationConnection
+    // 6. Upsert IntegrationConnection
     const connection = await upsertConnectionByExternalId({
       organizationId,
       provider:            "google_drive",
@@ -108,7 +120,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       connectedAt:         new Date(),
     });
 
-    // 6. Store access_token (encrypted at rest, expires in expires_in seconds)
+    // 7. Store access_token (encrypted at rest, expires in expires_in seconds)
     const accessExpiresAt = new Date(Date.now() + tokens.expires_in * 1000);
     await storeIntegrationSecret({
       organizationId,
@@ -118,7 +130,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       expiresAt:    accessExpiresAt,
     });
 
-    // 7. Store refresh_token (encrypted at rest, no expiry — long-lived)
+    // 8. Store refresh_token (encrypted at rest, no expiry — long-lived)
     if (tokens.refresh_token) {
       await storeIntegrationSecret({
         organizationId,
@@ -128,7 +140,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       });
     }
 
-    // 8. Mark connection as connected
+    // 9. Mark connection as connected
     await updateIntegrationConnectionStatus(connection.id, organizationId, {
       status:      CONNECTION_STATUS.CONNECTED,
       health:      CONNECTION_HEALTH.HEALTHY,

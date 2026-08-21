@@ -239,7 +239,7 @@ describe("04A-D-R1-C: Server-side scan authority", () => {
     expect(driveRouteSrc).toContain("NO_CACHE_HEADERS");
     // Applied to status response — find the status action block
     const statusActionIdx = driveRouteSrc.indexOf('action === "status"');
-    const statusBlock = driveRouteSrc.slice(statusActionIdx, statusActionIdx + 800);
+    const statusBlock = driveRouteSrc.slice(statusActionIdx, statusActionIdx + 3000);
     expect(statusBlock).toContain("NO_CACHE_HEADERS");
     // Applied to scan-page response — find the scan-page result return
     const scanResultIdx = driveRouteSrc.indexOf("analyzedFiles:   pageAnalysis");

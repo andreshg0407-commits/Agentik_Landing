@@ -157,7 +157,7 @@ describe("04A-E-C: Cache-Control on all Drive proxy responses", () => {
 
   test("T12: status response includes NO_CACHE_HEADERS", () => {
     const statusIdx = driveRouteSrc.indexOf('action === "status"');
-    const statusBlock = driveRouteSrc.slice(statusIdx, statusIdx + 800);
+    const statusBlock = driveRouteSrc.slice(statusIdx, statusIdx + 3000);
     expect(statusBlock).toContain("NO_CACHE_HEADERS");
   });
 

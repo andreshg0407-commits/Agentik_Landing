@@ -60,6 +60,7 @@ import {
 }                                         from "@/lib/marketing-studio/drive/drive-api-client";
 import type { DriveScannedFile }          from "@/lib/marketing-studio/drive/drive-api-client";
 import { getTenantDriveRoot }             from "@/lib/marketing-studio/drive/drive-tenant-root";
+import { disconnectConnectionById }      from "@/lib/integrations/integration-repository";
 import { runDryRun }                      from "@/lib/marketing-studio/bulk-import/drive-dry-run-engine";
 import {
   buildProductMapsForDryRun,
@@ -115,7 +116,7 @@ export async function GET(
 
     const action = req.nextUrl.searchParams.get("action") ?? "status";
 
-    // ── Status (04A-F-R1: masked email, root folderId) ─────────────────────
+    // ── Status (04A-F-R2: live Drive probe, reauth detection) ──────────────
     if (action === "status") {
       const conn = await getDriveConnection(organizationId);
       const root = await getTenantDriveRoot(organizationId);
@@ -129,13 +130,84 @@ export async function GET(
         accountEmail = connRecord?.externalAccountName ?? null;
       }
 
+      // If no connection in DB, short-circuit — no probe needed
+      if (!conn) {
+        return NextResponse.json({
+          connected:             false,
+          tenantRootConfigured:  root !== null,
+          tenantRootFolderName:  root?.folderName ?? null,
+          tenantRootFolderId:    root?.folderId ?? null,
+          accountEmail:          null,
+          reauthRequired:        false,
+          reauthReason:          null,
+        }, { headers: NO_CACHE_HEADERS });
+      }
+
+      // Live probe: attempt token + Drive API call to verify connection is real
+      let reauthRequired = false;
+      let reauthReason: string | null = null;
+      try {
+        const accessToken = await getDriveAccessToken(conn);
+        // Lightweight probe — Drive about endpoint (no file listing)
+        const probeRes = await fetch(
+          "https://www.googleapis.com/drive/v3/about?fields=user",
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+        if (probeRes.status === 401 || probeRes.status === 403) {
+          reauthRequired = true;
+          const probeBody = await probeRes.json().catch(() => ({})) as { error?: { errors?: Array<{ reason?: string }> } };
+          const reason = probeBody?.error?.errors?.[0]?.reason;
+          if (reason === "insufficientPermissions" || reason === "forbidden") {
+            reauthReason = "DRIVE_SCOPE_MISSING";
+          } else if (reason === "domainPolicy") {
+            reauthReason = "WORKSPACE_ADMIN_BLOCKED";
+          } else if (reason === "accessNotConfigured") {
+            reauthReason = "DRIVE_API_DISABLED";
+          } else {
+            reauthReason = "TOKEN_REVOKED";
+          }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "";
+        reauthRequired = true;
+        if (msg.includes("DRIVE_TOKEN_EXPIRED")) {
+          // Refresh token invalid — revoked or expired
+          reauthReason = msg.includes("revoked") ? "TOKEN_REVOKED" : "TOKEN_EXPIRED";
+        } else {
+          reauthReason = "TOKEN_REVOKED";
+        }
+      }
+
       return NextResponse.json({
-        connected:             conn !== null,
+        connected:             !reauthRequired,
         tenantRootConfigured:  root !== null,
         tenantRootFolderName:  root?.folderName ?? null,
         tenantRootFolderId:    root?.folderId ?? null,
         accountEmail:          maskEmail(accountEmail),
+        reauthRequired,
+        reauthReason,
       }, { headers: NO_CACHE_HEADERS });
+    }
+
+    // ── Disconnect (04A-F-R2: tenant-scoped, no asset/product deletion) ────
+    if (action === "disconnect") {
+      const isAdmin =
+        platformRole === "SUPER_ADMIN" ||
+        platformRole === "AGENTIK_ADMIN" ||
+        membership.role === "ORG_ADMIN";
+      if (!isAdmin) {
+        return NextResponse.json({ error: "ADMIN_DISCONNECT_DENIED" }, { status: 403 });
+      }
+
+      const conn = await getDriveConnection(organizationId);
+      if (!conn) {
+        return NextResponse.json({ disconnected: true }, { headers: NO_CACHE_HEADERS });
+      }
+
+      // Mark connection as NOT_CONNECTED — does NOT delete assets/products/files
+      await disconnectConnectionById(conn.connectionId, organizationId);
+
+      return NextResponse.json({ disconnected: true }, { headers: NO_CACHE_HEADERS });
     }
 
     // ── Admin-browse (04A-F-R1: initial root selection — NO tenantRoot required) ─
@@ -510,7 +582,9 @@ export async function GET(
     if (msg === "DRIVE_PERMISSION_DENIED")        return NextResponse.json({ error: "Sin permisos para acceder a esta carpeta" }, { status: 403 });
     if (msg === "DRIVE_FOLDER_NOT_FOUND")         return NextResponse.json({ error: "Carpeta no encontrada en Google Drive" }, { status: 404 });
     if (msg === "DRIVE_NOT_A_FOLDER")             return NextResponse.json({ error: "El ID no corresponde a una carpeta" }, { status: 400 });
-    if (msg === "DRIVE_TOKEN_EXPIRED")            return NextResponse.json({ error: msg }, { status: 401 });
+    if (msg === "DRIVE_TOKEN_EXPIRED")            return NextResponse.json({ error: msg, reauthRequired: true, reauthReason: "TOKEN_EXPIRED" }, { status: 401 });
+    if (msg === "DRIVE_SCOPE_MISSING")           return NextResponse.json({ error: msg, reauthRequired: true, reauthReason: "DRIVE_SCOPE_MISSING" }, { status: 403 });
+    if (msg === "WORKSPACE_ADMIN_BLOCKED")       return NextResponse.json({ error: msg, reauthRequired: true, reauthReason: "WORKSPACE_ADMIN_BLOCKED" }, { status: 403 });
     console.error("[marketing-studio/drive GET]", err);
     return NextResponse.json({ error: msg }, { status: 500 });
   }

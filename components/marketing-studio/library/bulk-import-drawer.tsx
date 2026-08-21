@@ -49,6 +49,7 @@ type ConnectionState =
   | "CONNECTED_NO_ROOT"
   | "READY"
   | "TOKEN_EXPIRED"
+  | "REAUTH_REQUIRED"
   | "ERROR";
 
 interface DriveStatusResponse {
@@ -57,6 +58,8 @@ interface DriveStatusResponse {
   tenantRootFolderName: string | null;
   tenantRootFolderId:   string | null;
   accountEmail:         string | null;
+  reauthRequired?:      boolean;
+  reauthReason?:        string | null;
 }
 
 interface BrowseFolder {
@@ -180,12 +183,26 @@ export function BulkImportDrawer({
     try {
       const res = await fetch(`/api/orgs/${orgSlug}/marketing-studio/drive?action=status`);
       if (!res.ok) {
+        // Check if the error response contains reauth info
+        const errBody = await res.json().catch(() => ({})) as { reauthRequired?: boolean; reauthReason?: string };
+        if (errBody.reauthRequired) {
+          setErrorMsg(reauthReasonLabel(errBody.reauthReason ?? null));
+          setConnState("REAUTH_REQUIRED");
+          return;
+        }
         setErrorMsg("No se pudo verificar la conexion con Drive");
         setConnState("ERROR");
         return;
       }
       const data: DriveStatusResponse = await res.json();
       setDriveStatus(data);
+
+      // Live probe detected stale connection
+      if (data.reauthRequired) {
+        setErrorMsg(reauthReasonLabel(data.reauthReason ?? null));
+        setConnState("REAUTH_REQUIRED");
+        return;
+      }
 
       if (!data.connected) {
         setConnState("DISCONNECTED");
@@ -213,6 +230,9 @@ export function BulkImportDrawer({
       setStep("folders");
     } else if (connState === "CONNECTED_NO_ROOT" && step === "connection") {
       setStep("root");
+    } else if (connState === "REAUTH_REQUIRED" && step !== "connection") {
+      // Stale connection detected mid-flow — return to connection step
+      setStep("connection");
     }
   }, [connState, step]);
 
@@ -683,6 +703,21 @@ export function BulkImportDrawer({
                 </StepMessage>
               )}
 
+              {connState === "REAUTH_REQUIRED" && (
+                <StepMessage icon="⚠" title="Reautorizacion requerida" detail={errorMsg ?? "La conexion con Google Drive requiere reautorizacion."} color={C.amber}>
+                  <div style={{ marginTop: S[4] }}>
+                    <button onClick={connectDrive} style={primaryBtnStyle}>
+                      Reconectar cuenta de Google
+                    </button>
+                  </div>
+                  <div style={{
+                    marginTop: S[3], fontFamily: T.mono, fontSize: T.sz["2xs"], color: C.inkFaint,
+                  }}>
+                    Se solicitaran los permisos necesarios (drive.readonly, openid, email).
+                  </div>
+                </StepMessage>
+              )}
+
               {connState === "ERROR" && (
                 <StepMessage icon="✕" title="Error de conexion" detail={errorMsg ?? "Error desconocido"} color={C.red}>
                   <div style={{ display: "flex", gap: S[2], marginTop: S[4], justifyContent: "center" }}>
@@ -1135,6 +1170,19 @@ function FolderList({
       ))}
     </div>
   );
+}
+
+// ── Reauth reason labels ─────────────────────────────────────────────────────
+
+function reauthReasonLabel(reason: string | null): string {
+  switch (reason) {
+    case "TOKEN_REVOKED":          return "La autorizacion de Google Drive fue revocada. Reconecta tu cuenta.";
+    case "TOKEN_EXPIRED":          return "El token de Google Drive expiro. Reconecta tu cuenta.";
+    case "DRIVE_SCOPE_MISSING":    return "Faltan permisos de Drive (drive.readonly). Reconecta y acepta todos los permisos.";
+    case "DRIVE_API_DISABLED":     return "La API de Google Drive no esta habilitada para esta cuenta.";
+    case "WORKSPACE_ADMIN_BLOCKED": return "El administrador de Google Workspace bloqueo el acceso a Drive para esta aplicacion.";
+    default:                       return "La conexion con Google Drive requiere reautorizacion.";
+  }
 }
 
 // ── StepMessage ──────────────────────────────────────────────────────────────
