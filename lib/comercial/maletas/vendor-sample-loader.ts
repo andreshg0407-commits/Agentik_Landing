@@ -295,6 +295,18 @@ export interface VendorSampleLoadResult {
   opportunityCandidates: OpportunityCandidatesResult;
   /** MALETAS-08B2R3: B04 production inventory */
   b04Inventory: B04InventoryResult;
+  /** P0-08B2R6G: OP truth audit — separates B04 physical from real OP */
+  opTruthAudit: {
+    b04PhysicalRefs: number;
+    b04PhysicalQty: number;
+    b04CandidatesWithSubgrupo: number;
+    b04RejectedNoSubgrupo: number;
+    legacyOpCandidates: number;
+    opSourceTruthState: "ESTIMATED" | "NO_DATA";
+    b04SourceTruthState: "CERTIFIED" | "UNAVAILABLE";
+    opCoverageAuthority: "B04_PHYSICAL";
+    explanation: string;
+  };
 }
 
 // ── Main loader ──────────────────────────────────────────────────────────────
@@ -347,6 +359,7 @@ export async function loadVendorSampleData(
       sampleCoverage: { vendorCoverages: [], totalMissingPositions: 0, totalExcessPositions: 0, globalCompletionPct: 0, coverageSummary: { b01Available: 0, opIncoming: 0, productionRequired: 0, importUnavailable: 0, dataUnverified: 0, stockBelowThreshold: 0 } },
       opportunityCandidates: { candidates: [], totalCS: 0, totalLT: 0 },
       b04Inventory: { refs: [], byReference: new Map(), totalRefs: 0, totalPositiveRefs: 0, totalExistencia: 0, availability: "UNAVAILABLE" as const, queriedAt: new Date() },
+      opTruthAudit: { b04PhysicalRefs: 0, b04PhysicalQty: 0, b04CandidatesWithSubgrupo: 0, b04RejectedNoSubgrupo: 0, legacyOpCandidates: 0, opSourceTruthState: "NO_DATA" as const, b04SourceTruthState: "UNAVAILABLE" as const, opCoverageAuthority: "B04_PHYSICAL" as const, explanation: "Fuente SAG no disponible." },
     };
   }
 
@@ -383,6 +396,7 @@ export async function loadVendorSampleData(
       sampleCoverage: { vendorCoverages: [], totalMissingPositions: 0, totalExcessPositions: 0, globalCompletionPct: 0, coverageSummary: { b01Available: 0, opIncoming: 0, productionRequired: 0, importUnavailable: 0, dataUnverified: 0, stockBelowThreshold: 0 } },
       opportunityCandidates: { candidates: [], totalCS: 0, totalLT: 0 },
       b04Inventory: { refs: [], byReference: new Map(), totalRefs: 0, totalPositiveRefs: 0, totalExistencia: 0, availability: "UNAVAILABLE" as const, queriedAt: new Date() },
+      opTruthAudit: { b04PhysicalRefs: 0, b04PhysicalQty: 0, b04CandidatesWithSubgrupo: 0, b04RejectedNoSubgrupo: 0, legacyOpCandidates: 0, opSourceTruthState: "NO_DATA" as const, b04SourceTruthState: "UNAVAILABLE" as const, opCoverageAuthority: "B04_PHYSICAL" as const, explanation: "SAG CURRENT B01 no disponible." },
     };
   }
 
@@ -1352,9 +1366,10 @@ export async function loadVendorSampleData(
     });
   }
 
-  // B04 is the SOLE authority for OP_INCOMING.
-  // Legacy ProductionOrder is diagnostic only — never generates OP_INCOMING.
-  // Only B04 candidates are passed to the coverage engine.
+  // P0-08B2R6G: B04 = physical inventory in PRODUCTO EN PROCESO warehouse.
+  // B04 candidates are used for OP coverage matching (textile subgrupo match).
+  // Real OP data from ProductionOrder (fuente 33) is diagnostic only — producedQty is null.
+  // Until real OP source is certified, B04 physical stock is the best proxy for active production.
   const unifiedOpCandidates: OpCoverageCandidate[] = b04OpCandidates;
 
   // ── Sample coverage (MALETAS-COBERTURA-MOSTRARIO-08B2) ──────────────
@@ -1372,6 +1387,24 @@ export async function loadVendorSampleData(
       opAvailable: b04Available, // B04 is sole OP authority — legacy ProductionOrder is diagnostic only
     },
   );
+
+  // P0-08B2R6G: OP truth audit — separate B04 physical from real OP
+  const legacyOpCount = opCovCandidates.length;
+  const b04CandidateCount = b04OpCandidates.length;
+  const b04RejectedNoSubgrupo = b04Inventory.refs.filter(r => !r.subgrupoSag).length;
+  const opTruthAudit = {
+    b04PhysicalRefs: b04Inventory.totalRefs,
+    b04PhysicalQty: b04Inventory.totalExistencia,
+    b04CandidatesWithSubgrupo: b04CandidateCount,
+    b04RejectedNoSubgrupo,
+    legacyOpCandidates: legacyOpCount,
+    opSourceTruthState: legacyOpCount > 0 ? "ESTIMATED" as const : "NO_DATA" as const,
+    b04SourceTruthState: b04Inventory.availability === "AVAILABLE" ? "CERTIFIED" as const : "UNAVAILABLE" as const,
+    opCoverageAuthority: "B04_PHYSICAL" as const, // B04 is currently sole OP_INCOMING authority
+    explanation: "B04 = inventario fisico en Producto en Proceso. No es una OP real. "
+      + "ProductionOrder (fuente 33) existe pero producedQty=null → pendingQty es estimado. "
+      + "Hasta certificar la fuente real de OP, B04 es el mejor proxy de produccion activa.",
+  };
 
   return {
     vendors,
@@ -1392,6 +1425,7 @@ export async function loadVendorSampleData(
     sampleCoverage,
     opportunityCandidates,
     b04Inventory,
+    opTruthAudit,
   };
 }
 

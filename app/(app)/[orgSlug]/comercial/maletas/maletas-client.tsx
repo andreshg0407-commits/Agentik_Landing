@@ -173,6 +173,17 @@ interface MaletasClientProps {
   coverageResult: BusinessCoverageResult;
   sampleCoverage: SampleCoverageResult;
   b04Inventory: Omit<import("@/lib/comercial/maletas/b04-production-inventory").B04InventoryResult, "byReference" | "queriedAt">;
+  opTruthAudit: {
+    b04PhysicalRefs: number;
+    b04PhysicalQty: number;
+    b04CandidatesWithSubgrupo: number;
+    b04RejectedNoSubgrupo: number;
+    legacyOpCandidates: number;
+    opSourceTruthState: "ESTIMATED" | "NO_DATA";
+    b04SourceTruthState: "CERTIFIED" | "UNAVAILABLE";
+    opCoverageAuthority: "B04_PHYSICAL";
+    explanation: string;
+  };
 }
 
 // ── Design tokens ────────────────────────────────────────────────────────────
@@ -265,6 +276,7 @@ export function MaletasClient({
   sampleCoverage,
   opportunityCandidates,
   b04Inventory,
+  opTruthAudit,
 }: MaletasClientProps) {
   const [selectedVendor, setSelectedVendor] = useState<VendorSampleSnapshot | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -1147,7 +1159,7 @@ export function MaletasClient({
         </SectionHeader>
 
         {/* ── Inventario de OP Activas — Bodega 4 (MALETAS-08B2R3) ── */}
-        <B04InventorySection b04Inventory={b04Inventory} sampleCoverage={sampleCoverage} />
+        <B04InventorySection b04Inventory={b04Inventory} sampleCoverage={sampleCoverage} opTruthAudit={opTruthAudit} />
 
         {/* Source indicator */}
         <div style={{
@@ -4387,9 +4399,10 @@ const COVERAGE_STATUS_COLOR: Record<CoverageStatus, string> = {
 };
 
 /** B04 Production Inventory panel (MALETAS-08B2R3, reconciled MALETAS-08B2R6F) */
-function B04InventorySection({ b04Inventory, sampleCoverage }: {
+function B04InventorySection({ b04Inventory, sampleCoverage, opTruthAudit }: {
   b04Inventory: MaletasClientProps["b04Inventory"];
   sampleCoverage: SampleCoverageResult;
+  opTruthAudit: MaletasClientProps["opTruthAudit"];
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -4596,6 +4609,26 @@ function B04InventorySection({ b04Inventory, sampleCoverage }: {
             background: C.surfaceAlt, borderRadius: R.sm,
           }}>
             {`${matched.length} + ${unmatched.length} + ${unverified.length} = ${reconciled.length} (total B04)`}
+          </div>
+
+          {/* OP Truth Audit (P0-08B2R6G) */}
+          <div style={{
+            padding: S[3], marginBottom: S[3],
+            background: C.amberLight, borderRadius: R.md,
+            border: `1px solid ${C.amberBorder}`,
+          }}>
+            <div style={{ fontFamily: T.mono, fontSize: 8, fontWeight: 700, color: C.amber, textTransform: "uppercase" as const, marginBottom: S[1] }}>
+              Fuente de datos OP
+            </div>
+            <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkMid, lineHeight: 1.6 }}>
+              <div>Autoridad: <strong>B04 inventario fisico</strong> (no OP real)</div>
+              <div>B04 refs fisicas: <strong>{opTruthAudit.b04PhysicalRefs}</strong> · {Math.round(opTruthAudit.b04PhysicalQty)} unidades</div>
+              <div>Candidatos con subgrupo: <strong>{opTruthAudit.b04CandidatesWithSubgrupo}</strong> · Sin subgrupo: {opTruthAudit.b04RejectedNoSubgrupo}</div>
+              <div>OP reales (ProductionOrder): <strong>{opTruthAudit.legacyOpCandidates}</strong> · Estado: {opTruthAudit.opSourceTruthState}</div>
+              <div style={{ marginTop: S[1], fontSize: 8, color: C.inkFaint }}>
+                {opTruthAudit.explanation}
+              </div>
+            </div>
           </div>
 
           {/* Tab selector */}

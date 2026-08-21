@@ -43,6 +43,7 @@ export default async function MaletasPage({
         totalExistencia: data.b04Inventory.totalExistencia,
         availability: data.b04Inventory.availability,
       }}
+      opTruthAudit={data.opTruthAudit}
     />
   );
 }
