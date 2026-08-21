@@ -23,6 +23,7 @@
  *   D-16: No B01 absence alone classifies as Import
  */
 
+// @ts-expect-error — vitest types resolved at runtime via npx, not a project dependency
 import { describe, test, expect } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
