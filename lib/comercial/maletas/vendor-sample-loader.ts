@@ -52,7 +52,7 @@ import {
   IMPORT_SCARCITY_MINIMUM,
   DEFAULT_SUBGROUP_MINIMUM_REFS,
 } from "./vendor-sample-types";
-import type { AccessoryScarcityState, AccessorySummary } from "./vendor-sample-types";
+import type { AccessoryScarcityState, AccessorySummary, VerifiedAvailable } from "./vendor-sample-types";
 import { loadEffectiveMinimumRefsMap, loadVendorActivationOverrides } from "./vendor-bag-ideal-route-service";
 import { buildCommercialIntelligence } from "./maletas-commercial-intelligence";
 import type { MaletasCommercialIntelligenceResult } from "./maletas-commercial-intelligence-types";
@@ -524,16 +524,34 @@ export async function loadVendorSampleData(
       const hasCentralAvailability = lookupRec
         ? lookupRec.stockDataState === "CERTIFIED"
         : coverage != null;
-      /** @deprecated Use lookupRec.compatibleCommercialStock — alias kept for downstream compatibility */
-      const centralAvailable = lookupRec
-        ? lookupRec.compatibleCommercialStock
-        : (coverage?.disponible ?? 0);
+      // P0-INVENTORY-AVAILABLE-TRUTH-08B2R6B: SAG CURRENT DISPONIBLE is the SOLE
+      // authority for available stock. coverage.disponible comes from SAG CURRENT
+      // vw_agentik_inventario (EXISTENCIA - RESERVADO). lookupRec.compatibleCommercialStock
+      // uses CCS/PIL which are stale physical stock — NEVER use for availability.
+      // When coverage is missing, availableQty is null — NEVER 0.
+      const verifiedAvailable: VerifiedAvailable = coverage != null
+        ? {
+            availableQty: coverage.disponible,
+            physicalQty: canonical.byReference.get(item.reference)?.existencia ?? null,
+            reservedQty: canonical.byReference.get(item.reference)?.reservado ?? null,
+            truthState: "VERIFIED" as const,
+            sourceUpdatedAt: coverage.snapshotAt,
+            warehouseCode: "B01",
+          }
+        : {
+            availableQty: null,
+            physicalQty: null,
+            reservedQty: null,
+            truthState: "DATA_UNVERIFIED" as const,
+            reason: "SAG_CURRENT_AVAILABLE_MISSING",
+          };
+      const centralAvailable = verifiedAvailable.availableQty;
       const stockDataState: import("./vendor-sample-types").StockDataState =
-        hasCentralAvailability ? "CERTIFIED" : "ABSENT";
-      const rawState = deriveState(centralAvailable, minimum, hasCentralAvailability);
+        centralAvailable !== null ? "CERTIFIED" : "ABSENT";
+      const rawState = deriveState(centralAvailable, minimum, centralAvailable !== null);
       const state: SampleState = rawState;
-      const commercialHealth = deriveCommercialHealth(centralAvailable, minimum, hasCentralAvailability);
-      const riesgoAgotamiento = state === "saludable" && centralAvailable <= minimum + RIESGO_BUFFER;
+      const commercialHealth = deriveCommercialHealth(centralAvailable, minimum, centralAvailable !== null);
+      const riesgoAgotamiento = state === "saludable" && centralAvailable !== null && centralAvailable <= minimum + RIESGO_BUFFER;
       const sourceLabel = item.sourceWarehouse
         ? (BODEGA_NAMES[item.sourceWarehouse] ?? `B${item.sourceWarehouse}`)
         : null;
@@ -575,6 +593,7 @@ export async function loadVendorSampleData(
         imageUrl: enrichment?.imageUrl ?? null,
         present: true,
         centralAvailable,
+        verifiedAvailable,
         minimumRequired: minimum,
         state,
         commercialHealth,
@@ -651,23 +670,26 @@ export async function loadVendorSampleData(
           existing.evidenceRefs.set(ref.reference, {
             reference: ref.reference,
             description: ref.description,
-            available: ref.centralAvailable,
+            available: ref.centralAvailable ?? 0, // filtered by isEligibleForProductionSuggestion (state !== sin_datos)
           });
         }
         existing.totalMinRequired += ref.minimumRequired;
       } else {
+        // centralAvailable is guaranteed non-null here: isEligibleForProductionSuggestion
+        // filters state === "sin_datos" which maps to null centralAvailable
+        const prodAvailable = ref.centralAvailable ?? 0;
         subgroupProdMap.set(key, {
           line: ref.line,
           subgrupoSag: sg,
-          totalCentralAvailable: ref.centralAvailable,
+          totalCentralAvailable: prodAvailable,
           totalMinRequired: ref.minimumRequired,
           affectedVendorSet: new Set([vendor.vendorName]),
           evidenceRefs: new Map([[ref.reference, {
             reference: ref.reference,
             description: ref.description,
-            available: ref.centralAvailable,
+            available: prodAvailable,
           }]]),
-          reasonType: ref.centralAvailable <= 0
+          reasonType: prodAvailable <= 0
             ? "central_stock_insufficient"
             : ref.replacementOptions.length === 0
               ? "no_replacement_available"
@@ -1382,14 +1404,14 @@ function mapCanonicalToOldAction(action: MaletaSupplyAction | null): SupplyActio
 // ── State derivation (2-state model) ─────────────────────────────────────────
 
 function deriveState(
-  centralAvailable: number,
+  centralAvailable: number | null,
   minimum: number,
   hasCoverageData: boolean,
 ): SampleState {
   // COMERCIAL-INVENTARIO-DATA-SAFETY-LOCK-01 Phase 1:
   // Absence of a coverage record does NOT mean zero inventory.
   // Only derive state when data actually exists.
-  if (!hasCoverageData) return "sin_datos";
+  if (!hasCoverageData || centralAvailable === null) return "sin_datos";
   // STRICT greater-than: disponible > minimo → saludable
   if (centralAvailable > minimum) return "saludable";
   return "reemplazar";
@@ -1400,11 +1422,11 @@ function deriveState(
 // Does NOT affect vendor mallet presence — presence is determined by SAG F34.
 
 function deriveCommercialHealth(
-  centralAvailable: number,
+  centralAvailable: number | null,
   minimum: number,
   hasCoverageData: boolean,
 ): SampleCommercialHealth {
-  if (!hasCoverageData) return "INSUFFICIENT_DATA";
+  if (!hasCoverageData || centralAvailable === null) return "INSUFFICIENT_DATA";
   if (centralAvailable <= 0) return "OUT_OF_STOCK";
   if (centralAvailable <= minimum) return "LOW_STOCK";
   return "HEALTHY";
@@ -1761,7 +1783,7 @@ function buildVendorSnapshot(
     health: deriveVendorHealth(refs),
     isActive,
     totalRefs: refs.length,
-    totalUnits: refs.reduce((s, r) => s + Math.max(0, r.centralAvailable), 0),
+    totalUnits: refs.reduce((s, r) => s + Math.max(0, r.centralAvailable ?? 0), 0),
     estimatedValue: 0,
     replaceRefs,
     healthyRefs,

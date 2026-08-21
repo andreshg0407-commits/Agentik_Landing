@@ -89,7 +89,7 @@ export interface PortfolioReferenceItem {
   subgrupoSag: string;
   grupoSag: string | null;
   sizeClass: string | null;
-  centralAvailable: number;
+  centralAvailable: number | null;
   stockDataState: string;
   sampleState: string;
   commercialHealth: string;
@@ -112,7 +112,7 @@ export interface WithdrawalItem {
   description: string;
   line: string;
   subgrupoSag: string;
-  centralAvailable: number;
+  centralAvailable: number | null;
   removalReason: string;
   removalDomain: string;
   imageUrl: string | null;
@@ -190,7 +190,7 @@ export interface SupplyCandidatesResult {
 export interface ProductionSignalItem {
   subgrupoSag: string;
   line: string;
-  centralAvailable: number;
+  centralAvailable: number | null;
   minimumRequired: number;
   shortfall: number;
   suggestedQty: number;
@@ -213,7 +213,7 @@ export interface CoverageOpportunityItem {
   subgrupoSag: string;
   grupoSag: string | null;
   sizeClass: string | null;
-  centralAvailable: number;
+  centralAvailable: number | null;
   eligibleVendorCount: number;
 }
 
@@ -284,7 +284,7 @@ export interface SharedNeedsResult {
 export interface MultiVendorCandidateItem {
   reference: string;
   description: string;
-  centralAvailable: number;
+  centralAvailable: number | null;
   eligibleVendorCount: number;
   eligibleVendorIds: string[];
   subgroupName: string;

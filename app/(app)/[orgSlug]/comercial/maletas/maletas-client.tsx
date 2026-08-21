@@ -58,6 +58,13 @@ import type {
 } from "@/lib/comercial/maletas/sample-coverage-engine";
 import { toDisplayLabel } from "@/lib/comercial/maletas/textile-reference-normalizer";
 
+// P0-INVENTORY-AVAILABLE-TRUTH-08B2R6B: null-safe helpers for centralAvailable
+/** Numeric value for arithmetic (null → 0, only used when null is already excluded from decisions) */
+const avail = (v: number | null): number => v ?? 0;
+/** Sort comparator: null → sort last */
+const availSort = (a: number | null, b: number | null): number =>
+  a === null && b === null ? 0 : a === null ? 1 : b === null ? -1 : a - b;
+
 // ── Props ────────────────────────────────────────────────────────────────────
 
 interface MaletasClientProps {
@@ -1221,7 +1228,7 @@ export function MaletasClient({
 
                     // Sort
                     const sorted = [...filtered].sort(
-                      (a, b) => a.centralAvailable - b.centralAvailable,
+                      (a, b) => availSort(a.centralAvailable, b.centralAvailable),
                     );
                     const visible = sorted.slice(0, localVisibleCount);
                     const hasMoreLine = localVisibleCount < sorted.length;
@@ -1428,7 +1435,7 @@ export function MaletasClient({
                                       <div style={{
                                         fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 600,
                                         textAlign: "right" as const,
-                                        color: ref.stockDataState === "ABSENT" ? C.inkFaint
+                                        color: ref.stockDataState === "ABSENT" || ref.centralAvailable === null ? C.inkFaint
                                           : ref.centralAvailable <= 0 ? C.red
                                           : ref.centralAvailable <= ref.minimumRequired ? C.amber
                                           : C.ink,
@@ -1503,7 +1510,7 @@ export function MaletasClient({
                   {retiroLineGroups.map(([lineName, lineRefs]) => {
                     const isExpanded_ = lineExpanded[`RETIRO_${lineName}`] === true;
                     const localVisibleCount = lineVisibleCounts[`RETIRO_${lineName}`] ?? PAGE_SIZE;
-                    const sorted = [...lineRefs].sort((a, b) => a.centralAvailable - b.centralAvailable);
+                    const sorted = [...lineRefs].sort((a, b) => availSort(a.centralAvailable, b.centralAvailable));
                     const visible = sorted.slice(0, localVisibleCount);
                     const hasMoreLine = localVisibleCount < sorted.length;
 
@@ -1613,7 +1620,7 @@ export function MaletasClient({
                                       <div style={{
                                         fontFamily: T.mono, fontSize: T.sz.xs, fontWeight: 600,
                                         textAlign: "right" as const,
-                                        color: ref.stockDataState === "ABSENT" ? C.inkFaint : ref.centralAvailable <= 0 ? C.red : C.amber,
+                                        color: ref.stockDataState === "ABSENT" || ref.centralAvailable === null ? C.inkFaint : ref.centralAvailable <= 0 ? C.red : C.amber,
                                       }}>
                                         {ref.stockDataState === "ABSENT" ? "\u2014" : ref.centralAvailable}
                                       </div>
@@ -1878,8 +1885,8 @@ function ReplacementDetailPanel({ ref_ }: { ref_: VendorSampleRef }) {
         <DetailField label="Linea" value={ref_.line} />
         <DetailField
           label="Disponible en bodega principal"
-          value={ref_.stockDataState === "ABSENT" ? "\u2014" : String(ref_.centralAvailable)}
-          color={ref_.stockDataState === "ABSENT" ? C.inkFaint : ref_.centralAvailable <= 0 ? C.red : C.amber}
+          value={ref_.stockDataState === "ABSENT" || ref_.centralAvailable === null ? "Sin verificar" : String(ref_.centralAvailable)}
+          color={ref_.stockDataState === "ABSENT" || ref_.centralAvailable === null ? C.inkFaint : ref_.centralAvailable <= 0 ? C.red : C.amber}
         />
         <DetailField label="Minimo requerido" value={String(ref_.minimumRequired)} />
       </div>
@@ -2258,7 +2265,7 @@ function AccessoryScarcityPanel({ ref_ }: { ref_: VendorSampleRef }) {
         </div>
         <div>
           <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint, textTransform: "uppercase" as const, letterSpacing: "0.05em" }}>Disponible B36+B37</div>
-          <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: 700, color: accentColor }}>{ref_.availableB24 ?? 0}</div>
+          <div style={{ fontFamily: T.mono, fontSize: T.sz.sm, fontWeight: 700, color: accentColor }}>{ref_.availableB24 ?? "\u2014"}</div>
         </div>
         <div>
           <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint, textTransform: "uppercase" as const, letterSpacing: "0.05em" }}>Minimo operativo</div>
@@ -2973,6 +2980,7 @@ function IntelligencePanel({ vendor, commercialRefs, retiroRefs, coverageByLine,
       const count = commercialRefs.filter((r) =>
         r.line === lineKey &&
         r.stockDataState === "CERTIFIED" &&
+        r.centralAvailable !== null &&
         r.centralAvailable >= range.min &&
         r.centralAvailable <= range.max,
       ).length;
@@ -2991,12 +2999,12 @@ function IntelligencePanel({ vendor, commercialRefs, retiroRefs, coverageByLine,
   // ── D. Calidad del muestrario (analytical only) ─────────────────────
   const quality = useMemo(() => {
     const retiroUrgente = retiroRefs.filter((r) =>
-      r.stockDataState === "CERTIFIED" && r.centralAvailable <= 0,
+      r.stockDataState === "CERTIFIED" && r.centralAvailable !== null && r.centralAvailable <= 0,
     ).length;
     const nearRetiro = commercialRefs.filter((r) => {
       if (r.stockDataState !== "CERTIFIED") return false;
       const range = RISK_MARGIN[r.line];
-      return range != null && r.centralAvailable >= range.min && r.centralAvailable <= range.max;
+      return range != null && r.centralAvailable !== null && r.centralAvailable >= range.min && r.centralAvailable <= range.max;
     }).length;
     const sinClasificar = vendor.refs.filter((r) =>
       r.line === "OTRO" || r.subgrupoSag === "OTRO" || r.subgrupoSag === "SIN_SUBGRUPO" ||
@@ -3466,14 +3474,14 @@ function DepletedVault({ refs }: { refs: VendorSampleRef[] }) {
     for (const ref of refs) {
       byLine.set(ref.line, (byLine.get(ref.line) ?? 0) + 1);
     }
-    const zeroStock = refs.filter((r) => r.centralAvailable <= 0).length;
-    const lowStock = refs.filter((r) => r.centralAvailable > 0).length;
+    const zeroStock = refs.filter((r) => r.centralAvailable === null || r.centralAvailable <= 0).length;
+    const lowStock = refs.filter((r) => r.centralAvailable !== null && r.centralAvailable > 0).length;
     return { byLine, zeroStock, lowStock, total: refs.length };
   }, [refs]);
 
   // Simple rotation rating based on available data
   const rotationRating = (ref: VendorSampleRef): { stars: number; label: string } => {
-    if (ref.centralAvailable <= 0) return { stars: 1, label: "Sin inventario" };
+    if (ref.centralAvailable === null || ref.centralAvailable <= 0) return { stars: 1, label: "Sin inventario" };
     if (ref.centralAvailable <= ref.minimumRequired * 0.5) return { stars: 2, label: "Baja rotacion" };
     if (ref.centralAvailable <= ref.minimumRequired) return { stars: 3, label: "Rotacion media" };
     return { stars: 4, label: "Alta rotacion" };
@@ -3573,7 +3581,7 @@ function DepletedVault({ refs }: { refs: VendorSampleRef[] }) {
                 </div>
                 <span style={{ fontSize: 9, color: C.inkFaint }}>{ref.line}</span>
                 <span style={{ textAlign: "center", fontWeight: 700, color: C.red }}>
-                  {ref.centralAvailable <= 0 ? "\u2014" : ref.centralAvailable}
+                  {ref.centralAvailable === null ? "Sin verificar" : ref.centralAvailable <= 0 ? "\u2014" : ref.centralAvailable}
                 </span>
                 <span style={{ textAlign: "center", color: C.inkFaint }}>
                   {ref.minimumRequired}

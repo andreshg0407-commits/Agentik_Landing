@@ -24,7 +24,7 @@ export interface SerializedPortfolioRef {
   description: string;
   line: string;
   sizeClass: string | null;
-  centralAvailable: number;
+  centralAvailable: number | null;
   commercialHealth: string;
   suggestedAction: string;
   imageUrl: string | null;

@@ -495,7 +495,7 @@ export interface SubgroupProductionEval {
   tieneOpActiva: boolean;
   decision: ProductionDecision;
   dataState: ProductionDataState;
-  evidenceRefs: Array<{ reference: string; description: string; available: number }>;
+  evidenceRefs: Array<{ reference: string; description: string; available: number | null }>;
 }
 
 /**
@@ -519,7 +519,7 @@ export function evaluateProductionThresholds(
     group: string | null;
     grupoSag: string | null;
     subgrupoSag: string;
-    refs: Array<{ reference: string; description: string; available: number }>;
+    refs: Array<{ reference: string; description: string; available: number | null }>;
   }>();
 
   for (const vendor of vendors) {
@@ -720,7 +720,7 @@ export function evaluateImportRefs(
   for (const [, ref] of Array.from(refMap)) {
     // COMERCIAL-INVENTARIO-DATA-SAFETY-LOCK-01 Phase 2:
     // Skip refs with no availability data — absence ≠ zero.
-    if (ref.state === "sin_datos") continue;
+    if (ref.state === "sin_datos" || ref.centralAvailable === null) continue;
     diag.evaluadas++;
     const inventario = ref.centralAvailable;
     const ultimoIngreso = ref.lastTransferDate ?? null;

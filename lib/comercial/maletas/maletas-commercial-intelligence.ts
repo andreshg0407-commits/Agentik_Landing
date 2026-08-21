@@ -35,7 +35,7 @@ interface CatalogSubgrupoEntry {
   subgrupoSag: string;
   subgrupoId: number | null;
   line: string;
-  refs: { reference: string; description: string; centralAvailable: number }[];
+  refs: { reference: string; description: string; centralAvailable: number | null }[];
 }
 
 function buildCatalogIndex(
@@ -173,7 +173,7 @@ function computeSubgrupoCoverage(
       present: refsInVendor > 0,
       refsInVendor,
       refsInCatalog: entry.refs.length,
-      centralAvailableTotal: entry.refs.reduce((s, r) => s + Math.max(r.centralAvailable, 0), 0),
+      centralAvailableTotal: entry.refs.reduce((s, r) => s + Math.max(r.centralAvailable ?? 0, 0), 0),
     });
   }
 
@@ -203,7 +203,7 @@ function computeCoverageOpportunities(
 
     // Find refs in this subgrupo that the vendor doesn't carry and have stock
     const availableRefs = entry.refs.filter(
-      (r) => !vendorRefs.has(r.reference) && r.centralAvailable > 0,
+      (r) => !vendorRefs.has(r.reference) && r.centralAvailable !== null && r.centralAvailable > 0,
     );
 
     if (availableRefs.length === 0) continue;
@@ -211,10 +211,10 @@ function computeCoverageOpportunities(
     // Prioritize subgrupos the vendor is missing entirely
     const isMissing = !vendorSubgrupos.has(key);
 
-    const totalAvailableQty = availableRefs.reduce((s, r) => s + r.centralAvailable, 0);
+    const totalAvailableQty = availableRefs.reduce((s, r) => s + (r.centralAvailable ?? 0), 0);
 
     const topRefs: CoverageOpportunityRef[] = availableRefs
-      .sort((a, b) => b.centralAvailable - a.centralAvailable)
+      .sort((a, b) => (b.centralAvailable ?? 0) - (a.centralAvailable ?? 0))
       .slice(0, MAX_OPPORTUNITY_REFS)
       .map((r) => ({
         reference: r.reference,
@@ -252,7 +252,8 @@ function computeAtRiskRefs(vendor: VendorSampleSnapshot): AtRiskReference[] {
     const riskThreshold = minimum * RISK_MULTIPLIER;
 
     // At risk: saludable but close to minimum, OR already reemplazar
-    if (ref.centralAvailable <= riskThreshold && ref.centralAvailable > 0) {
+    // null = DATA_UNVERIFIED → skip risk analysis (fail-closed)
+    if (ref.centralAvailable !== null && ref.centralAvailable <= riskThreshold && ref.centralAvailable > 0) {
       const riskRatio = minimum > 0 ? ref.centralAvailable / minimum : 0;
       const riskLevel = ref.centralAvailable <= minimum ? "critico" : "alto";
 
@@ -261,7 +262,7 @@ function computeAtRiskRefs(vendor: VendorSampleSnapshot): AtRiskReference[] {
         description: ref.description,
         line: ref.line,
         subgrupoSag: ref.subgrupoSag,
-        centralAvailable: ref.centralAvailable,
+        centralAvailable: ref.centralAvailable!, // guarded by !== null above
         minimumRequired: minimum,
         riskRatio: Math.round(riskRatio * 100) / 100,
         riskLevel,

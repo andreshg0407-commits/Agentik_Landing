@@ -47,7 +47,7 @@ export interface CoverageOpportunityRef {
   reference: string;
   description: string;
   line: string;
-  centralAvailable: number;
+  centralAvailable: number | null; // null = DATA_UNVERIFIED
 }
 
 // ── Risk Analysis ───────────────────────────────────────────────────────────

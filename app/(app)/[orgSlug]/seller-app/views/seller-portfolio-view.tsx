@@ -244,7 +244,7 @@ function RefCard({ ref_, isRetiro }: { ref_: SerializedPortfolioRef; isRetiro?: 
       {/* Stock */}
       <div style={{ textAlign: "right", flexShrink: 0 }}>
         <div style={{ fontSize: T.sz.sm, fontWeight: T.wt.semibold, color: C.ink }}>
-          {ref_.centralAvailable}
+          {ref_.centralAvailable ?? "—"}
         </div>
         <div style={{ fontSize: 9, color: C.inkLight }}>stock</div>
       </div>

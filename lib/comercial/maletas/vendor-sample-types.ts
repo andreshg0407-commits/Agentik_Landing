@@ -36,6 +36,38 @@ export type StockDataState =
   | "CERTIFIED"        // real data from canonical or CCS — value is trustworthy
   | "ABSENT";          // no data source — show "—", never "0"
 
+// ── P0-INVENTORY-AVAILABLE-TRUTH-08B2R6B ────────────────────────────────────
+// Verified availability contract: SAG CURRENT DISPONIBLE is the sole authority.
+// When SAG data is missing, availableQty MUST be null — never 0.
+
+export type AvailabilityTruthState = "VERIFIED" | "DATA_UNVERIFIED" | "PHYSICAL_STOCK_ONLY";
+
+export type VerifiedAvailable =
+  | {
+      availableQty: number;
+      physicalQty: number | null;
+      reservedQty: number | null;
+      truthState: "VERIFIED";
+      sourceUpdatedAt: Date | null;
+      warehouseCode: string;
+    }
+  | {
+      availableQty: number;
+      physicalQty: number | null;
+      reservedQty: null;
+      truthState: "PHYSICAL_STOCK_ONLY";
+      sourceUpdatedAt: null;
+      warehouseCode: string;
+      reason: string;
+    }
+  | {
+      availableQty: null;
+      physicalQty: null;
+      reservedQty: null;
+      truthState: "DATA_UNVERIFIED";
+      reason: string;
+    };
+
 // ── Accessory/import scarcity (IMPORT-SCARCITY-ENGINE-01) ───────────────────
 
 export type AccessoryScarcityState = "saludable" | "escasez";
@@ -109,7 +141,7 @@ export interface RemovalInput {
   businessDomain?: RemovalBusinessDomain;
   /** Drawer line — used as fallback when businessDomain is not available */
   line?: string;
-  compatibleCommercialStock: number;
+  compatibleCommercialStock: number | null; // null = DATA_UNVERIFIED → retiro for audit
   stockDataState: StockDataState;
 }
 
@@ -136,6 +168,8 @@ export function isCandidateForRemoval(input: RemovalInput): boolean {
   // Unknown/external domain → retiro
   if (domain === "UNKNOWN") return true;
 
+  // null = DATA_UNVERIFIED → retiro for audit (fail-closed)
+  if (input.compatibleCommercialStock === null) return true;
   const threshold = RETIRO_THRESHOLDS[domain];
   return input.compatibleCommercialStock <= threshold;
 }
@@ -206,7 +240,8 @@ export interface VendorSampleRef {
   brand: string | null;             // "Castillitos" | "Latin Kids" resolved from productLine
   sizeClass: string | null;         // IMPORT only: "PEQUENO" | "MEDIANO" | "GRANDE"
   present: boolean;                  // F34 net balance > 0
-  centralAvailable: number;          // textil: B01 (SAG CURRENT), import: B24 — 04A3R: CCS prohibited
+  centralAvailable: number | null;    // textil: B01 (SAG CURRENT), import: B24 — null = DATA_UNVERIFIED
+  verifiedAvailable: VerifiedAvailable; // P0-08B2R6B: full truth contract
   minimumRequired: number;           // from business rules
   state: SampleState;                // "saludable" | "reemplazar" (central stock vs minimum)
   commercialHealth: SampleCommercialHealth; // MAIN warehouse health (independent of presence)
@@ -299,7 +334,7 @@ export interface CoverageGapRef {
   line: string;
   subgrupoId: number | null;
   subgrupoSag: string | null;
-  centralAvailable: number;
+  centralAvailable: number | null; // null = DATA_UNVERIFIED
   vendorPresence: number;
   suggestedAction: string;
 }

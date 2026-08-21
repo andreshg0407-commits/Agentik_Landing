@@ -190,11 +190,19 @@ export function buildVendorSnapshots(
         imageUrl: null,
         present: true,
         centralAvailable: item.currentUnits,
+        verifiedAvailable: {
+          availableQty: null,
+          physicalQty: null,
+          reservedQty: null,
+          truthState: "DATA_UNVERIFIED" as const,
+          reason: "MOCK_CONTEXT",
+        },
         minimumRequired: minimum,
         state,
         commercialHealth: item.currentUnits <= 0 ? "OUT_OF_STOCK" as const
           : item.currentUnits <= minimum ? "LOW_STOCK" as const
           : "HEALTHY" as const,
+        stockDataState: "ABSENT" as const, // MOCK_CONTEXT: vendor-sample-service uses MaletasOperationalContext (not SAG)
         riesgoAgotamiento,
         suggestedAction,
         replacementRef,
@@ -231,7 +239,7 @@ export function buildVendorSnapshots(
       health,
       isActive: true,
       totalRefs: refs.length,
-      totalUnits: refs.reduce((s, r) => s + Math.max(0, r.centralAvailable), 0),
+      totalUnits: refs.reduce((s, r) => s + Math.max(0, r.centralAvailable ?? 0), 0),
       estimatedValue: 0,
       replaceRefs: refs.filter((r) => r.state === "reemplazar").length,
       healthyRefs: refs.filter((r) => r.state === "saludable").length,
@@ -303,7 +311,7 @@ export function buildReplacementSuggestions(
           vendorId: vendor.vendorId,
           currentRef: ref.reference,
           currentDesc: ref.description,
-          currentAvailable: ref.centralAvailable,
+          currentAvailable: ref.centralAvailable ?? 0,
           replacementRef: ref.replacementRef,
           replacementDesc: ref.replacementDesc ?? "",
           replacementAvailable: ref.replacementAvailable ?? 0,

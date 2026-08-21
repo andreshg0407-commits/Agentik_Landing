@@ -208,7 +208,7 @@ export async function emitSampleWithdrawalNotification(input: {
   world: string | null;
   line: string | null;
   withdrawalReason: string;
-  currentAvailability: number;
+  currentAvailability: number | null;
   orgSlug: string;
   asOf: string;
 }): Promise<SellerNotification | null> {
