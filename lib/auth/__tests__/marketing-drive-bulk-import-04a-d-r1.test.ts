@@ -215,14 +215,21 @@ describe("04A-D-R1-C: Server-side scan authority", () => {
     expect(scanPageBlock).toContain("buildProductMapsForDryRun");
   });
 
-  test("T14: Client drawer does NOT submit any of the 11 forbidden fields", () => {
-    // Client never sends these to server
-    expect(bulkImportDrawerSrc).not.toContain('method: "POST"');
+  test("T14: Client drawer does NOT submit asset metadata — only admin config POST (set-root)", () => {
+    // 04A-F: POST is allowed ONLY for set-root (admin config write).
+    // Verify the only POST call is for set-root, not for asset import.
+    const postMatches = bulkImportDrawerSrc.match(/method:\s*"POST"/g) ?? [];
+    expect(postMatches.length).toBe(1); // exactly one POST — set-root
+    const postIdx = bulkImportDrawerSrc.indexOf('method: "POST"');
+    const postContext = bulkImportDrawerSrc.slice(Math.max(0, postIdx - 200), postIdx + 200);
+    expect(postContext).toContain("set-root");
+    // No other write methods
     expect(bulkImportDrawerSrc).not.toContain("method: 'POST'");
-    // Verify no JSON body with file metadata
-    expect(bulkImportDrawerSrc).not.toContain("JSON.stringify({");
-    // Client only calls GET scan-page with folderId/pageToken/folderPath/folderName
-    // (navigational params, not metadata)
+    // The JSON body is for set-root config (folderId), NOT file metadata
+    const jsonIdx = bulkImportDrawerSrc.indexOf("JSON.stringify(");
+    const jsonContext = bulkImportDrawerSrc.slice(Math.max(0, jsonIdx - 200), jsonIdx + 200);
+    expect(jsonContext).toContain("set-root");
+    expect(jsonContext).toContain("folderId");
   });
 
   test("T15: Cache-Control: private, no-store on status, scan-page, and results", () => {
@@ -232,7 +239,7 @@ describe("04A-D-R1-C: Server-side scan authority", () => {
     expect(driveRouteSrc).toContain("NO_CACHE_HEADERS");
     // Applied to status response — find the status action block
     const statusActionIdx = driveRouteSrc.indexOf('action === "status"');
-    const statusBlock = driveRouteSrc.slice(statusActionIdx, statusActionIdx + 500);
+    const statusBlock = driveRouteSrc.slice(statusActionIdx, statusActionIdx + 800);
     expect(statusBlock).toContain("NO_CACHE_HEADERS");
     // Applied to scan-page response — find the scan-page result return
     const scanResultIdx = driveRouteSrc.indexOf("analyzedFiles:   pageAnalysis");
@@ -309,11 +316,11 @@ describe("04A-D-R1-D: Completeness contract — drawer logic", () => {
 
   test("T22: Child folder error sets truncated=true and continues", () => {
     // HTTP error from scan-page → add to allErrors, shift queue, truncated
-    // Find the scan-page error handling (second if (!res.ok) in the file — inside scanning loop)
-    const firstOk = bulkImportDrawerSrc.indexOf("if (!res.ok)");
-    const secondOk = bulkImportDrawerSrc.indexOf("if (!res.ok)", firstOk + 10);
-    expect(secondOk).toBeGreaterThan(firstOk);
-    const errorBlock = bulkImportDrawerSrc.slice(secondOk, secondOk + 800);
+    // Find the scan-page error handling inside the scanning loop (after "scan-page" action param)
+    const scanLoopIdx = bulkImportDrawerSrc.indexOf('"scan-page"');
+    const scanOkIdx = bulkImportDrawerSrc.indexOf("if (!res.ok)", scanLoopIdx);
+    expect(scanOkIdx).toBeGreaterThan(scanLoopIdx);
+    const errorBlock = bulkImportDrawerSrc.slice(scanOkIdx, scanOkIdx + 800);
     expect(errorBlock).toContain("allErrors.push");
     expect(errorBlock).toContain("queue.shift()");
     expect(errorBlock).toContain("truncated = true");
@@ -397,21 +404,26 @@ describe("04A-D-R1-H: Zero writes global", () => {
   test("T29: Engine is zero-writes, no prisma, no DB calls", () => {
     expect(dryRunEngineSrc).toContain("ZERO WRITES");
     expect(dryRunEngineSrc).not.toContain("prisma.");
-    expect(dryRunEngineSrc).not.toContain(".create(");
-    expect(dryRunEngineSrc).not.toContain(".update(");
-    expect(dryRunEngineSrc).not.toContain(".delete(");
+    // Engine: no Prisma calls
+    expect(dryRunEngineSrc).not.toContain("prisma.productEntity");
+    expect(dryRunEngineSrc).not.toContain("prisma.asset");
   });
 
-  test("T30: Drawer has zero write methods and import CTA permanently disabled", () => {
-    // No write HTTP methods
-    expect(bulkImportDrawerSrc).not.toContain('method: "POST"');
+  test("T30: Drawer has no asset-write methods (POST only for set-root) and import CTA permanently disabled", () => {
+    // 04A-F: POST is allowed ONLY for set-root (admin config write).
+    const postMatches = bulkImportDrawerSrc.match(/method:\s*"POST"/g) ?? [];
+    expect(postMatches.length).toBe(1); // exactly one POST — set-root
+    const postIdx = bulkImportDrawerSrc.indexOf('method: "POST"');
+    const postContext = bulkImportDrawerSrc.slice(Math.max(0, postIdx - 200), postIdx + 200);
+    expect(postContext).toContain("set-root");
+    // No other write methods
     expect(bulkImportDrawerSrc).not.toContain('method: "PUT"');
     expect(bulkImportDrawerSrc).not.toContain('method: "PATCH"');
     expect(bulkImportDrawerSrc).not.toContain('method: "DELETE"');
-    // No DB operations
-    expect(bulkImportDrawerSrc).not.toContain(".create(");
-    expect(bulkImportDrawerSrc).not.toContain(".update(");
-    expect(bulkImportDrawerSrc).not.toContain(".delete(");
+    // No Prisma or entity operations (Map.delete/URL.createObjectURL are OK)
+    expect(bulkImportDrawerSrc).not.toContain("prisma.");
+    expect(bulkImportDrawerSrc).not.toContain("ProductEntity");
+    expect(bulkImportDrawerSrc).not.toContain("uploadTo");
     // Import CTA disabled
     expect(bulkImportDrawerSrc).toContain("assetIngestionAllowed=false");
     expect(bulkImportDrawerSrc).toContain("Importación todavía bloqueada");

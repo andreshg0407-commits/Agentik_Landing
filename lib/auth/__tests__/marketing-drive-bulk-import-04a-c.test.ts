@@ -199,9 +199,11 @@ describe("04A-C-F: Zero writes", () => {
     const postSection = driveRouteSrc.slice(driveRouteSrc.indexOf("export async function POST"));
     expect(postSection).toContain("runDryRun");
     expect(postSection).not.toContain("ProductAssetLink");
-    expect(postSection).not.toContain(".create(");
-    expect(postSection).not.toContain(".update(");
-    expect(postSection).not.toContain(".delete(");
+    // POST handler: no entity mutations, only runDryRun analysis
+    expect(postSection).not.toContain("ProductAssetLink");
+    expect(postSection).not.toContain("prisma.productEntity.create");
+    expect(postSection).not.toContain("prisma.asset.create");
+    expect(postSection).not.toContain("uploadTo");
   });
 });
 

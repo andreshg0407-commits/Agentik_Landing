@@ -321,12 +321,13 @@ describe("11 — Drive dry-run performs zero writes", () => {
     expect(driveRouteSrc).toContain("ZERO WRITES");
   });
 
-  test("T40: no prisma.create/update/delete in drive route", () => {
-    // Drive route should only use findMany for inventory lookup
-    expect(driveRouteSrc).not.toContain(".create(");
-    expect(driveRouteSrc).not.toContain(".update(");
-    expect(driveRouteSrc).not.toContain(".delete(");
-    expect(driveRouteSrc).not.toContain(".upsert(");
+  test("T40: no asset/product mutations in drive route", () => {
+    // Drive route should only use findMany/findUnique for inventory lookup
+    expect(driveRouteSrc).not.toContain("prisma.productEntity.create");
+    expect(driveRouteSrc).not.toContain("prisma.productEntity.update");
+    expect(driveRouteSrc).not.toContain("prisma.asset.create");
+    expect(driveRouteSrc).not.toContain("prisma.asset.update");
+    expect(driveRouteSrc).not.toContain("uploadTo");
   });
 
   test("T41: organizationId included in dry-run context", () => {

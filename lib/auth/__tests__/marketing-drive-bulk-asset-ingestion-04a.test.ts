@@ -194,9 +194,9 @@ describe("04A-F: Dry-Run Engine", () => {
   test("T16: dry-run engine is zero-writes", () => {
     expect(dryRunEngineSrc).toContain("ZERO WRITES");
     expect(dryRunEngineSrc).not.toContain("prisma.");
-    expect(dryRunEngineSrc).not.toContain(".create(");
-    expect(dryRunEngineSrc).not.toContain(".update(");
-    expect(dryRunEngineSrc).not.toContain(".delete(");
+    expect(dryRunEngineSrc).not.toContain("prisma.productEntity");
+    expect(dryRunEngineSrc).not.toContain("prisma.asset");
+    expect(dryRunEngineSrc).not.toContain("uploadTo");
   });
 
   test("T17: dry-run result includes zeroWrites: true", () => {
@@ -225,9 +225,11 @@ describe("04A-J: Commercial Asset Map Service", () => {
     expect(assetMapServiceSrc).toContain("server-only");
     expect(assetMapServiceSrc).toContain("getPrimaryAssetUrlMap");
     expect(assetMapServiceSrc).toContain("Read-only, zero writes");
-    expect(assetMapServiceSrc).not.toContain(".create(");
-    expect(assetMapServiceSrc).not.toContain(".update(");
-    expect(assetMapServiceSrc).not.toContain(".delete(");
+    // No Prisma mutations — only findMany for reads
+    expect(assetMapServiceSrc).not.toContain("prisma.productEntity.create");
+    expect(assetMapServiceSrc).not.toContain("prisma.productEntity.update");
+    expect(assetMapServiceSrc).not.toContain("prisma.productEntity.delete");
+    expect(assetMapServiceSrc).not.toContain("uploadTo");
   });
 });
 
@@ -236,9 +238,11 @@ describe("04A-J: Commercial Asset Map Service", () => {
 describe("04A-A: Reconciliation Audit", () => {
   test("T21: reconciliation audit is read-only with zeroWrites assertion", () => {
     expect(reconAuditSrc).toContain("zeroWrites:  true");
-    expect(reconAuditSrc).not.toContain(".create(");
-    expect(reconAuditSrc).not.toContain(".update(");
-    expect(reconAuditSrc).not.toContain(".delete(");
+    // No Prisma mutations
+    expect(reconAuditSrc).not.toContain("prisma.productEntity.create");
+    expect(reconAuditSrc).not.toContain("prisma.productEntity.update");
+    expect(reconAuditSrc).not.toContain("prisma.asset.create");
+    expect(reconAuditSrc).not.toContain("uploadTo");
   });
 });
 

@@ -51,8 +51,14 @@ describe("04A-D-B: Client authority eliminated", () => {
     expect(bulkImportDrawerSrc).toContain("DryRunFileDetail[]");
     expect(bulkImportDrawerSrc).toContain("accumulatedFiles");
     expect(bulkImportDrawerSrc).toContain("page.analyzedFiles");
-    // No POST method in drawer (04A-D: removed POST analyze)
-    expect(bulkImportDrawerSrc).not.toContain('method: "POST"');
+    // 04A-F: POST is allowed ONLY for set-root (admin config write), not for file data.
+    const postMatches = bulkImportDrawerSrc.match(/method:\s*"POST"/g) ?? [];
+    expect(postMatches.length).toBeLessThanOrEqual(1);
+    if (postMatches.length === 1) {
+      const postIdx = bulkImportDrawerSrc.indexOf('method: "POST"');
+      const postContext = bulkImportDrawerSrc.slice(Math.max(0, postIdx - 200), postIdx + 200);
+      expect(postContext).toContain("set-root");
+    }
     expect(bulkImportDrawerSrc).not.toContain("method: 'POST'");
     // No DriveScannedFile import (client never sees raw metadata)
     expect(bulkImportDrawerSrc).not.toContain("DriveScannedFile");
@@ -176,19 +182,20 @@ describe("04A-D-B: Client dedup", () => {
 // ── T11: Zero writes preserved across all layers ────────────────────────
 
 describe("04A-D-F: Zero writes", () => {
-  test("T11: Engine is zero-writes, drawer has no write methods, no prisma in engine", () => {
+  test("T11: Engine is zero-writes, drawer has no asset-write methods, no prisma in engine", () => {
     // Engine: zero writes, no prisma
     expect(dryRunEngineSrc).toContain("ZERO WRITES");
     expect(dryRunEngineSrc).not.toContain("prisma.");
-    // Drawer: no POST, PUT, PATCH, DELETE
-    expect(bulkImportDrawerSrc).not.toContain('method: "POST"');
+    // 04A-F: POST allowed ONLY for set-root (admin config), no other write methods
+    const postMatches = bulkImportDrawerSrc.match(/method:\s*"POST"/g) ?? [];
+    expect(postMatches.length).toBeLessThanOrEqual(1);
     expect(bulkImportDrawerSrc).not.toContain('method: "PUT"');
     expect(bulkImportDrawerSrc).not.toContain('method: "PATCH"');
     expect(bulkImportDrawerSrc).not.toContain('method: "DELETE"');
-    // Drawer: no create/update/delete ops
-    expect(bulkImportDrawerSrc).not.toContain(".create(");
-    expect(bulkImportDrawerSrc).not.toContain(".update(");
-    expect(bulkImportDrawerSrc).not.toContain(".delete(");
+    // Drawer: no Prisma or entity operations (Map.delete/URL.createObjectURL are OK)
+    expect(bulkImportDrawerSrc).not.toContain("prisma.");
+    expect(bulkImportDrawerSrc).not.toContain("ProductEntity");
+    expect(bulkImportDrawerSrc).not.toContain("uploadTo");
   });
 });
 

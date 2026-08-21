@@ -1,10 +1,21 @@
 /**
  * app/api/orgs/[orgSlug]/marketing-studio/drive/route.ts
  *
- * MARKETING-DRIVE-BULK-ASSET-INGESTION-04A/04A-D — Drive proxy
+ * MARKETING-DRIVE-BULK-ASSET-INGESTION-04A/04A-F-R1 — Drive proxy
  *
  * GET ?action=status
- *   Returns { connected, tenantRootConfigured, tenantRootFolderName }
+ *   Returns { connected, tenantRootConfigured, tenantRootFolderName, tenantRootFolderId, accountEmail (masked) }
+ *
+ * GET ?action=admin-browse&folderId=ID&mode=my-drive|shared-drives
+ *   04A-F-R1: Admin-only folder picker BEFORE tenantRoot exists.
+ *   Browses My Drive or Shared Drives. No tenantRoot requirement.
+ *
+ * GET ?action=browse&folderId=FOLDER_ID&pageToken=TOKEN
+ *   04A-F: Folder picker navigation within tenant root.
+ *   Returns folders, breadcrumb, fileCount. Ancestry-validated.
+ *
+ * GET ?action=validate-ancestry&folderIds=ID1,ID2,...
+ *   04A-F-R1: Batch ancestry validation for multi-select.
  *
  * GET ?action=structure&folderId=FOLDER_ID_OR_URL
  *   Reads the Drive folder structure recursively (3 levels).
@@ -36,6 +47,7 @@
 import { NextRequest, NextResponse }      from "next/server";
 import { requireOrgAccess }               from "@/lib/auth/org-access";
 import { canAccessMarketingStudio }       from "@/lib/auth/module-access";
+import { prisma }                         from "@/lib/prisma";
 import {
   getDriveConnection,
   getDriveAccessToken,
@@ -44,6 +56,7 @@ import {
   isDescendantOfRoot,
   scanDriveFolder,
   listFolderPage,
+  validateDriveFolder,
 }                                         from "@/lib/marketing-studio/drive/drive-api-client";
 import type { DriveScannedFile }          from "@/lib/marketing-studio/drive/drive-api-client";
 import { getTenantDriveRoot }             from "@/lib/marketing-studio/drive/drive-tenant-root";
@@ -93,7 +106,7 @@ export async function GET(
   const { orgSlug } = await params;
 
   try {
-    const { membership, organization } = await requireOrgAccess(orgSlug);
+    const { membership, organization, platformRole } = await requireOrgAccess(orgSlug);
     const organizationId = organization.id;
 
     if (!canAccessMarketingStudio(membership.role)) {
@@ -102,15 +115,217 @@ export async function GET(
 
     const action = req.nextUrl.searchParams.get("action") ?? "status";
 
-    // ── Status ──────────────────────────────────────────────────────────────
+    // ── Status (04A-F-R1: masked email, root folderId) ─────────────────────
     if (action === "status") {
       const conn = await getDriveConnection(organizationId);
       const root = await getTenantDriveRoot(organizationId);
+
+      let accountEmail: string | null = null;
+      if (conn) {
+        const connRecord = await prisma.integrationConnection.findUnique({
+          where: { id: conn.connectionId },
+          select: { externalAccountName: true },
+        });
+        accountEmail = connRecord?.externalAccountName ?? null;
+      }
+
       return NextResponse.json({
         connected:             conn !== null,
         tenantRootConfigured:  root !== null,
         tenantRootFolderName:  root?.folderName ?? null,
+        tenantRootFolderId:    root?.folderId ?? null,
+        accountEmail:          maskEmail(accountEmail),
       }, { headers: NO_CACHE_HEADERS });
+    }
+
+    // ── Admin-browse (04A-F-R1: initial root selection — NO tenantRoot required) ─
+    if (action === "admin-browse") {
+      // Admin-only gate: same as set-root
+      const isAdmin =
+        platformRole === "SUPER_ADMIN" ||
+        platformRole === "AGENTIK_ADMIN" ||
+        membership.role === "ORG_ADMIN";
+      if (!isAdmin) {
+        return NextResponse.json({ error: "ADMIN_BROWSE_DENIED" }, { status: 403 });
+      }
+
+      // Resolve connection + token (but NOT tenantRoot)
+      const conn = await getDriveConnection(organizationId);
+      if (!conn) throw new Error("DRIVE_NOT_CONNECTED");
+      let accessToken: string;
+      try { accessToken = await getDriveAccessToken(conn); }
+      catch (err) {
+        const msg = err instanceof Error ? err.message : "";
+        if (msg.includes("DRIVE_TOKEN_EXPIRED")) throw new Error("DRIVE_TOKEN_EXPIRED");
+        throw err;
+      }
+
+      const rawFolderId = req.nextUrl.searchParams.get("folderId") ?? "";
+      const folderId    = rawFolderId ? (parseDriveFolderUrl(rawFolderId) ?? rawFolderId) : null;
+      const pageToken   = req.nextUrl.searchParams.get("pageToken") ?? undefined;
+      const browseMode  = req.nextUrl.searchParams.get("mode") ?? "my-drive";
+
+      // List Shared Drives if requested
+      if (browseMode === "shared-drives" && !folderId) {
+        const sdUrl = new URL("https://www.googleapis.com/drive/v3/drives");
+        sdUrl.searchParams.set("pageSize", "100");
+        if (pageToken) sdUrl.searchParams.set("pageToken", pageToken);
+        const sdRes = await fetch(sdUrl.toString(), {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (!sdRes.ok) {
+          return NextResponse.json({ error: "SHARED_DRIVES_UNAVAILABLE" }, { status: 502 });
+        }
+        const sdData = await sdRes.json() as {
+          drives?: { id: string; name: string }[];
+          nextPageToken?: string;
+        };
+        return NextResponse.json({
+          folderId:      null,
+          folderName:    "Shared Drives",
+          folders:       (sdData.drives ?? []).map(d => ({ id: d.id, name: d.name })),
+          fileCount:     0,
+          nextPageToken: sdData.nextPageToken ?? null,
+          breadcrumb:    [{ id: "shared-drives", name: "Shared Drives" }],
+          mode:          "shared-drives",
+        }, { headers: NO_CACHE_HEADERS });
+      }
+
+      // Browse a specific folder (My Drive root or any folder the user can access)
+      const browseFolderId = folderId || "root";
+      let page;
+      try {
+        page = await listFolderPage(browseFolderId, accessToken, pageToken);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Error";
+        return NextResponse.json({ error: msg }, { status: 403 });
+      }
+
+      // Build breadcrumb for admin browse (walk up to Drive root)
+      const breadcrumb: { id: string; name: string }[] = [];
+      if (browseFolderId !== "root") {
+        let crumbId = browseFolderId;
+        for (let i = 0; i < 15; i++) {
+          const meta = await validateDriveFolder(crumbId, accessToken);
+          breadcrumb.unshift({ id: meta.id, name: meta.name });
+          const pUrl = new URL(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(crumbId)}`);
+          pUrl.searchParams.set("fields", "parents");
+          pUrl.searchParams.set("supportsAllDrives", "true");
+          const pRes = await fetch(pUrl.toString(), { headers: { Authorization: `Bearer ${accessToken}` } });
+          if (!pRes.ok) break;
+          const pData = await pRes.json() as { parents?: string[] };
+          if (!pData.parents?.[0]) break;
+          crumbId = pData.parents[0];
+        }
+      }
+      breadcrumb.unshift({ id: "root", name: "Mi Drive" });
+
+      return NextResponse.json({
+        folderId:      browseFolderId,
+        folderName:    breadcrumb[breadcrumb.length - 1]?.name ?? "Mi Drive",
+        folders:       page.childFolders,
+        fileCount:     page.files.length,
+        nextPageToken: page.nextPageToken,
+        breadcrumb,
+        mode:          browseMode,
+      }, { headers: NO_CACHE_HEADERS });
+    }
+
+    // ── Browse (04A-F: folder picker within tenant root) ──────────────────
+    if (action === "browse") {
+      const rawFolderId = req.nextUrl.searchParams.get("folderId") ?? "";
+      const folderId    = rawFolderId ? (parseDriveFolderUrl(rawFolderId) ?? rawFolderId) : null;
+
+      const { tenantRoot, accessToken } = await resolveGate(organizationId);
+      const browseFolderId = folderId || tenantRoot.folderId;
+
+      if (browseFolderId !== tenantRoot.folderId) {
+        const isDesc = await isDescendantOfRoot(browseFolderId, tenantRoot.folderId, accessToken);
+        if (!isDesc) {
+          return NextResponse.json({ error: "OUTSIDE_TENANT_ROOT" }, { status: 403 });
+        }
+      }
+
+      const pageToken = req.nextUrl.searchParams.get("pageToken") ?? undefined;
+      const page = await listFolderPage(browseFolderId, accessToken, pageToken);
+
+      const breadcrumb: { id: string; name: string }[] = [];
+      if (browseFolderId !== tenantRoot.folderId) {
+        let crumbId = browseFolderId;
+        for (let i = 0; i < 15 && crumbId !== tenantRoot.folderId; i++) {
+          const meta = await validateDriveFolder(crumbId, accessToken);
+          breadcrumb.unshift({ id: meta.id, name: meta.name });
+          const pUrl = new URL(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(crumbId)}`);
+          pUrl.searchParams.set("fields", "parents");
+          pUrl.searchParams.set("supportsAllDrives", "true");
+          const pRes = await fetch(pUrl.toString(), { headers: { Authorization: `Bearer ${accessToken}` } });
+          if (!pRes.ok) break;
+          const pData = await pRes.json() as { parents?: string[] };
+          if (!pData.parents?.[0]) break;
+          crumbId = pData.parents[0];
+        }
+      }
+      breadcrumb.unshift({ id: tenantRoot.folderId, name: tenantRoot.folderName });
+
+      return NextResponse.json({
+        folderId:      browseFolderId,
+        folderName:    breadcrumb[breadcrumb.length - 1]?.name ?? "—",
+        folders:       page.childFolders,
+        fileCount:     page.files.length,
+        nextPageToken: page.nextPageToken,
+        breadcrumb,
+      }, { headers: NO_CACHE_HEADERS });
+    }
+
+    // ── Validate-ancestry (04A-F-R1: batch validation for multi-select) ───
+    if (action === "validate-ancestry") {
+      const folderIdsRaw = req.nextUrl.searchParams.get("folderIds") ?? "";
+      const folderIds = folderIdsRaw.split(",").filter(Boolean);
+      if (folderIds.length === 0) {
+        return NextResponse.json({ error: "folderIds required" }, { status: 400 });
+      }
+      if (folderIds.length > 20) {
+        return NextResponse.json({ error: "Max 20 folders per validation" }, { status: 400 });
+      }
+
+      const { tenantRoot, accessToken } = await resolveGate(organizationId);
+      const results: { folderId: string; valid: boolean; ancestors: string[] }[] = [];
+      for (const fid of folderIds) {
+        if (fid === tenantRoot.folderId) {
+          results.push({ folderId: fid, valid: true, ancestors: [fid] });
+          continue;
+        }
+        // Walk parent chain to collect ancestors up to tenant root
+        const ancestors: string[] = [fid];
+        let currentId = fid;
+        let valid = false;
+        for (let depth = 0; depth < 20; depth++) {
+          const metaUrl = new URL(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(currentId)}`);
+          metaUrl.searchParams.set("fields", "id,parents,shortcutDetails");
+          metaUrl.searchParams.set("supportsAllDrives", "true");
+          const metaRes = await fetch(metaUrl.toString(), {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          if (!metaRes.ok) break;
+          const metaData = await metaRes.json() as {
+            parents?: string[];
+            shortcutDetails?: { targetId: string };
+          };
+          if (metaData.shortcutDetails) {
+            currentId = metaData.shortcutDetails.targetId;
+            ancestors.push(currentId);
+            continue;
+          }
+          if (!metaData.parents?.[0]) break;
+          const parentId = metaData.parents[0];
+          ancestors.push(parentId);
+          if (parentId === tenantRoot.folderId) { valid = true; break; }
+          currentId = parentId;
+        }
+        results.push({ folderId: fid, valid, ancestors });
+      }
+
+      return NextResponse.json({ results }, { headers: NO_CACHE_HEADERS });
     }
 
     // ── Scan-page (04A-C) ───────────────────────────────────────────────────
@@ -391,4 +606,16 @@ export async function POST(
     console.error("[marketing-studio/drive POST]", err);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Masks an email for display: a***@e***.com — never expose full email to client */
+function maskEmail(email: string | null): string | null {
+  if (!email || !email.includes("@")) return email;
+  const [local, domain] = email.split("@");
+  const [domainName, ...tld] = domain.split(".");
+  const maskedLocal = local[0] + "***";
+  const maskedDomain = domainName[0] + "***";
+  return `${maskedLocal}@${maskedDomain}.${tld.join(".")}`;
 }

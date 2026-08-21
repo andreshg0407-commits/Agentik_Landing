@@ -50,7 +50,8 @@ const TAG_LENGTH = 16;   // 128-bit auth tag
 const KEY_VERSION = "v1";
 
 function getEncryptionKey(): Buffer {
-  const hex = process.env.VAULT_ENCRYPTION_KEY;
+  // Prefer VAULT_ENCRYPTION_KEY; fall back to canonical VAULT_MASTER_KEY
+  const hex = process.env.VAULT_ENCRYPTION_KEY ?? process.env.VAULT_MASTER_KEY;
   if (!hex || hex.length !== 64) throw new VaultKeyMissingError();
   return Buffer.from(hex, "hex");
 }

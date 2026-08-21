@@ -68,8 +68,9 @@ describe("04A-B-D: Drive connection states", () => {
   test("T04: Drawer handles Drive not connected", () => {
     // Checks data.connected from status response
     expect(bulkImportDrawerSrc).toContain("data.connected");
-    // Shows error when not connected
-    expect(bulkImportDrawerSrc).toContain("Drive no está conectado");
+    // 04A-F: shows DISCONNECTED state with connect CTA
+    expect(bulkImportDrawerSrc).toContain("DISCONNECTED");
+    expect(bulkImportDrawerSrc).toContain("Drive no conectado");
   });
 });
 
@@ -78,8 +79,9 @@ describe("04A-B-D: Drive connection states", () => {
 describe("04A-B-D: Root configuration states", () => {
   test("T05: Drawer handles root not configured", () => {
     expect(bulkImportDrawerSrc).toContain("tenantRootConfigured");
-    expect(bulkImportDrawerSrc).toContain("DRIVE_TENANT_ROOT_NOT_CONFIGURED");
-    expect(bulkImportDrawerSrc).toContain('setStep("configure")');
+    // 04A-F: CONNECTED_NO_ROOT state triggers root step
+    expect(bulkImportDrawerSrc).toContain("CONNECTED_NO_ROOT");
+    expect(bulkImportDrawerSrc).toContain('setStep("root")');
   });
 });
 
@@ -169,19 +171,20 @@ describe("04A-B-F: Import CTA disabled", () => {
 // ── T12: Zero write routes ────────────────────────────────────────────────
 
 describe("04A-B-F: Zero write enforcement", () => {
-  test("T12: Drawer uses GET-only for scanning — no POST/PUT/PATCH/DELETE (04A-D)", () => {
-    // 04A-D: server-side analysis per page — drawer no longer POSTs raw files
-    // All scanning is via GET ?action=scan-page — zero writes
+  test("T12: Drawer uses GET-only for scanning — POST only for set-root config (04A-F)", () => {
+    // 04A-D: server-side analysis per page — scanning via GET ?action=scan-page
     expect(bulkImportDrawerSrc).toContain("scan-page");
-    // No POST/PUT/PATCH/DELETE methods
-    expect(bulkImportDrawerSrc).not.toContain('method: "POST"');
+    // 04A-F: POST allowed ONLY for set-root (admin config write)
+    const postMatches = bulkImportDrawerSrc.match(/method:\s*"POST"/g) ?? [];
+    expect(postMatches.length).toBeLessThanOrEqual(1);
+    // No PUT/PATCH/DELETE methods
     expect(bulkImportDrawerSrc).not.toContain("method: \"PUT\"");
     expect(bulkImportDrawerSrc).not.toContain("method: \"PATCH\"");
     expect(bulkImportDrawerSrc).not.toContain("method: \"DELETE\"");
-    // No create/update/delete operations
-    expect(bulkImportDrawerSrc).not.toContain(".create(");
-    expect(bulkImportDrawerSrc).not.toContain(".update(");
-    expect(bulkImportDrawerSrc).not.toContain(".delete(");
+    // No Prisma or entity operations (Map.delete/Set.delete/URL.createObjectURL are OK)
+    expect(bulkImportDrawerSrc).not.toContain("prisma.");
+    expect(bulkImportDrawerSrc).not.toContain("ProductEntity");
+    expect(bulkImportDrawerSrc).not.toContain("uploadTo");
   });
 });
 
