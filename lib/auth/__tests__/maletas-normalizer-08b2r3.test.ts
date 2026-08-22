@@ -367,7 +367,7 @@ describe("I — Coverage engine must use B04 truth", () => {
 
   test("T41: DATA_UNVERIFIED when opAvailable=false (never PRODUCTION_REQUIRED)", () => {
     expect(engineSrc).toContain("!dataAvailability.opAvailable");
-    const step2Idx = engineSrc.indexOf("// STEP 2: OP Activa");
+    const step2Idx = engineSrc.indexOf("// STEP 2: B04 Producto en Proceso (P0-08B2R6G-R1)");
     const step3Idx = engineSrc.indexOf("// STEP 3: PRODUCTION_REQUIRED");
     const opSection = engineSrc.slice(step2Idx, step3Idx);
     expect(opSection).toContain("DATA_UNVERIFIED");
@@ -377,7 +377,7 @@ describe("I — Coverage engine must use B04 truth", () => {
     const step3Idx = engineSrc.indexOf("// STEP 3: PRODUCTION_REQUIRED");
     expect(step3Idx).toBeGreaterThan(0);
     const after = engineSrc.slice(step3Idx, step3Idx + 500);
-    expect(after).toContain("Stock certificado = 0 en B01 y sin OP activa. Produccion requerida.");
+    expect(after).toContain("Stock certificado = 0 en B01 y B04. Produccion requerida.");
   });
 });
 
@@ -447,7 +447,7 @@ describe("K — B04 sole OP authority (GATE 1)", () => {
 
   test("T52: B04 unavailable → DATA_UNVERIFIED in coverage engine", () => {
     const engineSrc = readSrc("lib/comercial/maletas/sample-coverage-engine.ts");
-    const step2 = engineSrc.indexOf("// STEP 2: OP Activa");
+    const step2 = engineSrc.indexOf("// STEP 2: B04 Producto en Proceso (P0-08B2R6G-R1)");
     const step3 = engineSrc.indexOf("// STEP 3: PRODUCTION_REQUIRED");
     const opSection = engineSrc.slice(step2, step3);
     expect(opSection).toContain("!dataAvailability.opAvailable");
@@ -490,7 +490,7 @@ describe("L — No temporal filter for B04 (GATE 2)", () => {
     const engineSrc = readSrc("lib/comercial/maletas/sample-coverage-engine.ts");
     expect(engineSrc).toContain('"OP_INCOMING"');
     expect(engineSrc).toContain('"OP_ACTIVA"');
-    const step2 = engineSrc.indexOf("// STEP 2: OP Activa");
+    const step2 = engineSrc.indexOf("// STEP 2: B04 Producto en Proceso (P0-08B2R6G-R1)");
     const step3 = engineSrc.indexOf("// STEP 3: PRODUCTION_REQUIRED");
     const opMatch = engineSrc.slice(step2, step3);
     expect(opMatch).toContain("OP_INCOMING");
@@ -507,13 +507,13 @@ describe("M — B04 panel structure (GATE 3)", () => {
   const clientSrc = readSrc("app/(app)/[orgSlug]/comercial/maletas/maletas-client.tsx");
 
   test("T57: B04 panel exists with correct title", () => {
-    expect(clientSrc).toContain("Producto en proceso \u2014 Bodega 4");
+    expect(clientSrc).toContain("En camino \u2014 Producto en proceso (B04)");
   });
 
   test("T58: B04 panel shows reconciled columns", () => {
     expect(clientSrc).toContain("Grupo / Subgrupo");
-    expect(clientSrc).toContain("Cant. B04");
-    expect(clientSrc).toContain("Posicion derrotero");
+    expect(clientSrc).toContain('"B04"');
+    expect(clientSrc).toContain('"Posicion"');
     expect(clientSrc).toContain("Razon");
     expect(clientSrc).toContain("Estado");
   });
@@ -542,12 +542,12 @@ describe("N — Unified OP counters (GATE 6)", () => {
 
   test("T62: Con OP activa reads from sampleCoverage.coverageSummary.opIncoming", () => {
     // Must NOT use prodWithOp.length for the KPI display
-    expect(clientSrc).toContain("Con OP activa (B04)");
+    expect(clientSrc).toContain("En camino (B04)");
     expect(clientSrc).toContain('value: sampleCoverage.coverageSummary.opIncoming');
   });
 
   test("T63: En camino por OP reads from vendorCov.opIncoming (same engine)", () => {
-    expect(clientSrc).toContain("En camino por OP");
+    expect(clientSrc).toContain("En camino (B04)");
     expect(clientSrc).toContain("vendorCov.opIncoming");
   });
 });
@@ -640,8 +640,8 @@ describe("P — Per-vendor reconciliation (08B2R4)", () => {
     // Oportunidades: 6 columns
     expect(clientSrc).toContain('"Posicion compatible"');
     expect(clientSrc).toContain('"Clasificacion"');
-    // B04: 7 columns
-    expect(clientSrc).toContain('"Cant. B04"');
+    // B04: 7 columns (Referencia, Descripcion, Linea, Grupo/Subgrupo, B04, Posicion/Razon, Estado)
+    expect(clientSrc).toContain('"B04"');
   });
 
   test("T76: Tables use truncation for long descriptions", () => {

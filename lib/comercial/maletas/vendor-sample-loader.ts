@@ -1366,10 +1366,11 @@ export async function loadVendorSampleData(
     });
   }
 
-  // P0-08B2R6G: B04 = physical inventory in PRODUCTO EN PROCESO warehouse.
-  // B04 candidates are used for OP coverage matching (textile subgrupo match).
-  // Real OP data from ProductionOrder (fuente 33) is diagnostic only — producedQty is null.
-  // Until real OP source is certified, B04 physical stock is the best proxy for active production.
+  // P0-08B2R6G-R1: B04_PHYSICAL_IS_THE_BUSINESS_OP_AUTHORITY
+  // Canonical cascade: B01 → B04 → PRODUCTION_REQUIRED
+  // B04 = physical inventory in PRODUCTO EN PROCESO warehouse (existencia > 0).
+  // ProductionOrder (fuente 33) is preserved for future Produccion module but does NOT
+  // participate in coverage authority. No estimated quantities feed into Maletas decisions.
   const unifiedOpCandidates: OpCoverageCandidate[] = b04OpCandidates;
 
   // ── Sample coverage (MALETAS-COBERTURA-MOSTRARIO-08B2) ──────────────
@@ -1384,7 +1385,7 @@ export async function loadVendorSampleData(
     vendorNameMap,
     {
       b01Available: !canonical.sourceDown,
-      opAvailable: b04Available, // B04 is sole OP authority — legacy ProductionOrder is diagnostic only
+      opAvailable: b04Available, // B04 physical inventory is the business OP authority (P0-08B2R6G-R1)
     },
   );
 
@@ -1401,9 +1402,9 @@ export async function loadVendorSampleData(
     opSourceTruthState: legacyOpCount > 0 ? "ESTIMATED" as const : "NO_DATA" as const,
     b04SourceTruthState: b04Inventory.availability === "AVAILABLE" ? "CERTIFIED" as const : "UNAVAILABLE" as const,
     opCoverageAuthority: "B04_PHYSICAL" as const, // B04 is currently sole OP_INCOMING authority
-    explanation: "B04 = inventario fisico en Producto en Proceso. No es una OP real. "
-      + "ProductionOrder (fuente 33) existe pero producedQty=null → pendingQty es estimado. "
-      + "Hasta certificar la fuente real de OP, B04 es el mejor proxy de produccion activa.",
+    explanation: "Cascada: B01 → B04 → Produccion requerida. "
+      + "B04 = inventario fisico en Producto en Proceso (existencia > 0). "
+      + "ProductionOrder (fuente 33) preservado como backlog de Produccion — no participa en cobertura.",
   };
 
   return {

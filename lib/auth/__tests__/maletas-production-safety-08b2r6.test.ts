@@ -314,7 +314,7 @@ describe("J — Below-threshold means REVIEW, not PRODUCTION", () => {
   test("S21: STEP 1b runs BEFORE OP check (between STEP 1 and STEP 2)", () => {
     const step1 = engineSrc.indexOf("// STEP 1: Bodega Principal");
     const step1b = engineSrc.indexOf("// STEP 1b:");
-    const step2 = engineSrc.indexOf("// STEP 2: OP Activa");
+    const step2 = engineSrc.indexOf("// STEP 2: B04 Producto en Proceso (P0-08B2R6G-R1)");
     expect(step1).toBeGreaterThan(0);
     expect(step1b).toBeGreaterThan(step1);
     expect(step2).toBeGreaterThan(step1b);

@@ -844,7 +844,7 @@ export function MaletasClient({
               { label: "Produccion inmediata", value: prodImmediate.length, color: prodImmediate.length > 0 ? C.red : C.green },
               { label: "Revision humana", value: sampleCoverage.coverageSummary.stockBelowThreshold, color: sampleCoverage.coverageSummary.stockBelowThreshold > 0 ? C.amber : C.green },
               { label: "Proximos al limite", value: prodRisk.length, color: prodRisk.length > 0 ? C.amber : C.green },
-              { label: "Con OP activa (B04)", value: sampleCoverage.coverageSummary.opIncoming, color: sampleCoverage.coverageSummary.opIncoming > 0 ? C.blueDark : C.inkFaint },
+              { label: "En camino (B04)", value: sampleCoverage.coverageSummary.opIncoming, color: sampleCoverage.coverageSummary.opIncoming > 0 ? C.blueDark : C.inkFaint },
             ].map((kpi) => (
               <div key={kpi.label} style={{
                 background: C.white, borderRadius: R.lg,
@@ -1158,7 +1158,7 @@ export function MaletasClient({
           )}
         </SectionHeader>
 
-        {/* ── Inventario de OP Activas — Bodega 4 (MALETAS-08B2R3) ── */}
+        {/* ── En camino — Producto en proceso (B04) ── */}
         <B04InventorySection b04Inventory={b04Inventory} sampleCoverage={sampleCoverage} opTruthAudit={opTruthAudit} />
 
         {/* Source indicator */}
@@ -1844,7 +1844,7 @@ export function MaletasClient({
                     {[
                       { label: "Posiciones faltantes", value: vendorCov.missingEntries, color: vendorCov.missingEntries > 0 ? C.red : C.green },
                       { label: "Disponibles en B01", value: vendorCov.b01Available, color: C.green },
-                      { label: "En camino por OP", value: vendorCov.opIncoming, color: C.amber },
+                      { label: "En camino (B04)", value: vendorCov.opIncoming, color: C.amber },
                       { label: "Revision humana", value: vendorCov.stockBelowThreshold, color: C.amber },
                       { label: "Produccion certificada", value: vendorCov.productionRequired, color: C.red },
                       { label: "Import sin disponib.", value: vendorCov.importUnavailable, color: C.inkFaint },
@@ -1883,14 +1883,14 @@ export function MaletasClient({
                     emptyMessage="Sin posiciones con candidatos disponibles en bodega"
                   />
 
-                  {/* ── SECTION: EN CAMINO POR OP — open if non-empty ── */}
+                  {/* ── SECTION: EN CAMINO — PRODUCTO EN PROCESO (B04) ── */}
                   <CoverageSection
-                    title="En camino por OP"
+                    title="En camino — Producto en proceso (B04)"
                     count={opPositions.length}
                     color={C.amber}
                     defaultOpen={opPositions.length > 0}
                     positions={opPositions}
-                    emptyMessage="Sin posiciones con OP activa"
+                    emptyMessage="Sin posiciones con existencia en B04"
                   />
 
                   {/* ── SECTION: REVISION HUMANA — stock below threshold ── */}
@@ -4382,7 +4382,7 @@ function UnresolvedRefsPanel({
 
 const COVERAGE_STATUS_LABEL: Record<CoverageStatus, string> = {
   B01_AVAILABLE: "B01",
-  OP_INCOMING: "OP activa",
+  OP_INCOMING: "B04",
   STOCK_AVAILABLE_BELOW_THRESHOLD: "Revision",
   PRODUCTION_REQUIRED: "Producir",
   IMPORT_UNAVAILABLE: "Sin stock",
@@ -4479,14 +4479,14 @@ function B04InventorySection({ b04Inventory, sampleCoverage, opTruthAudit }: {
           fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: C.titleDeep,
           display: "flex", alignItems: "center", gap: S[2],
         }}>
-          Producto en proceso — Bodega 4
+          En camino — Producto en proceso (B04)
           <span style={{ fontFamily: T.mono, fontSize: 9, color: C.amber, fontWeight: 600,
             padding: "2px 8px", borderRadius: R.sm, background: C.amber + "12" }}>
             No disponible
           </span>
         </div>
         <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkFaint, marginTop: S[2] }}>
-          No fue posible consultar B04 (PRODUCTO EN PROCESO) desde SAG. Todas las posiciones sin B01 se marcan DATA_UNVERIFIED.
+          No fue posible consultar B04 (Producto en Proceso) desde SAG. Posiciones sin cobertura B01 se marcan DATA_UNVERIFIED.
         </div>
       </div>
     );
@@ -4505,7 +4505,7 @@ function B04InventorySection({ b04Inventory, sampleCoverage, opTruthAudit }: {
     SOURCE_DATA_INCOMPLETE: "Datos incompletos",
   };
 
-  const B04_COLS = "minmax(100px,1.2fr) minmax(120px,1.5fr) minmax(100px,1.2fr) 70px minmax(100px,1.2fr) 100px";
+  const B04_COLS = "minmax(90px,1fr) minmax(110px,1.3fr) 70px minmax(80px,1fr) 60px minmax(100px,1.2fr) 90px";
   const tabStyle = (active: boolean) => ({
     fontFamily: T.mono, fontSize: 9, fontWeight: 600 as const,
     padding: "4px 10px", borderRadius: R.sm, cursor: "pointer" as const,
@@ -4527,7 +4527,7 @@ function B04InventorySection({ b04Inventory, sampleCoverage, opTruthAudit }: {
         }}
       >
         <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: C.titleDeep }}>
-          Producto en proceso — Bodega 4
+          En camino — Producto en proceso (B04)
         </span>
         <span style={{
           fontFamily: T.mono, fontSize: 9, fontWeight: 600,
@@ -4611,30 +4611,27 @@ function B04InventorySection({ b04Inventory, sampleCoverage, opTruthAudit }: {
             {`${matched.length} + ${unmatched.length} + ${unverified.length} = ${reconciled.length} (total B04)`}
           </div>
 
-          {/* OP Truth Audit (P0-08B2R6G) */}
+          {/* Cascade authority (P0-08B2R6G-R1) */}
           <div style={{
             padding: S[3], marginBottom: S[3],
-            background: C.amberLight, borderRadius: R.md,
-            border: `1px solid ${C.amberBorder}`,
+            background: C.surfaceAlt, borderRadius: R.md,
+            border: `1px solid ${C.line}`,
           }}>
-            <div style={{ fontFamily: T.mono, fontSize: 8, fontWeight: 700, color: C.amber, textTransform: "uppercase" as const, marginBottom: S[1] }}>
-              Fuente de datos OP
+            <div style={{ fontFamily: T.mono, fontSize: 8, fontWeight: 700, color: C.inkMid, textTransform: "uppercase" as const, marginBottom: S[1] }}>
+              Existencia fisica registrada en la bodega de Producto en Proceso
             </div>
             <div style={{ fontFamily: T.mono, fontSize: 9, color: C.inkMid, lineHeight: 1.6 }}>
-              <div>Autoridad: <strong>B04 inventario fisico</strong> (no OP real)</div>
-              <div>B04 refs fisicas: <strong>{opTruthAudit.b04PhysicalRefs}</strong> · {Math.round(opTruthAudit.b04PhysicalQty)} unidades</div>
-              <div>Candidatos con subgrupo: <strong>{opTruthAudit.b04CandidatesWithSubgrupo}</strong> · Sin subgrupo: {opTruthAudit.b04RejectedNoSubgrupo}</div>
-              <div>OP reales (ProductionOrder): <strong>{opTruthAudit.legacyOpCandidates}</strong> · Estado: {opTruthAudit.opSourceTruthState}</div>
-              <div style={{ marginTop: S[1], fontSize: 8, color: C.inkFaint }}>
-                {opTruthAudit.explanation}
-              </div>
+              <div>Cascada: <strong>B01</strong> → <strong>B04</strong> → <strong>Produccion requerida</strong></div>
+              <div>B04 refs: <strong>{opTruthAudit.b04PhysicalRefs}</strong> · {Math.round(opTruthAudit.b04PhysicalQty)} unidades</div>
+              <div>Candidatos con subgrupo: <strong>{opTruthAudit.b04CandidatesWithSubgrupo}</strong> · Sin subgrupo: <strong>{opTruthAudit.b04RejectedNoSubgrupo}</strong></div>
+              <div>Fuente B04: <strong>{opTruthAudit.b04SourceTruthState === "CERTIFIED" ? "Certificada" : "No disponible"}</strong></div>
             </div>
           </div>
 
           {/* Tab selector */}
           <div style={{ display: "flex", gap: S[2], marginBottom: S[2], flexWrap: "wrap" }}>
             <button onClick={() => setActiveTab("matched")} style={tabStyle(activeTab === "matched")}>
-              En camino por OP ({matched.length})
+              En camino B04 ({matched.length})
             </button>
             <button onClick={() => setActiveTab("unmatched")} style={tabStyle(activeTab === "unmatched")}>
               Sin posicion compatible ({unmatched.length})
@@ -4679,15 +4676,15 @@ function B04InventorySection({ b04Inventory, sampleCoverage, opTruthAudit }: {
               padding: `10px 16px`, background: C.surfaceAlt,
               borderBottom: `1px solid ${C.line}`, gap: S[1], alignItems: "center",
             }}>
-              {["Referencia", "Descripcion", "Grupo / Subgrupo", "Cant. B04",
-                activeTab === "matched" ? "Posicion derrotero" : "Razon",
+              {["Referencia", "Descripcion", "Linea", "Grupo / Subgrupo", "B04",
+                activeTab === "matched" ? "Posicion" : "Razon",
                 "Estado",
               ].map((h) => (
                 <div key={h} style={{
                   fontFamily: T.mono, fontSize: 8, fontWeight: 700,
                   color: C.inkFaint, textTransform: "uppercase" as const,
                   letterSpacing: "0.06em",
-                  textAlign: (h === "Cant. B04") ? "right" as const : undefined,
+                  textAlign: (h === "B04") ? "right" as const : undefined,
                 }}>{h}</div>
               ))}
             </div>
@@ -4707,9 +4704,13 @@ function B04InventorySection({ b04Inventory, sampleCoverage, opTruthAudit }: {
                 borderBottom: `1px solid ${C.lineSubtle}`,
                 gap: S[2], alignItems: "start",
               }}>
-                {/* Col 1: Reference + line label */}
+                {/* Col 1: Reference */}
+                <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: C.titleDeep }}>{entry.reference}</div>
+                {/* Col 2: Description */}
+                <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}
+                  title={entry.description}>{entry.description}</div>
+                {/* Col 3: Line */}
                 <div>
-                  <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: C.titleDeep }}>{entry.reference}</div>
                   <span style={{
                     fontFamily: T.mono, fontSize: 8, fontWeight: 700,
                     color: entry.linea === "CS" ? C.blueDark : entry.linea === "LT" ? C.green : C.inkFaint,
@@ -4717,24 +4718,21 @@ function B04InventorySection({ b04Inventory, sampleCoverage, opTruthAudit }: {
                     background: (entry.linea === "CS" ? C.blueDark : entry.linea === "LT" ? C.green : C.inkFaint) + "12",
                   }}>{DERROTERO_LINE_LABEL[entry.linea] ?? entry.linea}</span>
                 </div>
-                {/* Col 2: Description */}
-                <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}
-                  title={entry.description}>{entry.description}</div>
-                {/* Col 3: Grupo / Subgrupo */}
+                {/* Col 4: Grupo / Subgrupo */}
                 <div style={{ fontFamily: T.mono, fontSize: 10, color: C.inkMid }}>
                   {entry.grupoSag ?? "\u2014"} / {entry.subgrupoSag ?? "\u2014"}
                 </div>
-                {/* Col 4: Quantity */}
+                {/* Col 5: Quantity B04 */}
                 <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, color: C.amber, textAlign: "right" as const }}>
                   {entry.existencia}
                 </div>
-                {/* Col 5: Position or Reason */}
+                {/* Col 6: Position or Reason */}
                 <div style={{ fontFamily: T.mono, fontSize: 9, color: entry.matchedPosition ? C.blueDark : C.inkFaint }}>
                   {entry.matchedPosition
                     ? entry.matchedPosition
                     : EXCLUSION_LABEL[entry.exclusionReason]}
                 </div>
-                {/* Col 6: Truth state */}
+                {/* Col 7: Truth state */}
                 <div>
                   <span style={{
                     fontFamily: T.mono, fontSize: 8, fontWeight: 600,
@@ -4746,7 +4744,7 @@ function B04InventorySection({ b04Inventory, sampleCoverage, opTruthAudit }: {
                       ? (entry.exclusionReason === "MATCHED" ? C.blueDark : C.green)
                       : C.amber) + "12",
                   }}>
-                    {entry.exclusionReason === "MATCHED" ? "OP_INCOMING"
+                    {entry.exclusionReason === "MATCHED" ? "EN CAMINO"
                       : entry.matchTruthState === "DATA_UNVERIFIED" ? "SIN VERIFICAR"
                       : "EN PROCESO"}
                   </span>

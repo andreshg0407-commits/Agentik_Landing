@@ -245,7 +245,7 @@ describe("I-11: sample-coverage-engine fail-closed", () => {
     );
     const prodIdx = textileBlock.lastIndexOf('"PRODUCTION_REQUIRED"');
     const b01Idx = textileBlock.indexOf("STEP 1: Bodega Principal");
-    const opIdx = textileBlock.indexOf("STEP 2: OP Activa");
+    const opIdx = textileBlock.indexOf("STEP 2: B04 Producto en Proceso (P0-08B2R6G-R1)");
     expect(prodIdx).toBeGreaterThan(opIdx);
     expect(opIdx).toBeGreaterThan(b01Idx);
   });

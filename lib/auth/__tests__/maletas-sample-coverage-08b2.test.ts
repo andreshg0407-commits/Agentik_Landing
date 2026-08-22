@@ -56,7 +56,7 @@ describe("B — Cascade: B01 → OP → PRODUCTION_REQUIRED", () => {
 
   test("T06: STEP 1 Bodega checked before STEP 2 OP (code order)", () => {
     const bodegaIdx = src.indexOf("// STEP 1: Bodega Principal");
-    const opIdx = src.indexOf("// STEP 2: OP Activa");
+    const opIdx = src.indexOf("// STEP 2: B04 Producto en Proceso (P0-08B2R6G-R1)");
     const prodIdx = src.indexOf("// STEP 3: PRODUCTION_REQUIRED");
     expect(bodegaIdx).toBeGreaterThan(0);
     expect(opIdx).toBeGreaterThan(bodegaIdx);
@@ -435,7 +435,7 @@ describe("O — OP cascade: B01 → OP → PRODUCTION_REQUIRED", () => {
 
   test("T58: OP matching uses same matchesTextilEntry as B01", () => {
     const opSection = engineSrc.slice(
-      engineSrc.indexOf("// STEP 2: OP Activa"),
+      engineSrc.indexOf("// STEP 2: B04 Producto en Proceso (P0-08B2R6G-R1)"),
       engineSrc.indexOf("// STEP 3: PRODUCTION_REQUIRED"),
     );
     expect(opSection).toContain("matchesTextilEntry(");
@@ -445,7 +445,7 @@ describe("O — OP cascade: B01 → OP → PRODUCTION_REQUIRED", () => {
 
   test("T59: OP matching excludes refs in vendor bag", () => {
     const opSection = engineSrc.slice(
-      engineSrc.indexOf("// STEP 2: OP Activa"),
+      engineSrc.indexOf("// STEP 2: B04 Producto en Proceso (P0-08B2R6G-R1)"),
       engineSrc.indexOf("// STEP 3: PRODUCTION_REQUIRED"),
     );
     expect(opSection).toContain("vendorRefs.has(op.reference.trim().toUpperCase())");
@@ -453,7 +453,7 @@ describe("O — OP cascade: B01 → OP → PRODUCTION_REQUIRED", () => {
 
   test("T60: OP matching excludes usedReferences", () => {
     const opSection = engineSrc.slice(
-      engineSrc.indexOf("// STEP 2: OP Activa"),
+      engineSrc.indexOf("// STEP 2: B04 Producto en Proceso (P0-08B2R6G-R1)"),
       engineSrc.indexOf("// STEP 3: PRODUCTION_REQUIRED"),
     );
     expect(opSection).toContain("usedReferences.has(op.reference.trim().toUpperCase())");
@@ -464,7 +464,7 @@ describe("O — OP cascade: B01 → OP → PRODUCTION_REQUIRED", () => {
     expect(step3Idx).toBeGreaterThan(0);
     const after = engineSrc.slice(step3Idx, step3Idx + 500);
     expect(after).toContain('"PRODUCTION_REQUIRED"');
-    expect(after).toContain("Stock certificado = 0 en B01 y sin OP activa. Produccion requerida.");
+    expect(after).toContain("Stock certificado = 0 en B01 y B04. Produccion requerida.");
   });
 
   test("T62: A single B01 ref cannot fill two positions (usedReferences dedup)", () => {

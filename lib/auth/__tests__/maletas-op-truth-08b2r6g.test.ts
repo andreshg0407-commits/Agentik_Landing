@@ -146,7 +146,7 @@ describe("G-08: OP truth audit in UI", () => {
   });
 
   test("UI shows OP source truth state", () => {
-    expect(clientSrc).toContain("opTruthAudit.opSourceTruthState");
+    expect(clientSrc).toContain("opTruthAudit.b04SourceTruthState");
   });
 
   test("UI shows B04 physical ref count", () => {
@@ -178,12 +178,14 @@ describe("G-09: OP source truth states", () => {
 // ══════════════════════════════════════════════════════════════════════════
 
 describe("G-10: explanation field", () => {
-  test("explanation describes B04 vs OP semantics", () => {
-    expect(loaderSrc).toContain("No es una OP real");
+  test("explanation describes cascade semantics", () => {
+    expect(loaderSrc).toContain("Cascada: B01");
+    expect(loaderSrc).toContain("B04 = inventario fisico en Producto en Proceso");
   });
 
-  test("explanation mentions producedQty=null", () => {
-    expect(loaderSrc).toContain("producedQty=null");
+  test("explanation mentions ProductionOrder preserved as backlog", () => {
+    expect(loaderSrc).toContain("ProductionOrder (fuente 33) preservado como backlog de Produccion");
+    expect(loaderSrc).toContain("no participa en cobertura");
   });
 });
 

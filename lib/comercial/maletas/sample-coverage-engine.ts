@@ -13,19 +13,24 @@
  * Thresholds (100/200/10) prove wholesale availability — the bag receives
  * only a sample, not the threshold quantity.
  *
- * Coverage cascade per slot:
- *   1. B01_AVAILABLE                — B01 has eligible wholesale ref
- *   2. OP_INCOMING                  — active OP has eligible ref in production
- *   3. STOCK_AVAILABLE_BELOW_THRESHOLD — B01 has stock but below wholesale threshold
- *   4. PRODUCTION_REQUIRED          — textile: no ref exists, needs new production
+ * Canonical coverage cascade (P0-08B2R6G-R1):
+ *   B01_DISPONIBLE → B04_PRODUCTO_EN_PROCESO → PRODUCTION_REQUIRED
+ *
+ *   1. B01_AVAILABLE                — B01 has eligible wholesale ref (disponible > threshold)
+ *   2. STOCK_AVAILABLE_BELOW_THRESHOLD — B01 has stock but below wholesale threshold
+ *   3. OP_INCOMING                  — B04 physical inventory has eligible ref (existencia > 0)
+ *   4. PRODUCTION_REQUIRED          — no ref in B01 or B04, both sources certified
  *   5. IMPORT_UNAVAILABLE           — import: no ref available
  *   6. DATA_UNVERIFIED              — source data not certified
  *
+ * B04 = physical inventory in "Producto en Proceso" warehouse.
+ * ProductionOrder (fuente 33) is NOT used in this cascade — reserved for future Produccion module.
+ *
  * Invariants:
- *   - B01 + OP + BELOW_THRESHOLD + PRODUCTION + IMPORT_UNAVAILABLE + DATA_UNVERIFIED = total faltantes
+ *   - B01 + B04 + BELOW_THRESHOLD + PRODUCTION + IMPORT_UNAVAILABLE + DATA_UNVERIFIED = total faltantes
  *   - Each reference assigned at most once per vendor evaluation
  *   - No reference already in the bag can be suggested
- *   - PRODUCTION_REQUIRED only after certified absence in B01 AND OP
+ *   - PRODUCTION_REQUIRED only after certified absence in B01 AND B04
  *   - Deterministic: ties broken by disponible DESC, reference ASC
  *
  * Pure computation — no Prisma, no UI, no side effects.
@@ -432,7 +437,7 @@ function buildMissingPosition(
   let productionReason: string | null = null;
   if (allCandidates.some((c) => c.status === "PRODUCTION_REQUIRED")) {
     minWholesaleLot = threshold > 0 ? threshold : null;
-    productionReason = "Sin referencia mayorista disponible en B01 ni en OP activa";
+    productionReason = "Sin referencia mayorista disponible en B01 ni en B04";
   }
 
   return {
@@ -555,7 +560,8 @@ function resolveTextileSlots(
       continue;
     }
 
-    // STEP 2: OP Activa
+    // STEP 2: B04 Producto en Proceso (P0-08B2R6G-R1)
+    // B04 physical inventory — existencia > 0 means product is in process
     if (!dataAvailability.opAvailable) {
       candidates.push({
         reference: "",
@@ -566,7 +572,7 @@ function resolveTextileSlots(
         pendingQty: null,
         opNumber: null,
         threshold,
-        explanation: "No fue posible verificar completamente la disponibilidad. No se recomienda producir hasta certificar B01 y OP.",
+        explanation: "No fue posible verificar B04 (Producto en Proceso). No se recomienda producir hasta certificar B01 y B04.",
       });
       continue;
     }
@@ -592,14 +598,14 @@ function resolveTextileSlots(
         pendingQty: opMatch.pendingQty,
         opNumber: opMatch.opNumber,
         threshold,
-        explanation: `En camino por OP #${opMatch.opNumber}: ${opMatch.pendingQty} pendientes`,
+        explanation: `En camino — B04 existencia: ${opMatch.pendingQty} unidades en Producto en Proceso`,
       });
       usedReferences.add(opMatch.reference.trim().toUpperCase());
       continue;
     }
 
-    // STEP 3: PRODUCTION_REQUIRED — certified absence in B01 AND OP
-    // MALETAS-P0-PRODUCTION-SAFETY-08B2R6: only when stock = 0 in ALL sources
+    // STEP 3: PRODUCTION_REQUIRED — certified absence in B01 AND B04
+    // P0-08B2R6G-R1: only when stock = 0 in ALL sources and both are certified
     candidates.push({
       reference: "",
       description: entry.subgroupName,
@@ -609,7 +615,7 @@ function resolveTextileSlots(
       pendingQty: null,
       opNumber: null,
       threshold,
-      explanation: "Stock certificado = 0 en B01 y sin OP activa. Produccion requerida.",
+      explanation: "Stock certificado = 0 en B01 y B04. Produccion requerida.",
     });
   }
 }
@@ -695,14 +701,14 @@ function resolveImportSlots(
           pendingQty: opMatch.pendingQty,
           opNumber: opMatch.opNumber,
           threshold,
-          explanation: `En camino por OP #${opMatch.opNumber}: ${opMatch.pendingQty} pendientes`,
+          explanation: `En camino — B04 existencia: ${opMatch.pendingQty} unidades en Producto en Proceso`,
         });
         usedReferences.add(opMatch.reference.trim().toUpperCase());
         continue;
       }
     }
 
-    // IMPORT_UNAVAILABLE — no B01, no OP (never suggest textile production)
+    // IMPORT_UNAVAILABLE — no B01, no B04 (never suggest textile production)
     candidates.push({
       reference: "",
       description: entry.subgroupName,
