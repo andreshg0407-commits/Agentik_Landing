@@ -42,6 +42,8 @@ export const ROUTE_MODULE_MAP: ReadonlyArray<[string, ModuleKey]> = [
   // Marketing Studio is a separate module from the internal Agentik console.
   // ORG_ADMIN / MANAGER can access marketing-studio but NOT the full agentik console.
   ["agentik/marketing-studio",     "marketing_studio"],
+  // Copilot Preview route — gated by "copilot" module, not the internal "agentik" key.
+  ["agentik/copilot",              "copilot"],
   // Torre de Control drilldown workspaces — same gate as the parent /executive page.
   ["finanzas/torre-control",        "torre_control"],
   // Finanzas submodules — gated by the "finance" module key.
