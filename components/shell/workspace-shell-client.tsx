@@ -16,6 +16,9 @@
  *
  * All panels push the canvas — no overlays.
  * Collapses use CSS width transitions (0.18s ease).
+ *
+ * R1: Agent-resolved rail header, "Iniciar chat" button,
+ *     viewport-sticky right rail, contextual capabilities.
  */
 
 "use client";
@@ -47,6 +50,8 @@ import {
 } from "@/components/shell/executive-mobile-chrome";
 import { CopilotChatConsumer } from "@/components/copilot/copilot-chat-consumer";
 import type { CopilotPageContext } from "@/components/copilot/copilot-chat-consumer";
+import { resolveAgentForRoute } from "@/lib/agentik-agents/agent-resolver";
+import { resolveQuickActions }  from "@/lib/agentik-agents/agent-registry";
 
 // ── Domain icon registry — resolves iconKey → lucide component ────────────────
 // Client-side only: icons are React components and cannot cross the RSC boundary.
@@ -118,15 +123,31 @@ export function WorkspaceShellClient({
   const [railCompact,   setRailCompact]   = useState(false);
   const [copilotOpen,   setCopilotOpen]   = useState(false);
 
-  // Resolve page context for copilot consumer
+  // ── Resolve contextual agent from pathname ─────────────────────────────
+  const agentResult = resolveAgentForRoute({ pathname });
+  const agent = agentResult.agent;
+
   const orgSlug = pathname.split("/").filter(Boolean)[0] ?? "";
   const segments = pathname.replace(`/${orgSlug}`, "").split("/").filter(Boolean);
+
   const copilotContext: CopilotPageContext = {
     orgSlug,
     module: segments[0] ?? null,
     route: pathname,
     membershipRole: roleBadge.label,
+    agent: {
+      id:           agent.id,
+      name:         agent.name,
+      displayName:  agent.displayName,
+      title:        agent.title,
+      avatarKey:    agent.avatarKey,
+      accentColor:  agent.accentColor,
+      domain:       agent.domain,
+      capabilities: agent.capabilities,
+    },
   };
+
+  const quickActions = resolveQuickActions(agent, orgSlug);
 
   // Compute right rail width — drawer overrides compact and normal
   const railWidth = copilotOpen ? DRAWER_W : railCompact ? RAIL_MIN : RAIL_W;
@@ -226,6 +247,11 @@ export function WorkspaceShellClient({
             display:       "flex",
             flexDirection: "column",
             overflow:      "hidden",
+            // Viewport-sticky: rail stays fixed to viewport, not document height
+            position:      "sticky",
+            top:           0,
+            height:        "100dvh",
+            alignSelf:     "flex-start",
           }}
         >
           {copilotOpen ? (
@@ -237,94 +263,233 @@ export function WorkspaceShellClient({
             />
           ) : (
             <>
+              {/* ── Agent identity header ─────────────────────────────────── */}
               <div style={{
-                padding:        `${S[2]}px ${S[2]}px`,
+                padding:        `${S[3]}px ${railCompact ? S[1] : S[3]}px`,
                 borderBottom:   "1px solid var(--ag-line, rgba(0,74,173,.12))",
                 display:        "flex",
-                alignItems:     "center",
-                justifyContent: railCompact ? "center" : "space-between",
+                flexDirection:  railCompact ? "column" : "row",
+                alignItems:     railCompact ? "center" : "flex-start",
+                gap:            railCompact ? S[2] : S[2],
                 flexShrink:     0,
-                gap:            S[1],
               }}>
-                {/* Copilot chat button */}
-                <button
-                  onClick={() => setCopilotOpen(true)}
-                  title="Iniciar chat con Copilot"
-                  style={{
-                    all:            "unset",
-                    cursor:         "pointer",
-                    width:          24,
-                    height:         24,
-                    borderRadius:   6,
-                    background:     "linear-gradient(135deg, #004AAD 0%, #1E63D8 100%)",
-                    display:        "flex",
-                    alignItems:     "center",
-                    justifyContent: "center",
-                    flexShrink:     0,
-                    boxShadow:      "0 1px 4px rgba(0,74,173,0.25)",
-                  }}
-                >
-                  <span style={{
-                    fontFamily: T.mono,
-                    fontSize:   9,
-                    fontWeight: T.wt.bold,
-                    color:      "#fff",
-                    lineHeight: 1,
-                  }}>
-                    C
-                  </span>
-                </button>
-                {!railCompact && (
-                  <button
-                    onClick={() => setRailCompact(true)}
-                    title="Contraer panel"
-                    style={{
-                      all:            "unset",
-                      cursor:         "pointer",
-                      width:          24,
-                      height:         24,
-                      borderRadius:   6,
-                      border:         "1px solid var(--ag-line, rgba(0,74,173,.12))",
-                      background:     C.white,
-                      display:        "flex",
-                      alignItems:     "center",
-                      justifyContent: "center",
-                      fontSize:       10,
-                      color:          C.blueDark,
-                      flexShrink:     0,
-                      transition:     "background 0.12s, border-color 0.12s",
-                      boxShadow:      "var(--ag-shadow-sm)",
-                    }}
-                  >
-                    ‹
-                  </button>
-                )}
-                {railCompact && (
-                  <button
-                    onClick={() => setRailCompact(false)}
-                    title="Expandir panel"
-                    style={{
-                      all:            "unset",
-                      cursor:         "pointer",
-                      width:          24,
-                      height:         24,
-                      borderRadius:   6,
-                      border:         "1px solid var(--ag-line, rgba(0,74,173,.12))",
-                      background:     C.white,
-                      display:        "flex",
-                      alignItems:     "center",
-                      justifyContent: "center",
-                      fontSize:       10,
-                      color:          C.blueDark,
-                      flexShrink:     0,
-                      transition:     "background 0.12s, border-color 0.12s",
-                      boxShadow:      "var(--ag-shadow-sm)",
-                    }}
-                  >
-                    ›
-                  </button>
+                {railCompact ? (
+                  /* ── Compact: avatar + expand ──────────────────────────── */
+                  <>
+                    <button
+                      onClick={() => setCopilotOpen(true)}
+                      title={`Iniciar chat con ${agent.name}`}
+                      style={{
+                        all:            "unset",
+                        cursor:         "pointer",
+                        width:          28,
+                        height:         28,
+                        borderRadius:   "50%",
+                        background:     `linear-gradient(135deg, ${agent.accentColor} 0%, ${agent.accentColor}CC 100%)`,
+                        display:        "flex",
+                        alignItems:     "center",
+                        justifyContent: "center",
+                        flexShrink:     0,
+                      }}
+                    >
+                      <span style={{
+                        fontFamily: T.mono,
+                        fontSize:   T.sz["2xs"],
+                        fontWeight: T.wt.bold,
+                        color:      "#fff",
+                        lineHeight: 1,
+                      }}>
+                        {agent.name.slice(0, 1)}
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => setRailCompact(false)}
+                      title="Expandir panel"
+                      style={{
+                        all:            "unset",
+                        cursor:         "pointer",
+                        width:          24,
+                        height:         24,
+                        borderRadius:   6,
+                        border:         "1px solid var(--ag-line, rgba(0,74,173,.12))",
+                        background:     C.white,
+                        display:        "flex",
+                        alignItems:     "center",
+                        justifyContent: "center",
+                        fontSize:       10,
+                        color:          C.blueDark,
+                        flexShrink:     0,
+                        boxShadow:      "var(--ag-shadow-sm)",
+                      }}
+                    >
+                      ›
+                    </button>
+                  </>
+                ) : (
+                  /* ── Expanded: full agent header + Iniciar chat ────────── */
+                  <>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[2] }}>
+                        {/* Agent avatar */}
+                        <div style={{
+                          width:          28,
+                          height:         28,
+                          borderRadius:   "50%",
+                          background:     `linear-gradient(135deg, ${agent.accentColor} 0%, ${agent.accentColor}CC 100%)`,
+                          display:        "flex",
+                          alignItems:     "center",
+                          justifyContent: "center",
+                          flexShrink:     0,
+                        }}>
+                          <span style={{
+                            fontFamily: T.mono,
+                            fontSize:   T.sz["2xs"],
+                            fontWeight: T.wt.bold,
+                            color:      "#fff",
+                            lineHeight: 1,
+                          }}>
+                            {agent.name.slice(0, 1)}
+                          </span>
+                        </div>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{
+                            fontFamily:    T.mono,
+                            fontSize:      T.sz.sm,
+                            fontWeight:    T.wt.bold,
+                            color:         C.titleDeep,
+                            overflow:      "hidden",
+                            textOverflow:  "ellipsis",
+                            whiteSpace:    "nowrap",
+                            lineHeight:    1.2,
+                          }}>
+                            {agent.displayName}
+                          </div>
+                          <div style={{
+                            fontFamily:   T.mono,
+                            fontSize:     T.sz["2xs"],
+                            color:        C.inkLight,
+                            overflow:     "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace:   "nowrap",
+                            lineHeight:   1.3,
+                          }}>
+                            {agent.title}
+                          </div>
+                        </div>
+                      </div>
+                      {/* Iniciar chat button */}
+                      <button
+                        onClick={() => setCopilotOpen(true)}
+                        style={{
+                          all:            "unset",
+                          cursor:         "pointer",
+                          display:        "flex",
+                          alignItems:     "center",
+                          justifyContent: "center",
+                          gap:             S[1],
+                          width:          "100%",
+                          padding:        `${S[1] + 1}px 0`,
+                          fontFamily:     T.mono,
+                          fontSize:       T.sz.xs,
+                          fontWeight:     T.wt.semibold,
+                          color:          C.blueDark,
+                          background:     C.blueLight,
+                          border:         `1px solid ${C.blueBorder}`,
+                          borderRadius:   R.md,
+                          boxSizing:      "border-box",
+                        }}
+                      >
+                        Iniciar chat
+                      </button>
+                    </div>
+                    {/* Collapse button */}
+                    <button
+                      onClick={() => setRailCompact(true)}
+                      title="Contraer panel"
+                      style={{
+                        all:            "unset",
+                        cursor:         "pointer",
+                        width:          24,
+                        height:         24,
+                        borderRadius:   6,
+                        border:         "1px solid var(--ag-line, rgba(0,74,173,.12))",
+                        background:     C.white,
+                        display:        "flex",
+                        alignItems:     "center",
+                        justifyContent: "center",
+                        fontSize:       10,
+                        color:          C.blueDark,
+                        flexShrink:     0,
+                        transition:     "background 0.12s, border-color 0.12s",
+                        boxShadow:      "var(--ag-shadow-sm)",
+                        marginTop:      2,
+                      }}
+                    >
+                      ‹
+                    </button>
+                  </>
                 )}
               </div>
+
+              {/* ── Agent capabilities + quick actions (expanded only) ──── */}
+              {!railCompact && (
+                <div style={{
+                  padding:       `${S[2]}px ${S[3]}px`,
+                  borderBottom:  "1px solid var(--ag-line, rgba(0,74,173,.12))",
+                  flexShrink:    0,
+                }}>
+                  {/* Capabilities */}
+                  <div style={{
+                    fontFamily:    T.mono,
+                    fontSize:      8,
+                    fontWeight:    T.wt.semibold,
+                    color:         C.inkGhost,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.10em",
+                    marginBottom:  S[1],
+                  }}>
+                    Capacidades
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    {agent.capabilities.map((cap) => (
+                      <div key={cap} style={{
+                        fontFamily: T.mono,
+                        fontSize:   T.sz["2xs"],
+                        color:      C.inkLight,
+                        lineHeight: 1.4,
+                      }}>
+                        {cap}
+                      </div>
+                    ))}
+                  </div>
+                  {/* Quick actions */}
+                  {quickActions.length > 0 && (
+                    <div style={{ marginTop: S[2], display: "flex", flexWrap: "wrap", gap: 4 }}>
+                      {quickActions.map((qa) => (
+                        <Link
+                          key={qa.id}
+                          href={qa.href}
+                          style={{
+                            fontFamily:   T.mono,
+                            fontSize:     T.sz["2xs"],
+                            fontWeight:   T.wt.medium,
+                            color:        C.blueDark,
+                            background:   C.blueLight,
+                            border:       `1px solid ${C.blueBorder}`,
+                            borderRadius: R.sm,
+                            padding:      "1px 6px",
+                            textDecoration: "none",
+                          }}
+                        >
+                          {qa.label}
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── Ops rail content (expanded only) ─────────────────────── */}
               {!railCompact && (
                 <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
                   {railContent}
@@ -372,7 +537,7 @@ function PrimaryRail({
       overflowY:     "auto" as const,
       overflowX:     "hidden" as const,
       // Right-edge material separator — gives the rail a persistent shell-layer depth
-      boxShadow:     "inset -1px 0 0 rgba(255,255,255,.05), 3px 0 12px rgba(0,0,0,.18)",
+      boxShadow:     "inset -1px 0 rgba(255,255,255,.05), 3px 0 12px rgba(0,0,0,.18)",
     }}>
       {/* Agentik logo mark */}
       <div style={{

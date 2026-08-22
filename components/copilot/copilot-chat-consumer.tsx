@@ -4,16 +4,24 @@
  * components/copilot/copilot-chat-consumer.tsx
  *
  * Copilot Core — Shared Chat Consumer
- * Sprint: COPILOT-SURFACE-UNIFICATION-01
+ * Sprint: COPILOT-SURFACE-UNIFICATION-01 → COPILOT-DESKTOP-RAIL-UX-01R1
  *
- * Reusable conversational UI. Consumed by:
- *   - Desktop: right rail drawer
+ * Reusable conversational UI with contextual agent identity.
+ * Consumed by:
+ *   - Desktop: right rail drawer (agent-resolved)
  *   - Manager App: fullscreen (Phase 2)
  *   - Seller App: fullscreen with seller confinement (Phase 2)
  *   - QA harness: /agentik/copilot page
  *
  * Same 01C runtime. Same API routes. Same deterministic mock.
  * Identity, role, tenant, seller scope always server-side.
+ *
+ * R1 changes:
+ *   - Agent identity (name, title, avatar) replaces generic "Copilot Preview"
+ *   - Contextual report chips (only for agent domain)
+ *   - Reports render in chat first, download is secondary
+ *   - Facts (source, freshness, confidence) visible on responses
+ *   - Viewport-dependent layout: only messages scroll
  */
 
 import { useState, useRef, useEffect, useCallback } from "react";
@@ -43,11 +51,23 @@ interface ApiAnswer {
   }>;
 }
 
+export interface CopilotAgentInfo {
+  readonly id: string;
+  readonly name: string;
+  readonly displayName: string;
+  readonly title: string;
+  readonly avatarKey: string;
+  readonly accentColor: string;
+  readonly domain: string;
+  readonly capabilities: readonly string[];
+}
+
 export interface CopilotPageContext {
   readonly orgSlug: string;
   readonly module: string | null;
   readonly route: string;
   readonly membershipRole: string;
+  readonly agent: CopilotAgentInfo;
 }
 
 interface CopilotChatConsumerProps {
@@ -57,13 +77,33 @@ interface CopilotChatConsumerProps {
   onClose?: () => void;
 }
 
-// ── Report Types ─────────────────────────────────────────────────────────────
+// ── Agent-Contextual Report Chips ────────────────────────────────────────────
+// Only show report actions supported by the active agent's domain.
+// In 01C all capabilities are commercial (sales domain).
 
-const REPORT_OPTIONS = [
-  { type: "customer_summary", label: "Clientes" },
-  { type: "sales_performance", label: "Ventas" },
-  { type: "orders_summary", label: "Pedidos" },
-] as const;
+interface ReportChip {
+  keyword: string;
+  label: string;
+  reportType: string;
+}
+
+const COMMERCIAL_REPORTS: ReportChip[] = [
+  { keyword: "clientes", label: "Clientes", reportType: "customer_summary" },
+  { keyword: "ventas",   label: "Ventas",   reportType: "sales_performance" },
+  { keyword: "pedidos",  label: "Pedidos",  reportType: "orders_summary" },
+];
+
+/** Domains that have 01C commercial capabilities. */
+const DOMAIN_REPORTS: Record<string, ReportChip[]> = {
+  sales: COMMERCIAL_REPORTS,
+};
+
+/** Map capabilityId → reportType for download action. */
+const CAPABILITY_TO_REPORT: Record<string, string> = {
+  "commercial.customers.summary.read": "customer_summary",
+  "commercial.orders.summary.read":    "orders_summary",
+  "commercial.sales.performance.read": "sales_performance",
+};
 
 // ── Component ────────────────────────────────────────────────────────────────
 
@@ -72,12 +112,16 @@ export function CopilotChatConsumer({
   compact = false,
   onClose,
 }: CopilotChatConsumerProps) {
+  const { agent } = context;
   const [messages, setMessages] = useState<CopilotSessionMessage[]>([]);
   const [input, setInput] = useState("");
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("idle");
   const [lastError, setLastError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Reports available for the resolved agent's domain
+  const reportChips = DOMAIN_REPORTS[agent.domain] ?? [];
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -87,8 +131,10 @@ export function CopilotChatConsumer({
     inputRef.current?.focus();
   }, []);
 
-  const handleSend = useCallback(async () => {
-    const trimmed = input.trim();
+  // ── Send message ─────────────────────────────────────────────────────────
+
+  const handleSend = useCallback(async (text?: string) => {
+    const trimmed = (text ?? input).trim();
     if (!trimmed || connectionStatus === "sending") return;
 
     const userMessage: CopilotSessionMessage = {
@@ -99,7 +145,7 @@ export function CopilotChatConsumer({
     };
 
     setMessages((prev) => [...prev, userMessage]);
-    setInput("");
+    if (!text) setInput("");
     setConnectionStatus("sending");
     setLastError(null);
 
@@ -128,6 +174,8 @@ export function CopilotChatConsumer({
         text: data.answer.text,
         truthState: data.answer.truthState as TruthState,
         timestamp: data.answer.asOf,
+        capabilityId: data.answer.capabilityId,
+        facts: data.answer.facts,
       };
 
       setMessages((prev) => [...prev, agentMessage]);
@@ -158,8 +206,22 @@ export function CopilotChatConsumer({
     [handleSend],
   );
 
+  // ── Report chip → send keyword as chat message ──────────────────────────
+
+  const handleReportQuery = useCallback(
+    (chip: ReportChip) => {
+      handleSend(chip.keyword);
+    },
+    [handleSend],
+  );
+
+  // ── Download CSV (secondary action on report messages) ──────────────────
+
   const handleDownloadReport = useCallback(
-    async (reportType: string) => {
+    async (capabilityId: string) => {
+      const reportType = CAPABILITY_TO_REPORT[capabilityId];
+      if (!reportType) return;
+
       try {
         const res = await fetch(`/api/orgs/${context.orgSlug}/copilot/reports`, {
           method: "POST",
@@ -191,6 +253,8 @@ export function CopilotChatConsumer({
     [context.orgSlug],
   );
 
+  // ── Render ───────────────────────────────────────────────────────────────
+
   return (
     <div
       style={{
@@ -200,7 +264,7 @@ export function CopilotChatConsumer({
         minHeight: 0,
       }}
     >
-      {/* Header */}
+      {/* ── Header — Agent Identity ───────────────────────────────────────── */}
       <div
         style={{
           padding: `${S[2]}px ${S[3]}px`,
@@ -212,78 +276,95 @@ export function CopilotChatConsumer({
           background: C.white,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
-          <span
+        <div style={{ display: "flex", alignItems: "center", gap: S[2], minWidth: 0 }}>
+          {/* Agent avatar */}
+          <div
             style={{
-              fontFamily: T.mono,
-              fontSize: compact ? T.sz.sm : T.sz.md,
-              fontWeight: T.wt.bold,
-              color: C.titleDeep,
+              width: 26,
+              height: 26,
+              borderRadius: "50%",
+              background: `linear-gradient(135deg, ${agent.accentColor} 0%, ${agent.accentColor}CC 100%)`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
             }}
           >
-            Copilot
-          </span>
+            <span
+              style={{
+                fontFamily: T.mono,
+                fontSize: T.sz["2xs"],
+                fontWeight: T.wt.bold,
+                color: "#fff",
+                lineHeight: 1,
+              }}
+            >
+              {agent.name.slice(0, 1)}
+            </span>
+          </div>
+          {/* Agent name + title */}
+          <div style={{ minWidth: 0 }}>
+            <div
+              style={{
+                fontFamily: T.mono,
+                fontSize: compact ? T.sz.sm : T.sz.md,
+                fontWeight: T.wt.bold,
+                color: C.titleDeep,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                lineHeight: 1.2,
+              }}
+            >
+              {agent.displayName}
+            </div>
+            <div
+              style={{
+                fontFamily: T.mono,
+                fontSize: T.sz["2xs"],
+                color: C.inkLight,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                lineHeight: 1.3,
+              }}
+            >
+              {agent.title}
+            </div>
+          </div>
+          {/* Connection status dot */}
+          <span
+            style={{
+              width: 5,
+              height: 5,
+              borderRadius: "50%",
+              flexShrink: 0,
+              background:
+                connectionStatus === "sending" ? C.amber :
+                connectionStatus === "error"   ? C.red :
+                C.green,
+            }}
+          />
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: S[1] }}>
           <span
             style={{
               fontFamily: T.mono,
               fontSize: T.sz["2xs"],
               fontWeight: T.wt.medium,
-              color: C.blueDark,
-              background: C.blueLight,
-              border: `1px solid ${C.blueBorder}`,
+              color: C.amberDark,
+              background: C.amberLight,
+              border: `1px solid ${C.amberBorder}`,
               borderRadius: R.pill,
               padding: "1px 5px",
             }}
           >
             Preview
           </span>
-          {/* Connection status */}
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 3,
-              fontFamily: T.mono,
-              fontSize: T.sz["2xs"],
-              color:
-                connectionStatus === "sending" ? C.amberDark :
-                connectionStatus === "error"   ? C.red :
-                C.green,
-            }}
-          >
-            <span
-              style={{
-                width: 5,
-                height: 5,
-                borderRadius: "50%",
-                background:
-                  connectionStatus === "sending" ? C.amber :
-                  connectionStatus === "error"   ? C.red :
-                  C.green,
-              }}
-            />
-          </span>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: S[1] }}>
-          {/* Context badge */}
-          {context.module && (
-            <span
-              style={{
-                fontFamily: T.mono,
-                fontSize: T.sz["2xs"],
-                color: C.inkFaint,
-                background: C.surfaceAlt,
-                borderRadius: R.sm,
-                padding: "1px 5px",
-              }}
-            >
-              {context.module}
-            </span>
-          )}
           {onClose && (
             <button
               onClick={onClose}
-              title="Cerrar Copilot"
+              title="Cerrar chat"
               style={{
                 all: "unset",
                 cursor: "pointer",
@@ -306,7 +387,7 @@ export function CopilotChatConsumer({
         </div>
       </div>
 
-      {/* Messages area */}
+      {/* ── Messages area (only this scrolls) ─────────────────────────────── */}
       <div
         style={{
           flex: 1,
@@ -334,7 +415,7 @@ export function CopilotChatConsumer({
                 marginBottom: S[1],
               }}
             >
-              Copilot Preview
+              {agent.displayName}
             </div>
             <div
               style={{
@@ -342,10 +423,28 @@ export function CopilotChatConsumer({
                 fontSize: T.sz.xs,
                 color: C.inkLight,
                 lineHeight: 1.5,
+                marginBottom: S[2],
               }}
             >
-              Pregunta sobre clientes, pedidos o ventas.
-              Las respuestas son determinísticas (sin modelo de IA).
+              {reportChips.length > 0
+                ? "Pregunta sobre clientes, pedidos o ventas. Usa los accesos rápidos o escribe tu consulta."
+                : `Escribe tu consulta para ${agent.name}.`}
+            </div>
+            {/* Agent capabilities */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "center" }}>
+              {agent.capabilities.slice(0, 4).map((cap) => (
+                <span
+                  key={cap}
+                  style={{
+                    fontFamily: T.mono,
+                    fontSize: T.sz["2xs"],
+                    color: C.inkFaint,
+                    lineHeight: 1.4,
+                  }}
+                >
+                  {cap}
+                </span>
+              ))}
             </div>
           </div>
         )}
@@ -354,14 +453,15 @@ export function CopilotChatConsumer({
           <CopilotChatMessage
             key={msg.id}
             message={msg}
-            agentInitial="C"
+            agentInitial={agent.name.slice(0, 1)}
+            onDownload={handleDownloadReport}
           />
         ))}
 
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Demo mode banner */}
+      {/* ── Demo mode banner ──────────────────────────────────────────────── */}
       <div
         style={{
           fontFamily: T.mono,
@@ -378,49 +478,52 @@ export function CopilotChatConsumer({
         Modo demostración — respuestas determinísticas, sin modelo de IA conectado.
       </div>
 
-      {/* Reports bar */}
-      <div
-        style={{
-          padding: `${S[1]}px ${S[2]}px`,
-          display: "flex",
-          gap: 4,
-          alignItems: "center",
-          flexWrap: "wrap",
-          flexShrink: 0,
-          borderTop: `1px solid ${C.line}`,
-        }}
-      >
-        <span
+      {/* ── Contextual report chips (agent domain only) ───────────────────── */}
+      {reportChips.length > 0 && (
+        <div
           style={{
-            fontFamily: T.mono,
-            fontSize: T.sz["2xs"],
-            color: C.inkLight,
+            padding: `${S[1]}px ${S[2]}px`,
+            display: "flex",
+            gap: 4,
+            alignItems: "center",
+            flexWrap: "wrap",
+            flexShrink: 0,
+            borderTop: `1px solid ${C.line}`,
           }}
         >
-          Informes:
-        </span>
-        {REPORT_OPTIONS.map((opt) => (
-          <button
-            key={opt.type}
-            onClick={() => handleDownloadReport(opt.type)}
+          <span
             style={{
               fontFamily: T.mono,
               fontSize: T.sz["2xs"],
-              fontWeight: T.wt.medium,
-              color: C.blueDark,
-              background: C.blueLight,
-              border: `1px solid ${C.blueBorder}`,
-              borderRadius: R.sm,
-              padding: "1px 5px",
-              cursor: "pointer",
+              color: C.inkLight,
             }}
           >
-            {opt.label}
-          </button>
-        ))}
-      </div>
+            Informes:
+          </span>
+          {reportChips.map((chip) => (
+            <button
+              key={chip.reportType}
+              onClick={() => handleReportQuery(chip)}
+              disabled={connectionStatus === "sending"}
+              style={{
+                fontFamily: T.mono,
+                fontSize: T.sz["2xs"],
+                fontWeight: T.wt.medium,
+                color: connectionStatus === "sending" ? C.inkGhost : C.blueDark,
+                background: C.blueLight,
+                border: `1px solid ${C.blueBorder}`,
+                borderRadius: R.sm,
+                padding: "1px 5px",
+                cursor: connectionStatus === "sending" ? "not-allowed" : "pointer",
+              }}
+            >
+              {chip.label}
+            </button>
+          ))}
+        </div>
+      )}
 
-      {/* Input bar */}
+      {/* ── Input bar ─────────────────────────────────────────────────────── */}
       <div
         style={{
           borderTop: `1px solid ${C.line}`,
@@ -438,7 +541,7 @@ export function CopilotChatConsumer({
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Escribe tu consulta..."
+          placeholder={`Pregunta a ${agent.name}...`}
           disabled={connectionStatus === "sending"}
           style={{
             flex: 1,
@@ -454,7 +557,7 @@ export function CopilotChatConsumer({
           }}
         />
         <button
-          onClick={handleSend}
+          onClick={() => handleSend()}
           disabled={connectionStatus === "sending" || !input.trim()}
           style={{
             fontFamily: T.mono,
@@ -480,7 +583,7 @@ export function CopilotChatConsumer({
         </button>
       </div>
 
-      {/* Error banner */}
+      {/* ── Error banner ──────────────────────────────────────────────────── */}
       {lastError && connectionStatus === "error" && (
         <div
           style={{
