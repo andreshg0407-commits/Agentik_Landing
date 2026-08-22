@@ -45,6 +45,8 @@ import {
   ExecutiveMobileHeader,
   CopilotSphere,
 } from "@/components/shell/executive-mobile-chrome";
+import { CopilotChatConsumer } from "@/components/copilot/copilot-chat-consumer";
+import type { CopilotPageContext } from "@/components/copilot/copilot-chat-consumer";
 
 // ── Domain icon registry — resolves iconKey → lucide component ────────────────
 // Client-side only: icons are React components and cannot cross the RSC boundary.
@@ -80,6 +82,7 @@ const PRIMARY_W  = 64;
 const CTX_W      = 220;
 const RAIL_W     = 264;
 const RAIL_MIN   = 40;
+const DRAWER_W   = 400;
 
 const PRIMARY_BG  = "linear-gradient(180deg, #001E4A 0%, #003A8A 100%)";
 const TRANSITION  = "width 0.18s ease, min-width 0.18s ease";
@@ -113,6 +116,20 @@ export function WorkspaceShellClient({
   const [activeDomain,  setActiveDomain]  = useState(() => inferActiveDomain(pathname, domains));
   const [ctxCollapsed,  setCtxCollapsed]  = useState(false);
   const [railCompact,   setRailCompact]   = useState(false);
+  const [copilotOpen,   setCopilotOpen]   = useState(false);
+
+  // Resolve page context for copilot consumer
+  const orgSlug = pathname.split("/").filter(Boolean)[0] ?? "";
+  const segments = pathname.replace(`/${orgSlug}`, "").split("/").filter(Boolean);
+  const copilotContext: CopilotPageContext = {
+    orgSlug,
+    module: segments[0] ?? null,
+    route: pathname,
+    membershipRole: roleBadge.label,
+  };
+
+  // Compute right rail width — drawer overrides compact and normal
+  const railWidth = copilotOpen ? DRAWER_W : railCompact ? RAIL_MIN : RAIL_W;
 
   // Sync active domain when pathname changes via link navigation
   useEffect(() => {
@@ -197,56 +214,123 @@ export function WorkspaceShellClient({
           {isBlocked ? <BlockedView /> : children}
         </main>
 
-        {/* ── 4. Right Ops Rail (desktop only) ─────────────────────────────── */}
+        {/* ── 4. Right Ops Rail / Copilot Drawer (desktop only) ─────────────── */}
         <div
           className={hasMobile ? "org-rail ag-desktop-only" : "org-rail"}
           style={{
-            width:         railCompact ? RAIL_MIN : RAIL_W,
-            minWidth:      railCompact ? RAIL_MIN : RAIL_W,
+            width:         railWidth,
+            minWidth:      railWidth,
             transition:    TRANSITION,
             borderLeft:    "1px solid var(--ag-line, rgba(0,74,173,.12))",
-            background:    "var(--ag-surface, #F7F9FF)",
+            background:    copilotOpen ? C.white : "var(--ag-surface, #F7F9FF)",
             display:       "flex",
             flexDirection: "column",
             overflow:      "hidden",
           }}
         >
-          <div style={{
-            padding:        `${S[2]}px ${S[2]}px`,
-            borderBottom:   "1px solid var(--ag-line, rgba(0,74,173,.12))",
-            display:        "flex",
-            alignItems:     "center",
-            justifyContent: railCompact ? "center" : "flex-end",
-            flexShrink:     0,
-          }}>
-            <button
-              onClick={() => setRailCompact(c => !c)}
-              title={railCompact ? "Expandir panel" : "Contraer panel"}
-              style={{
-                all:            "unset",
-                cursor:         "pointer",
-                width:          24,
-                height:         24,
-                borderRadius:   6,
-                border:         "1px solid var(--ag-line, rgba(0,74,173,.12))",
-                background:     C.white,
+          {copilotOpen ? (
+            /* ── Copilot chat drawer ────────────────────────────────────────── */
+            <CopilotChatConsumer
+              context={copilotContext}
+              compact
+              onClose={() => setCopilotOpen(false)}
+            />
+          ) : (
+            <>
+              <div style={{
+                padding:        `${S[2]}px ${S[2]}px`,
+                borderBottom:   "1px solid var(--ag-line, rgba(0,74,173,.12))",
                 display:        "flex",
                 alignItems:     "center",
-                justifyContent: "center",
-                fontSize:       10,
-                color:          C.blueDark,
+                justifyContent: railCompact ? "center" : "space-between",
                 flexShrink:     0,
-                transition:     "background 0.12s, border-color 0.12s",
-                boxShadow:      "var(--ag-shadow-sm)",
-              }}
-            >
-              {railCompact ? "›" : "‹"}
-            </button>
-          </div>
-          {!railCompact && (
-            <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
-              {railContent}
-            </div>
+                gap:            S[1],
+              }}>
+                {/* Copilot chat button */}
+                <button
+                  onClick={() => setCopilotOpen(true)}
+                  title="Iniciar chat con Copilot"
+                  style={{
+                    all:            "unset",
+                    cursor:         "pointer",
+                    width:          24,
+                    height:         24,
+                    borderRadius:   6,
+                    background:     "linear-gradient(135deg, #004AAD 0%, #1E63D8 100%)",
+                    display:        "flex",
+                    alignItems:     "center",
+                    justifyContent: "center",
+                    flexShrink:     0,
+                    boxShadow:      "0 1px 4px rgba(0,74,173,0.25)",
+                  }}
+                >
+                  <span style={{
+                    fontFamily: T.mono,
+                    fontSize:   9,
+                    fontWeight: T.wt.bold,
+                    color:      "#fff",
+                    lineHeight: 1,
+                  }}>
+                    C
+                  </span>
+                </button>
+                {!railCompact && (
+                  <button
+                    onClick={() => setRailCompact(true)}
+                    title="Contraer panel"
+                    style={{
+                      all:            "unset",
+                      cursor:         "pointer",
+                      width:          24,
+                      height:         24,
+                      borderRadius:   6,
+                      border:         "1px solid var(--ag-line, rgba(0,74,173,.12))",
+                      background:     C.white,
+                      display:        "flex",
+                      alignItems:     "center",
+                      justifyContent: "center",
+                      fontSize:       10,
+                      color:          C.blueDark,
+                      flexShrink:     0,
+                      transition:     "background 0.12s, border-color 0.12s",
+                      boxShadow:      "var(--ag-shadow-sm)",
+                    }}
+                  >
+                    ‹
+                  </button>
+                )}
+                {railCompact && (
+                  <button
+                    onClick={() => setRailCompact(false)}
+                    title="Expandir panel"
+                    style={{
+                      all:            "unset",
+                      cursor:         "pointer",
+                      width:          24,
+                      height:         24,
+                      borderRadius:   6,
+                      border:         "1px solid var(--ag-line, rgba(0,74,173,.12))",
+                      background:     C.white,
+                      display:        "flex",
+                      alignItems:     "center",
+                      justifyContent: "center",
+                      fontSize:       10,
+                      color:          C.blueDark,
+                      flexShrink:     0,
+                      transition:     "background 0.12s, border-color 0.12s",
+                      boxShadow:      "var(--ag-shadow-sm)",
+                    }}
+                  >
+                    ›
+                  </button>
+                )}
+              </div>
+              {!railCompact && (
+                <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
+                  {railContent}
+                </div>
+              )}
+            </>
           )}
         </div>
 

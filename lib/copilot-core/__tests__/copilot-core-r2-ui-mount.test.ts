@@ -115,16 +115,17 @@ describe("R2 UI Mount — Transparency", () => {
 });
 
 describe("R2 UI Mount — Navigation", () => {
-  test("R2-10: Nav config includes Copilot Preview entry in agentik domain", () => {
+  test("R2-10: Copilot Preview removed from tenant nav (SURFACE-UNIFICATION-01)", () => {
     const src = readFile(NAV_CONFIG);
-    expect(src).toContain("Copilot Preview");
-    expect(src).toContain("agentik/copilot");
-    // Must be in agentik domain (pathKeys includes it)
+    // Copilot Preview nav entry removed — chat lives in the right rail drawer.
+    // QA route /agentik/copilot still exists but is not in the sidebar.
     const agentikSection = src.slice(
       src.indexOf('id:        "agentik"'),
       src.indexOf("Configuracion"),
     );
-    expect(agentikSection).toContain("Copilot Preview");
+    // Nav item MUST NOT exist — only the QA comment should reference it
+    expect(agentikSection).not.toContain('label: "Copilot Preview"');
+    // pathKeys still includes agentik/copilot for domain detection (QA route)
     expect(agentikSection).toContain("agentik/copilot");
   });
 });

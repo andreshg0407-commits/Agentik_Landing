@@ -374,8 +374,8 @@ export function buildNavDomains(opts: NavBuildOptions): DomainDef[] {
         { label: "Runtime",          href: "#", isSectionHeader: true, visibility: "platform" },
         { label: "Approval Center",  href: `/${s}/copilot/approval-center`,     indent: 1, accent: "#004AAD", badge: "⚡", visibility: "platform", pathMatches: ["copilot/approval-center"] },
         { label: "Runtime Admin",    href: `/${s}/agentik/runtime-admin`,        indent: 1, accent: "#004AAD", badge: "⚙",  visibility: "platform", pathMatches: ["agentik/runtime-admin"] },
-        { label: "Preview",         href: "#", isSectionHeader: true },
-        { label: "Copilot Preview", href: `/${s}/agentik/copilot`,             indent: 1, accent: "#004AAD", badge: "Preview", pathMatches: ["agentik/copilot"] },
+        // Copilot Preview — QA route only, removed from tenant nav per COPILOT-SURFACE-UNIFICATION-01.
+        // Route /agentik/copilot preserved for QA; chat lives in the right rail drawer.
       ],
     });
   }
