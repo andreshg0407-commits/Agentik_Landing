@@ -45,6 +45,83 @@ import type {
 
 const DRIVE_API_BASE = "https://www.googleapis.com/drive/v3";
 
+// ── Drive API error classification ──────────────────────────────────────────
+
+/**
+ * Sanitized Drive API error — no tokens, no raw bodies.
+ * Preserves only: HTTP status, Google reason code, safe message, endpoint.
+ */
+export interface DriveApiErrorInfo {
+  httpStatus:  number;
+  reason:      string | null;    // Google's error.errors[0].reason
+  message:     string | null;    // Google's error.message (no tokens)
+  endpoint:    string;           // e.g. "files.list", "about", "drives.list"
+  errorClass:  DriveErrorClass;
+}
+
+export type DriveErrorClass =
+  | "TOKEN_REVOKED"            // 401 or 403 with authError/tokenRevoked
+  | "DRIVE_SCOPE_MISSING"     // 403 insufficientPermissions
+  | "DRIVE_API_DISABLED"      // 403 accessNotConfigured
+  | "WORKSPACE_ADMIN_BLOCKED" // 403 domainPolicy
+  | "FOLDER_ACCESS_DENIED"    // 403 on a specific folder (not a token issue)
+  | "NOT_FOUND"               // 404
+  | "EMPTY_LISTING"           // 200 with zero results
+  | "UNKNOWN";
+
+/**
+ * Reads the Google Drive API error response and classifies it.
+ * Never logs or returns raw tokens.
+ */
+async function classifyDriveError(
+  res: Response,
+  endpoint: string,
+): Promise<DriveApiErrorInfo> {
+  const httpStatus = res.status;
+  let reason: string | null = null;
+  let message: string | null = null;
+
+  try {
+    const body = await res.json() as {
+      error?: { message?: string; errors?: Array<{ reason?: string; message?: string }> };
+    };
+    reason  = body?.error?.errors?.[0]?.reason ?? null;
+    message = body?.error?.message ?? null;
+  } catch { /* non-JSON body */ }
+
+  let errorClass: DriveErrorClass = "UNKNOWN";
+
+  if (httpStatus === 401) {
+    errorClass = "TOKEN_REVOKED";
+  } else if (httpStatus === 403) {
+    if (reason === "insufficientPermissions" || reason === "forbidden") {
+      errorClass = "DRIVE_SCOPE_MISSING";
+    } else if (reason === "accessNotConfigured") {
+      errorClass = "DRIVE_API_DISABLED";
+    } else if (reason === "domainPolicy") {
+      errorClass = "WORKSPACE_ADMIN_BLOCKED";
+    } else {
+      // 403 on a specific resource vs global — heuristic: if endpoint is a folder op, it's folder-level
+      errorClass = endpoint.includes("files/") || endpoint === "files.list"
+        ? "FOLDER_ACCESS_DENIED"
+        : "TOKEN_REVOKED";
+    }
+  } else if (httpStatus === 404) {
+    errorClass = "NOT_FOUND";
+  }
+
+  return { httpStatus, reason, message, endpoint, errorClass };
+}
+
+/**
+ * Throws a classified Drive API error.
+ * The error message includes the class and sanitized detail (no tokens).
+ */
+function throwDriveError(info: DriveApiErrorInfo): never {
+  const detail = info.reason ? ` (reason=${info.reason})` : "";
+  throw new Error(`DRIVE_ERROR:${info.errorClass}:${info.httpStatus}:${info.endpoint}${detail}`);
+}
+
 /** Google Workspace native types — not downloadable as binary, skip silently */
 const GOOGLE_NATIVE_MIME_SKIP = new Set([
   "application/vnd.google-apps.document",
@@ -174,9 +251,11 @@ async function listFolderContents(
       headers: { Authorization: `Bearer ${accessToken}` },  // ⚠ server-only
     });
 
-    if (res.status === 401 || res.status === 403) throw new Error("DRIVE_PERMISSION_DENIED");
-    if (res.status === 404)                       throw new Error("DRIVE_FOLDER_NOT_FOUND");
-    if (!res.ok)                                  throw new Error(`Drive API error: ${res.status}`);
+    if (res.status === 401 || res.status === 403) {
+      throwDriveError(await classifyDriveError(res, "files.list"));
+    }
+    if (res.status === 404) throw new Error("DRIVE_FOLDER_NOT_FOUND");
+    if (!res.ok)            throw new Error(`Drive API error: ${res.status}`);
 
     const data = await res.json() as DriveFileListResponse;
     results.push(...(data.files ?? []));
@@ -206,7 +285,9 @@ export async function validateDriveFolder(
   });
 
   if (res.status === 404) throw new Error("DRIVE_FOLDER_NOT_FOUND");
-  if (res.status === 403) throw new Error("DRIVE_PERMISSION_DENIED");
+  if (res.status === 403) {
+    throwDriveError(await classifyDriveError(res, `files/${encodeURIComponent(folderId)}`));
+  }
   if (!res.ok)            throw new Error(`Drive folder validation failed: ${res.status}`);
 
   const data = await res.json() as { id: string; name: string; mimeType: string };
@@ -374,7 +455,9 @@ export async function downloadDriveFile(
     headers: { Authorization: `Bearer ${accessToken}` },  // ⚠ server-only
   });
 
-  if (res.status === 403) throw new Error("DRIVE_PERMISSION_DENIED");
+  if (res.status === 403) {
+    throwDriveError(await classifyDriveError(res, "files.download"));
+  }
   if (res.status === 404) throw new Error("DRIVE_FILE_NOT_FOUND");
   if (!res.ok)            throw new Error(`Drive download failed: ${res.status}`);
 
@@ -476,7 +559,9 @@ export async function listFolderPage(
     headers: { Authorization: `Bearer ${accessToken}` },
   });
 
-  if (res.status === 401 || res.status === 403) throw new Error("DRIVE_PERMISSION_DENIED");
+  if (res.status === 401 || res.status === 403) {
+    throwDriveError(await classifyDriveError(res, "files.list.page"));
+  }
   if (res.status === 404)                       throw new Error("DRIVE_FOLDER_NOT_FOUND");
   if (!res.ok)                                  throw new Error(`Drive API error: ${res.status}`);
 

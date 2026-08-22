@@ -122,12 +122,20 @@ export async function GET(
       const root = await getTenantDriveRoot(organizationId);
 
       let accountEmail: string | null = null;
+      let storedScopes: string[] = [];
       if (conn) {
         const connRecord = await prisma.integrationConnection.findUnique({
           where: { id: conn.connectionId },
-          select: { externalAccountName: true },
+          select: { externalAccountName: true, scopes: true },
         });
         accountEmail = connRecord?.externalAccountName ?? null;
+        // scopes is Json @default("[]") — parse safely
+        const rawScopes = connRecord?.scopes;
+        if (Array.isArray(rawScopes)) {
+          storedScopes = rawScopes.filter((s): s is string => typeof s === "string");
+        } else if (typeof rawScopes === "string") {
+          try { storedScopes = JSON.parse(rawScopes); } catch { /* empty */ }
+        }
       }
 
       // If no connection in DB, short-circuit — no probe needed
@@ -140,12 +148,18 @@ export async function GET(
           accountEmail:          null,
           reauthRequired:        false,
           reauthReason:          null,
+          configError:           null,
+          storedScopes:          [],
+          hasDriveReadonly:       false,
         }, { headers: NO_CACHE_HEADERS });
       }
 
       // Live probe: attempt token + Drive API call to verify connection is real
+      // getDriveAccessToken already attempts refresh if token is expired —
+      // it only throws DRIVE_TOKEN_EXPIRED when refresh itself fails (revoked/missing).
       let reauthRequired = false;
       let reauthReason: string | null = null;
+      let configError: string | null = null;
       try {
         const accessToken = await getDriveAccessToken(conn);
         // Lightweight probe — Drive about endpoint (no file listing)
@@ -154,38 +168,51 @@ export async function GET(
           { headers: { Authorization: `Bearer ${accessToken}` } },
         );
         if (probeRes.status === 401 || probeRes.status === 403) {
-          reauthRequired = true;
           const probeBody = await probeRes.json().catch(() => ({})) as { error?: { errors?: Array<{ reason?: string }> } };
           const reason = probeBody?.error?.errors?.[0]?.reason;
           if (reason === "insufficientPermissions" || reason === "forbidden") {
+            // Token works but lacks drive.readonly scope — reauth needed
+            reauthRequired = true;
             reauthReason = "DRIVE_SCOPE_MISSING";
           } else if (reason === "domainPolicy") {
-            reauthReason = "WORKSPACE_ADMIN_BLOCKED";
+            // Workspace admin blocked Drive API — not a token issue, config error
+            configError = "WORKSPACE_ADMIN_BLOCKED";
           } else if (reason === "accessNotConfigured") {
-            reauthReason = "DRIVE_API_DISABLED";
+            // Drive API not enabled in Google Cloud project — config error, not reauth
+            configError = "DRIVE_API_DISABLED";
           } else {
+            // Token invalid/revoked — reauth needed
+            reauthRequired = true;
             reauthReason = "TOKEN_REVOKED";
           }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : "";
-        reauthRequired = true;
         if (msg.includes("DRIVE_TOKEN_EXPIRED")) {
-          // Refresh token invalid — revoked or expired
+          // Refresh token invalid/revoked — getDriveAccessToken already tried refresh
+          reauthRequired = true;
           reauthReason = msg.includes("revoked") ? "TOKEN_REVOKED" : "TOKEN_EXPIRED";
         } else {
-          reauthReason = "TOKEN_REVOKED";
+          // Transient network error — don't force reauth, report as config error
+          configError = "PROBE_FAILED";
         }
       }
 
+      const hasDriveReadonly = storedScopes.some(
+        s => s.includes("drive.readonly") || s.includes("drive"),
+      );
+
       return NextResponse.json({
-        connected:             !reauthRequired,
+        connected:             !reauthRequired && !configError,
         tenantRootConfigured:  root !== null,
         tenantRootFolderName:  root?.folderName ?? null,
         tenantRootFolderId:    root?.folderId ?? null,
         accountEmail:          maskEmail(accountEmail),
         reauthRequired,
         reauthReason,
+        configError,
+        storedScopes,
+        hasDriveReadonly,
       }, { headers: NO_CACHE_HEADERS });
     }
 
@@ -270,6 +297,18 @@ export async function GET(
         page = await listFolderPage(browseFolderId, accessToken, pageToken);
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Error";
+        // Parse classified errors for reauthRequired signaling
+        if (msg.startsWith("DRIVE_ERROR:")) {
+          const errorClass = msg.split(":")[1] ?? "UNKNOWN";
+          const reauthClasses = new Set(["TOKEN_REVOKED", "DRIVE_SCOPE_MISSING"]);
+          const isConfigError = errorClass === "DRIVE_API_DISABLED" || errorClass === "WORKSPACE_ADMIN_BLOCKED";
+          return NextResponse.json({
+            error: errorClass,
+            reauthRequired: reauthClasses.has(errorClass),
+            reauthReason: reauthClasses.has(errorClass) ? errorClass : null,
+            configError: isConfigError ? errorClass : null,
+          }, { status: 403, headers: NO_CACHE_HEADERS });
+        }
         return NextResponse.json({ error: msg }, { status: 403 });
       }
 
@@ -579,12 +618,34 @@ export async function GET(
         { status: 503 },
       );
     }
+    // Classified Drive errors: DRIVE_ERROR:CLASS:STATUS:ENDPOINT (reason=...)
+    if (msg.startsWith("DRIVE_ERROR:")) {
+      const parts = msg.split(":");
+      const errorClass = parts[1] ?? "UNKNOWN";
+      const httpStatus = parseInt(parts[2] ?? "500", 10);
+
+      // Only TOKEN_REVOKED and DRIVE_SCOPE_MISSING require reauth (user action)
+      const reauthClasses = new Set(["TOKEN_REVOKED", "DRIVE_SCOPE_MISSING"]);
+      const reauthRequired = reauthClasses.has(errorClass);
+      // DRIVE_API_DISABLED: Google Cloud project config — not a token issue
+      // WORKSPACE_ADMIN_BLOCKED: Workspace admin policy — not a token issue
+      // FOLDER_ACCESS_DENIED: specific folder inaccessible — not a token issue
+      const isConfigError = errorClass === "DRIVE_API_DISABLED" || errorClass === "WORKSPACE_ADMIN_BLOCKED";
+      return NextResponse.json({
+        error: errorClass,
+        reauthRequired,
+        reauthReason: reauthRequired ? errorClass : null,
+        configError: isConfigError ? errorClass : null,
+        driveDetail: msg,
+      }, { status: httpStatus, headers: NO_CACHE_HEADERS });
+    }
+    // Legacy error codes (pre-classification)
     if (msg === "DRIVE_PERMISSION_DENIED")        return NextResponse.json({ error: "DRIVE_PERMISSION_DENIED", reauthRequired: true, reauthReason: "TOKEN_REVOKED" }, { status: 403 });
     if (msg === "DRIVE_FOLDER_NOT_FOUND")         return NextResponse.json({ error: "Carpeta no encontrada en Google Drive" }, { status: 404 });
     if (msg === "DRIVE_NOT_A_FOLDER")             return NextResponse.json({ error: "El ID no corresponde a una carpeta" }, { status: 400 });
     if (msg === "DRIVE_TOKEN_EXPIRED")            return NextResponse.json({ error: msg, reauthRequired: true, reauthReason: "TOKEN_EXPIRED" }, { status: 401 });
     if (msg === "DRIVE_SCOPE_MISSING")           return NextResponse.json({ error: msg, reauthRequired: true, reauthReason: "DRIVE_SCOPE_MISSING" }, { status: 403 });
-    if (msg === "WORKSPACE_ADMIN_BLOCKED")       return NextResponse.json({ error: msg, reauthRequired: true, reauthReason: "WORKSPACE_ADMIN_BLOCKED" }, { status: 403 });
+    if (msg === "WORKSPACE_ADMIN_BLOCKED")       return NextResponse.json({ error: msg, reauthRequired: false, configError: "WORKSPACE_ADMIN_BLOCKED" }, { status: 403 });
     console.error("[marketing-studio/drive GET]", err);
     return NextResponse.json({ error: msg }, { status: 500 });
   }

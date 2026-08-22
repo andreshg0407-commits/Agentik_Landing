@@ -60,6 +60,7 @@ interface DriveStatusResponse {
   accountEmail:         string | null;
   reauthRequired?:      boolean;
   reauthReason?:        string | null;
+  configError?:         string | null;
 }
 
 interface BrowseFolder {
@@ -184,10 +185,15 @@ export function BulkImportDrawer({
       const res = await fetch(`/api/orgs/${orgSlug}/marketing-studio/drive?action=status`);
       if (!res.ok) {
         // Check if the error response contains reauth info
-        const errBody = await res.json().catch(() => ({})) as { reauthRequired?: boolean; reauthReason?: string };
+        const errBody = await res.json().catch(() => ({})) as { reauthRequired?: boolean; reauthReason?: string; configError?: string };
         if (errBody.reauthRequired) {
           setErrorMsg(reauthReasonLabel(errBody.reauthReason ?? null));
           setConnState("REAUTH_REQUIRED");
+          return;
+        }
+        if (errBody.configError) {
+          setErrorMsg(configErrorLabel(errBody.configError));
+          setConnState("ERROR");
           return;
         }
         setErrorMsg("No se pudo verificar la conexion con Drive");
@@ -201,6 +207,13 @@ export function BulkImportDrawer({
       if (data.reauthRequired) {
         setErrorMsg(reauthReasonLabel(data.reauthReason ?? null));
         setConnState("REAUTH_REQUIRED");
+        return;
+      }
+
+      // Config error (API disabled, workspace policy) — not a token issue, no reauth CTA
+      if (data.configError) {
+        setErrorMsg(configErrorLabel(data.configError));
+        setConnState("ERROR");
         return;
       }
 
@@ -252,11 +265,17 @@ export function BulkImportDrawer({
       const res = await fetch(`/api/orgs/${orgSlug}/marketing-studio/drive?${params.toString()}`);
       if (!res.ok) {
         const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` })) as {
-          error?: string; reauthRequired?: boolean; reauthReason?: string;
+          error?: string; reauthRequired?: boolean; reauthReason?: string; configError?: string;
         };
         if (body.reauthRequired) {
           setErrorMsg(reauthReasonLabel(body.reauthReason ?? null));
           setConnState("REAUTH_REQUIRED");
+          setRootBrowseLoading(false);
+          return;
+        }
+        if (body.configError) {
+          setErrorMsg(configErrorLabel(body.configError));
+          setConnState("ERROR");
           setRootBrowseLoading(false);
           return;
         }
@@ -1185,11 +1204,19 @@ function FolderList({
 function reauthReasonLabel(reason: string | null): string {
   switch (reason) {
     case "TOKEN_REVOKED":          return "La autorizacion de Google Drive fue revocada. Reconecta tu cuenta.";
-    case "TOKEN_EXPIRED":          return "El token de Google Drive expiro. Reconecta tu cuenta.";
+    case "TOKEN_EXPIRED":          return "El token de Google Drive expiro y no pudo renovarse. Reconecta tu cuenta.";
     case "DRIVE_SCOPE_MISSING":    return "Faltan permisos de Drive (drive.readonly). Reconecta y acepta todos los permisos.";
-    case "DRIVE_API_DISABLED":     return "La API de Google Drive no esta habilitada para esta cuenta.";
-    case "WORKSPACE_ADMIN_BLOCKED": return "El administrador de Google Workspace bloqueo el acceso a Drive para esta aplicacion.";
     default:                       return "La conexion con Google Drive requiere reautorizacion.";
+  }
+}
+
+/** Config errors — NOT solved by reconnecting. No reauth CTA. */
+function configErrorLabel(error: string | null): string {
+  switch (error) {
+    case "DRIVE_API_DISABLED":      return "La API de Google Drive no esta habilitada en el proyecto de Google Cloud. Contacta al administrador.";
+    case "WORKSPACE_ADMIN_BLOCKED": return "El administrador de Google Workspace bloqueo el acceso a Drive para esta aplicacion. Contacta al administrador.";
+    case "PROBE_FAILED":            return "No se pudo verificar la conexion con Drive. Reintenta en unos minutos.";
+    default:                        return "Error de configuracion de Google Drive. Contacta al administrador.";
   }
 }
 

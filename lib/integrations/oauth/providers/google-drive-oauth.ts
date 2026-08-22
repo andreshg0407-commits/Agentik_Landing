@@ -36,6 +36,16 @@ export const DRIVE_MAX_TOTAL_FILES = 2000;
 
 // ── Env var reader ─────────────────────────────────────────────────────────────
 
+/**
+ * Returns Google OAuth credentials.
+ *
+ * Three distinct concepts (never conflate):
+ *   1. redirectUri  — where Google sends the authorization code.
+ *                     Must match exactly what is registered in Google Cloud Console.
+ *                     Source: GOOGLE_DRIVE_REDIRECT_URI > GOOGLE_REDIRECT_URI > NEXT_PUBLIC_APP_URL fallback.
+ *   2. originUrl    — the deployment that initiated the flow (stored in OAuthSession.metadata).
+ *   3. appUrl       — NEXT_PUBLIC_APP_URL, used only as fallback for post-callback redirect.
+ */
 export function getGoogleCredentials(): {
   clientId:     string;
   clientSecret: string;
@@ -43,10 +53,12 @@ export function getGoogleCredentials(): {
 } {
   const clientId     = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const appUrl       = process.env.NEXT_PUBLIC_APP_URL ?? "";
-  const redirectUri  =
+
+  // Explicit per-provider var → legacy var → NEXT_PUBLIC_APP_URL fallback
+  const redirectUri =
+    process.env.GOOGLE_DRIVE_REDIRECT_URI ??
     process.env.GOOGLE_REDIRECT_URI ??
-    `${appUrl}/api/integrations/google-drive/callback`;
+    `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/api/integrations/google-drive/callback`;
 
   if (!clientId || !clientSecret) {
     throw new Error(

@@ -55,11 +55,11 @@ describe("REAUTH-A: Status endpoint probes Drive API", () => {
 
   test("T04: Stale connection (DB connected, token revoked) returns reauthRequired:true", () => {
     const statusIdx = driveRouteSrc.indexOf('"status"');
-    const statusBlock = driveRouteSrc.slice(statusIdx, statusIdx + 3000);
+    const statusBlock = driveRouteSrc.slice(statusIdx, statusIdx + 4500);
     // On probe failure (401/403), sets reauthRequired = true
     expect(statusBlock).toContain("reauthRequired = true");
-    // connected is the inverse of reauthRequired
-    expect(statusBlock).toContain("connected:             !reauthRequired");
+    // connected is false when reauthRequired or configError
+    expect(statusBlock).toContain("!reauthRequired && !configError");
   });
 });
 
@@ -137,11 +137,14 @@ describe("REAUTH-D: Drawer handles REAUTH_REQUIRED", () => {
     expect(drawerSrc).toContain('setStep("connection")');
   });
 
-  test("T17: Drawer has reauthReasonLabel function mapping all 5 reasons", () => {
+  test("T17: Drawer has reauthReasonLabel for reauth and configErrorLabel for config", () => {
+    // Reauth reasons (show reconnect CTA)
     expect(drawerSrc).toContain("reauthReasonLabel");
     expect(drawerSrc).toContain("TOKEN_REVOKED");
     expect(drawerSrc).toContain("TOKEN_EXPIRED");
     expect(drawerSrc).toContain("DRIVE_SCOPE_MISSING");
+    // Config errors (no reconnect CTA — "Contacta al administrador")
+    expect(drawerSrc).toContain("configErrorLabel");
     expect(drawerSrc).toContain("DRIVE_API_DISABLED");
     expect(drawerSrc).toContain("WORKSPACE_ADMIN_BLOCKED");
   });
