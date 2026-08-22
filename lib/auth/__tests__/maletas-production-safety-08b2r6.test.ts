@@ -304,20 +304,20 @@ describe("F — Single normalization source", () => {
 // ══════════════════════════════════════════════════════════════════════════
 
 describe("J — Below-threshold means REVIEW, not PRODUCTION", () => {
-  test("S20: STEP 1b exists in engine and emits STOCK_AVAILABLE_BELOW_THRESHOLD", () => {
-    expect(engineSrc).toContain("// STEP 1b:");
+  test("S20: STEP 2b exists in engine and emits STOCK_AVAILABLE_BELOW_THRESHOLD", () => {
+    expect(engineSrc).toContain("// STEP 2b:");
     expect(engineSrc).toContain("STOCK_AVAILABLE_BELOW_THRESHOLD");
     expect(engineSrc).toContain("Requiere revision humana");
     expect(engineSrc).toContain("no producir automaticamente");
   });
 
-  test("S21: STEP 1b runs BEFORE OP check (between STEP 1 and STEP 2)", () => {
+  test("S21: STEP 2b runs AFTER OP check (between STEP 2 and STEP 3)", () => {
     const step1 = engineSrc.indexOf("// STEP 1: Bodega Principal");
-    const step1b = engineSrc.indexOf("// STEP 1b:");
-    const step2 = engineSrc.indexOf("// STEP 2: B04 Producto en Proceso (P0-08B2R6G-R1)");
+    const step2 = engineSrc.indexOf("// STEP 2: B04 Producto en Proceso (P0-08B2R6G-R1, R2)");
+    const step2b = engineSrc.indexOf("// STEP 2b:");
     expect(step1).toBeGreaterThan(0);
-    expect(step1b).toBeGreaterThan(step1);
-    expect(step2).toBeGreaterThan(step1b);
+    expect(step2).toBeGreaterThan(step1);
+    expect(step2b).toBeGreaterThan(step2);
   });
 });
 

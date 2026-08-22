@@ -367,7 +367,7 @@ describe("I — Coverage engine must use B04 truth", () => {
 
   test("T41: DATA_UNVERIFIED when opAvailable=false (never PRODUCTION_REQUIRED)", () => {
     expect(engineSrc).toContain("!dataAvailability.opAvailable");
-    const step2Idx = engineSrc.indexOf("// STEP 2: B04 Producto en Proceso (P0-08B2R6G-R1)");
+    const step2Idx = engineSrc.indexOf("// STEP 2: B04 Producto en Proceso (P0-08B2R6G-R1, R2)");
     const step3Idx = engineSrc.indexOf("// STEP 3: PRODUCTION_REQUIRED");
     const opSection = engineSrc.slice(step2Idx, step3Idx);
     expect(opSection).toContain("DATA_UNVERIFIED");
@@ -447,7 +447,7 @@ describe("K — B04 sole OP authority (GATE 1)", () => {
 
   test("T52: B04 unavailable → DATA_UNVERIFIED in coverage engine", () => {
     const engineSrc = readSrc("lib/comercial/maletas/sample-coverage-engine.ts");
-    const step2 = engineSrc.indexOf("// STEP 2: B04 Producto en Proceso (P0-08B2R6G-R1)");
+    const step2 = engineSrc.indexOf("// STEP 2: B04 Producto en Proceso (P0-08B2R6G-R1, R2)");
     const step3 = engineSrc.indexOf("// STEP 3: PRODUCTION_REQUIRED");
     const opSection = engineSrc.slice(step2, step3);
     expect(opSection).toContain("!dataAvailability.opAvailable");
@@ -490,7 +490,7 @@ describe("L — No temporal filter for B04 (GATE 2)", () => {
     const engineSrc = readSrc("lib/comercial/maletas/sample-coverage-engine.ts");
     expect(engineSrc).toContain('"OP_INCOMING"');
     expect(engineSrc).toContain('"OP_ACTIVA"');
-    const step2 = engineSrc.indexOf("// STEP 2: B04 Producto en Proceso (P0-08B2R6G-R1)");
+    const step2 = engineSrc.indexOf("// STEP 2: B04 Producto en Proceso (P0-08B2R6G-R1, R2)");
     const step3 = engineSrc.indexOf("// STEP 3: PRODUCTION_REQUIRED");
     const opMatch = engineSrc.slice(step2, step3);
     expect(opMatch).toContain("OP_INCOMING");

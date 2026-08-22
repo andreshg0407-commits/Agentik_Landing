@@ -13,18 +13,28 @@
  * Thresholds (100/200/10) prove wholesale availability — the bag receives
  * only a sample, not the threshold quantity.
  *
- * Canonical coverage cascade (P0-08B2R6G-R1):
+ * Canonical coverage cascade (P0-08B2R6G-R2):
  *   B01_DISPONIBLE → B04_PRODUCTO_EN_PROCESO → PRODUCTION_REQUIRED
  *
  *   1. B01_AVAILABLE                — B01 has eligible wholesale ref (disponible > threshold)
- *   2. STOCK_AVAILABLE_BELOW_THRESHOLD — B01 has stock but below wholesale threshold
- *   3. OP_INCOMING                  — B04 physical inventory has eligible ref (existencia > 0)
- *   4. PRODUCTION_REQUIRED          — no ref in B01 or B04, both sources certified
- *   5. IMPORT_UNAVAILABLE           — import: no ref available
- *   6. DATA_UNVERIFIED              — source data not certified
+ *   2. OP_INCOMING                  — B04 physical inventory has eligible ref (existencia > 0)
+ *  2b. STOCK_AVAILABLE_BELOW_THRESHOLD — B01 has stock but below wholesale threshold
+ *   3. PRODUCTION_REQUIRED          — no ref in B01 or B04, both sources certified
+ *   4. IMPORT_UNAVAILABLE           — import: no ref available (never textile production)
+ *   5. DATA_UNVERIFIED              — source data not certified
+ *
+ * COVERAGE MODEL: REFERENCE SLOTS, NOT UNIT QUANTITIES.
+ * Each derrotero position needs N distinct references (targetReferences).
+ * The engine finds ONE candidate per missing slot. A position with 3 missing
+ * slots may have slot 1 = B01_AVAILABLE, slot 2 = OP_INCOMING, slot 3 = PRODUCTION_REQUIRED.
+ * The engine does NOT calculate unit-level shortfall between sources.
+ * "Coverage" = existence of a matching reference, not unit sufficiency.
  *
  * B04 = physical inventory in "Producto en Proceso" warehouse.
  * ProductionOrder (fuente 33) is NOT used in this cascade — reserved for future Produccion module.
+ *
+ * R2 FIX: STOCK_AVAILABLE_BELOW_THRESHOLD no longer blocks B04 evaluation.
+ * B04 product in process is preferred over B01 remnant below wholesale threshold.
  *
  * Invariants:
  *   - B01 + B04 + BELOW_THRESHOLD + PRODUCTION + IMPORT_UNAVAILABLE + DATA_UNVERIFIED = total faltantes
@@ -529,39 +539,10 @@ function resolveTextileSlots(
       continue;
     }
 
-    // STEP 1b: Bodega Principal — below threshold but stock > 0
-    // MALETAS-P0-PRODUCTION-SAFETY-08B2R6: stock exists but below wholesale threshold.
-    // This BLOCKS PRODUCTION_REQUIRED — requires human review instead.
-    const bodegaBelowThreshold = sortedCentralRefs.find((r) => {
-      if (vendorRefs.has(r.reference.trim().toUpperCase())) return false;
-      if (usedReferences.has(r.reference.trim().toUpperCase())) return false;
-      if (r.disponible <= 0) return false;
-      if (r.disponible > threshold) return false; // already handled above
-      if (!matchesTextilEntry(
-        r.line, r.subgrupoSag, r.grupoSag,
-        requiredLine, sagGrupos, entry.sagSubgrupos,
-      )) return false;
-      return true;
-    });
-
-    if (bodegaBelowThreshold) {
-      candidates.push({
-        reference: bodegaBelowThreshold.reference,
-        description: bodegaBelowThreshold.description,
-        status: "STOCK_AVAILABLE_BELOW_THRESHOLD",
-        source: "BODEGA",
-        availableQty: bodegaBelowThreshold.disponible,
-        pendingQty: null,
-        opNumber: null,
-        threshold,
-        explanation: `Stock en B01: ${bodegaBelowThreshold.disponible} (umbral mayorista ${requiredLine}: >${threshold}). Requiere revision humana — no producir automaticamente.`,
-      });
-      // Do NOT add to usedReferences — below-threshold refs may still be reviewed
-      continue;
-    }
-
-    // STEP 2: B04 Producto en Proceso (P0-08B2R6G-R1)
-    // B04 physical inventory — existencia > 0 means product is in process
+    // STEP 2: B04 Producto en Proceso (P0-08B2R6G-R1, R2)
+    // B04 physical inventory — existencia > 0 means product is in process.
+    // Checked BEFORE B01 below-threshold: B04 product in process is preferred
+    // over B01 remnant that cannot support wholesale operations.
     if (!dataAvailability.opAvailable) {
       candidates.push({
         reference: "",
@@ -604,8 +585,39 @@ function resolveTextileSlots(
       continue;
     }
 
+    // STEP 2b: B01 below threshold — stock exists but insufficient for wholesale.
+    // P0-08B2R6G-R2: evaluated AFTER B04 so B04 product in process is preferred.
+    // Blocks PRODUCTION_REQUIRED — requires human review instead.
+    const bodegaBelowThreshold = sortedCentralRefs.find((r) => {
+      if (vendorRefs.has(r.reference.trim().toUpperCase())) return false;
+      if (usedReferences.has(r.reference.trim().toUpperCase())) return false;
+      if (r.disponible <= 0) return false;
+      if (r.disponible > threshold) return false; // already handled in STEP 1
+      if (!matchesTextilEntry(
+        r.line, r.subgrupoSag, r.grupoSag,
+        requiredLine, sagGrupos, entry.sagSubgrupos,
+      )) return false;
+      return true;
+    });
+
+    if (bodegaBelowThreshold) {
+      candidates.push({
+        reference: bodegaBelowThreshold.reference,
+        description: bodegaBelowThreshold.description,
+        status: "STOCK_AVAILABLE_BELOW_THRESHOLD",
+        source: "BODEGA",
+        availableQty: bodegaBelowThreshold.disponible,
+        pendingQty: null,
+        opNumber: null,
+        threshold,
+        explanation: `Stock en B01: ${bodegaBelowThreshold.disponible} (umbral mayorista ${requiredLine}: >${threshold}). Requiere revision humana — no producir automaticamente.`,
+      });
+      // Do NOT add to usedReferences — below-threshold refs may still be reviewed
+      continue;
+    }
+
     // STEP 3: PRODUCTION_REQUIRED — certified absence in B01 AND B04
-    // P0-08B2R6G-R1: only when stock = 0 in ALL sources and both are certified
+    // P0-08B2R6G-R2: only when stock = 0 in ALL sources and both are certified
     candidates.push({
       reference: "",
       description: entry.subgroupName,
@@ -749,6 +761,8 @@ function matchesTextilEntry(
 
 // ── Status priority (lower = higher priority / more actionable) ─────────
 
+// Lower = higher priority / more actionable. Matches cascade order (R2):
+// B01 above threshold → B04 → B01 below threshold → PRODUCTION → IMPORT → DATA_UNVERIFIED
 const STATUS_PRIORITY: Record<CoverageStatus, number> = {
   B01_AVAILABLE: 1,
   OP_INCOMING: 2,

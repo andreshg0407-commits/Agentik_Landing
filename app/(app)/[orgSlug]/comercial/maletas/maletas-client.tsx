@@ -4963,11 +4963,11 @@ function CoverageSection({ title, count, color, defaultOpen, positions, emptyMes
             <div className="ag-op-table">
               {/* Header */}
               <div className="ag-op-row" style={{
-                display: "grid", gridTemplateColumns: "1fr 30px 30px 30px 90px",
+                display: "grid", gridTemplateColumns: "1fr 30px 30px 30px 30px 30px 30px 90px",
                 padding: `${S[1]}px ${S[3]}px`, background: C.surfaceAlt,
                 borderBottom: `1px solid ${C.line}`,
               }}>
-                {["Posicion", "Ideal", "Tiene", "Falta", "Estado"].map((h) => (
+                {["Posicion", "Ideal", "Tiene", "Falta", "B01", "B04", "Pend.", "Estado"].map((h) => (
                   <div key={h} style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: C.inkFaint, textTransform: "uppercase" as const }}>
                     {h}
                   </div>
@@ -5000,6 +5000,11 @@ function CoveragePositionRow({ pos }: { pos: CoveragePosition }) {
 
   const firstCandidate = pos.candidates[0];
 
+  // P0-08B2R6G-R2: per-position source breakdown (reference slot model)
+  const b01Count = pos.candidates.filter(c => c.status === "B01_AVAILABLE" || c.status === "STOCK_AVAILABLE_BELOW_THRESHOLD").length;
+  const b04Count = pos.candidates.filter(c => c.status === "OP_INCOMING").length;
+  const pendingCount = pos.missingReferences - b01Count - b04Count;
+
   return (
     <div style={{ borderBottom: `1px solid ${C.line}` }}>
       {/* ── Need row ── */}
@@ -5007,7 +5012,7 @@ function CoveragePositionRow({ pos }: { pos: CoveragePosition }) {
         className="ag-op-row"
         onClick={() => setExpanded(!expanded)}
         style={{
-          display: "grid", gridTemplateColumns: "1fr 30px 30px 30px 90px",
+          display: "grid", gridTemplateColumns: "1fr 30px 30px 30px 30px 30px 30px 90px",
           padding: `${S[2]}px ${S[3]}px`, cursor: "pointer", alignItems: "center",
           background: expanded ? C.blueLight : "transparent", transition: "background 0.1s",
         }}
@@ -5028,6 +5033,15 @@ function CoveragePositionRow({ pos }: { pos: CoveragePosition }) {
         </div>
         <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: C.red, textAlign: "center" as const }}>
           {pos.missingReferences}
+        </div>
+        <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, color: b01Count > 0 ? C.green : C.inkFaint, textAlign: "center" as const }}>
+          {b01Count || "\u2014"}
+        </div>
+        <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, color: b04Count > 0 ? C.amber : C.inkFaint, textAlign: "center" as const }}>
+          {b04Count || "\u2014"}
+        </div>
+        <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, color: pendingCount > 0 ? C.red : C.inkFaint, textAlign: "center" as const }}>
+          {pendingCount > 0 ? pendingCount : "\u2014"}
         </div>
         <div style={{
           fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: statusColor,
@@ -5063,7 +5077,7 @@ function CoveragePositionRow({ pos }: { pos: CoveragePosition }) {
           )}
           {firstCandidate.pendingQty != null && firstCandidate.opNumber && (
             <span style={{ fontFamily: T.mono, fontSize: 9, color: C.amber }}>
-              OP {firstCandidate.opNumber}: {firstCandidate.pendingQty} pend.
+              B04: {firstCandidate.pendingQty} en proceso
             </span>
           )}
         </div>
