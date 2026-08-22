@@ -411,6 +411,7 @@ function CopilotChat({
               >
                 Pregunta sobre clientes, pedidos o desempeño de ventas.
                 Los datos son agregados y redactados.
+                Las respuestas son determinísticas (sin modelo de IA).
               </div>
             </div>
           )}
@@ -482,6 +483,24 @@ function CopilotChat({
             Enviar
           </button>
         </div>
+      </div>
+
+      {/* Demo mode banner — permanent, never hidden */}
+      <div
+        style={{
+          fontFamily: T.mono,
+          fontSize: T.sz.xs,
+          color: C.amberDark,
+          background: C.amberLight,
+          border: `1px solid ${C.amberBorder}`,
+          borderRadius: R.sm,
+          padding: `${S[1]}px ${S[3]}px`,
+          textAlign: "center",
+          lineHeight: 1.5,
+        }}
+      >
+        Modo demostración — respuestas determinísticas, sin modelo de IA conectado.
+        Los datos son agregados y redactados. No es un Copilot conversacional terminado.
       </div>
 
       {/* Reports section */}

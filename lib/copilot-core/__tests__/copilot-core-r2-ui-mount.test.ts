@@ -15,6 +15,7 @@
  * - R2-08: Client component calls real chat API endpoint
  * - R2-09: Client component calls real reports API endpoint
  * - R2-10: Nav config includes "Copilot Preview" entry in agentik domain
+ * - R2-11: Client component shows permanent demo mode banner
  */
 
 import { describe, test, expect } from "bun:test";
@@ -100,6 +101,16 @@ describe("R2 UI Mount — Client Component Contract", () => {
     const src = readFile(COPILOT_CLIENT);
     expect(src).toContain("/api/orgs/${orgSlug}/copilot/reports");
     expect(src).toContain("reportType");
+  });
+});
+
+describe("R2 UI Mount — Transparency", () => {
+  test("R2-11: Client shows permanent demo mode banner (MOCK_MODE_EXPLICIT)", () => {
+    const src = readFile(COPILOT_CLIENT);
+    expect(src).toContain("Modo demostración");
+    expect(src).toContain("sin modelo de IA conectado");
+    expect(src).toContain("respuestas determinísticas");
+    expect(src).toContain("No es un Copilot conversacional terminado");
   });
 });
 
