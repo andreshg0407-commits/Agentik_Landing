@@ -579,7 +579,7 @@ export async function GET(
         { status: 503 },
       );
     }
-    if (msg === "DRIVE_PERMISSION_DENIED")        return NextResponse.json({ error: "Sin permisos para acceder a esta carpeta" }, { status: 403 });
+    if (msg === "DRIVE_PERMISSION_DENIED")        return NextResponse.json({ error: "DRIVE_PERMISSION_DENIED", reauthRequired: true, reauthReason: "TOKEN_REVOKED" }, { status: 403 });
     if (msg === "DRIVE_FOLDER_NOT_FOUND")         return NextResponse.json({ error: "Carpeta no encontrada en Google Drive" }, { status: 404 });
     if (msg === "DRIVE_NOT_A_FOLDER")             return NextResponse.json({ error: "El ID no corresponde a una carpeta" }, { status: 400 });
     if (msg === "DRIVE_TOKEN_EXPIRED")            return NextResponse.json({ error: msg, reauthRequired: true, reauthReason: "TOKEN_EXPIRED" }, { status: 401 });

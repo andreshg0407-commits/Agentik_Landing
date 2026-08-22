@@ -251,7 +251,15 @@ export function BulkImportDrawer({
       if (folderId && folderId !== "root") params.set("folderId", folderId);
       const res = await fetch(`/api/orgs/${orgSlug}/marketing-studio/drive?${params.toString()}`);
       if (!res.ok) {
-        const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` })) as {
+          error?: string; reauthRequired?: boolean; reauthReason?: string;
+        };
+        if (body.reauthRequired) {
+          setErrorMsg(reauthReasonLabel(body.reauthReason ?? null));
+          setConnState("REAUTH_REQUIRED");
+          setRootBrowseLoading(false);
+          return;
+        }
         setErrorMsg(body.error ?? "Error al navegar carpetas");
         setRootBrowseLoading(false);
         return;

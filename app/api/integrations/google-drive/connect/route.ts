@@ -43,6 +43,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const codeChallenge = deriveCodeChallenge(codeVerifier);
     const expiresAt     = new Date(Date.now() + 10 * 60 * 1000); // 10 min
 
+    // Capture the origin of the initiating deployment so the callback
+    // redirects back here (not always to NEXT_PUBLIC_APP_URL / production).
+    const initiatingOrigin = req.nextUrl.origin;
+
     await prisma.oAuthSession.create({
       data: {
         organizationId:  organization.id,
@@ -54,7 +58,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         status:          "pending",
         metadata:        {
           orgSlug,
-          returnTo: `/${orgSlug}/agentik/marketing-studio/biblioteca`,
+          returnTo:  `/${orgSlug}/agentik/marketing-studio/biblioteca`,
+          originUrl: initiatingOrigin,
         },
         expiresAt,
       },

@@ -41,14 +41,24 @@ import {
 export const runtime = "nodejs";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
+  const fallbackAppUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
   const code   = req.nextUrl.searchParams.get("code");
   const state  = req.nextUrl.searchParams.get("state");
   const error  = req.nextUrl.searchParams.get("error");
 
-  // User denied Google consent
+  // User denied Google consent — try to redirect to initiating origin
   if (error) {
-    return NextResponse.redirect(`${appUrl}/agentik/marketing-studio/biblioteca?drive_error=denied`);
+    let deniedUrl = fallbackAppUrl;
+    if (state) {
+      const errSession = await getOAuthSessionByState(state).catch(() => null);
+      if (errSession) {
+        const errMeta = errSession.metadata as Record<string, string> | null;
+        const errOrigin = errMeta?.originUrl;
+        if (isAllowedOrigin(errOrigin)) deniedUrl = errOrigin;
+        await consumeOAuthSessionByState(state).catch(() => {});
+      }
+    }
+    return NextResponse.redirect(`${deniedUrl}/agentik/marketing-studio/biblioteca?drive_error=denied`);
   }
 
   if (!code || !state) {
@@ -65,9 +75,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   }
 
   const { organizationId, metadata } = session;
-  const returnTo =
-    (metadata as Record<string, string> | null)?.returnTo ??
-    "/agentik/marketing-studio/biblioteca";
+  const meta = metadata as Record<string, string> | null;
+  const returnTo = meta?.returnTo ?? "/agentik/marketing-studio/biblioteca";
+
+  // Use the origin that initiated the OAuth flow (stored by connect route).
+  // This ensures Preview deployments redirect back to Preview, not production.
+  // Validate: must be same domain (agentickers.com) or a Vercel preview URL.
+  const storedOrigin = meta?.originUrl;
+  const appUrl = isAllowedOrigin(storedOrigin) ? storedOrigin : fallbackAppUrl;
 
   try {
     const creds = getGoogleCredentials();
@@ -155,5 +170,29 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const safeMsg = err instanceof Error ? err.message : "unknown";
     console.error("[google-drive/callback] token exchange failed:", safeMsg);
     return NextResponse.redirect(`${appUrl}${returnTo}?drive_error=token_exchange_failed`);
+  }
+}
+
+// ── Origin validation ───────────────────────────────────────────────────────
+
+/**
+ * Validates that a stored origin is safe for redirect.
+ * Allowed: production domain, Vercel preview deployments for this project.
+ * Prevents open-redirect attacks via crafted OAuthSession metadata.
+ */
+function isAllowedOrigin(origin: string | undefined): origin is string {
+  if (!origin) return false;
+  try {
+    const url = new URL(origin);
+    // Production domain
+    if (url.hostname === "agentickers.com") return true;
+    if (url.hostname === "www.agentickers.com") return true;
+    // Vercel Preview deployments (project-scoped)
+    if (url.hostname.endsWith("-andreshg0407-commits-projects.vercel.app")) return true;
+    // localhost for development
+    if (url.hostname === "localhost") return true;
+    return false;
+  } catch {
+    return false;
   }
 }
